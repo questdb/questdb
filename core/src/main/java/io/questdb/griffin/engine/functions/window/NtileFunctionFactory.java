@@ -206,8 +206,6 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
     static class NtileOverPartitionFunction extends LongFunction implements Function, WindowFunction, Reopenable {
 
         private final int bucketCount;
-        private final CairoConfiguration configuration;
-        private final ColumnTypes keyColumnTypes;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
         private int columnIndex;
@@ -223,8 +221,6 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
             this.bucketCount = bucketCount;
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
-            this.keyColumnTypes = keyColumnTypes;
-            this.configuration = configuration;
             this.map = MapFactory.createUnorderedMap(
                     configuration,
                     keyColumnTypes,

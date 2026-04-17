@@ -72,7 +72,8 @@ import io.questdb.std.Unsafe;
 public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
 
     public static final String NAME = "cume_dist";
-    // Map value columns for the partitioned function: lastOffset, rank, count, partitionIdx
+    // Map value columns for the partitioned function: lastOffset, rank (pass1) / prevRank (pass2),
+    // count, deferredStartOffset, deferredSize, deferredCapacity. See the static initializer below.
     private static final ArrayColumnTypes CUME_DIST_COLUMN_TYPES;
     private static final String SIGNATURE = NAME + "()";
 
@@ -109,14 +110,19 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                         configuration.getSqlWindowStoreMaxPages(),
                         MemoryTag.NATIVE_CIRCULAR_BUFFER
                 );
-                return new CumeDistOverPartitionFunction(
-                        windowContext.getPartitionByKeyTypes(),
-                        windowContext.getPartitionByRecord(),
-                        windowContext.getPartitionBySink(),
-                        configuration,
-                        memory,
-                        configuration.getSqlWindowInitialRangeBufferSize()
-                );
+                try {
+                    return new CumeDistOverPartitionFunction(
+                            windowContext.getPartitionByKeyTypes(),
+                            windowContext.getPartitionByRecord(),
+                            windowContext.getPartitionBySink(),
+                            configuration,
+                            memory,
+                            configuration.getSqlWindowInitialRangeBufferSize()
+                    );
+                } catch (Throwable t) {
+                    Misc.free(memory);
+                    throw t;
+                }
             } else {
                 return new CumeDistFunction();
             }

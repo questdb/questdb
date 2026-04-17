@@ -319,13 +319,18 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
 
-                    return new NthValueOverRowsFrameFunction(
-                            args.get(0),
-                            rowsLo,
-                            rowsHi,
-                            mem,
-                            n
-                    );
+                    try {
+                        return new NthValueOverRowsFrameFunction(
+                                args.get(0),
+                                rowsLo,
+                                rowsHi,
+                                mem,
+                                n
+                        );
+                    } catch (Throwable t) {
+                        Misc.free(mem);
+                        throw t;
+                    }
                 }
             }
         }
