@@ -12126,6 +12126,51 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCumeDistPartitionedSliceExpansion() throws Exception {
+        // Drop the initial per-partition slice capacity so a single peer group overflows it and
+        // forces expandRingBuffer inside CumeDistOverPartitionFunction.pass2. Two partitions
+        // each carry one large peer group followed by a short singleton: the large group
+        // triggers slice doubling, the transition to the singleton flushes the slice and
+        // exercises the recycle-through-freeList path on the subsequent peer-group boundary.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 4);
+        try {
+            assertMemoryLeak(() -> {
+                executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+                // Partition 1: 20 rows with val=1 (one peer group), then 1 row with val=2.
+                // Partition 2: 15 rows with val=1, then 1 row with val=2.
+                StringBuilder sb = new StringBuilder("insert into tab values ");
+                long ts = 1;
+                for (int r = 0; r < 20; r++) {
+                    sb.append('(').append(ts++).append(", 1, 1),");
+                }
+                sb.append('(').append(ts++).append(", 1, 2),");
+                for (int r = 0; r < 15; r++) {
+                    sb.append('(').append(ts++).append(", 2, 1),");
+                }
+                sb.append('(').append(ts).append(", 2, 2)");
+                execute(sb.toString());
+
+                // cume_dist for partition 1: 20/21 for val=1 rows, 21/21=1.0 for val=2.
+                // cume_dist for partition 2: 15/16 for val=1 rows, 16/16=1.0 for val=2.
+                assertSql(
+                        """
+                                i\tcd\tcnt
+                                1\t0.9523809523809523\t20
+                                1\t1.0\t1
+                                2\t0.9375\t15
+                                2\t1.0\t1
+                                """,
+                        "select i, cd, count(*) cnt from (" +
+                                "select i, cume_dist() over (partition by i order by val) cd from tab" +
+                                ") group by i, cd order by i, cd"
+                );
+            });
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 32);
+        }
+    }
+
+    @Test
     public void testNthValueRangeFrameBufferExpansion() throws Exception {
         // Reduce the window store page size so the initial ring-buffer capacity is tiny and
         // large partitions force expandRingBuffer in NthValueOverPartitionRangeFrameFunction
@@ -12165,19 +12210,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNthValuePartitionedRowsUnboundedLockedIn() throws Exception {
         // Partitioned ROWS frame with rowsLo=MIN_VALUE (unbounded preceding) and rowsHi=-1 (1
-        // preceding). Routes to NthValueOverPartitionRowsFrameFunction with frameLoBounded=false,
-        // bufferSize=frameSize=1. With n=1 the partition's count reaches n + bufferSize = 2 on
-        // the second row of each partition, at which point the locked value starts being
-        // emitted. testNthValuePartitionedRowsFrameBounded exercises the frameLoBounded=true
-        // branch, so this is the only test that covers the !frameLoBounded partitioned path.
+        // preceding). Routes to NthValueOverPartitionRowsFrameUnboundedFunction (bufferSize=1,
+        // n=1). The state-machine class captures row-n's value once count reaches n and emits
+        // it for every subsequent row where count >= n + bufferSize. testNthValuePartitionedRows-
+        // FrameBounded exercises the separate bounded-lo class (NthValueOverPartitionRowsFrame-
+        // Function), so this is the only test that covers the unbounded-lo partitioned path.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values " +
                     "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
                     "(4, 2, 40.0), (5, 2, 50.0)");
 
-            // The partitioned !frameLoBounded branch captures the row-n value once seen and
-            // emits it for every subsequent row where count >= n + bufferSize. With n=1 and
+            // NthValueOverPartitionRowsFrameUnboundedFunction captures the row-n value once seen
+            // and emits it for every subsequent row where count >= n + bufferSize. With n=1 and
             // bufferSize=1, that threshold is reached on the second row of each partition.
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
@@ -12241,9 +12286,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         //     current): once the frame is full, the n==currentFrameSize+1 path returns
         //     the current row's value.
         //   - n=5 on same frame: n > currentFrameSize+1, so the else-NaN path always fires.
-        //   - n=1 on "rows between unbounded preceding and 2 preceding": frameLoBounded
-        //     is false, so the state-machine arm locks row 1's value; it is emitted from
-        //     row 3 onward once totalCount >= n + bufferSize = 3.
+        //   - n=1 on "rows between unbounded preceding and 2 preceding": routes to
+        //     NthValueOverRowsFrameUnboundedFunction, whose state machine locks row 1's
+        //     value and emits it from row 3 onward once totalCount >= n + bufferSize = 3.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");

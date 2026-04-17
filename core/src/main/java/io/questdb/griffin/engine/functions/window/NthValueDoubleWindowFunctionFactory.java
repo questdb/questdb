@@ -49,6 +49,7 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -157,11 +158,17 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(
-                            configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(),
-                            MemoryTag.NATIVE_CIRCULAR_BUFFER
-                    );
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(
+                                configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(),
+                                MemoryTag.NATIVE_CIRCULAR_BUFFER
+                        );
+                    } catch (Throwable t) {
+                        Misc.free(map);
+                        throw t;
+                    }
 
                     return new NthValueOverPartitionRangeFrameFunction(
                             map,
@@ -245,11 +252,17 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             columnTypes
                     );
 
-                    MemoryARW mem = Vm.getCARWInstance(
-                            configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(),
-                            MemoryTag.NATIVE_CIRCULAR_BUFFER
-                    );
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(
+                                configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(),
+                                MemoryTag.NATIVE_CIRCULAR_BUFFER
+                        );
+                    } catch (Throwable t) {
+                        Misc.free(map);
+                        throw t;
+                    }
 
                     return new NthValueOverPartitionRowsFrameFunction(
                             map,
@@ -999,9 +1012,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 if (firstIdx == 0) {
                     Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
                 } else {
+                    // size == capacity on this branch, so the two memcpy calls below cover the
+                    // whole ring: [firstIdx .. size) followed by [0 .. firstIdx).
                     long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
                     Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
-                    Vect.memcpy(newAddress + firstPieceSize, oldAddress, ((firstIdx + size) % size) * RECORD_SIZE);
+                    Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
                     firstIdx = 0;
                 }
 
