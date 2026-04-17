@@ -178,7 +178,6 @@ mod tests {
                 format: None, // It should error because this is missing.
                 ascii: None,
                 not_null: false,
-            
             },
         );
 

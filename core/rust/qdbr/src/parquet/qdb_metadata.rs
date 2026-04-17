@@ -221,7 +221,6 @@ mod tests {
                     format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
                     ascii: None,
                     not_null: false,
-                
                 },
                 QdbMetaCol {
                     column_type: ColumnTypeTag::Int.into_type(),
@@ -229,7 +228,6 @@ mod tests {
                     format: None,
                     ascii: None,
                     not_null: false,
-                
                 },
                 QdbMetaCol {
                     column_type: ColumnTypeTag::Varchar.into_type(),
@@ -237,7 +235,6 @@ mod tests {
                     format: None,
                     ascii: Some(true),
                     not_null: false,
-                
                 },
             ],
             unused_bytes: 0,
@@ -288,7 +285,6 @@ mod tests {
                 format: None,
                 ascii: None,
                 not_null: false,
-            
             }],
             unused_bytes: 4096,
             squash_tracker: -1,
@@ -337,7 +333,6 @@ mod tests {
                 format: None,
                 ascii: None,
                 not_null: false,
-            
             }],
             unused_bytes: 0,
             squash_tracker: -1,
@@ -365,7 +360,6 @@ mod tests {
                 format: None,
                 ascii: None,
                 not_null: false,
-            
             }],
             unused_bytes: 0,
             squash_tracker: 42,
@@ -448,7 +442,7 @@ mod tests {
         // Backward compatibility: old JSON without not_null should default to false
         let json_str = r#"{"version":1,"schema":[{"column_type":5,"column_top":0}]}"#;
         let deserialized = QdbMeta::deserialize(json_str)?;
-        assert_eq!(deserialized.schema[0].not_null, false);
+        assert!(!deserialized.schema[0].not_null);
         Ok(())
     }
 
