@@ -33,16 +33,22 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public final class UuidColumn extends UuidFunction implements ColumnFunction {
     private static final ObjList<UuidColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
+    private final boolean notNull;
 
-    private UuidColumn(int columnIndex) {
+    private UuidColumn(int columnIndex, boolean notNull) {
         this.columnIndex = columnIndex;
+        this.notNull = notNull;
     }
 
     public static UuidColumn newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        return newInstance(columnIndex, false);
+    }
+
+    public static UuidColumn newInstance(int columnIndex, boolean notNull) {
+        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new UuidColumn(columnIndex);
+        return new UuidColumn(columnIndex, notNull);
     }
 
     @Override
@@ -61,6 +67,11 @@ public final class UuidColumn extends UuidFunction implements ColumnFunction {
     }
 
     @Override
+    public boolean isNotNull() {
+        return notNull;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         // the UUID column is thread-safe
 
@@ -72,7 +83,7 @@ public final class UuidColumn extends UuidFunction implements ColumnFunction {
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new UuidColumn(i));
+            COLUMNS.setQuick(i, new UuidColumn(i, false));
         }
     }
 }
