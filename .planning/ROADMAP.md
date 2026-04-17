@@ -216,4 +216,4 @@ Plans:
 | 9. Fix Critical Review Findings | 1/1 | Complete | 2026-04-13 |
 | 10. Fix Offset-Aware Bucket Alignment | 1/1 | Complete | 2026-04-13 |
 | 11. Hardening — Review Findings & Missing Test Coverage | 1/1 | Complete (retroactive) | 2026-04-13 |
-| 12. Replace safety-net reclassification with legacy fallback | 4/4 | Complete   | 2026-04-17 |
+| 12. Replace safety-net reclassification with legacy fallback | 4/4 | Complete    | 2026-04-17 |
