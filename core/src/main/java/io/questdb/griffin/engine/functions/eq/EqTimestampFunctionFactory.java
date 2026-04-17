@@ -33,7 +33,9 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqTimestampFunctionFactory implements FunctionFactory {
@@ -58,6 +60,14 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
     ) {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
+        // `x = NULL` / `x IS NULL` on a NOT NULL TIMESTAMP column is always false.
+        // NegatingFunctionFactory flips the constant for IS NOT NULL.
+        if (left.isConstant() && left.getTimestamp(null) == Numbers.LONG_NULL && right.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        if (right.isConstant() && right.getTimestamp(null) == Numbers.LONG_NULL && left.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
         int leftType = ColumnType.getTimestampType(left.getType());
         int rightType = ColumnType.getTimestampType(right.getType());
         int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
