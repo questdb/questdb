@@ -42,6 +42,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
@@ -55,6 +57,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -101,11 +104,18 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
 
         if (windowContext.isOrdered()) {
             if (windowContext.getPartitionByRecord() != null) {
+                MemoryARW memory = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
                 return new CumeDistOverPartitionFunction(
                         windowContext.getPartitionByKeyTypes(),
                         windowContext.getPartitionByRecord(),
                         windowContext.getPartitionBySink(),
-                        configuration
+                        configuration,
+                        memory,
+                        configuration.getSqlWindowInitialRangeBufferSize()
                 );
             } else {
                 return new CumeDistFunction();
@@ -333,16 +343,21 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
 
     // cume_dist() over (partition by xxx order by xxx)
     //
-    // pass1 stores rank per row and tracks per-partition state in a Map (lastOffset,
-    // rank, count, partitionIdx). pass2 detects peer-group boundaries per partition
-    // and flushes deferred rows with the correct cumulative distribution value.
-    // Each partition's deferred offsets live in a separate LongList indexed through
-    // the Map's partitionIdx column.
+    // pass1 stores rank per row and per-partition state in a Map (lastOffset, rank, count,
+    // deferredStartOffset, deferredSize, deferredCapacity). Each partition's deferred output
+    // offsets live in a slice of a single shared MemoryARW — no per-partition Java objects.
+    // pass2 detects peer-group boundaries per partition, walks the slice and writes the
+    // resolved cumulative distribution value, then resets the slice for the next peer group.
+    // Slices grow on demand via expandRingBuffer, recycling previously-freed blocks through
+    // freeList (same pattern as NthValueOverPartitionRangeFrameFunction and friends).
     static class CumeDistOverPartitionFunction extends DoubleFunction implements Function, WindowFunction, Reopenable {
 
         private final CairoConfiguration configuration;
+        private final MemoryARW deferredOffsets;
+        private final LongList freeList = new LongList();
+        private final int initialBufferSize;
         private final ColumnTypes keyColumnTypes;
-        private final ObjList<LongList> partitionDeferredOffsets = new ObjList<>();
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
         private int columnIndex;
@@ -355,12 +370,16 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                 ColumnTypes keyColumnTypes,
                 VirtualRecord partitionByRecord,
                 RecordSink partitionBySink,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                MemoryARW deferredOffsets,
+                int initialBufferSize
         ) {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
             this.keyColumnTypes = keyColumnTypes;
             this.configuration = configuration;
+            this.deferredOffsets = deferredOffsets;
+            this.initialBufferSize = initialBufferSize;
         }
 
         @Override
@@ -369,7 +388,8 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             Misc.free(map);
             Misc.freeObjList(partitionByRecord.getFunctions());
             Misc.freeObjList(rankMaps);
-            partitionDeferredOffsets.clear();
+            deferredOffsets.close();
+            freeList.clear();
         }
 
         @Override
@@ -418,9 +438,11 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             if (mapValue.isNew()) {
                 rank = 1;
                 count = 1;
-                int idx = partitionDeferredOffsets.size();
-                partitionDeferredOffsets.add(new LongList());
-                mapValue.putLong(3, idx);
+                long startOffset = deferredOffsets.appendAddressFor((long) initialBufferSize * Long.BYTES)
+                        - deferredOffsets.getPageAddress(0);
+                mapValue.putLong(3, startOffset);
+                mapValue.putLong(4, 0L);
+                mapValue.putLong(5, initialBufferSize);
             } else {
                 long lastOffset = mapValue.getLong(0);
                 rank = mapValue.getLong(1);
@@ -453,38 +475,54 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
 
             // Column 1 is reused as prevRank in pass2 (reset in preparePass2)
             long prevRank = mapValue.getLong(1);
-            int partitionIdx = (int) mapValue.getLong(3);
-            LongList deferred = partitionDeferredOffsets.getQuick(partitionIdx);
+            long startOffset = mapValue.getLong(3);
+            long size = mapValue.getLong(4);
+            long capacity = mapValue.getLong(5);
 
             if (prevRank != 0 && storedRank != prevRank) {
-                // Peer group boundary for this partition: flush deferred rows
+                // Peer group boundary for this partition: flush the deferred slice.
                 double cumeDist = (double) (storedRank - 1) / (double) totalRows;
-                for (int i = 0, n = deferred.size(); i < n; i++) {
-                    long offset = deferred.getQuick(i);
+                for (long i = 0; i < size; i++) {
+                    long offset = deferredOffsets.getLong(startOffset + i * Long.BYTES);
                     Unsafe.getUnsafe().putDouble(spi.getAddress(offset, columnIndex), cumeDist);
                 }
-                deferred.clear();
+                size = 0;
             }
 
-            // Write tentative 1.0 (correct for the last peer group: totalRows / totalRows)
+            // Grow the slice if it is full. expandRingBuffer doubles capacity and returns the
+            // new slice via memoryDesc; the previous slice is recycled through freeList.
+            if (size == capacity) {
+                memoryDesc.reset(capacity, startOffset, size, 0, freeList);
+                expandRingBuffer(deferredOffsets, memoryDesc, Long.BYTES);
+                capacity = memoryDesc.capacity;
+                startOffset = memoryDesc.startOffset;
+            }
+
+            // Append current row's offset to the deferred slice.
+            deferredOffsets.putLong(startOffset + size * Long.BYTES, recordOffset);
+            size++;
+
+            // Write tentative 1.0 (correct for the last peer group: totalRows / totalRows).
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), 1.0);
-            deferred.add(recordOffset);
-            // Update prevRank in column 1
+
+            // Persist updated slice bookkeeping and prevRank.
             mapValue.putLong(1, storedRank);
+            mapValue.putLong(3, startOffset);
+            mapValue.putLong(4, size);
+            mapValue.putLong(5, capacity);
         }
 
         @Override
         public void preparePass2() {
-            // Reset column 1 (rank) to 0 for use as prevRank in pass2
+            // Reset column 1 (rank) to 0 for use as prevRank in pass2, and reset each partition's
+            // deferred slice size to 0 (capacity and startOffset remain so that pass2 reuses the
+            // already-allocated native slice).
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = cursor.getRecord();
             while (cursor.hasNext()) {
                 MapValue value = record.getValue();
                 value.putLong(1, 0);
-            }
-            // Clear all per-partition deferred offset lists
-            for (int i = 0, n = partitionDeferredOffsets.size(); i < n; i++) {
-                partitionDeferredOffsets.getQuick(i).clear();
+                value.putLong(4, 0L);
             }
         }
 
@@ -493,14 +531,15 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             if (map != null) {
                 map.reopen();
             }
-            partitionDeferredOffsets.clear();
+            freeList.clear();
         }
 
         @Override
         public void reset() {
             Misc.free(map);
             Misc.freeObjListAndKeepObjects(rankMaps);
-            partitionDeferredOffsets.clear();
+            deferredOffsets.close();
+            freeList.clear();
         }
 
         @Override
@@ -524,15 +563,18 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         public void toTop() {
             super.toTop();
             Misc.clear(map);
-            partitionDeferredOffsets.clear();
+            deferredOffsets.truncate();
+            freeList.clear();
         }
     }
 
     static {
         CUME_DIST_COLUMN_TYPES = new ArrayColumnTypes();
-        CUME_DIST_COLUMN_TYPES.add(ColumnType.LONG); // lastOffset
-        CUME_DIST_COLUMN_TYPES.add(ColumnType.LONG); // rank (pass1) / prevRank (pass2)
-        CUME_DIST_COLUMN_TYPES.add(ColumnType.LONG); // count
-        CUME_DIST_COLUMN_TYPES.add(ColumnType.LONG); // partitionIdx
+        CUME_DIST_COLUMN_TYPES.add(ColumnType.LONG); // slot 0: lastOffset
+        CUME_DIST_COLUMN_TYPES.add(ColumnType.LONG); // slot 1: rank (pass1) / prevRank (pass2)
+        CUME_DIST_COLUMN_TYPES.add(ColumnType.LONG); // slot 2: count
+        CUME_DIST_COLUMN_TYPES.add(ColumnType.LONG); // slot 3: deferredStartOffset (native offset into shared MemoryARW)
+        CUME_DIST_COLUMN_TYPES.add(ColumnType.LONG); // slot 4: deferredSize (entries in the deferred slice)
+        CUME_DIST_COLUMN_TYPES.add(ColumnType.LONG); // slot 5: deferredCapacity (allocated entries in the slice)
     }
 }

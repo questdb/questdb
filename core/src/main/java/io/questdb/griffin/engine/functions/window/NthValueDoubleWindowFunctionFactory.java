@@ -211,7 +211,28 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             n
                     );
                 }
-                // between [unbounded | x] preceding and [x preceding | current row] (but not unbounded preceding to current row)
+                // unbounded preceding and K preceding (K > 0) — no per-partition buffer needed.
+                else if (rowsLo == Long.MIN_VALUE) {
+                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+                    columnTypes.add(ColumnType.LONG); // count
+                    columnTypes.add(ColumnType.LONG); // lockedValue (double bits as long)
+
+                    Map map = MapFactory.createUnorderedMap(
+                            configuration,
+                            partitionByKeyTypes,
+                            columnTypes
+                    );
+
+                    return new NthValueOverPartitionRowsFrameUnboundedFunction(
+                            map,
+                            partitionByRecord,
+                            partitionBySink,
+                            rowsHi,
+                            args.get(0),
+                            n
+                    );
+                }
+                // between X preceding and [Y preceding | current row]
                 else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG); // position of current oldest element
@@ -274,7 +295,10 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
                     return new NthValueOverCurrentRowFunction(args.get(0), n);
-                } // between [unbounded | x] preceding and [y preceding | current row]
+                } // between unbounded preceding and K preceding (K > 0) — no buffer needed.
+                else if (rowsLo == Long.MIN_VALUE) {
+                    return new NthValueOverRowsFrameUnboundedFunction(args.get(0), rowsHi, n);
+                } // between X preceding and [Y preceding | current row]
                 else {
                     MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
@@ -638,14 +662,16 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         }
     }
 
-    // handles nth_value() over (partition by x [order by o] rows between y and z)
+    // handles nth_value() over (partition by x [order by o] rows between K preceding and
+    // [Y preceding | current row]). The unbounded-preceding..K-preceding variant uses a
+    // simpler state-machine class (NthValueOverPartitionRowsFrameUnboundedFunction) that
+    // does not allocate a per-partition buffer.
     // removable cumulative aggregation
     public static class NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         protected final int bufferSize;
         protected final int excludeCount;
         protected final boolean frameIncludesCurrentValue;
-        protected final boolean frameLoBounded;
         protected final int frameSize;
         protected final MemoryARW memory;
         protected final int n;
@@ -662,15 +688,9 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 int n
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
-            if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
-                bufferSize = (int) Math.abs(rowsLo);
-                frameLoBounded = true;
-            } else {
-                frameSize = (int) Math.abs(rowsHi);
-                bufferSize = frameSize;
-                frameLoBounded = false;
-            }
+            assert rowsLo > Long.MIN_VALUE; // use NthValueOverPartitionRowsFrameUnboundedFunction for the unbounded-lo case
+            frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
+            bufferSize = (int) Math.abs(rowsLo);
             this.excludeCount = rowsHi < 0 ? (int) Math.abs(rowsHi) : 0;
             this.frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
@@ -679,10 +699,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         @Override
         public void computeNext(Record record) {
-            // Map slot layout:
-            //   frameLoBounded:  0=loIdx, 1=startOffset, 2=count (capped at bufferSize)
-            //   !frameLoBounded: 0=count (uncapped), 1=lockedValue (double bits as long)
-
+            // Map value slot layout: 0=loIdx, 1=startOffset, 2=count (capped at bufferSize).
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -690,30 +707,6 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
             double d = arg.getDouble(record);
 
-            if (!frameLoBounded) {
-                // rows between unbounded preceding and K preceding: frame = rows [1, M-K].
-                // nth_value(n) locks to row n's value forever once the frame contains n rows.
-                long count;
-                if (mapValue.isNew()) {
-                    count = 0;
-                    mapValue.putLong(1, Double.doubleToRawLongBits(Double.NaN));
-                } else {
-                    count = mapValue.getLong(0);
-                }
-                count++;
-                if (count == n) {
-                    mapValue.putLong(1, Double.doubleToRawLongBits(d));
-                }
-                if (count >= n + bufferSize) {
-                    nthValue = Double.longBitsToDouble(mapValue.getLong(1));
-                } else {
-                    nthValue = Double.NaN;
-                }
-                mapValue.putLong(0, count);
-                return;
-            }
-
-            // frameLoBounded: rows between X preceding and [Y preceding | current row]
             long loIdx;
             long startOffset;
             long count;
@@ -811,11 +804,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between ");
-            if (frameLoBounded) {
-                sink.val(bufferSize);
-            } else {
-                sink.val("unbounded");
-            }
+            sink.val(bufferSize);
             sink.val(" preceding and ");
             if (frameIncludesCurrentValue) {
                 sink.val("current row");
@@ -829,6 +818,92 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         public void toTop() {
             super.toTop();
             memory.truncate();
+        }
+    }
+
+    // Handles nth_value() over (partition by x [order by o] rows between unbounded preceding
+    // and K preceding), K > 0. Once each partition has seen n rows, the n-th value is locked
+    // and emitted whenever the frame first contains at least n rows (count >= n + bufferSize).
+    // No per-partition buffer — O(1) state per partition (count + lockedValue).
+    public static class NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+
+        protected final int bufferSize;
+        protected final int n;
+        protected double nthValue;
+
+        public NthValueOverPartitionRowsFrameUnboundedFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rowsHi,
+                Function arg,
+                int n
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            assert rowsHi < 0; // K preceding with K > 0
+            this.bufferSize = (int) Math.abs(rowsHi);
+            this.n = n;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            // Map value slot layout: 0=count (uncapped), 1=lockedValue (double bits as long).
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+
+            double d = arg.getDouble(record);
+            long count;
+            if (mapValue.isNew()) {
+                count = 0;
+                mapValue.putLong(1, Double.doubleToRawLongBits(Double.NaN));
+            } else {
+                count = mapValue.getLong(0);
+            }
+            count++;
+            if (count == n) {
+                mapValue.putLong(1, Double.doubleToRawLongBits(d));
+            }
+            if (count >= (long) n + bufferSize) {
+                nthValue = Double.longBitsToDouble(mapValue.getLong(1));
+            } else {
+                nthValue = Double.NaN;
+            }
+            mapValue.putLong(0, count);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return nthValue;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), nthValue);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(',').val(n).val(')');
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(" rows between unbounded preceding and ");
+            sink.val(bufferSize).val(" preceding");
+            sink.val(')');
         }
     }
 
@@ -1040,37 +1115,28 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         }
     }
 
-    // Handles nth_value() over ([order by o] rows between y and z); there's no partition by.
+    // Handles nth_value() over ([order by o] rows between K preceding and [Y preceding |
+    // current row]); there's no partition by. The unbounded-preceding..K-preceding variant
+    // uses a simpler state-machine class (NthValueOverRowsFrameUnboundedFunction) that does
+    // not allocate a ring buffer.
     // Removable cumulative aggregation.
     public static class NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
         protected final MemoryARW buffer;
         protected final int bufferSize;
         protected final int excludeCount;
         protected final boolean frameIncludesCurrentValue;
-        protected final boolean frameLoBounded;
         protected final int frameSize;
         protected final int n;
         protected long count = 0;
-        protected double lockedValue = Double.NaN;
         protected int loIdx = 0;
         protected double nthValue;
-        protected long totalCount = 0;
 
         public NthValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int n) {
             super(arg);
-
+            assert rowsLo > Long.MIN_VALUE; // use NthValueOverRowsFrameUnboundedFunction for the unbounded-lo case
             assert rowsLo != Long.MIN_VALUE || rowsHi != 0; // use NthValueOverUnboundedRowsFrameFunction for (Long.MIN_VALUE, 0)
-
-            if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
-                bufferSize = (int) Math.abs(rowsLo);
-                frameLoBounded = true;
-            } else {
-                frameSize = (int) Math.abs(rowsHi);
-                bufferSize = frameSize;
-                frameLoBounded = false;
-            }
-
+            frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
+            bufferSize = (int) Math.abs(rowsLo);
             excludeCount = rowsHi < 0 ? (int) Math.abs(rowsHi) : 0;
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
@@ -1088,18 +1154,6 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         public void computeNext(Record record) {
             double d = arg.getDouble(record);
 
-            if (!frameLoBounded) {
-                // rows between unbounded preceding and K preceding: frame = rows [1, M-K].
-                // nth_value(n) locks to row n's value forever once the frame contains n rows.
-                totalCount++;
-                if (totalCount == n) {
-                    lockedValue = d;
-                }
-                nthValue = totalCount >= n + bufferSize ? lockedValue : Double.NaN;
-                return;
-            }
-
-            // frameLoBounded: rows between X preceding and [Y preceding | current row]
             long effectiveCount = Math.min(count, bufferSize);
             long currentFrameElements;
             if (frameIncludesCurrentValue) {
@@ -1160,11 +1214,9 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         @Override
         public void reopen() {
             nthValue = Double.NaN;
-            lockedValue = Double.NaN;
             loIdx = 0;
             initBuffer();
             count = 0;
-            totalCount = 0;
         }
 
         @Override
@@ -1172,10 +1224,8 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             super.reset();
             buffer.close();
             nthValue = Double.NaN;
-            lockedValue = Double.NaN;
             loIdx = 0;
             count = 0;
-            totalCount = 0;
         }
 
         @Override
@@ -1184,11 +1234,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             sink.val('(').val(arg).val(',').val(n).val(')');
             sink.val(" over (");
             sink.val(" rows between ");
-            if (frameLoBounded) {
-                sink.val(bufferSize);
-            } else {
-                sink.val("unbounded");
-            }
+            sink.val(bufferSize);
             sink.val(" preceding and ");
             if (frameIncludesCurrentValue) {
                 sink.val("current row");
@@ -1202,17 +1248,97 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         public void toTop() {
             super.toTop();
             nthValue = Double.NaN;
-            lockedValue = Double.NaN;
             loIdx = 0;
             initBuffer();
             count = 0;
-            totalCount = 0;
         }
 
         private void initBuffer() {
             for (int i = 0; i < bufferSize; i++) {
                 buffer.putDouble((long) i * Double.BYTES, Double.NaN);
             }
+        }
+    }
+
+    // Handles nth_value() over ([order by o] rows between unbounded preceding and K preceding),
+    // K > 0, with no partition by. Once totalCount reaches n, the n-th value is captured in
+    // lockedValue and emitted whenever the frame first contains at least n rows. No buffer.
+    public static class NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
+        protected final int bufferSize;
+        protected final int n;
+        protected double lockedValue = Double.NaN;
+        protected double nthValue = Double.NaN;
+        protected long totalCount = 0;
+
+        public NthValueOverRowsFrameUnboundedFunction(Function arg, long rowsHi, int n) {
+            super(arg);
+            assert rowsHi < 0; // K preceding with K > 0
+            this.bufferSize = (int) Math.abs(rowsHi);
+            this.n = n;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            double d = arg.getDouble(record);
+            totalCount++;
+            if (totalCount == n) {
+                lockedValue = d;
+            }
+            nthValue = totalCount >= (long) n + bufferSize ? lockedValue : Double.NaN;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return nthValue;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), nthValue);
+        }
+
+        @Override
+        public void reopen() {
+            nthValue = Double.NaN;
+            lockedValue = Double.NaN;
+            totalCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            nthValue = Double.NaN;
+            lockedValue = Double.NaN;
+            totalCount = 0;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(',').val(n).val(')');
+            sink.val(" over (");
+            sink.val(" rows between unbounded preceding and ");
+            sink.val(bufferSize).val(" preceding");
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            nthValue = Double.NaN;
+            lockedValue = Double.NaN;
+            totalCount = 0;
         }
     }
 
