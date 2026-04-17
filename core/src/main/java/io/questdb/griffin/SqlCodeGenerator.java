@@ -1305,6 +1305,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         int columnIndex;
         if (ast.type == FUNCTION && ast.paramCount == 1 && isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return sumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (ast.type == FUNCTION && isCountKeyword(ast.token)
@@ -1314,37 +1317,65 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return COUNT_CONSTRUCTOR;
         } else if (isSingleColumnFunction(ast, "count")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
-            // A NOT NULL-aware fast path (skip the sentinel scan for non-keyed COUNT,
-            // return rowCount) exists in the feature plan, but applying it selectively
-            // would make SELECT count(x) disagree with SELECT g, count(x) GROUP BY g
-            // for the same NOT NULL x — the keyed Rosti kernel would still sentinel-skip.
-            // Kept consistent with the keyed path until a native Rosti NOT NULL kernel
-            // ships. Same reasoning applies to SUM/MIN/MAX/AVG below. See task/follow-up
-            // on native NOT NULL kernels for vec_agg and Rosti.
             return countConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return ksumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "nsum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return nsumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "avg")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return avgConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "min")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return minConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "max")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return maxConstructors.get(metadata.getColumnType(columnIndex));
         }
         return null;
+    }
+
+    /**
+     * Returns true when the vectorized aggregate path must not be used for this column,
+     * because its NOT NULL semantic ("sentinels are valid values") isn't honored by the
+     * native kernels. Every kernel in Vect.* and Rosti::keyed* still treats the type's
+     * sentinel as null, so they would under-count / skip-in-sum values that the NOT NULL
+     * feature declares to be real data. Until native NOT NULL kernels land, codegen
+     * refuses the vec path for these columns and falls back to the non-vectorized
+     * GroupByFunction pipeline. The non-vec pipeline has the same sentinel-skip issue
+     * today (see GroupByFunction implementations such as CountLongGroupByFunction), but
+     * keeping the vec path out of the picture (a) prevents the keyed/non-keyed
+     * inconsistency a Java-only vec override would introduce and (b) leaves a single
+     * place to upgrade when NOT NULL-aware aggregation ships. See the null-bitmaps plan.
+     */
+    private static boolean isVectorAggregateUnsafeForNotNull(RecordMetadata metadata, int columnIndex) {
+        return columnIndex >= 0 && metadata.isNotNull(columnIndex);
     }
 
     private boolean assembleKeysAndFunctionReferences(

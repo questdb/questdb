@@ -1088,16 +1088,18 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCountOnNotNullColumnIsConsistentKeyedAndNonKeyed() throws Exception {
+    public void testAggregateOnNotNullColumnIsConsistent() throws Exception {
         assertMemoryLeak(() -> {
-            // Until the vectorized COUNT fast path can honour the "sentinels are real
-            // values" NOT NULL semantic across BOTH keyed and non-keyed paths (the keyed
-            // path would need a native Rosti NotNull kernel), codegen does not select
-            // a NotNull variant for COUNT/SUM/MIN/MAX/AVG. So count(x) on a NOT NULL
-            // column behaves like count(x) on a nullable column in both cases: rows where
-            // the value equals the type's sentinel are not counted. The important
-            // invariant is that non-keyed and keyed agree — sum of per-group counts
-            // equals the total count.
+            // Every native aggregate kernel today (both the vectorized Vect.* / Rosti::keyed*
+            // path and the non-vectorized GroupByFunction classes) sentinel-skips, which
+            // disagrees with the NOT NULL semantic that "sentinels are valid values".
+            // SqlCodeGenerator.isVectorAggregateUnsafeForNotNull refuses the vec path for
+            // NOT NULL columns so a Java-only fast-path cannot silently diverge from the
+            // keyed path; the query falls back to the non-vectorized GroupByFunction
+            // pipeline. That pipeline also sentinel-skips today — fixing the semantic
+            // properly waits for validity bitmaps (Part 2 of the null-bitmaps plan). The
+            // invariant we DO enforce here: keyed and non-keyed aggregates agree for the
+            // same data, and sum of per-group aggregates equals the non-keyed aggregate.
             execute("CREATE TABLE t (x LONG NOT NULL, g SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
@@ -1107,7 +1109,6 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         (NULL, 'b', '2024-01-04')
                     """);
 
-            // Non-keyed count — sentinel row not counted.
             assertSql(
                     """
                             count_x\tcount_star
@@ -1116,7 +1117,6 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     "SELECT count(x) count_x, count(*) count_star FROM t"
             );
 
-            // Keyed count — also sentinel-skipped; sum of per-group counts == non-keyed count.
             assertSql(
                     """
                             g\tcount_x
@@ -1124,6 +1124,23 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             b\t1
                             """,
                     "SELECT g, count(x) count_x FROM t ORDER BY g"
+            );
+
+            // Sum, min, max are similarly consistent between keyed and non-keyed paths.
+            assertSql(
+                    """
+                            sum_x\tmin_x\tmax_x
+                            6\t1\t3
+                            """,
+                    "SELECT sum(x) sum_x, min(x) min_x, max(x) max_x FROM t"
+            );
+            assertSql(
+                    """
+                            g\tsum_x
+                            a\t3
+                            b\t3
+                            """,
+                    "SELECT g, sum(x) sum_x FROM t ORDER BY g"
             );
         });
     }
