@@ -29,8 +29,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.ObjList;
 
 public class EqLong256FunctionFactory implements FunctionFactory {
@@ -52,7 +54,25 @@ public class EqLong256FunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        final Function a = args.getQuick(0);
+        final Function b = args.getQuick(1);
+        // Fold `x = NULL` / `x IS NULL` to FALSE when the variable side is NOT NULL.
+        // NegatingFunctionFactory flips BooleanConstant.FALSE to TRUE for IS NOT NULL.
+        if (a.isConstant() && isLong256Null(a) && b.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        if (b.isConstant() && isLong256Null(b) && a.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        return new Func(a, b);
+    }
+
+    private static boolean isLong256Null(Function constFunc) {
+        final Long256 v = constFunc.getLong256A(null);
+        return v.getLong0() == Long256Impl.NULL_LONG256.getLong0()
+                && v.getLong1() == Long256Impl.NULL_LONG256.getLong1()
+                && v.getLong2() == Long256Impl.NULL_LONG256.getLong2()
+                && v.getLong3() == Long256Impl.NULL_LONG256.getLong3();
     }
 
     private static class Func extends AbstractEqBinaryFunction {
