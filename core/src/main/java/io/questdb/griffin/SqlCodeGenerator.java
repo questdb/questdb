@@ -67,6 +67,7 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.FallbackToLegacyException;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -3523,20 +3524,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Safety-net type check: if a PREV source column has an unsupported type,
-            // it is likely a key column that isKeyColumn() missed (e.g., CTE/subquery
-            // context where the bottomUpColumns AST doesn't reflect the inner SELECT).
-            // Reclassify it as FILL_KEY. The optimizer gate hasPrevWithUnsupportedType()
-            // blocks genuine aggregates with unsupported PREV types, so this safety net
-            // only fires for misidentified key columns.
-            for (int i = prevSourceCols.size() - 1; i >= 0; i--) {
+            // Codegen-time authoritative type check: the groupBy factory's metadata is
+            // fully resolved, so we can rely on it (unlike the optimizer gate, which
+            // works from AST inference). If any PREV source column's output type is
+            // unsupported by the fast path, signal the caller to restore SAMPLE BY
+            // state and re-dispatch to the legacy cursor.
+            for (int i = 0, n = prevSourceCols.size(); i < n; i++) {
                 int col = prevSourceCols.getQuick(i);
                 int mode = fillModes.getQuick(col);
                 int sourceCol = mode >= 0 ? mode : col;
                 short tag = ColumnType.tagOf(groupByMetadata.getColumnType(sourceCol));
                 if (!isFastPathPrevSupportedType(tag)) {
-                    fillModes.setQuick(col, SampleByFillRecordCursorFactory.FILL_KEY);
-                    prevSourceCols.removeIndex(i);
+                    throw FallbackToLegacyException.INSTANCE;
                 }
             }
 
@@ -8024,22 +8023,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw e;
                     }
 
-                    return generateFill(
-                            model,
-                            new GroupByRecordCursorFactory(
-                                    executionContext.getCairoEngine(),
-                                    configuration,
-                                    factory,
-                                    meta,
-                                    arrayColumnTypes,
-                                    executionContext.getSharedQueryWorkerCount(),
-                                    tempVaf,
-                                    tempKeyIndexesInBase.getQuick(0),
-                                    tempKeyIndex.getQuick(0),
-                                    tempSymbolSkewIndexes
-                            ),
-                            executionContext
-                    );
+                    try {
+                        return generateFill(
+                                model,
+                                new GroupByRecordCursorFactory(
+                                        executionContext.getCairoEngine(),
+                                        configuration,
+                                        factory,
+                                        meta,
+                                        arrayColumnTypes,
+                                        executionContext.getSharedQueryWorkerCount(),
+                                        tempVaf,
+                                        tempKeyIndexesInBase.getQuick(0),
+                                        tempKeyIndex.getQuick(0),
+                                        tempSymbolSkewIndexes
+                                ),
+                                executionContext
+                        );
+                    } catch (FallbackToLegacyException fallback) {
+                        // generateFill already freed its partial allocations. Walk the
+                        // nested-model chain to find the stashed SAMPLE BY node, restore
+                        // it, and re-dispatch to the legacy cursor path.
+                        IQueryModel curr = model;
+                        while (curr != null && curr.getStashedSampleByNode() == null) {
+                            curr = curr.getNestedModel();
+                        }
+                        final ExpressionNode stashed = curr != null ? curr.getStashedSampleByNode() : null;
+                        assert stashed != null : "stashedSampleByNode not found on any nested model";
+                        curr.setSampleBy(stashed);
+                        curr.setStashedSampleByNode(null);
+                        return generateSampleBy(model, executionContext, stashed, model.getSampleByUnit());
+                    }
                 }
 
                 // Free the vector aggregate functions since we didn't use them.
@@ -8197,50 +8211,65 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             baseMetadata
                     );
 
-                    return generateFill(
-                            model,
-                            new AsyncGroupByRecordCursorFactory(
-                                    executionContext.getCairoEngine(),
-                                    asm,
-                                    configuration,
-                                    executionContext.getMessageBus(),
-                                    factory,
-                                    outerProjectionMetadata,
-                                    listColumnFilterCopy,
-                                    keyTypesCopy,
-                                    valueTypesCopy,
-                                    groupByFunctions,
-                                    extractWorkerFunctionsConditionally(
-                                            tempInnerProjectionFunctions,
-                                            projectionFunctionFlags,
-                                            perWorkerInnerProjectionFunctions,
-                                            GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
-                                    ),
-                                    keyFunctions,
-                                    extractWorkerFunctionsConditionally(
-                                            tempInnerProjectionFunctions,
-                                            projectionFunctionFlags,
-                                            perWorkerInnerProjectionFunctions,
-                                            GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
-                                    ),
-                                    new ObjList<>(tempOuterProjectionFunctions),
-                                    compiledFilter,
-                                    bindVarMemory,
-                                    bindVarFunctions,
-                                    filter,
-                                    filterUsedColumnIndexes,
-                                    compileWorkerFiltersConditionally(
-                                            executionContext,
-                                            filter,
-                                            executionContext.getSharedQueryWorkerCount(),
-                                            filterExpr,
-                                            factory.getMetadata()
-                                    ),
-                                    executionContext.getSharedQueryWorkerCount(),
-                                    sharedOuterProjectionFunctions
-                            ),
-                            executionContext
-                    );
+                    try {
+                        return generateFill(
+                                model,
+                                new AsyncGroupByRecordCursorFactory(
+                                        executionContext.getCairoEngine(),
+                                        asm,
+                                        configuration,
+                                        executionContext.getMessageBus(),
+                                        factory,
+                                        outerProjectionMetadata,
+                                        listColumnFilterCopy,
+                                        keyTypesCopy,
+                                        valueTypesCopy,
+                                        groupByFunctions,
+                                        extractWorkerFunctionsConditionally(
+                                                tempInnerProjectionFunctions,
+                                                projectionFunctionFlags,
+                                                perWorkerInnerProjectionFunctions,
+                                                GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
+                                        ),
+                                        keyFunctions,
+                                        extractWorkerFunctionsConditionally(
+                                                tempInnerProjectionFunctions,
+                                                projectionFunctionFlags,
+                                                perWorkerInnerProjectionFunctions,
+                                                GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
+                                        ),
+                                        new ObjList<>(tempOuterProjectionFunctions),
+                                        compiledFilter,
+                                        bindVarMemory,
+                                        bindVarFunctions,
+                                        filter,
+                                        filterUsedColumnIndexes,
+                                        compileWorkerFiltersConditionally(
+                                                executionContext,
+                                                filter,
+                                                executionContext.getSharedQueryWorkerCount(),
+                                                filterExpr,
+                                                factory.getMetadata()
+                                        ),
+                                        executionContext.getSharedQueryWorkerCount(),
+                                        sharedOuterProjectionFunctions
+                                ),
+                                executionContext
+                        );
+                    } catch (FallbackToLegacyException fallback) {
+                        // generateFill already freed its partial allocations. Walk the
+                        // nested-model chain to find the stashed SAMPLE BY node, restore
+                        // it, and re-dispatch to the legacy cursor path.
+                        IQueryModel curr = model;
+                        while (curr != null && curr.getStashedSampleByNode() == null) {
+                            curr = curr.getNestedModel();
+                        }
+                        final ExpressionNode stashed = curr != null ? curr.getStashedSampleByNode() : null;
+                        assert stashed != null : "stashedSampleByNode not found on any nested model";
+                        curr.setSampleBy(stashed);
+                        curr.setStashedSampleByNode(null);
+                        return generateSampleBy(model, executionContext, stashed, model.getSampleByUnit());
+                    }
                 }
             }
 
@@ -8257,23 +8286,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            return generateFill(
-                    model,
-                    new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
-                            asm,
-                            configuration,
-                            factory,
-                            listColumnFilterA,
-                            keyTypes,
-                            valueTypes,
-                            outerProjectionMetadata,
-                            groupByFunctions,
-                            keyFunctions,
-                            new ObjList<>(tempOuterProjectionFunctions),
-                            sharedOuterProjectionFunctions
-                    ),
-                    executionContext
-            );
+            try {
+                return generateFill(
+                        model,
+                        new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
+                                asm,
+                                configuration,
+                                factory,
+                                listColumnFilterA,
+                                keyTypes,
+                                valueTypes,
+                                outerProjectionMetadata,
+                                groupByFunctions,
+                                keyFunctions,
+                                new ObjList<>(tempOuterProjectionFunctions),
+                                sharedOuterProjectionFunctions
+                        ),
+                        executionContext
+                );
+            } catch (FallbackToLegacyException fallback) {
+                // generateFill already freed its partial allocations. Walk the
+                // nested-model chain to find the stashed SAMPLE BY node, restore
+                // it, and re-dispatch to the legacy cursor path.
+                IQueryModel curr = model;
+                while (curr != null && curr.getStashedSampleByNode() == null) {
+                    curr = curr.getNestedModel();
+                }
+                final ExpressionNode stashed = curr != null ? curr.getStashedSampleByNode() : null;
+                assert stashed != null : "stashedSampleByNode not found on any nested model";
+                curr.setSampleBy(stashed);
+                curr.setStashedSampleByNode(null);
+                return generateSampleBy(model, executionContext, stashed, model.getSampleByUnit());
+            }
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
