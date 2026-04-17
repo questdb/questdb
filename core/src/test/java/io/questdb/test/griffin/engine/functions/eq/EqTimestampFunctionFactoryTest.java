@@ -49,6 +49,147 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
     }
 
     @Test
+    public void testFunc() throws Exception {
+        // Func: matched precision, both sides dynamic (column references).
+        assertMemoryLeak(() -> {
+            execute("create table x (a timestamp, b timestamp)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001Z'), " +
+                    "('2020-01-01T00:00:00.000002Z', '2020-01-01T00:00:00.000003Z')");
+            assertSql("""
+                            column
+                            true
+                            false
+                            """,
+                    "select a = b from x");
+        });
+    }
+
+    @Test
+    public void testLeftConstFuncConverting() throws Exception {
+        // LeftConstFunc via the converting branch: const is on the lower-precision
+        // side (MICRO), column on the higher-precision side (NANO). The factory
+        // pre-converts the const value once.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp_ns)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000001000Z'), " +
+                    "('2020-01-01T00:00:00.000002000Z')");
+            assertSql("""
+                            column
+                            true
+                            false
+                            """,
+                    "select '2020-01-01T00:00:00.000001Z'::timestamp = ts from x");
+            // Flipped: triggers the initial swap-normalization path as well.
+            assertSql("""
+                            column
+                            true
+                            false
+                            """,
+                    "select ts = '2020-01-01T00:00:00.000001Z'::timestamp from x");
+        });
+    }
+
+    @Test
+    public void testLeftConstFuncMatchedWithCacheSwap() throws Exception {
+        // LeftConstFunc via the matched-types branch, hit through the cache-swap:
+        // const is placed on the right in the source, factory swaps it onto the
+        // left so the cached-value comparison runs.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000001Z'), " +
+                    "('2020-01-01T00:00:00.000002Z')");
+            assertSql("""
+                            column
+                            true
+                            false
+                            """,
+                    "select ts = '2020-01-01T00:00:00.000001Z'::timestamp from x");
+        });
+    }
+
+    @Test
+    public void testLeftConvertRightRunTimeConstFunc() throws Exception {
+        // LeftConvertRightRunTimeConstFunc: column on the lower-precision side
+        // (MICRO), runtime-const bind variable on the higher-precision side
+        // (STRING, which resolves to TIMESTAMP_NS via implicit cast). The bug fix
+        // caches the bind variable's timestamp in init() so the STRING parse does
+        // not repeat per row.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000001Z'), " +
+                    "('2020-01-01T00:00:00.000002Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr("bind", "2020-01-01T00:00:00.000002Z");
+            assertSql("""
+                            column
+                            false
+                            true
+                            """,
+                    "select ts = :bind from x");
+        });
+    }
+
+    @Test
+    public void testLeftRunTimeConstFunc() throws Exception {
+        // LeftRunTimeConstFunc: runtime-const on the lower-precision side (MICRO
+        // bind variable), column on the higher-precision side (NANO). The factory
+        // converts and caches the bind value in init().
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp_ns)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000001000Z'), " +
+                    "('2020-01-01T00:00:00.000002000Z')");
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
+            assertSql("""
+                            column
+                            false
+                            true
+                            """,
+                    "select ts = :bind from x");
+            // Flipped: exercises the initial swap-normalization before the
+            // left-converts left-runtime-const path.
+            assertSql("""
+                            column
+                            false
+                            true
+                            """,
+                    "select :bind = ts from x");
+        });
+    }
+
+    @Test
+    public void testMatchedLeftRunTimeConstFunc() throws Exception {
+        // MatchedLeftRunTimeConstFunc: matched precision with a runtime-const bind
+        // variable. Covers direct left placement and the cache-swap path for a
+        // right-side bind variable.
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000001Z'), " +
+                    "('2020-01-01T00:00:00.000002Z')");
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
+            assertSql("""
+                            column
+                            false
+                            true
+                            """,
+                    "select ts = :bind from x");
+            assertSql("""
+                            column
+                            false
+                            true
+                            """,
+                    "select :bind = ts from x");
+        });
+    }
+
+    @Test
     public void testMixedMicrosAndNanos() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
