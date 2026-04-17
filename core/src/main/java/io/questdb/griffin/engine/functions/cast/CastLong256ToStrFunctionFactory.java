@@ -60,6 +60,43 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
+    public static class Func extends StrFunction implements UnaryFunction {
+        private final Function arg;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public Func(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkA) ? sinkA : null;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val("::string");
+        }
+    }
+
     public static class FuncNotNull extends StrFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
@@ -91,43 +128,6 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean isNotNull() {
             return true;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(arg).val("::string");
-        }
-    }
-
-    public static class Func extends StrFunction implements UnaryFunction {
-        private final Function arg;
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
-
-        public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public CharSequence getStrA(Record rec) {
-            sinkA.clear();
-            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkA) ? sinkA : null;
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            sinkB.clear();
-            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
         }
 
         @Override

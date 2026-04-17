@@ -70,6 +70,37 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
         return new Func(func, timestampType);
     }
 
+    public static class Func extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+        private final TimestampDriver timestampDriver;
+
+        public Func(Function arg, int timestampType) {
+            super(arg);
+            timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            return toSink(rec, sinkA);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return toSink(rec, sinkB);
+        }
+
+        private @Nullable Utf8StringSink toSink(Record rec, Utf8StringSink sink) {
+            final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
+                return null;
+            }
+            sink.clear();
+            timestampDriver.append(sink, value);
+            return sink;
+        }
+    }
+
     public static class FuncNotNull extends AbstractCastToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
@@ -102,37 +133,6 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
             } else {
                 timestampDriver.append(sink, value);
             }
-            return sink;
-        }
-    }
-
-    public static class Func extends AbstractCastToVarcharFunction {
-        private final Utf8StringSink sinkA = new Utf8StringSink();
-        private final Utf8StringSink sinkB = new Utf8StringSink();
-        private final TimestampDriver timestampDriver;
-
-        public Func(Function arg, int timestampType) {
-            super(arg);
-            timestampDriver = ColumnType.getTimestampDriver(timestampType);
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(Record rec) {
-            return toSink(rec, sinkA);
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(Record rec) {
-            return toSink(rec, sinkB);
-        }
-
-        private @Nullable Utf8StringSink toSink(Record rec, Utf8StringSink sink) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return null;
-            }
-            sink.clear();
-            timestampDriver.append(sink, value);
             return sink;
         }
     }

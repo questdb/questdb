@@ -62,34 +62,6 @@ public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
         return new Func(doubleFunc);
     }
 
-    public static class FuncNotNull extends AbstractCastToVarcharFunction {
-        private final Utf8StringSink sinkA = new Utf8StringSink();
-        private final Utf8StringSink sinkB = new Utf8StringSink();
-
-        public FuncNotNull(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(Record rec) {
-            sinkA.clear();
-            sinkA.put(arg.getDouble(rec));
-            return sinkA;
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(Record rec) {
-            sinkB.clear();
-            sinkB.put(arg.getDouble(rec));
-            return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
-        }
-    }
-
     public static class Func extends AbstractCastToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
@@ -118,6 +90,34 @@ public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
                 return sinkB;
             }
             return null;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            sinkA.clear();
+            sinkA.put(arg.getDouble(rec));
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            sinkB.clear();
+            sinkB.put(arg.getDouble(rec));
+            return sinkB;
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return true;
         }
     }
 }

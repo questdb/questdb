@@ -95,8 +95,7 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrA(Record rec) {
             sinkA.clear();
-            // checkNaN=false preserves LONG_NULL (MIN_VALUE) as numeric text rather than
-            // short-circuiting to the literal "null".
+            // checkNaN=false — Numbers.append would otherwise rewrite LONG_NULL to the text "null".
             Numbers.append(sinkA, arg.getLong(rec), false);
             return sinkA;
         }

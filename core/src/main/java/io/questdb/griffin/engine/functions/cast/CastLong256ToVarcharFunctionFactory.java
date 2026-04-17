@@ -58,6 +58,27 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
+    public static class Func extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public Func(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            sinkA.clear();
+            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkA) ? sinkA : null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            sinkB.clear();
+            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
+        }
+    }
+
     public static class FuncNotNull extends AbstractCastToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
@@ -83,27 +104,6 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public boolean isNotNull() {
             return true;
-        }
-    }
-
-    public static class Func extends AbstractCastToVarcharFunction {
-        private final Utf8StringSink sinkA = new Utf8StringSink();
-        private final Utf8StringSink sinkB = new Utf8StringSink();
-
-        public Func(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(Record rec) {
-            sinkA.clear();
-            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkA) ? sinkA : null;
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(Record rec) {
-            sinkB.clear();
-            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
         }
     }
 }

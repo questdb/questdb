@@ -62,6 +62,37 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
         return new Func(func);
     }
 
+    public static class Func extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public Func(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            final long value = arg.getDate(rec);
+            if (value != Numbers.LONG_NULL) {
+                sinkA.clear();
+                sinkA.putISODateMillis(value);
+                return sinkA;
+            }
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            final long value = arg.getDate(rec);
+            if (value != Numbers.LONG_NULL) {
+                sinkB.clear();
+                sinkB.putISODateMillis(value);
+                return sinkB;
+            }
+            return null;
+        }
+    }
+
     public static class FuncNotNull extends AbstractCastToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
@@ -93,37 +124,6 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
                 sink.putISODateMillis(value);
             }
             return sink;
-        }
-    }
-
-    public static class Func extends AbstractCastToVarcharFunction {
-        private final Utf8StringSink sinkA = new Utf8StringSink();
-        private final Utf8StringSink sinkB = new Utf8StringSink();
-
-        public Func(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(Record rec) {
-            final long value = arg.getDate(rec);
-            if (value != Numbers.LONG_NULL) {
-                sinkA.clear();
-                sinkA.putISODateMillis(value);
-                return sinkA;
-            }
-            return null;
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(Record rec) {
-            final long value = arg.getDate(rec);
-            if (value != Numbers.LONG_NULL) {
-                sinkB.clear();
-                sinkB.putISODateMillis(value);
-                return sinkB;
-            }
-            return null;
         }
     }
 }

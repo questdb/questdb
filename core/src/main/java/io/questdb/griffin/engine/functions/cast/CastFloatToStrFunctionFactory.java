@@ -54,34 +54,6 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
         return new Func(floatFunc);
     }
 
-    public static class FuncNotNull extends AbstractCastToStrFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
-
-        public FuncNotNull(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public CharSequence getStrA(Record rec) {
-            sinkA.clear();
-            sinkA.put(arg.getFloat(rec));
-            return sinkA;
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            sinkB.clear();
-            sinkB.put(arg.getFloat(rec));
-            return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
-        }
-    }
-
     public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
@@ -110,6 +82,34 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value);
             return sinkB;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            sinkA.put(arg.getFloat(rec));
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            sinkB.put(arg.getFloat(rec));
+            return sinkB;
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return true;
         }
     }
 }

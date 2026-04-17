@@ -103,6 +103,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink errorMessage = new StringSink();
     private final SCSequence eventSubSequence = new SCSequence();
     private final HttpConnectionContext httpConnectionContext;
+    private final IntList isColumnNotNull = new IntList();
     private final CharSequence keepAliveHeader;
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
@@ -176,6 +177,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnCount = 0;
         columnSkewList.clear();
         columnTypesAndFlags.clear();
+        isColumnNotNull.clear();
         columnNames.clear();
         queryTimestampIndex = -1;
         cursor = Misc.free(cursor);
@@ -214,6 +216,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void clearFactory() {
         columnSkewList.clear();
         columnTypesAndFlags.clear();
+        isColumnNotNull.clear();
         recordCursorFactory = Misc.free(recordCursorFactory);
     }
 
@@ -462,8 +465,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private static void putDateValue(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
         final long d = rec.getDate(col);
         if (d == Long.MIN_VALUE) {
-            // For NOT NULL columns the sentinel is valid data; emit the raw bit pattern
-            // (matches CursorPrinter) so the client sees consistent content instead of JSON null.
             if (notNull) {
                 response.putAscii('"');
                 Numbers.append(response, d, false);
@@ -482,10 +483,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             response.putAscii("null");
             return;
         }
+        // appendNonNull (vs Decimals.append) skips the sentinel short-circuit.
         response.putAscii('"');
-        // Decimals.append writes the literal "null" for the sentinel; appendNonNull always
-        // formats the value. NOT NULL columns take the appendNonNull path even for the
-        // sentinel bit pattern.
         Decimals.appendNonNull(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
@@ -545,15 +544,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private static void putIPv4Value(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
         final int i = rec.getIPv4(col);
-        if (i == Numbers.IPv4_NULL) {
-            if (notNull) {
-                // sentinel is valid data on NOT NULL columns; emit the dotted-quad form
-                response.putAscii('"');
-                Numbers.intToIPv4Sink(response, i);
-                response.putAscii('"');
-            } else {
-                response.putAscii("null");
-            }
+        if (i == Numbers.IPv4_NULL && !notNull) {
+            response.putAscii("null");
         } else {
             response.putAscii('"');
             Numbers.intToIPv4Sink(response, i);
@@ -566,20 +558,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (i == Integer.MIN_VALUE && !notNull) {
             response.putAscii("null");
         } else {
-            // On NOT NULL columns INT_NULL (MIN_VALUE) is real data; printing as a JSON number
-            // is safe because JSON accepts -2147483648 and clients distinguish from string.
+            // checkNaN=false — otherwise Numbers.append rewrites INT_NULL to the text "null".
             Numbers.append(response, (long) i, false);
         }
     }
 
     private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col, int intervalType, boolean notNull) {
         final Interval interval = rec.getInterval(col);
-        if (Interval.NULL.equals(interval)) {
-            if (notNull) {
-                response.putAscii('"').put(interval, intervalType).putAscii('"');
-            } else {
-                response.putAscii("null");
-            }
+        if (Interval.NULL.equals(interval) && !notNull) {
+            response.putAscii("null");
             return;
         }
         response.putAscii('"').put(interval, intervalType).putAscii('"');
@@ -600,7 +587,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             Numbers.append(response, l, false);
             response.putAscii('"');
         } else {
-            // Numbers.append(..., false) preserves Long.MIN_VALUE as numeric text (for NOT NULL cols).
             Numbers.append(response, l, false);
         }
     }
@@ -633,8 +619,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         final long t = rec.getTimestamp(col);
         if (t == Long.MIN_VALUE) {
             if (notNull) {
-                // sentinel is valid data; emit the raw bit pattern as a quoted string so JSON
-                // consumers keep treating timestamps as string-typed.
+                // keep timestamp string-typed for JSON consumers; emit the raw bit pattern.
                 response.putAscii('"');
                 Numbers.append(response, t, false);
                 response.putAscii('"');
@@ -649,14 +634,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private static void putUuidValue(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
         long lo = rec.getLong128Lo(col);
         long hi = rec.getLong128Hi(col);
-        if (Uuid.isNull(lo, hi)) {
-            if (notNull) {
-                response.putAscii('"');
-                Numbers.appendUuid(lo, hi, response);
-                response.putAscii('"');
-            } else {
-                response.putAscii("null");
-            }
+        if (Uuid.isNull(lo, hi) && !notNull) {
+            response.putAscii("null");
             return;
         }
         response.putAscii('"');
@@ -712,6 +691,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         int flags = GeoHashes.getBitFlags(columnType);
         this.columnTypesAndFlags.add(columnType);
         this.columnTypesAndFlags.add(flags);
+        this.isColumnNotNull.add(metadata.isNotNull(i) ? 1 : 0);
         this.columnNames.add(columnName);
     }
 
@@ -809,7 +789,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
             int columnIdx = columnSkewList.size() > 0 ? columnSkewList.getQuick(columnIndex) : columnIndex;
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
-            boolean notNull = recordCursorFactory.getMetadata().isNotNull(columnIdx);
+            boolean notNull = isColumnNotNull.getQuick(columnIndex) != 0;
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BOOLEAN:
                     putBooleanValue(response, record, columnIdx);
@@ -818,10 +798,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putByteValue(response, record, columnIdx);
                     break;
                 case ColumnType.DOUBLE:
-                    putDoubleValue(response, record, columnIdx);
+                    putDoubleValue(response, record, columnIdx, notNull);
                     break;
                 case ColumnType.FLOAT:
-                    putFloatValue(response, record, columnIdx);
+                    putFloatValue(response, record, columnIdx, notNull);
                     break;
                 case ColumnType.INT:
                     putIntValue(response, record, columnIdx, notNull);
@@ -1135,9 +1115,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.putAscii('"');
     }
 
-    private void putDoubleValue(HttpChunkedResponse response, Record rec, int col) {
+    private void putDoubleValue(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
         double v = rec.getDouble(col);
-        if (!Numbers.isFinite(v) && recordCursorFactory.getMetadata().isNotNull(col)) {
+        if (!Numbers.isFinite(v) && notNull) {
             response.putAscii('"');
             Numbers.append(response, v);
             response.putAscii('"');
@@ -1146,9 +1126,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private void putFloatValue(HttpChunkedResponse response, Record rec, int col) {
+    private void putFloatValue(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
         float v = rec.getFloat(col);
-        if (!Numbers.isFinite(v) && recordCursorFactory.getMetadata().isNotNull(col)) {
+        if (!Numbers.isFinite(v) && notNull) {
             response.putAscii('"');
             Numbers.append(response, v);
             response.putAscii('"');
@@ -1206,6 +1186,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.columnNames.clear();
         columnSkewList.clear();
         this.columnTypesAndFlags.clear();
+        this.isColumnNotNull.clear();
         if (columnNames != null) {
             columnCount = 0;
             long rawLo = columnNames.lo();

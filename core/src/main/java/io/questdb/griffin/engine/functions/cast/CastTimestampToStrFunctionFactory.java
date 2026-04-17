@@ -60,6 +60,37 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         return new Func(func);
     }
 
+    public static class Func extends AbstractCastToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+        private final TimestampDriver timestampDriver;
+
+        public Func(Function arg) {
+            super(arg);
+            timestampDriver = ColumnType.getTimestampDriver(arg.getType());
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return toSink(sinkA, rec);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return toSink(sinkB, rec);
+        }
+
+        private @Nullable StringSink toSink(StringSink sink, Record rec) {
+            sink.clear();
+            final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
+                return null;
+            }
+            timestampDriver.append(sink, value);
+            return sink;
+        }
+    }
+
     public static class FuncNotNull extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
@@ -94,37 +125,6 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
             } else {
                 timestampDriver.append(sink, value);
             }
-            return sink;
-        }
-    }
-
-    public static class Func extends AbstractCastToStrFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
-        private final TimestampDriver timestampDriver;
-
-        public Func(Function arg) {
-            super(arg);
-            timestampDriver = ColumnType.getTimestampDriver(arg.getType());
-        }
-
-        @Override
-        public CharSequence getStrA(Record rec) {
-            return toSink(sinkA, rec);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return toSink(sinkB, rec);
-        }
-
-        private @Nullable StringSink toSink(StringSink sink, Record rec) {
-            sink.clear();
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return null;
-            }
-            timestampDriver.append(sink, value);
             return sink;
         }
     }
