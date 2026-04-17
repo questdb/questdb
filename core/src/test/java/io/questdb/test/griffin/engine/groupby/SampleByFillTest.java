@@ -5,6 +5,7 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -717,6 +718,36 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevCaseOverDecimalFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            // Aggregate argument is a CASE expression returning DECIMAL256.
+            // The optimizer gate passes through expression-argument aggregates,
+            // and the retro-fallback at codegen detects the unsupported output
+            // type and re-dispatches to the legacy Sample By cursor path.
+            // Plan assertion proves retro-fallback fires (legacy "Sample By",
+            // not fast-path "Sample By Fill").
+            execute("CREATE TABLE t (v DOUBLE, d256_col DECIMAL(39, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, cast('1.0' AS DECIMAL(39,2)), '2024-01-01T00:00:00.000000Z')," +
+                    "(2.0, cast('3.0' AS DECIMAL(39,2)), '2024-01-01T02:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, first(CASE WHEN v > 0 THEN d256_col ELSE NULL::decimal(39,2) END) f " +
+                            "FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    """
+                            Encode sort
+                              keys: [ts]
+                                Sample By
+                                  keys: [ts]
+                                  values: [first(case([0<v,d256_col,null]))]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevCrossColumnBadAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -829,6 +860,60 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevExpressionArgDecimal128Fallback() throws Exception {
+        assertMemoryLeak(() -> {
+            // Aggregate argument is an expression returning DECIMAL128 (scale promotes
+            // DECIMAL(25,2) to DECIMAL128). The optimizer gate cannot resolve expression
+            // output types, so the rewrite proceeds; retro-fallback at codegen detects
+            // the unsupported type on the fully resolved groupBy metadata and re-dispatches
+            // to the legacy cursor. Plan asserts "Sample By" (legacy), not "Sample By Fill".
+            execute("CREATE TABLE t (d128_col DECIMAL(25, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(cast('1.0' AS DECIMAL(25,2)), '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('3.0' AS DECIMAL(25,2)), '2024-01-01T02:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, sum(d128_col * 1::decimal(25,2)) s FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    """
+                            Encode sort
+                              keys: [ts]
+                                Sample By
+                                  keys: [ts]
+                                  values: [sum(d128_col*1.00)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevExpressionArgStringFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            // Aggregate argument is an expression returning STRING (concat). The output
+            // type STRING is not fast-path-supported, so retro-fallback routes to the
+            // legacy cursor path after the rewrite.
+            execute("CREATE TABLE t (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('hello', '2024-01-01T00:00:00.000000Z')," +
+                    "('world', '2024-01-01T02:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, first(concat(s, 'x')) f FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    """
+                            Encode sort
+                              keys: [ts]
+                                Sample By
+                                  keys: [ts]
+                                  values: [first(concat([s,'x']))]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevGeoHash() throws Exception {
         assertMemoryLeak(() -> {
             // Non-keyed query with geohash columns and FILL(PREV).
@@ -889,6 +974,35 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     "SELECT ts, city, first(g) FROM geo_weather " +
                             "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevIntervalFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            // INTERVAL aggregate expression (first(interval(ts1, ts2))) is auto-cast to
+            // STRING, which is not fast-path-supported. The query takes the retro-fallback
+            // path and is served by the legacy Sample By cursor. Plan asserts "Sample By"
+            // (legacy), not "Sample By Fill" (fast path). The Tier 1 gate addition of
+            // ColumnType.INTERVAL (plan 12-01) closes the asymmetry against
+            // isFastPathPrevSupportedType.
+            execute("CREATE TABLE t (ts1 TIMESTAMP, ts2 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', '2024-01-01T01:00:00.000000Z', '2024-01-01T00:00:00.000000Z')," +
+                    "('2024-01-01T02:00:00.000000Z', '2024-01-01T03:00:00.000000Z', '2024-01-01T02:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, first(interval(ts1, ts2)) i FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    """
+                            Encode sort
+                              keys: [ts]
+                                Sample By
+                                  keys: [ts]
+                                  values: [first(interval(ts1,ts2)::string)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
             );
         });
     }
@@ -1002,6 +1116,28 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\tLondon\t10.0
                             """,
                     "SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevLong128Fallback() throws Exception {
+        assertMemoryLeak(() -> {
+            // LONG128 has no first/last/sum/min/max aggregate function in QuestDB,
+            // so SELECT first(long128_col) ... fails at aggregate resolution. This test
+            // documents that LONG128 PREV aggregates cannot reach the fast path and
+            // are rejected at compile time. The Tier 1 optimizer gate addition of
+            // ColumnType.LONG128 to isUnsupportedPrevType (plan 12-01) closes the
+            // asymmetry against isFastPathPrevSupportedType and protects against the
+            // day LONG128 aggregates ship.
+            execute("CREATE TABLE t (val LONG128, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(to_long128(0, 1), '2024-01-01T00:00:00.000000Z')," +
+                    "(to_long128(0, 2), '2024-01-01T02:00:00.000000Z')");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, first(val) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    11,
+                    "there is no matching function `first` with the argument types"
             );
         });
     }
@@ -1250,6 +1386,37 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR WITH OFFSET '10:00'",
                     "ts"
             );
+        });
+    }
+
+    @Test
+    public void testFillToNullTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // A bind variable bound to null timestamp evaluates to LONG_NULL at
+            // runtime. The optimizer rewrites FROM/TO into an interval filter,
+            // which folds to empty rows when the upper bound is LONG_NULL, so the
+            // fill cursor sees zero base rows. Critically, the fill cursor still
+            // calls initialize() with toFunc != TimestampConstantNull (no
+            // object-identity match) and toFunc.getTimestamp() == LONG_NULL.
+            // Without the hasExplicitTo LONG_NULL guard (plan 12-02 task 1),
+            // maxTimestamp would be promoted to Long.MAX_VALUE while
+            // hasExplicitTo stays true; the zero-base-row path at line 660-668
+            // would NOT take the short-circuit (maxTimestamp == LONG_NULL check
+            // at 661 would be false), leaving the cursor in an inconsistent state
+            // and risking Long.MAX_VALUE-bounded emission in worst cases. With
+            // the guard, maxTimestamp stays LONG_NULL, the short-circuit fires,
+            // and emission terminates cleanly with zero rows. The test asserts
+            // termination (no hang) and bounded empty result.
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 1.0)," +
+                    "('2024-01-01T02:00:00.000000Z', 2.0)");
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("upperBound", Numbers.LONG_NULL);
+            assertQueryNoLeakCheck(
+                    "ts\tavg\n",
+                    "SELECT ts, avg(v) FROM t SAMPLE BY 1h FROM '2024-01-01' TO :upperBound FILL(NULL)",
+                    "ts", false, false);
         });
     }
 
