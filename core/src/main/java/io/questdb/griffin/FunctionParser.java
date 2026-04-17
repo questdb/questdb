@@ -213,7 +213,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.INTERVAL -> IntervalColumn.newInstance(index, columnType, isNotNull);
             case ColumnType.ARRAY -> new ArrayColumn(index, columnType);
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> new DecimalColumn(index, columnType);
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> new DecimalColumn(index, columnType, isNotNull);
             default -> throw SqlException.position(position)
                     .put("unsupported column type ")
                     .put(ColumnType.nameOf(columnType));

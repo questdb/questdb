@@ -32,6 +32,7 @@ import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.lt.CompareDecimal128Function;
 import io.questdb.griffin.engine.functions.lt.CompareDecimal256Function;
 import io.questdb.griffin.engine.functions.lt.CompareDecimal64Function;
@@ -64,6 +65,14 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
     ) {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
+        // `x = NULL` / `x IS NULL` on a NOT NULL DECIMAL column is always false.
+        // NegatingFunctionFactory flips the constant for IS NOT NULL.
+        if (ColumnType.isNull(left.getType()) && right.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        if (ColumnType.isNull(right.getType()) && left.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
         left = DecimalUtil.maybeRescaleDecimalConstant(
                 left,
                 sqlExecutionContext.getDecimal256(),
