@@ -768,9 +768,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table x " + "(" + " k int, " + " i int, " + " l long, " + " f float, " + " d double, " + " dat date, " + " ts timestamp NOT NULL " + ")", "select k, count(1) c1, " + "count(*) cstar, " + "count(i) ci, " + "count(l) cl, " + "count(d) cd, " + "count(dat) cdat, " + "count(ts) cts " + "from x", """
                 VirtualRecord
                   functions: [k,c1,c1,ci,cl,cd,cdat,cts]
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
                       keys: [k]
                       values: [count(*),count(i),count(l),count(d),count(dat),count(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x
@@ -5038,8 +5039,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table x (ts timestamp NOT NULL, ts1 timestamp NOT NULL) timestamp(ts) partition by day;",
                 "select min(ts), max(ts), min(ts1), max(ts1) from x",
                 """
-                        GroupBy vectorized: true workers: 1
-                          values: [min_designated(ts),max_designated(ts),min(ts1),max(ts1)]
+                        Async Group By workers: 1
+                          vectorized: true
+                          values: [min(ts),max(ts),min(ts1),max(ts1)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: x
@@ -9934,8 +9937,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table x (l long, ts timestamp NOT NULL)", "select * from x where ts = (select min(ts) from x)", """
                 Async Filter workers: 1
                   filter: ts=cursor\s
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
+                      vectorized: true
                       values: [min(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x
@@ -9960,8 +9965,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table x (l long, ts timestamp NOT NULL)", "select * from x where ts > (select min(ts) from x)", """
                 Async Filter workers: 1
                   filter: ts [thread-safe] > cursor\s
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
+                      vectorized: true
                       values: [min(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x
@@ -9986,8 +9993,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table x (l long, ts timestamp NOT NULL)", "select * from x where ts < (select max(ts) from x)", """
                 Async Filter workers: 1
                   filter: ts [thread-safe] < cursor\s
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
+                      vectorized: true
                       values: [max(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x

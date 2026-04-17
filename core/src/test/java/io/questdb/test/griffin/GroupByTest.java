@@ -3358,9 +3358,9 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [ref0]
                                 VirtualRecord
                                   functions: [created]
-                                    Async JIT Group By workers: 1
+                                    Async Group By workers: 1
                                       keys: [created]
-                                      filter: null!=created
+                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
@@ -3406,9 +3406,9 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [ref0]
                                 VirtualRecord
                                   functions: [dateadd('h',1,created)]
-                                    Async JIT Group By workers: 1
+                                    Async Group By workers: 1
                                       keys: [created]
-                                      filter: null!=created
+                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
@@ -3451,9 +3451,9 @@ public class GroupByTest extends AbstractCairoTest {
                     """
                             Encode sort light
                               keys: [created]
-                                Async JIT Group By workers: 1
+                                Async Group By workers: 1
                                   keys: [created]
-                                  filter: null!=created
+                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tab

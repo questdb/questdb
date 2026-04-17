@@ -3086,9 +3086,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
                               keys: [x]
-                              values: [max_designated(ts)]
+                              values: [max(ts)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -3107,9 +3108,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
                               keys: [x]
-                              values: [min_designated(ts)]
+                              values: [min(ts)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -5340,9 +5342,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
                               keys: [x]
-                              values: [max_designated(ts)]
+                              values: [max(ts)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -5361,9 +5364,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
                               keys: [x]
-                              values: [min_designated(ts)]
+                              values: [min(ts)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
