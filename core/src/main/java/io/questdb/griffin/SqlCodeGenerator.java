@@ -7348,7 +7348,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         boolean entity;
         // the model is considered entity when it doesn't add any value to its nested model
-        if (metadata.getColumnCount() == selectColumnCount) {
+        boolean hasRename = false;
+        for (int i = 0; i < selectColumnCount; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.getAlias() != null && !Chars.equals(qc.getAlias(), qc.getAst().token)) {
+                // user projection renames a column (e.g. `timestamp AS ts`); the wrapper
+                // carries real semantics and must not be elided.
+                hasRename = true;
+                break;
+            }
+        }
+        if (hasRename) {
+            entity = false;
+        } else if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
             entity = true;
             for (int i = 0; i < selectColumnCount; i++) {
                 QueryColumn qc = columns.getQuick(i);
@@ -7360,14 +7372,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     break;
                 }
             }
-            if (entity && timestamp != null) {
-                // model declares an explicit timestamp; it's redundant only if the
-                // child already exposes the same designated timestamp column.
-                final int tsIndex = metadata.getTimestampIndex();
-                entity = tsIndex != -1 && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex));
-            }
         } else {
-            entity = false;
+            final int tsIndex = metadata.getTimestampIndex();
+            entity = timestamp != null && tsIndex != -1 && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex));
         }
 
         if (entity) {
