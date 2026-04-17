@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.log.Log;
+import io.questdb.std.IntList;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -34,7 +35,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoColumn implements Sinkable {
     public static final Log LOG = LogFactory.getLog(CairoEngine.class);
-    private int[] coveringColumnIndices;
+    private IntList coveringColumnIndices;
     private boolean dedupKey;
     private boolean designated;
     private int indexBlockCapacity;
@@ -69,7 +70,7 @@ public class CairoColumn implements Sinkable {
         target.metadataVersion = this.metadataVersion;
     }
 
-    public int[] getCoveringColumnIndices() {
+    public IntList getCoveringColumnIndices() {
         return coveringColumnIndices;
     }
 
@@ -125,7 +126,7 @@ public class CairoColumn implements Sinkable {
         return symbolTableStatic;
     }
 
-    public void setCoveringColumnIndices(int[] coveringColumnIndices) {
+    public void setCoveringColumnIndices(IntList coveringColumnIndices) {
         this.coveringColumnIndices = coveringColumnIndices;
     }
 

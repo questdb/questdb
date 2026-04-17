@@ -45,6 +45,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
@@ -257,12 +258,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     } else {
                         sink.putAscii(" INDEX TYPE ");
                         IndexType.putName(sink, idxType);
-                        int[] coveringCols = column.getCoveringColumnIndices();
-                        if (coveringCols != null && coveringCols.length > 0) {
+                        IntList coveringCols = column.getCoveringColumnIndices();
+                        if (coveringCols != null && coveringCols.size() > 0) {
                             sink.putAscii(" INCLUDE (");
                             int emitted = 0;
-                            for (int ci = 0; ci < coveringCols.length; ci++) {
-                                CairoColumn covCol = table.getColumnQuiet(coveringCols[ci]);
+                            for (int ci = 0, cn = coveringCols.size(); ci < cn; ci++) {
+                                CairoColumn covCol = table.getColumnQuiet(coveringCols.getQuick(ci));
                                 if (covCol != null) {
                                     if (emitted > 0) {
                                         sink.putAscii(", ");

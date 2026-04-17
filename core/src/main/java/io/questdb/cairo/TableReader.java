@@ -369,7 +369,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                             columnNameTxn,
                             partitionTxn,
                             getColumnTop(columnBase, columnIndex),
-                            metadata
+                            metadata,
+                            columnVersionReader,
+                            partitionTimestamp
                     );
                 } finally {
                     path.trimTo(plen);
@@ -1000,9 +1002,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                 indexes.setQuick(globalIndex + 1, reader);
             }
         } else {
-            Path path = pathGenNativePartition(getPartitionIndex(columnBase), partitionTxn);
+            int partitionIndex = getPartitionIndex(columnBase);
+            Path path = pathGenNativePartition(partitionIndex, partitionTxn);
             try {
                 final byte indexType = metadata.getColumnIndexType(columnIndex);
+                final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
                 reader = IndexFactory.createReader(
                         indexType,
                         direction,
@@ -1012,7 +1016,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                         columnNameTxn,
                         partitionTxn,
                         getColumnTop(columnBase, columnIndex),
-                        metadata
+                        metadata,
+                        columnVersionReader,
+                        partitionTimestamp
                 );
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);
@@ -1757,7 +1763,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (metadata.isColumnIndexed(columnIndex)) {
                     IndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader != null) {
-                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata);
+                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
                     }
                 } else {
                     Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));

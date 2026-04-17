@@ -262,7 +262,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         readers[r] = new Thread(() -> {
                             try (Path rPath = new Path().of(dbRoot);
                                  PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                                         configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                                         configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                                 while (!Thread.interrupted() && (writerDone.getCount() > 0 || committedBatches.get() < writerCommits)) {
                                     reader.reloadConditionally();
                                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
@@ -348,7 +348,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         readers[r] = new Thread(() -> {
                             try (Path rPath = new Path().of(dbRoot);
                                  PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                                         configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                                         configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                                 reader.reloadConditionally();
                                 barrier.await();
 
@@ -453,7 +453,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 } else {
                                     try (Path rPath = new Path().of(dbRoot);
                                          PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                                                 configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                                                 configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                                         while (!Thread.interrupted() && writerDone.getCount() > 0) {
                                             reader.reloadConditionally();
                                             RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
@@ -1276,7 +1276,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 // Verify backward
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                        configuration, path.trimTo(plen), "edge_exact_bc", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        configuration, path.trimTo(plen), "edge_exact_bc", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
@@ -1312,7 +1312,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 // Verify backward with 65 values
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                        configuration, path.trimTo(plen), "edge_exact_bc_65", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        configuration, path.trimTo(plen), "edge_exact_bc_65", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
@@ -1406,7 +1406,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
 
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                        configuration, path.trimTo(plen), "edge_nokey", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        configuration, path.trimTo(plen), "edge_nokey", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                     // Same checks for backward reader
                     RowCursor cursor5 = reader.getCursor(5, 0, Long.MAX_VALUE);
                     Assert.assertFalse("bwd key=5 should be empty", cursor5.hasNext());
@@ -1643,7 +1643,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     // Verify backward reader
                     try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                         for (int k = 0; k < keyCount; k++) {
                             LongList expected = oracle.getQuick(k);
                             RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
@@ -1865,7 +1865,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 // Also verify backward
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
@@ -1956,7 +1956,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     // Backward read verification
                     try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                            configuration, path.trimTo(plen), "multi_compact", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), "multi_compact", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         long expected = rowId - 1;
                         int count = 0;
@@ -2170,7 +2170,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 // Simulate a query-boundary reload. Within a query the reader
                                 // stays pinned to its construction-time sealTxn (Principle 5);
                                 // a fresh of() is the contract for switching generations.
-                                reader.of(configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null);
+                                reader.of(configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0);
 
                                 // Verify both pages have valid sequences (no corruption)
                                 long keyBase = reader.getKeyBaseAddress();
@@ -2280,7 +2280,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(200, count);
 
-                        reader.of(configuration, path.trimTo(plen), "rb_reader", COLUMN_NAME_TXN_NONE, -1, 0, null);
+                        reader.of(configuration, path.trimTo(plen), "rb_reader", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0);
                         RowCursor cursor2 = reader.getCursor(0, 0, Long.MAX_VALUE);
                         count = 0;
                         while (cursor2.hasNext()) {
@@ -2332,7 +2332,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(BP_BATCH * 3, count);
 
-                        reader.of(configuration, path.trimTo(plen), "trunc_reader", COLUMN_NAME_TXN_NONE, -1, 0, null);
+                        reader.of(configuration, path.trimTo(plen), "trunc_reader", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0);
                         RowCursor cursor2 = reader.getCursor(0, 0, Long.MAX_VALUE);
                         Assert.assertFalse(cursor2.hasNext());
                         Misc.free(cursor2);
@@ -2718,7 +2718,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 // Also verify backward
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                        configuration, path.trimTo(plen), "rb_w_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        configuration, path.trimTo(plen), "rb_w_seal", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
@@ -2994,7 +2994,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 // Verify backward
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                        configuration, path.trimTo(plen), "stress_hot", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        configuration, path.trimTo(plen), "stress_hot", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
@@ -3174,7 +3174,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     // Open reader INSIDE the writer scope (before seal) so sparse gens exist
                     try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                            configuration, path.trimTo(plen), "tier1_bwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), "tier1_bwd", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                         // Force lookup build
                         try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
                             while (firstCursor.hasNext()) {
@@ -3376,7 +3376,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     // Also verify backward reader with Tier 2
                     try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                            configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                         reader.setGenLookupMemoryBudget(1024);
 
                         try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
@@ -3481,7 +3481,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 // Also verify backward reader with Tier 3
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                        configuration, path.trimTo(plen), "tier3_none", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        configuration, path.trimTo(plen), "tier3_none", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                     reader.setGenLookupMemoryBudget(0);
 
                     try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
@@ -3769,7 +3769,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 // Also verify backward
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {

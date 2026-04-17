@@ -24,9 +24,14 @@
 
 package io.questdb.cairo.idx;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableToken;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -40,13 +45,6 @@ import java.io.Closeable;
 public interface IndexWriter extends Closeable, Mutable {
 
     /**
-     * Returns the index type for this writer.
-     *
-     * @return the index type constant from {@link IndexType}
-     */
-    byte getIndexType();
-
-    /**
      * Adds a key-value pair to the index.
      *
      * @param key   the symbol key (must be >= 0)
@@ -55,9 +53,22 @@ public interface IndexWriter extends Closeable, Mutable {
     void add(int key, long value);
 
     /**
+     * Closes the index without truncating files.
+     * Default implementation just calls close().
+     */
+    void closeNoTruncate();
+
+    /**
      * Commits the index to disk based on the configuration's commit mode.
      */
     void commit();
+
+    /**
+     * Returns the index type for this writer.
+     *
+     * @return the index type constant from {@link IndexType}
+     */
+    byte getIndexType();
 
     /**
      * Returns the number of distinct keys in the index.
@@ -152,11 +163,52 @@ public interface IndexWriter extends Closeable, Mutable {
      */
     void rollbackValues(long maxValue);
 
-    /**
-     * Sets the maximum value stored in the index header.
-     *
-     * @param maxValue the maximum value
-     */
+    default void clearCovering() {
+    }
+
+    default void configureCovering(
+            ObjList<CharSequence> coveredColumnNames,
+            LongList coveredColumnNameTxns,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
+            int timestampColumnIndex
+    ) {
+    }
+
+    default void configureCovering(
+            LongList coveredColumnAddrs,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
+            int coverCount
+    ) {
+    }
+
+    default void discard() {
+    }
+
+    default void rebuildSidecars() {
+    }
+
+    default void seal() {
+    }
+
+    default void setCoveredColumnNameTxns(LongList txns) {
+    }
+
+    default void publishPendingPurges(
+            MessageBus messageBus,
+            TableToken tableToken,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy,
+            long currentTableTxn
+    ) {
+    }
+
     void setMaxValue(long maxValue);
 
     /**
@@ -175,14 +227,11 @@ public interface IndexWriter extends Closeable, Mutable {
      */
     void sync(boolean async);
 
+    default void tombstoneCover(int writerIdx) {
+    }
+
     /**
      * Truncates the index, removing all data.
      */
     void truncate();
-
-    /**
-     * Closes the index without truncating files.
-     * Default implementation just calls close().
-     */
-    void closeNoTruncate();
 }

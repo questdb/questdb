@@ -843,13 +843,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntList columnIndexes,
             RecordMetadata queryMeta
     ) {
-        int[] coveringIndices = reader.getMetadata().getColumnMetadata(keyReaderColIdx).getCoveringColumnIndices();
-        if (coveringIndices == null || coveringIndices.length == 0) {
+        IntList coveringIndices = reader.getMetadata().getColumnMetadata(keyReaderColIdx).getCoveringColumnIndices();
+        if (coveringIndices == null || coveringIndices.size() == 0) {
             return null;
         }
-        // The mapping is keyed by query column position (0 to queryColCount-1).
-        // SelectedRecord wraps CoveringRecord but maps via identity (factory metadata
-        // column position == query column position) so the query-position index is correct.
         int queryColCount = queryMeta.getColumnCount();
         int[] mapping = new int[queryColCount];
         for (int q = 0; q < queryColCount; q++) {
@@ -860,8 +857,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             int writerColIdx = reader.getMetadata().getWriterIndex(readerColIdx);
             int includeIdx = -1;
-            for (int c = 0; c < coveringIndices.length; c++) {
-                if (coveringIndices[c] == writerColIdx) {
+            for (int c = 0, cn = coveringIndices.size(); c < cn; c++) {
+                if (coveringIndices.getQuick(c) == writerColIdx) {
                     includeIdx = c;
                     break;
                 }
@@ -7726,11 +7723,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 tableModel.isUpdate()
                                         );
                                     }
-                                    // Consume the WHERE clause so it doesn't get applied again downstream
                                     tableModel.setWhereClause(null);
-                                    return new PostingIndexDistinctRecordCursorFactory(
-                                            distinctMeta, dfcFactory, colIdx, 0, colIndexes, colSizeShifts
-                                    );
+                                    return new PostingIndexDistinctRecordCursorFactory(distinctMeta, dfcFactory, colIdx, 0, colIndexes);
                                 }
                             }
                         }

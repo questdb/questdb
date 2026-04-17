@@ -57,19 +57,14 @@ public interface ColumnIndexer extends QuietCloseable {
         // no-op by default
     }
 
-    /**
-     * Configure covering with pre-mapped addresses. Used by O3 where column
-     * data lives in native memory buffers, not files on disk.
-     */
     default void configureCovering(
-            long[] coveredColumnAddrs,
-            long[] coveredColumnTops,
-            int[] coveredColumnShifts,
-            int[] coveredColumnIndices,
-            int[] coveredColumnTypes,
+            LongList coveredColumnAddrs,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
             int coverCount
     ) {
-        // no-op by default
     }
 
     void configureFollowerAndWriter(
@@ -108,6 +103,9 @@ public interface ColumnIndexer extends QuietCloseable {
     ) {
     }
 
+    default void rebuildSidecars() {
+    }
+
     void refreshSourceAndIndex(long loRow, long hiRow);
 
     void releaseIndexWriter();
@@ -115,6 +113,12 @@ public interface ColumnIndexer extends QuietCloseable {
     void resetColumnTop();
 
     void rollback(long maxRow);
+
+    default void seal() {
+    }
+
+    default void setCoveredColumnNameTxns(LongList txns) {
+    }
 
     void sync(boolean async);
 

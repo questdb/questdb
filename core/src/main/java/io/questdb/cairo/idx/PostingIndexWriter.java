@@ -64,6 +64,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.idx.PostingIndexUtils.*;
 
 /**
@@ -417,11 +418,11 @@ public class PostingIndexWriter implements IndexWriter {
      * owns the mmaps and is responsible for unmapping them.
      */
     public void configureCovering(
-            long[] coveredColumnAddrs,
-            long[] coveredColumnTops,
-            int[] coveredColumnShifts,
-            int[] coveredColumnIndices,
-            int[] coveredColumnTypes,
+            LongList coveredColumnAddrs,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
             int coverCount
     ) {
         unmapCoveredColumnReads();
@@ -434,14 +435,39 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnIndices.clear();
         this.coveredColumnTypes.clear();
         for (int i = 0; i < coverCount; i++) {
-            this.coveredColumnAddrs.add(coveredColumnAddrs[i]);
-            this.coveredColumnTops.add(coveredColumnTops[i]);
-            this.coveredColumnShifts.add(coveredColumnShifts[i]);
-            this.coveredColumnIndices.add(coveredColumnIndices[i]);
-            this.coveredColumnTypes.add(coveredColumnTypes[i]);
+            this.coveredColumnAddrs.add(coveredColumnAddrs.getQuick(i));
+            this.coveredColumnTops.add(coveredColumnTops.getQuick(i));
+            this.coveredColumnShifts.add(coveredColumnShifts.getQuick(i));
+            this.coveredColumnIndices.add(coveredColumnIndices.getQuick(i));
+            this.coveredColumnTypes.add(coveredColumnTypes.getQuick(i));
+            this.coveredColumnNameTxns.add(COLUMN_NAME_TXN_NONE);
         }
         this.coverCount = coverCount;
         this.timestampColumnIndex = -1;
+    }
+
+    @TestOnly
+    public void configureCovering(
+            long[] coveredColumnAddrs,
+            long[] coveredColumnTops,
+            int[] coveredColumnShifts,
+            int[] coveredColumnIndices,
+            int[] coveredColumnTypes,
+            int coverCount
+    ) {
+        LongList addrs = new LongList(coverCount);
+        LongList tops = new LongList(coverCount);
+        IntList shifts = new IntList(coverCount);
+        IntList indices = new IntList(coverCount);
+        IntList types = new IntList(coverCount);
+        for (int i = 0; i < coverCount; i++) {
+            addrs.add(coveredColumnAddrs[i]);
+            tops.add(coveredColumnTops[i]);
+            shifts.add(coveredColumnShifts[i]);
+            indices.add(coveredColumnIndices[i]);
+            types.add(coveredColumnTypes[i]);
+        }
+        configureCovering(addrs, tops, shifts, indices, types, coverCount);
     }
 
     /**
@@ -958,9 +984,11 @@ public class PostingIndexWriter implements IndexWriter {
                 savedSidecarBufs = new long[coverCount];
                 savedSidecarSizes = new long[coverCount];
                 for (int c = 0; c < coverCount; c++) {
-                    // coveredColumnNameTxn placeholder: a future change will
-                    // resolve the per-cover-column txn from _cv.d.
-                    LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, sidecarTxn, columnNameTxn);
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
+                    long covT = getCoveredColumnNameTxn(c);
+                    LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, covT, columnNameTxn);
                     if (ff.exists(pcFile)) {
                         long fileLen = ff.length(pcFile);
                         if (fileLen > 0) {
@@ -1064,6 +1092,31 @@ public class PostingIndexWriter implements IndexWriter {
         }
         if (valueMem.isOpen()) {
             valueMem.sync(async);
+        }
+    }
+
+    @Override
+    public void tombstoneCover(int writerIdx) {
+        int targetC = -1;
+        for (int c = 0, n = coveredColumnIndices.size(); c < n; c++) {
+            if (coveredColumnIndices.getQuick(c) == writerIdx) {
+                targetC = c;
+                break;
+            }
+        }
+        if (targetC < 0) {
+            return;
+        }
+        coveredColumnIndices.setQuick(targetC, -1);
+        if (targetC < sidecarMems.size()) {
+            MemoryMARW mem = sidecarMems.getQuick(targetC);
+            if (mem != null) {
+                Misc.free(mem);
+                sidecarMems.setQuick(targetC, null);
+            }
+        }
+        if (sidecarInfoMem != null) {
+            sidecarInfoMem.putInt(8L + (long) targetC * Integer.BYTES, -1);
         }
     }
 
@@ -1556,6 +1609,9 @@ public class PostingIndexWriter implements IndexWriter {
             // Name-based: open files ourselves via mmap cache
             try (Path p = new Path()) {
                 for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
                     mapColumnFile(p, coveredColumnNames.getQuick(c), coveredColumnNameTxns.getQuick(c),
                             coveredColReadAddrs, coveredColReadSizes, c, false);
                     if (ColumnType.isVarSize(coveredColumnTypes.getQuick(c))) {
@@ -1923,6 +1979,17 @@ public class PostingIndexWriter implements IndexWriter {
         return addr + offset;
     }
 
+    private long getCoveredColumnNameTxn(int c) {
+        return c < coveredColumnNameTxns.size()
+                ? coveredColumnNameTxns.getQuick(c)
+                : COLUMN_NAME_TXN_NONE;
+    }
+
+    public void setCoveredColumnNameTxns(LongList txns) {
+        coveredColumnNameTxns.clear();
+        coveredColumnNameTxns.addAll(txns);
+    }
+
     private long getCoveredDataReadAddr(int covIdx, long offset, long needed) {
         ensureCoveredColumnReadMaps();
         long addr = coveredColReadAddrs[covIdx];
@@ -2206,14 +2273,21 @@ public class PostingIndexWriter implements IndexWriter {
                 sidecarInfoMem.putInt(coveredColumnIndices.getQuick(c));
             }
 
-            // Open .pc0, .pc1, ... files. coveredColumnNameTxn placeholder:
-            // a future change will resolve the per-cover-column txn from _cv.d.
+            // Open .pc0, .pc1, ... files. Each cover c uses its own
+            // coveredColumnNameTxn from _cv.d so ALTER TYPE on a covered
+            // column produces a different filename and reader sees old
+            // sidecar as missing -> falls back to main column.
             sidecarMems.clear();
             for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    sidecarMems.add(null);    // tombstoned slot
+                    continue;
+                }
+                long covT = getCoveredColumnNameTxn(c);
                 MemoryMARW mem = Vm.getCMARWInstance();
                 mem.of(
                         ff,
-                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, postingColumnNameTxn, sealTxn),
+                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, covT, sealTxn),
                         configuration.getDataIndexValueAppendPageSize(),
                         0L,
                         MemoryTag.MMAP_INDEX_WRITER
@@ -2268,11 +2342,17 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
-            // coveredColumnNameTxn placeholder: a future change will resolve
-            // the per-cover-column txn from _cv.d.
+            // Each cover c's filename uses the covered column's own
+            // coveredColumnNameTxn from _cv.d (per Phase B). Tombstoned
+            // slots (coveredColumnIndices == -1) skipped — no .pcN file.
             sidecarMems.clear();
             for (int c = 0; c < coverCount; c++) {
-                LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, postingColumnNameTxn, sealTxn);
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    sidecarMems.add(null);
+                    continue;
+                }
+                long covT = getCoveredColumnNameTxn(c);
+                LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, covT, sealTxn);
                 long fileLen = ff.exists(pcFile) ? ff.length(pcFile) : -1L;
                 long existingSize = fileLen > 0 ? fileLen : 0L;
                 MemoryMARW mem = Vm.getCMARWInstance();
@@ -3196,8 +3276,12 @@ public class PostingIndexWriter implements IndexWriter {
                 oldSidecarBufs = savedSidecarBufs;
                 oldSidecarSizes = savedSidecarSizes;
                 for (int c = 0; c < coverCount; c++) {
-                    incrSidecarSiBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
                     MemoryMARW mem = sidecarMems.getQuick(c);
+                    if (mem == null) {
+                        incrSidecarSiBufs[c] = 0;
+                        continue;
+                    }
+                    incrSidecarSiBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
                     for (int i = 0; i < siSize; i += Long.BYTES) {
                         mem.putLong(0L);
                     }
@@ -3221,6 +3305,7 @@ public class PostingIndexWriter implements IndexWriter {
                         int oldSiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
                         long oldStrideIdxBase = PostingIndexUtils.PC_HEADER_SIZE;
                         for (int c = 0; c < coverCount; c++) {
+                            if (incrSidecarSiBufs[c] == 0) continue;
                             MemoryMARW mem = sidecarMems.getQuick(c);
                             Unsafe.getUnsafe().putLong(
                                     incrSidecarSiBufs[c] + (long) s * Long.BYTES,
@@ -3263,6 +3348,7 @@ public class PostingIndexWriter implements IndexWriter {
                                 incrSidecarBuf = Unsafe.malloc(incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
                             }
                             for (int c = 0; c < coverCount; c++) {
+                                if (incrSidecarSiBufs[c] == 0) continue;
                                 Unsafe.getUnsafe().putLong(
                                         incrSidecarSiBufs[c] + (long) s * Long.BYTES,
                                         sidecarMems.getQuick(c).getAppendOffset() - siSize);
@@ -3271,6 +3357,7 @@ public class PostingIndexWriter implements IndexWriter {
                                     mergedValuesAddr, incrSidecarBuf);
                         } else {
                             for (int c = 0; c < coverCount; c++) {
+                                if (incrSidecarSiBufs[c] == 0) continue;
                                 Unsafe.getUnsafe().putLong(
                                         incrSidecarSiBufs[c] + (long) s * Long.BYTES,
                                         sidecarMems.getQuick(c).getAppendOffset() - siSize);
@@ -3294,6 +3381,7 @@ public class PostingIndexWriter implements IndexWriter {
             // stride_index lives right after the per-gen offset header.
             if (incrSidecarSiBufs != null) {
                 for (int c = 0; c < coverCount; c++) {
+                    if (incrSidecarSiBufs[c] == 0) continue;
                     MemoryMARW mem = sidecarMems.getQuick(c);
                     Unsafe.getUnsafe().putLong(
                             incrSidecarSiBufs[c] + (long) sc * Long.BYTES,
@@ -3837,6 +3925,9 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         for (int c = 0; c < coverCount; c++) {
+            if (coveredColumnIndices.getQuick(c) < 0) {
+                continue;
+            }
             MemoryMARW mem = sidecarMems.getQuick(c);
             int colType = coveredColumnTypes.getQuick(c);
             long colTop = coveredColumnTops.getQuick(c);
@@ -4133,6 +4224,9 @@ public class PostingIndexWriter implements IndexWriter {
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             try (Path p = new Path()) {
                 for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
                     try {
                         mapCoveredColumn(p, c);
                         writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);

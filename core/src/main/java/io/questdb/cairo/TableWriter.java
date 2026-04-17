@@ -244,6 +244,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final long[] o3LastTimestampSpreads;
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
     private final boolean o3QuickSortEnabled;
+    private final LongList o3SealAddrs = new LongList();
+    private final LongList o3SealMappedSizes = new LongList();
+    private final LongList o3SealNameTxns = new LongList();
+    private final IntList o3SealShifts = new IntList();
+    private final LongList o3SealTops = new LongList();
+    private final IntList o3SealTypes = new IntList();
     private final Path other;
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
@@ -327,12 +333,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<Runnable> o3NullSetters2;
     private PagedDirectLongList o3PartitionUpdateSink;
     private long o3RowCount;
-    // Reusable arrays for sealPostingIndexesForO3Partitions (zero-GC on commit path)
-    private long[] o3SealAddrs = new long[0];
-    private long[] o3SealMappedSizes = new long[0];
-    private int[] o3SealShifts = new int[0];
-    private long[] o3SealTops = new long[0];
-    private int[] o3SealTypes = new int[0];
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
     private volatile boolean o3oomObserved;
@@ -782,29 +782,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.invalidMetadataRecoverable("cannot create index, column type is not SYMBOL", columnName);
         }
 
-        // Resolve covering column names to indices before writing the index
-        int[] coveringColumnIndices = null;
+        IntList coveringColumnIndices = null;
         if (coveringColumnNames != null && coveringColumnNames.size() > 0) {
-            coveringColumnIndices = new int[coveringColumnNames.size()];
+            coveringColumnIndices = new IntList(coveringColumnNames.size());
+            int indexedColumnWriterIdx = metadata.getColumnMetadata(columnIndex).getWriterIndex();
             for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
                 CharSequence covName = coveringColumnNames.get(i);
-                int covIdx = metadata.getColumnIndexQuiet(covName);
-                if (covIdx == -1) {
+                int covDense = metadata.getColumnIndexQuiet(covName);
+                if (covDense == -1) {
                     throw CairoException.invalidMetadataRecoverable("INCLUDE column does not exist", covName);
                 }
-                if (covIdx == columnIndex) {
+                int covWriter = metadata.getColumnMetadata(covDense).getWriterIndex();
+                if (covWriter == indexedColumnWriterIdx) {
                     throw CairoException.invalidMetadataRecoverable("INCLUDE must not contain the indexed column", covName);
                 }
                 for (int j = 0; j < i; j++) {
-                    if (coveringColumnIndices[j] == covIdx) {
+                    if (coveringColumnIndices.getQuick(j) == covWriter) {
                         throw CairoException.invalidMetadataRecoverable("duplicate column in INCLUDE", covName);
                     }
                 }
-                // All column types are supported in INCLUDE.
-                // Fixed-width types are stored as raw bytes in the sidecar.
-                // Variable-width types (VARCHAR, STRING, BINARY, arrays) use
-                // the offset-based var-width sidecar format.
-                coveringColumnIndices[i] = covIdx;
+                coveringColumnIndices.add(covWriter);
             }
         }
 
@@ -1102,6 +1099,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         ConvertOperatorImpl convertOperator = getConvertOperator();
         try {
             commit();
+            tombstoneCoveredColumnInOtherIndexes(metadata.getColumnMetadata(existingColIndex).getWriterIndex());
 
             // ConvertOperatorImpl opens native .d files directly, so parquet
             // partitions must be converted back to native before the column
@@ -2873,6 +2871,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         commit();
 
+        // Tombstone any cover slot in other POSTING indexes that references
+        // this column. Must run BEFORE metadata.removeColumn so the
+        // writerIndex lookup is valid.
+        tombstoneCoveredColumnInOtherIndexes(metadata.getColumnMetadata(index).getWriterIndex());
+
         metadata.removeColumn(index);
         if (timestamp) {
             metadata.clearTimestampIndex();
@@ -4477,11 +4480,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {
         TableColumnMetadata colMeta = metadata.getColumnMetadata(columnIndex);
-        int[] coveringCols = colMeta.getCoveringColumnIndices();
-        if (coveringCols == null || coveringCols.length == 0) {
+        IntList coveringCols = colMeta.getCoveringColumnIndices();
+        if (coveringCols == null || coveringCols.size() == 0) {
             return;
         }
-        int coverCount = coveringCols.length;
+        int coverCount = coveringCols.size();
         coveringNames.clear();
         coveringNameTxns.clear();
         coveringTops.clear();
@@ -4489,7 +4492,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         coveringIndices.clear();
         coveringTypes.clear();
         for (int i = 0; i < coverCount; i++) {
-            int covCol = coveringCols[i];
+            int covCol = coveringCols.getQuick(i);
+            if (covCol < 0) {
+                coveringNames.add(null);
+                coveringNameTxns.add(TableUtils.COLUMN_NAME_TXN_NONE);
+                coveringTops.add(0);
+                coveringShifts.add(0);
+                coveringIndices.add(-1);
+                coveringTypes.add(-1);
+                continue;
+            }
             int covType = metadata.getColumnType(covCol);
             coveringNames.add(metadata.getColumnName(covCol));
             coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
@@ -6232,9 +6244,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // would use a covering index scan plan (metadata says INCLUDE) and
         // find no sidecar data. Future writes create new sparse generations
         // that the next seal merges.
-        if (indexer.getWriter() instanceof PostingIndexWriter piw) {
-            piw.seal();
-        }
+        indexer.seal();
     }
 
     private void indexNativePartition(
@@ -10306,11 +10316,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             for (int i = 0; i < columnCount; i++) {
-                int[] coveringIndices = metadata.getCoveringColumnIndices(i);
-                if (coveringIndices != null && coveringIndices.length > 0) {
-                    ddlMem.putInt(coveringIndices.length);
-                    for (int idx : coveringIndices) {
-                        ddlMem.putInt(idx);
+                IntList coveringIndices = metadata.getCoveringColumnIndices(i);
+                if (coveringIndices != null && coveringIndices.size() > 0) {
+                    ddlMem.putInt(coveringIndices.size());
+                    for (int ci = 0, cn = coveringIndices.size(); ci < cn; ci++) {
+                        ddlMem.putInt(coveringIndices.getQuick(ci));
                     }
                 }
             }
@@ -10496,30 +10506,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
 
-                    int[] coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
-                    boolean hasCovering = coveringCols != null && coveringCols.length > 0;
+                    IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
+                    boolean hasCovering = coveringCols != null && coveringCols.size() > 0;
 
                     if (hasCovering) {
-                        // Covering posting index: map covered columns and rebuild sidecars
-                        int coverCount = coveringCols.length;
-                        if (o3SealAddrs.length < coverCount) {
-                            o3SealAddrs = new long[coverCount];
-                            o3SealMappedSizes = new long[coverCount];
-                            o3SealTops = new long[coverCount];
-                            o3SealShifts = new int[coverCount];
-                            o3SealTypes = new int[coverCount];
-                        }
+                        int coverCount = coveringCols.size();
+                        o3SealAddrs.setPos(coverCount);
+                        o3SealMappedSizes.setPos(coverCount);
+                        o3SealNameTxns.setPos(coverCount);
+                        o3SealTops.setPos(coverCount);
+                        o3SealShifts.setPos(coverCount);
+                        o3SealTypes.setPos(coverCount);
                         boolean mapped = true;
 
                         try {
                             for (int c = 0; c < coverCount; c++) {
-                                o3SealAddrs[c] = 0;
-                                int covCol = coveringCols[c];
+                                o3SealAddrs.setQuick(c, 0);
+                                int covCol = coveringCols.getQuick(c);
+                                if (covCol < 0) {
+                                    o3SealTypes.setQuick(c, -1);
+                                    o3SealShifts.setQuick(c, 0);
+                                    o3SealTops.setQuick(c, 0);
+                                    o3SealNameTxns.setQuick(c, TableUtils.COLUMN_NAME_TXN_NONE);
+                                    continue;
+                                }
                                 int covType = metadata.getColumnType(covCol);
-                                o3SealTypes[c] = covType;
-                                o3SealShifts[c] = ColumnType.pow2SizeOf(covType);
-                                o3SealTops[c] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
+                                o3SealTypes.setQuick(c, covType);
+                                o3SealShifts.setQuick(c, ColumnType.pow2SizeOf(covType));
+                                o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
                                 long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
+                                o3SealNameTxns.setQuick(c, covColNameTxn);
                                 LPSZ colFile = TableUtils.dFile(path.trimTo(plen), metadata.getColumnName(covCol), covColNameTxn);
                                 long fd = ff.openRO(colFile);
                                 if (fd < 0) {
@@ -10533,8 +10549,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         break;
                                     }
                                     long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
-                                    o3SealAddrs[c] = addr;
-                                    o3SealMappedSizes[c] = fileSize;
+                                    o3SealAddrs.setQuick(c, addr);
+                                    o3SealMappedSizes.setQuick(c, fileSize);
                                 } finally {
                                     ff.close(fd);
                                 }
@@ -10546,39 +10562,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         getPrimaryColumn(colIdx), columnTop
                                 );
                                 indexer.configureCovering(o3SealAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount);
-                                if (indexer.getWriter() instanceof PostingIndexWriter piw) {
-                                    piw.rebuildSidecars();
-                                }
+                                indexer.setCoveredColumnNameTxns(o3SealNameTxns);
+                                indexer.rebuildSidecars();
                             }
                         } finally {
                             for (int c = 0; c < coverCount; c++) {
-                                if (o3SealAddrs[c] != 0) {
-                                    ff.munmap(o3SealAddrs[c], o3SealMappedSizes[c], MemoryTag.MMAP_DEFAULT);
-                                    o3SealAddrs[c] = 0;
+                                if (o3SealAddrs.getQuick(c) != 0) {
+                                    ff.munmap(o3SealAddrs.getQuick(c), o3SealMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
+                                    o3SealAddrs.setQuick(c, 0);
                                 }
                             }
                             // Clear the writer's reference to o3SealAddrs so that
                             // a subsequent close() → seal() cannot dereference the
                             // unmapped addresses. The seal would return early (gen0
                             // is already dense), but this is a defensive measure.
-                            if (indexer.getWriter() instanceof PostingIndexWriter piw) {
-                                piw.clearCovering();
-                            }
+                            indexer.clearCovering();
                         }
                     } else {
-                        // Non-covering posting index: seal to convert sparse → dense.
-                        // The writer opens the .pk at the resolved partition path.
-                        // If the .pk is empty (genCount=0), this partition's data
-                        // lives in a different directory (O3 created it with a txn
-                        // suffix). Skip — the reader will find the correct .pk via
-                        // the partition name txn.
                         indexer.configureFollowerAndWriter(
                                 path.trimTo(plen), colName, colNameTxn,
                                 getPrimaryColumn(colIdx), columnTop
                         );
-                        if (indexer.getWriter() instanceof PostingIndexWriter piw) {
-                            piw.seal();
-                        }
+                        indexer.seal();
                     }
                 }
             } finally {
@@ -11086,6 +11091,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         distressed = true;
         throw new CairoError(cause);
+    }
+
+    private void tombstoneCoveredColumnInOtherIndexes(int droppedWriterIdx) {
+        if (droppedWriterIdx < 0) {
+            return;
+        }
+        int columnCount = metadata.getColumnCount();
+        for (int i = 0; i < columnCount; i++) {
+            TableColumnMetadata cm = metadata.getColumnMetadata(i);
+            if (cm == null || cm.isDeleted()) {
+                continue;
+            }
+            IntList cov = cm.getCoveringColumnIndices();
+            if (cov == null) {
+                continue;
+            }
+            boolean changed = false;
+            for (int j = 0, n = cov.size(); j < n; j++) {
+                if (cov.getQuick(j) == droppedWriterIdx) {
+                    cov.setQuick(j, -1);
+                    changed = true;
+                }
+            }
+            if (!changed) {
+                continue;
+            }
+            ColumnIndexer ix = i < indexers.size() ? indexers.getQuick(i) : null;
+            if (ix != null) {
+                IndexWriter w = ix.getWriter();
+                if (w != null) {
+                    w.tombstoneCover(droppedWriterIdx);
+                }
+            }
+        }
     }
 
     private void truncate(boolean keepSymbolTables) {

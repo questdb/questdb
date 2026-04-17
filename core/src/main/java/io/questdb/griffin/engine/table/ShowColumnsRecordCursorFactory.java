@@ -222,14 +222,14 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                     return cairoColumn.isIndexed() ? IndexType.nameOf(cairoColumn.getIndexType()) : "";
                 }
                 if (col == N_INDEX_INCLUDE_COL) {
-                    int[] coveringCols = cairoColumn.getCoveringColumnIndices();
-                    if (coveringCols == null || coveringCols.length == 0) {
+                    IntList coveringCols = cairoColumn.getCoveringColumnIndices();
+                    if (coveringCols == null || coveringCols.size() == 0) {
                         return "";
                     }
                     includeSink.clear();
                     int emitted = 0;
-                    for (int i = 0; i < coveringCols.length; i++) {
-                        CairoColumn covCol = cairoTable.getColumnQuiet(coveringCols[i]);
+                    for (int i = 0, n = coveringCols.size(); i < n; i++) {
+                        CairoColumn covCol = cairoTable.getColumnQuiet(coveringCols.getQuick(i));
                         if (covCol != null) {
                             if (emitted > 0) {
                                 includeSink.putAscii(',');
@@ -246,14 +246,14 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             @Override
             public CharSequence getStrB(int col) {
                 if (col == N_INDEX_INCLUDE_COL) {
-                    int[] coveringCols = cairoColumn.getCoveringColumnIndices();
-                    if (coveringCols == null || coveringCols.length == 0) {
+                    IntList coveringCols = cairoColumn.getCoveringColumnIndices();
+                    if (coveringCols == null || coveringCols.size() == 0) {
                         return "";
                     }
                     includeSinkB.clear();
                     int emitted = 0;
-                    for (int i = 0; i < coveringCols.length; i++) {
-                        CairoColumn covCol = cairoTable.getColumnQuiet(coveringCols[i]);
+                    for (int i = 0, n = coveringCols.size(); i < n; i++) {
+                        CairoColumn covCol = cairoTable.getColumnQuiet(coveringCols.getQuick(i));
                         if (covCol != null) {
                             if (emitted > 0) {
                                 includeSinkB.putAscii(',');

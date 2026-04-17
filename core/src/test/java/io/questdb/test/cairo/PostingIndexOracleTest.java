@@ -74,7 +74,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                 }
 
                 // Read backward
-                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(configuration, path.trimTo(plen), "bp_bwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(configuration, path.trimTo(plen), "bp_bwd", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     long prev = Long.MAX_VALUE;

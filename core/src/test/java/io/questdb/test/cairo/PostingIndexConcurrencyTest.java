@@ -232,7 +232,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                                      CountDownLatch writerDone, AtomicInteger committed) {
         try (Path rPath = new Path().of(dbRoot);
              PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
             while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
                 reader.reloadConditionally();
                 RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);

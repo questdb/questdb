@@ -107,7 +107,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         colMeta.setIndexValueBlockCapacity(indexValueBlockSize);
 
         if (coveringColumnNames != null && coveringColumnNames.size() > 0) {
-            int[] coveringIndices = new int[coveringColumnNames.size()];
+            IntList coveringIndices = new IntList(coveringColumnNames.size());
             for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
                 CharSequence covName = coveringColumnNames.get(i);
                 int covIdx = columnNameIndexMap.get(covName);
@@ -118,11 +118,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     throw CairoException.nonCritical().put("INCLUDE must not contain the indexed column [column=").put(covName).put(']');
                 }
                 for (int j = 0; j < i; j++) {
-                    if (coveringIndices[j] == covIdx) {
+                    if (coveringIndices.getQuick(j) == covIdx) {
                         throw CairoException.nonCritical().put("duplicate column in INCLUDE [column=").put(covName).put(']');
                     }
                 }
-                coveringIndices[i] = covIdx;
+                coveringIndices.add(covIdx);
             }
             colMeta.setCoveringColumnIndices(coveringIndices);
         }
@@ -357,8 +357,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.isDedupKey(i)
             );
             // Propagate covering column indices (INCLUDE list) from the table structure
-            int[] coveringIndices = tableStruct.getCoveringColumnIndices(i);
-            if (coveringIndices != null && coveringIndices.length > 0) {
+            IntList coveringIndices = tableStruct.getCoveringColumnIndices(i);
+            if (coveringIndices != null && coveringIndices.size() > 0) {
                 columnMetadata.getQuick(columnMetadata.size() - 1).setCoveringColumnIndices(coveringIndices);
             }
             readColumnOrder.add(i);
@@ -466,9 +466,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                         offset += Integer.BYTES;
                         if (includeCount > 0 && memSize - offset >= (long) includeCount * Integer.BYTES
                                 && colIdx >= 0 && colIdx < columnCount) {
-                            int[] indices = new int[includeCount];
+                            IntList indices = new IntList(includeCount);
                             for (int j = 0; j < includeCount; j++) {
-                                indices[j] = metaMem.getInt(offset);
+                                indices.add(metaMem.getInt(offset));
                                 offset += Integer.BYTES;
                             }
                             columnMetadata.getQuick(colIdx).setCoveringColumnIndices(indices);
@@ -540,19 +540,19 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         // Count how many columns have covering indices
         int coveringColumnCount = 0;
         for (int i = 0; i < columnCount; i++) {
-            int[] indices = getColumnMetadata(i).getCoveringColumnIndices();
-            if (indices != null && indices.length > 0) {
+            IntList indices = getColumnMetadata(i).getCoveringColumnIndices();
+            if (indices != null && indices.size() > 0) {
                 coveringColumnCount++;
             }
         }
         metaMem.putInt(coveringColumnCount);
         for (int i = 0; i < columnCount; i++) {
-            int[] indices = getColumnMetadata(i).getCoveringColumnIndices();
-            if (indices != null && indices.length > 0) {
+            IntList indices = getColumnMetadata(i).getCoveringColumnIndices();
+            if (indices != null && indices.size() > 0) {
                 metaMem.putInt(i); // column index
-                metaMem.putInt(indices.length);
-                for (int idx : indices) {
-                    metaMem.putInt(idx);
+                metaMem.putInt(indices.size());
+                for (int j = 0, n = indices.size(); j < n; j++) {
+                    metaMem.putInt(indices.getQuick(j));
                 }
             }
         }

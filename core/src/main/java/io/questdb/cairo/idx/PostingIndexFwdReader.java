@@ -34,12 +34,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-/**
- * Forward reader for Delta + FoR64 BitPacking bitmap index.
- * <p>
- * Block-buffered decode: unpacks 64 values at a time from FoR64 blocks.
- * Generation iteration uses PostingGenLookup for tiered gen-to-key mapping.
- */
 public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     private static final int MIN_BUFFER_CAPACITY = 4;
     private final ObjList<Cursor> freeCursors = new ObjList<>();
@@ -52,7 +46,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long partitionTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0);
     }
 
     public PostingIndexFwdReader(
@@ -62,9 +56,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long columnNameTxn,
             long partitionTxn,
             long columnTop,
-            io.questdb.cairo.sql.RecordMetadata metadata
+            io.questdb.cairo.sql.RecordMetadata metadata,
+            io.questdb.cairo.ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
     }
 
     @Override
@@ -78,11 +74,23 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
+        return getCursor(key, minValue, maxValue, null);
+    }
+
+    @Override
+    public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         if (key >= keyCount) {
             updateKeyCount();
         }
 
         if (key < keyCount) {
+            if (requiredCoverColumns != null && coverCount > 0) {
+                for (int c : requiredCoverColumns) {
+                    if (c >= 0 && c < coverCount) {
+                        ensureSidecarOpen(c);
+                    }
+                }
+            }
             Cursor c;
             if (freeCursors.size() > 0) {
                 c = freeCursors.popLast();
@@ -249,7 +257,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     return true;
                 }
 
-                // Min/max bounds check from cached metadata
                 if (requestedKey < genLookup.getGenMinKey(currentGen) ||
                         requestedKey > genLookup.getGenMaxKey(currentGen)) {
                     currentGen++;
@@ -269,7 +276,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (lookupPos < lookupEnd) {
                 int nextSparseGen = genLookup.getGenIndex(lookupPos);
 
-                // Check dense gens before this sparse gen
                 currentGen++;
                 while (currentGen < nextSparseGen) {
                     if (genLookup.getGenKeyCount(currentGen) >= 0) {
@@ -279,7 +285,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     currentGen++;
                 }
 
-                // Load sparse gen directly
                 int posInGen = genLookup.getPosInGen(lookupPos);
                 lookupPos++;
                 currentGen = nextSparseGen;
@@ -287,7 +292,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return true;
             }
 
-            // No more sparse hits — check remaining dense gens
             currentGen++;
             while (currentGen < genCount) {
                 if (genLookup.getGenKeyCount(currentGen) >= 0) {
@@ -523,7 +527,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
                 long dataAddr = strideAddr + flatHeaderSize;
 
-                // Binary search to skip values below minValue.
                 int effectiveStart = startCount;
                 int effectiveCount = count;
                 if (minValue > 0 && bitWidth > 0 && count > 1) {
@@ -541,7 +544,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     effectiveCount = endCount - effectiveStart;
                 }
 
-                // Also trim values above maxValue from the end
                 if (maxValue < Long.MAX_VALUE && effectiveCount > 1) {
                     int lo = effectiveStart, hi = effectiveStart + effectiveCount - 1;
                     while (lo < hi) {
@@ -581,7 +583,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            // Delta mode
             long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
             this.sidecarStrideKeyStart = 0;
@@ -617,7 +618,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             Unsafe.getUnsafe().loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
-            // Use stored prefix-sum for O(1) key lookup
             int minKey = genLookup.getGenMinKey(gen);
             int maxKey = genLookup.getGenMaxKey(gen);
             if (requestedKey < minKey || requestedKey > maxKey) {
@@ -751,7 +751,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             srcBitWidthsOffset = pos;
             pos += firstWord;
 
-            // packedOffsets only present for multi-block keys
             long srcPackedOffsetsOffset = 0;
             if (firstWord > 1) {
                 srcPackedOffsetsOffset = pos;
@@ -778,7 +777,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             for (int b = 0; b < startBlock; b++) {
                 skippedValueCount += Unsafe.getUnsafe().getByte(baseAddr + srcValueCountsOffset + b) & 0xFF;
             }
-            // Use packedOffsets for O(1) jump to startBlock's packed data
             if (startBlock > 0) {
                 packedDataStartOffset += Unsafe.getUnsafe().getLong(baseAddr + srcPackedOffsetsOffset + (long) startBlock * Long.BYTES);
             }
@@ -844,7 +842,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             this.currentGen = -1; // will be advanced by first advanceToNextRelevantGen()
 
-            // Set up inverted index range for this key (Tier 1)
             if (genLookup.isPerKeyMode() && key < genLookup.getKeyCount()) {
                 this.lookupPos = genLookup.getEntryStart(key);
                 this.lookupEnd = genLookup.getEntryEnd(key);

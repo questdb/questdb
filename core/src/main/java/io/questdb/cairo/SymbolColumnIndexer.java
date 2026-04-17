@@ -69,9 +69,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     @Override
     public void clearCovering() {
-        if (writer instanceof PostingIndexWriter piw) {
-            piw.clearCovering();
-        }
+        writer.clearCovering();
     }
 
     @Override
@@ -94,27 +92,38 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             IntList coveredColumnTypes,
             int timestampColumnIndex
     ) {
-        if (writer instanceof PostingIndexWriter piw) {
-            piw.configureCovering(
-                    coveredColumnNames, coveredColumnNameTxns, coveredColumnTops, coveredColumnShifts,
-                    coveredColumnIndices, coveredColumnTypes, timestampColumnIndex);
-        }
+        writer.configureCovering(
+                coveredColumnNames, coveredColumnNameTxns, coveredColumnTops, coveredColumnShifts,
+                coveredColumnIndices, coveredColumnTypes, timestampColumnIndex);
     }
 
     @Override
     public void configureCovering(
-            long[] coveredColumnAddrs,
-            long[] coveredColumnTops,
-            int[] coveredColumnShifts,
-            int[] coveredColumnIndices,
-            int[] coveredColumnTypes,
+            LongList coveredColumnAddrs,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
             int coverCount
     ) {
-        if (writer instanceof PostingIndexWriter piw) {
-            piw.configureCovering(
-                    coveredColumnAddrs, coveredColumnTops, coveredColumnShifts,
-                    coveredColumnIndices, coveredColumnTypes, coverCount);
-        }
+        writer.configureCovering(
+                coveredColumnAddrs, coveredColumnTops, coveredColumnShifts,
+                coveredColumnIndices, coveredColumnTypes, coverCount);
+    }
+
+    @Override
+    public void rebuildSidecars() {
+        writer.rebuildSidecars();
+    }
+
+    @Override
+    public void seal() {
+        writer.seal();
+    }
+
+    @Override
+    public void setCoveredColumnNameTxns(LongList txns) {
+        writer.setCoveredColumnNameTxns(txns);
     }
 
     @Override
@@ -150,13 +159,9 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     @Override
     public void discardAndClose() {
-        // Close without sealing — used when index is being dropped.
-        if (writer instanceof PostingIndexWriter piw) {
-            piw.clearCovering();
-            piw.discard();
-        } else {
-            Misc.free(writer);
-        }
+        writer.clearCovering();
+        writer.discard();
+        Misc.free(writer);
         if (buffer != 0) {
             fd = -1;
             Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_INDEX_READER);
@@ -224,9 +229,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             int partitionBy,
             long currentTableTxn
     ) {
-        if (writer instanceof PostingIndexWriter piw) {
-            piw.publishPendingPurges(messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy, currentTableTxn);
-        }
+        writer.publishPendingPurges(messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy, currentTableTxn);
     }
 
     @Override

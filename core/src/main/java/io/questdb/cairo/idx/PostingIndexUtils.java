@@ -159,8 +159,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 public final class PostingIndexUtils {
 
     public static final int BLOCK_CAPACITY = 64;
-    // .pci magic — bumped from 0x50434930 ("PCI0") when the per-cover-column type
-    // field was removed. Readers resolve types from current metadata instead.
+    // .pci layout: magic(4B) + count(4B) + writerIndex[count](4B each, -1 = tombstoned).
     public static final int COVER_INFO_MAGIC = 0x50434931; // "PCI1"
     public static final int DENSE_STRIDE = 256;
     // Elias-Fano encoding: if the first 4 bytes of an encoded key blob equal this sentinel,

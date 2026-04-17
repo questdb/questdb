@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
@@ -39,6 +40,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -50,6 +52,8 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
 
 public class CoveringIndexTest extends AbstractCairoTest {
+
+    private static final ColumnVersionReader EMPTY_CVR = new ColumnVersionReader();
 
     @Test
     public void testAlterTableAddIndexO3DuplicateInsert() throws Exception {
@@ -154,11 +158,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 int symIdx = metadata.getColumnIndex("sym");
                 assertTrue(metadata.isColumnIndexed(symIdx));
                 assertEquals(IndexType.POSTING, metadata.getColumnIndexType(symIdx));
-                int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                IntList coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(coveringCols);
-                assertEquals(3, coveringCols.length);
-                assertEquals(metadata.getColumnIndex("price"), coveringCols[0]);
-                assertEquals(metadata.getColumnIndex("qty"), coveringCols[1]);
+                assertEquals(3, coveringCols.size());
+                assertEquals(metadata.getColumnIndex("price"), coveringCols.getQuick(0));
+                assertEquals(metadata.getColumnIndex("qty"), coveringCols.getQuick(1));
             }
         });
     }
@@ -323,9 +327,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 int symIdx = metadata.getColumnIndex("sym");
                 assertTrue(metadata.isColumnIndexed(symIdx));
                 assertEquals(IndexType.POSTING, metadata.getColumnIndexType(symIdx));
-                int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                IntList coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(coveringCols);
-                assertEquals(3, coveringCols.length);
+                assertEquals(3, coveringCols.size());
             }
 
             // Non-covering query (SELECT * includes ts, which is not in INCLUDE)
@@ -491,10 +495,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             try (TableReader reader = getReader("t_ts_dup")) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int symIdx = metadata.getColumnIndex("sym");
-                int[] coveringIndices = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
-                assertEquals(2, coveringIndices.length);
-                assertEquals(metadata.getColumnIndex("price"), coveringIndices[0]);
-                assertEquals(metadata.getColumnIndex("ts"), coveringIndices[1]);
+                IntList coveringIndices = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertEquals(2, coveringIndices.size());
+                assertEquals(metadata.getColumnIndex("price"), coveringIndices.getQuick(0));
+                assertEquals(metadata.getColumnIndex("ts"), coveringIndices.getQuick(1));
             }
 
             execute("""
@@ -567,10 +571,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             try (TableReader reader = getReader("t_ts_auto")) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int symIdx = metadata.getColumnIndex("sym");
-                int[] coveringIndices = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
-                assertEquals(2, coveringIndices.length);
-                assertEquals(metadata.getColumnIndex("price"), coveringIndices[0]);
-                assertEquals(metadata.getColumnIndex("ts"), coveringIndices[1]);
+                IntList coveringIndices = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertEquals(2, coveringIndices.size());
+                assertEquals(metadata.getColumnIndex("price"), coveringIndices.getQuick(0));
+                assertEquals(metadata.getColumnIndex("ts"), coveringIndices.getQuick(1));
             }
 
             execute("""
@@ -922,8 +926,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader: genCount=2, but per-gen sidecars exist
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cursor instanceof CoveringRowCursor);
                         assertTrue(((CoveringRowCursor) cursor).hasCovering());
 
@@ -981,9 +985,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Verify ALL 30 covered values across both gens
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE);
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
+                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cc.hasCovering());
+
                         for (int i = 0; i < 30; i++) {
                             assertTrue("row " + i, cc.hasNext());
                             assertEquals(i, cc.next());
@@ -1083,12 +1088,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Read back keys from second stride (key >= 256)
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}))) {
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
                         // Key 260 is in stride 1, local key 4
-                        RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
+
 
                         assertTrue(cc.hasNext());
                         assertEquals(260, cc.next());
@@ -1096,18 +1102,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
                         Misc.free(cursor);
                         // Key 299 is in stride 1, local key 43
-                        cursor = reader.getCursor(299, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(299, 0, Long.MAX_VALUE, new int[]{0});
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
+
                         assertTrue(cc.hasNext());
                         assertEquals(299, cc.next());
                         assertEquals(1299L, cc.getCoveredLong(0));
                         assertFalse(cc.hasNext());
                         Misc.free(cursor);
                         // Key 0 is in stride 0 (control)
-                        cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
+
                         assertTrue(cc.hasNext());
                         assertEquals(0, cc.next());
                         assertEquals(1000L, cc.getCoveredLong(0));
@@ -2538,9 +2546,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             try (TableReader r = engine.getReader("t_alter")) {
                 int symIdx = r.getMetadata().getColumnIndex("sym");
                 assertTrue("covering flag lost after ALTER", r.getMetadata().getColumnMetadata(symIdx).isCovering());
-                int[] indices = r.getMetadata().getColumnMetadata(symIdx).getCoveringColumnIndices();
+                IntList indices = r.getMetadata().getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull("covering indices lost after ALTER", indices);
-                assertEquals(2, indices.length);
+                assertEquals(2, indices.size());
             }
 
             assertSql("""
@@ -2682,12 +2690,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader sees genCount=2 with per-gen sidecar data
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         // Per-gen sidecars: hasCovering() returns true
                         assertTrue(cc.hasCovering());
+
 
                         // Row IDs and covered values are correct
                         int count = 0;
@@ -2744,10 +2753,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}))) {
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         // Key 0: only gen 0 data (rows 0,2)
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE);
+                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cc.hasCovering());
+
                         assertTrue(cc.hasNext());
                         assertEquals(0, cc.next());
                         assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
@@ -2757,8 +2767,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
 
                         // Key 1: gen 0 + gen 1 (rows 1,3,4,5)
-                        cc = (CoveringRowCursor) reader.getCursor(1, 0, Long.MAX_VALUE);
+                        cc = (CoveringRowCursor) reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cc.hasCovering());
+
                         assertTrue(cc.hasNext());
                         assertEquals(1, cc.next());
                         assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
@@ -2815,11 +2826,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}))) {
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         // Key 1: rows 1,3,5,7,9,11,13,15,17,19
-                        RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
+
                         int count = 0;
                         while (cc.hasNext()) {
                             long rowId = cc.next();
@@ -2874,10 +2886,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{1}, new int[]{ColumnType.GEOSHORT}))) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.GEOSHORT}), EMPTY_CVR, 0)) {
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
+
 
                         // Rows 0-1: below columnTop, must get GeoHashes.SHORT_NULL (-1)
                         assertTrue(cc.hasNext());
@@ -4878,10 +4891,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
+
 
                         // First 4 rows: below columnTop, null sentinel is NaN for DOUBLE
                         for (int i = 0; i < 4; i++) {
@@ -5124,11 +5138,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertTrue(metadata.isColumnIndexed(symIdx));
                 assertEquals(IndexType.POSTING, metadata.getColumnIndexType(symIdx));
                 // Verify covering column indices are stored in metadata
-                int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                IntList coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(coveringCols);
-                assertEquals(3, coveringCols.length);
-                assertEquals(metadata.getColumnIndex("price"), coveringCols[0]);
-                assertEquals(metadata.getColumnIndex("qty"), coveringCols[1]);
+                assertEquals(3, coveringCols.size());
+                assertEquals(metadata.getColumnIndex("price"), coveringCols.getQuick(0));
+                assertEquals(metadata.getColumnIndex("qty"), coveringCols.getQuick(1));
             }
         });
     }
@@ -6322,9 +6336,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             try (TableReader r = engine.getReader("multi")) {
                 TableReaderMetadata metadata = r.getMetadata();
                 int symIdx = metadata.getColumnIndex("sym");
-                int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                IntList coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(coveringCols);
-                assertEquals(4, coveringCols.length);
+                assertEquals(4, coveringCols.size());
             }
         });
     }
@@ -6440,9 +6454,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Read: verify covering values for clean stride keys
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}))) {
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
                         // Key 0 is in stride 0 (clean stride) — should have correct covered value
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue("covering should be available after incremental seal", cc.hasCovering());
@@ -6452,9 +6466,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
                         Misc.free(cursor);
                         // Key 100 is in stride 0 (clean stride)
-                        cursor = reader.getCursor(100, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(100, 0, Long.MAX_VALUE, new int[]{0});
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
+
                         assertTrue(cc.hasNext());
                         assertEquals(100, cc.next());
                         assertEquals(1100L, cc.getCoveredLong(0));
@@ -6462,9 +6477,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         Misc.free(cursor);
 
                         // Key 260 is in stride 1 (dirty stride) — should also work
-                        cursor = reader.getCursor(260, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0});
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
+
                         assertTrue(cc.hasNext());
                         assertEquals(260, cc.next());
                         assertEquals(1260L, cc.getCoveredLong(0));
@@ -7064,9 +7080,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 TableReaderMetadata metadata = r.getMetadata();
                 int symIdx = metadata.getColumnIndex("sym");
                 assertTrue(metadata.getColumnMetadata(symIdx).isCovering());
-                int[] covering = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                IntList covering = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(covering);
-                assertEquals(3, covering.length);
+                assertEquals(3, covering.size());
             }
 
             // Release all cached readers and writers to force reopening
@@ -7077,11 +7093,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 TableReaderMetadata metadata = r.getMetadata();
                 int symIdx = metadata.getColumnIndex("sym");
                 assertTrue(metadata.getColumnMetadata(symIdx).isCovering());
-                int[] covering = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                IntList covering = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(covering);
-                assertEquals(3, covering.length);
-                assertEquals(metadata.getColumnIndex("price"), covering[0]);
-                assertEquals(metadata.getColumnIndex("qty"), covering[1]);
+                assertEquals(3, covering.size());
+                assertEquals(metadata.getColumnIndex("price"), covering.getQuick(0));
+                assertEquals(metadata.getColumnIndex("qty"), covering.getQuick(1));
             }
         });
     }
@@ -7494,7 +7510,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                     // Cursor should still implement CoveringRowCursor but hasCovering() returns false
                     assertTrue(cursor instanceof CoveringRowCursor);
                     assertFalse(((CoveringRowCursor) cursor).hasCovering());
@@ -7880,11 +7896,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Read back with covering cursor — verify both row IDs and covered values
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
+
 
                         // key 0: rows 0, 3, 6 -> values 10.0, 40.0, 70.0
                         assertTrue(cc.hasNext());
@@ -7902,9 +7919,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
                         Misc.free(cursor);
                         // key 1: rows 1, 4 -> values 20.0, 50.0
-                        cursor = reader.getCursor(1, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
+
 
                         assertTrue(cc.hasNext());
                         assertEquals(1, cc.next());
@@ -8489,10 +8507,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader at the latest sealTxn sees ALL committed data.
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         int totalRows = 0;
                         for (int key = 0; key < 3; key++) {
-                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE);
+                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE, new int[]{0});
+    
                             while (cc.hasNext()) {
                                 long rowId = cc.next();
                                 double covered = cc.getCoveredDouble(0);
@@ -9158,9 +9177,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             try (TableReader r = engine.getReader("t_wide_meta")) {
                 TableReaderMetadata metadata = r.getMetadata();
                 int symIdx = metadata.getColumnIndex("sym");
-                int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                IntList coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(coveringCols);
-                assertEquals(9, coveringCols.length);
+                assertEquals(9, coveringCols.size());
                 assertTrue(metadata.getColumnMetadata(symIdx).isCovering());
             }
         });
@@ -9402,7 +9421,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     break;
                 }
             }
-            m.add(new TableColumnMetadata("c" + i, type));
+            m.add(new TableColumnMetadata("c" + i, type, IndexType.NONE, 0, false, null, i, false));
         }
         return m;
     }
@@ -9423,5 +9442,150 @@ public class CoveringIndexTest extends AbstractCairoTest {
             factory.toPlan(planSink);
             return planSink.getSink().toString();
         }
+    }
+
+    @Test
+    public void testDropUnrelatedColumnDoesNotBreakCoveringIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_unrel (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT,
+                        unrelated VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_drop_unrel VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 100, 'x'),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 200, 'y'),
+                    ('2024-01-01T02:00:00', 'A', 30.5, 300, 'z')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_drop_unrel WHERE sym = 'A'");
+
+            execute("ALTER TABLE t_drop_unrel DROP COLUMN unrelated");
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_drop_unrel WHERE sym = 'A'");
+
+            execute("""
+                    INSERT INTO t_drop_unrel VALUES
+                    ('2024-01-01T03:00:00', 'A', 40.5, 400)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    40.5\t400
+                    """, "SELECT price, qty FROM t_drop_unrel WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testAlterTypeCoveredColumnFallsBackToTableScan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_alter_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 100),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 200),
+                    ('2024-01-01T02:00:00', 'A', 30.5, 300)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_alter_cov WHERE sym = 'A'");
+
+            execute("ALTER TABLE t_alter_cov ALTER COLUMN qty TYPE LONG");
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_alter_cov WHERE sym = 'A'");
+
+            execute("""
+                    INSERT INTO t_alter_cov VALUES
+                    ('2024-01-01T03:00:00', 'A', 40.5, 400)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    40.5\t400
+                    """, "SELECT price, qty FROM t_alter_cov WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testDropCoveredColumnFallsBackToTableScan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_drop_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 100),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 200),
+                    ('2024-01-01T02:00:00', 'A', 30.5, 300)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_drop_cov WHERE sym = 'A'");
+
+            execute("ALTER TABLE t_drop_cov DROP COLUMN qty");
+
+            assertSql("""
+                    price
+                    10.5
+                    30.5
+                    """, "SELECT price FROM t_drop_cov WHERE sym = 'A'");
+
+            execute("""
+                    INSERT INTO t_drop_cov VALUES
+                    ('2024-01-01T03:00:00', 'A', 40.5)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price
+                    10.5
+                    30.5
+                    40.5
+                    """, "SELECT price FROM t_drop_cov WHERE sym = 'A'");
+        });
     }
 }

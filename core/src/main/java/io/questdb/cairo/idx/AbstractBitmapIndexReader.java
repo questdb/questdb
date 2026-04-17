@@ -26,6 +26,7 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -117,7 +118,9 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
             long columnNameTxn,
             long partitionTxn,
             long columnTop,
-            RecordMetadata metadata
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
     ) {
         this.columnTop = columnTop;
         this.columnTxn = columnNameTxn;

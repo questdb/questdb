@@ -2158,11 +2158,11 @@ public final class TableUtils {
         }
 
         for (int i = 0; i < count; i++) {
-            int[] coveringIndices = tableStruct.getCoveringColumnIndices(i);
-            if (coveringIndices != null && coveringIndices.length > 0) {
-                mem.putInt(coveringIndices.length);
-                for (int idx : coveringIndices) {
-                    mem.putInt(idx);
+            IntList coveringIndices = tableStruct.getCoveringColumnIndices(i);
+            if (coveringIndices != null && coveringIndices.size() > 0) {
+                mem.putInt(coveringIndices.size());
+                for (int ci = 0, cn = coveringIndices.size(); ci < cn; ci++) {
+                    mem.putInt(coveringIndices.getQuick(ci));
                 }
             }
         }

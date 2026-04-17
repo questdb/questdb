@@ -151,7 +151,7 @@ public class PostingIndexBenchmarkSuite {
             IndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key : s.pointKeys) {
-                    try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE);) {
+                    try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
                         while (c.hasNext()) c.next();
                     }
                 }
@@ -171,7 +171,7 @@ public class PostingIndexBenchmarkSuite {
             IndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key : s.rangeKeys) {
-                    try (RowCursor c = reader.getCursor(key, s.maxRow / 4, s.maxRow * 3 / 4);) {
+                    try (RowCursor c = reader.getCursor(key, s.maxRow / 4, s.maxRow * 3 / 4)) {
                         while (c.hasNext()) c.next();
                     }
                 }
@@ -358,13 +358,13 @@ public class PostingIndexBenchmarkSuite {
     // Section 5: Write Overhead
     // ==================================================================================
 
-    private static long doCovBaselineRead(CairoConfiguration config, String dir, int[] keys,
+    private static void doCovBaselineRead(CairoConfiguration config, String dir, int[] keys,
                                           long colAddr, CoverType ct) {
         long sum = 0;
         try (Path path = new Path().of(dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                 for (int key : keys) {
-                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE);) {
+                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
                         while (cursor.hasNext()) {
                             long rowId = cursor.next();
                             sum += switch (ct) {
@@ -378,15 +378,14 @@ public class PostingIndexBenchmarkSuite {
                 }
             }
         }
-        return sum;
     }
 
-    private static long doCovCoveringRead(CairoConfiguration config, String dir, int[] keys, CoverType ct) {
+    private static void doCovCoveringRead(CairoConfiguration config, String dir, int[] keys, CoverType ct) {
         long sum = 0;
         try (Path path = new Path().of(dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                 for (int key : keys) {
-                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE);) {
+                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
                         if (cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
                             while (crc.hasNext()) {
                                 crc.next();
@@ -404,7 +403,6 @@ public class PostingIndexBenchmarkSuite {
                 }
             }
         }
-        return sum;
     }
 
     // ==================================================================================
@@ -625,7 +623,7 @@ public class PostingIndexBenchmarkSuite {
                 try (Path path = new Path().of(baseDir)) {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                         for (int key : queryKeys) {
-                            try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE);) {
+                            try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
                                 while (cursor.hasNext()) {
                                     long rowId = cursor.next();
                                     long pageNum = (rowId * ct.size) / PAGE_SIZE;
@@ -767,7 +765,7 @@ public class PostingIndexBenchmarkSuite {
 
         @Setup(Level.Trial)
         public void setup() {
-            long maxOffset = bitWidth == 64 ? Long.MAX_VALUE : (1L << bitWidth) - 1;
+            long maxOffset = (1L << bitWidth) - 1;
             packedSize = BitpackUtils.packedDataSize(TOTAL, bitWidth);
             packedAddr = Unsafe.malloc(packedSize, MemoryTag.NATIVE_DEFAULT);
             Unsafe.getUnsafe().setMemory(packedAddr, packedSize, (byte) 0);

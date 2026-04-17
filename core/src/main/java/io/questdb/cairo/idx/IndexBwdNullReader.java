@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.ObjList;
@@ -109,7 +110,9 @@ public class IndexBwdNullReader implements IndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long partitionTxn, long columnTop, RecordMetadata metadata) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn,
+                   long partitionTxn, long columnTop, RecordMetadata metadata,
+                   ColumnVersionReader columnVersionReader, long partitionTimestamp) {
         this.columnTxn = columnNameTxn;
         this.partitionTxn = partitionTxn;
     }

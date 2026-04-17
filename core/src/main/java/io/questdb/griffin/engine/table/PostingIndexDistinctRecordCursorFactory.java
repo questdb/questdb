@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,16 +45,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
-/**
- * Returns DISTINCT symbol values by iterating posting index keys and checking
- * for existence in any partition. O(K × P) where K = symbol key count and
- * P = partition count, vs O(N) for a full table scan (N = total rows).
- * <p>
- * The symbol table retains keys even after all rows for a symbol are dropped
- * (via DROP PARTITION or soft deletes), so DISTINCT cannot trust the symbol
- * table alone. The posting index provides the authoritative answer: a key
- * with zero entries across all partitions has no rows.
- */
 public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFactory {
     private final IntList columnIndexes;
 
@@ -67,13 +57,11 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             @NotNull PartitionFrameCursorFactory dfcFactory,
             int readerColumnIndex,
             int queryColumnPosition,
-            @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizeShifts
+            @NotNull IntList columnIndexes
     ) {
         this.metadata = metadata;
         this.dfcFactory = dfcFactory;
         this.columnIndexes = columnIndexes;
-
         this.cursor = new DistinctCursor(readerColumnIndex, queryColumnPosition);
     }
 

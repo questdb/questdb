@@ -26,6 +26,7 @@ package io.questdb.cairo.idx;
 
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -83,6 +84,10 @@ public interface IndexReader extends Closeable {
      */
     RowCursor getCursor(int key, long minValue, long maxValue);
 
+    default RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        return getCursor(key, minValue, maxValue);
+    }
+
     default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         throw new UnsupportedOperationException();
     }
@@ -110,7 +115,9 @@ public interface IndexReader extends Closeable {
             long columnNameTxn,
             long partitionTxn,
             long columnTop,
-            RecordMetadata metadata
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
     );
 
     void reloadConditionally();

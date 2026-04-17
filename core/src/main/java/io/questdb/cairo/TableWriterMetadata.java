@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
@@ -56,7 +57,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public int[] getCoveringColumnIndices(int columnIndex) {
+    public IntList getCoveringColumnIndices(int columnIndex) {
         return getColumnMetadata(columnIndex).getCoveringColumnIndices();
     }
 
@@ -199,9 +200,9 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     int includeCount = metaMem.getInt(offset);
                     offset += Integer.BYTES;
                     if (includeCount > 0 && offset + (long) includeCount * Integer.BYTES <= metaSize) {
-                        int[] indices = new int[includeCount];
+                        IntList indices = new IntList(includeCount);
                         for (int j = 0; j < includeCount; j++) {
-                            indices[j] = metaMem.getInt(offset);
+                            indices.add(metaMem.getInt(offset));
                             offset += Integer.BYTES;
                         }
                         columnMetadata.getQuick(i).setCoveringColumnIndices(indices);

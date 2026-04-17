@@ -216,9 +216,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Row-by-row CoveringCursor streams values directly from decoded
-        // sidecar arrays — optimal for getCursor() scans. The page frame path
-        // (getPageFrameCursor) is used by aggregation/parallel consumers.
         PartitionFrameCursor frameCursor = dfcFactory.getCursor(
                 executionContext,
                 columnIndexes,
@@ -226,7 +223,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         );
         try {
             if (resolvedKeys != null) {
-                // Multi-key path (IN list)
                 SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
                 cursor.multiKeys.clear();
                 boolean hasAnyKey = false;
@@ -372,6 +368,34 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
+    private static int[] buildRequiredIncludeIndices(int[] queryColToIncludeIdx) {
+        int max = -1;
+        for (int idx : queryColToIncludeIdx) {
+            if (idx > max) {
+                max = idx;
+            }
+        }
+        if (max < 0) {
+            return new int[0];
+        }
+        boolean[] seen = new boolean[max + 1];
+        int count = 0;
+        for (int idx : queryColToIncludeIdx) {
+            if (idx >= 0 && !seen[idx]) {
+                seen[idx] = true;
+                count++;
+            }
+        }
+        int[] result = new int[count];
+        int w = 0;
+        for (int i = 0; i <= max; i++) {
+            if (seen[i]) {
+                result[w++] = i;
+            }
+        }
+        return result;
+    }
+
     private static int findQueryPosition(IntList columnIndexes, int readerColIdx) {
         for (int q = 0, n = columnIndexes.size(); q < n; q++) {
             if (columnIndexes.getQuick(q) == readerColIdx) {
@@ -409,6 +433,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private final int indexColumnIndex;
         private final boolean latestBy;
         private final IntList multiKeys;
+        private final int[] requiredIncludeIndices;
         private final SymbolTable[] symTablesCache;
         private final int[] symbolIncludeCols;
         private Record activeRecord;
@@ -428,12 +453,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                        boolean latestBy, RecordMetadata metadata) {
             this.indexColumnIndex = indexColumnIndex;
             this.symbolKey = symbolKey;
-            // fallbackRecord constructed first so coveringRecord can hold a
-            // reference to it for per-column fallback. The cursor keeps both
-            // records in sync (rowId / symbolKey / partition state) so the
-            // delegation is always safe.
             this.fallbackRecord = new FallbackRecord(queryColToIncludeIdx, symbolKey, columnIndexes, metadata);
             this.coveringRecord = new CoveringRecord(queryColToIncludeIdx, symbolKey, metadata, fallbackRecord);
+            this.requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
             this.multiKeys = multiKeyCapacity > 0 ? new IntList(multiKeyCapacity) : null;
             this.symbolIncludeCols = symbolIncludeCols;
             this.symTablesCache = symbolIncludeCols != null ? new SymbolTable[queryColToIncludeIdx.length] : null;
@@ -597,8 +619,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private boolean findLatestRow(int rawSymbolKey) {
-            // Partitions iterate DESC (latest first). Find the first partition
-            // with data for this key and return the latest matching row.
             while (true) {
                 PartitionFrame frame = frameCursor.next();
                 if (frame == null) {
@@ -610,19 +630,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 int indexKey = TableUtils.toIndexKey(rawSymbolKey);
 
                 if (latestByFilter != null) {
-                    // Filtered LATEST BY: iterate backward through the posting
-                    // index, evaluating the filter on each row. When the backward
-                    // reader has covering data, use it directly to avoid column
-                    // file I/O; otherwise fall back to column files.
                     IndexReader bwdReader = tableReader.getIndexReader(
                             partitionIndex, indexColumnIndex, IndexReader.DIR_BACKWARD);
-                    RowCursor bwdCursor = bwdReader.getCursor(indexKey, rowLo, rowHi);
+                    RowCursor bwdCursor = bwdReader.getCursor(indexKey, rowLo, rowHi, requiredIncludeIndices);
                     try {
                         if (bwdCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
                             Misc.free(currentRowCursor);
                             currentRowCursor = crc;
                             bwdCursor = null;
-                            coveringRecord.of(crc);
+                                    coveringRecord.of(crc);
                             coveringRecord.setSymbolKey(rawSymbolKey);
                             // Keep fallbackRecord in sync so per-column
                             // delegation from coveringRecord stays valid.
@@ -656,7 +672,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // No filter: use forward reader and seekToLast for covering data
                     IndexReader fwdReader = tableReader.getIndexReader(
                             partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
-                    RowCursor rowCursor = fwdReader.getCursor(indexKey, rowLo, rowHi);
+                    RowCursor rowCursor = fwdReader.getCursor(indexKey, rowLo, rowHi, requiredIncludeIndices);
                     try {
                         if (rowCursor instanceof CoveringRowCursor crc) {
                             long lastRowId = crc.seekToLast();
@@ -729,7 +745,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             RowCursor rowCursor = indexReader.getCursor(
                     TableUtils.toIndexKey(rawSymbolKey),
                     rowLo,
-                    rowHi - 1
+                    rowHi - 1,
+                    requiredIncludeIndices
             );
             try {
                 if (rowCursor instanceof CoveringRowCursor crc) {
@@ -905,6 +922,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private final IntList multiKeys;
         private final int queryColCount;
         private final int[] queryColToIncludeIdx;
+        private final int[] requiredIncludeIndices;
         int resolvedKey;
         int symbolKey;
         private PartitionFrame cachedPartFrame;
@@ -924,6 +942,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.symbolKey = symbolKey;
             this.resolvedKey = symbolKey;
             this.queryColToIncludeIdx = queryColToIncludeIdx;
+            this.requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
             this.queryColCount = queryColToIncludeIdx.length;
             this.columnIndexes = columnIndexes;
             this.frame = new CoveringPageFrame(queryColCount);
@@ -1063,7 +1082,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             try (RowCursor rowCursor = indexReader.getCursor(
                     TableUtils.toIndexKey(rawSymbolKey),
                     rowLo,
-                    rowHi - 1
+                    rowHi - 1,
+                    requiredIncludeIndices
             )) {
                 // Fast path: covering sidecar data available — read directly from sidecar.
                 // Fallback: read matching rows from column files (unsealed partitions, etc.)
@@ -1490,12 +1510,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * {@code -1} = indexed symbol column.
      */
     private static class CoveringRecord implements Record {
-        private final Decimal128 decimal128 = new Decimal128();
-        private final Decimal256 decimal256 = new Decimal256();
-        // Per-column fallback target. When the sidecar for a column is
-        // unavailable, getXxx delegates to fallbackRecord to read from the
-        // main column file. The cursor must keep fallbackRecord's
-        // tableReader / partitionIndex / rowId in sync at all times.
         private final FallbackRecord fallbackRecord;
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
@@ -1607,8 +1621,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
                 if (cursor.isCoveredAvailable(includeIdx)) {
-                    // DECIMAL128 stores high first (offset 0), low second (offset 8) —
-                    // opposite to UUID. getCoveredLong128Lo reads offset 0 = high.
                     long high = cursor.getCoveredLong128Lo(includeIdx);
                     long low = cursor.getCoveredLong128Hi(includeIdx);
                     int scale = ColumnType.getDecimalScale(metadata.getColumnType(col));

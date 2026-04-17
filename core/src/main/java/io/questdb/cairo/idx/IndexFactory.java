@@ -26,6 +26,7 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -48,15 +49,17 @@ public final class IndexFactory {
             long columnNameTxn,
             long partitionTxn,
             long columnTop,
-            RecordMetadata metadata
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
     ) {
         return switch (indexType) {
             case IndexType.BITMAP -> direction == IndexReader.DIR_FORWARD
                     ? new BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.POSTING, IndexType.POSTING_DELTA -> direction == IndexReader.DIR_FORWARD
-                    ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata)
-                    : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata);
+                    ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp)
+                    : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
             default -> throw unsupportedIndexType(indexType);
         };
     }

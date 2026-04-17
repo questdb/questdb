@@ -532,9 +532,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 int includeCount = mem.getInt(offset);
                 offset += Integer.BYTES;
                 if (includeCount > 0 && offset + (long) includeCount * Integer.BYTES <= mem.size()) {
-                    int[] indices = new int[includeCount];
+                    IntList indices = new IntList(includeCount);
                     for (int j = 0; j < includeCount; j++) {
-                        indices[j] = mem.getInt(offset);
+                        indices.add(mem.getInt(offset));
                         offset += Integer.BYTES;
                     }
                     // Find the corresponding TableColumnMetadata for writerIndex i

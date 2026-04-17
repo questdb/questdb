@@ -26,7 +26,9 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -34,13 +36,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-/**
- * Backward reader for Delta + FoR64 BitPacking bitmap index.
- * <p>
- * Iterates generations in reverse, blocks within each generation in reverse,
- * and values within each block in reverse — producing values in descending order.
- * Uses PostingGenLookup for tiered gen-to-key mapping with cached metadata.
- */
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private static final int MIN_BUFFER_CAPACITY = 4;
     private final ObjList<Cursor> freeCursors = new ObjList<>();
@@ -51,21 +46,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             CharSequence name,
             long columnNameTxn,
             long partitionTxn,
-            long columnTop
-    ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null);
-    }
-
-    public PostingIndexBwdReader(
-            CairoConfiguration configuration,
-            Path path,
-            CharSequence name,
-            long columnNameTxn,
-            long partitionTxn,
             long columnTop,
-            io.questdb.cairo.sql.RecordMetadata metadata
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
     }
 
     @Override
@@ -79,11 +65,23 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
+        return getCursor(key, minValue, maxValue, null);
+    }
+
+    @Override
+    public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         if (key >= keyCount) {
             updateKeyCount();
         }
 
         if (key < keyCount) {
+            if (requiredCoverColumns != null && coverCount > 0) {
+                for (int c : requiredCoverColumns) {
+                    if (c >= 0 && c < coverCount) {
+                        ensureSidecarOpen(c);
+                    }
+                }
+            }
             Cursor c;
             if (freeCursors.size() > 0) {
                 c = freeCursors.popLast();
@@ -501,7 +499,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
                 long dataAddr = strideAddr + flatHeaderSize;
 
-                // Binary search to trim values outside [minValue, maxValue].
                 int effectiveStart = startCount;
                 int effectiveEnd = endCount;
                 if (minValue > 0 && bitWidth > 0 && count > 1) {
@@ -560,7 +557,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            // Delta mode
             long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
             int totalValueCount = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
             this.sidecarStrideKeyStart = 0;
@@ -611,7 +607,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             Unsafe.getUnsafe().loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
-            // Use stored prefix-sum for O(1) key lookup
             int minKey = genLookup.getGenMinKey(gen);
             int maxKey = genLookup.getGenMaxKey(gen);
             if (requestedKey < minKey || requestedKey > maxKey) {
@@ -764,7 +759,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             }
             pos += 4;
 
-            // File offsets into mapped value memory — resolved lazily per hot func
             srcValueCountsOffset = pos;
             pos += firstWord;
 
@@ -777,7 +771,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             srcBitWidthsOffset = pos;
             pos += firstWord;
 
-            // packedOffsets only present for multi-block keys
             if (firstWord > 1) {
                 srcPackedOffsetsOffset = pos;
                 pos += (long) firstWord * Long.BYTES;
@@ -787,7 +780,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
             packedDataStartOffset = pos;
 
-            // Trim trailing blocks (highest values) above maxValue.
             int endBlock = firstWord;
             if (maxValue < Long.MAX_VALUE && firstWord > 1) {
                 int lo = 0, hi = firstWord - 1;
@@ -802,7 +794,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 endBlock = lo + 1;
             }
 
-            // Trim leading blocks (lowest values) below minValue.
             int startBlock = 0;
             if (minValue > 0 && firstWord > 1) {
                 int lo = 0, hi = firstWord - 1;
@@ -877,7 +868,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
             this.currentGen = genCount; // will be decremented
 
-            // Set up inverted index range for this key (Tier 1), reverse order
             if (genLookup.isPerKeyMode() && key < genLookup.getKeyCount()) {
                 this.lookupPos = genLookup.getEntryEnd(key) - 1;
                 this.lookupEnd = genLookup.getEntryStart(key);

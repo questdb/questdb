@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.IntList;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import org.jetbrains.annotations.Nullable;
@@ -38,7 +39,7 @@ public class TableColumnMetadata implements Plannable {
     private final int writerIndex;
     private String columnName;
     private int columnType;
-    private int[] coveringColumnIndices;
+    private IntList coveringColumnIndices;
     private boolean dedupKeyFlag;
     private int indexValueBlockCapacity;
     private int parquetEncodingConfig;
@@ -150,7 +151,7 @@ public class TableColumnMetadata implements Plannable {
         return columnType;
     }
 
-    public int[] getCoveringColumnIndices() {
+    public IntList getCoveringColumnIndices() {
         return coveringColumnIndices;
     }
 
@@ -192,7 +193,7 @@ public class TableColumnMetadata implements Plannable {
     }
 
     public boolean isCovering() {
-        return coveringColumnIndices != null && coveringColumnIndices.length > 0;
+        return coveringColumnIndices != null && coveringColumnIndices.size() > 0;
     }
 
     public boolean isSymbolCacheFlag() {
@@ -215,7 +216,7 @@ public class TableColumnMetadata implements Plannable {
         this.columnName = name;
     }
 
-    public void setCoveringColumnIndices(int[] coveringColumnIndices) {
+    public void setCoveringColumnIndices(IntList coveringColumnIndices) {
         this.coveringColumnIndices = coveringColumnIndices;
     }
 
