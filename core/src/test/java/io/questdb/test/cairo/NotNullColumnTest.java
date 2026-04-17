@@ -1159,6 +1159,74 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsNullProjectionOnNotNullColumnExtendedTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            // Covers the Phase 1+2 types wired through FunctionParser.createColumn and
+            // their Eq*FunctionFactory short-circuits. For each NOT NULL column, x IS NULL
+            // must constant-fold to FALSE and x IS NOT NULL to TRUE regardless of the
+            // stored sentinel values.
+            execute("""
+                    CREATE TABLE t (
+                        ipv4_c IPv4 NOT NULL,
+                        uuid_c UUID NOT NULL,
+                        char_c CHAR NOT NULL,
+                        str_c STRING NOT NULL,
+                        vc_c VARCHAR NOT NULL,
+                        sym_c SYMBOL NOT NULL,
+                        l256_c LONG256 NOT NULL,
+                        geo_c GEOHASH(5c) NOT NULL,
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        ('1.2.3.4', '11111111-1111-1111-1111-111111111111', 'a', 'x', 'y', 's1',
+                         '0x01', 'u33db', '2024-01-01')
+                    """);
+
+            assertSql(
+                    """
+                            ipv4_null\tuuid_null\tchar_null\tstr_null\tvc_null\tsym_null\tl256_null\tgeo_null
+                            false\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse
+                            """,
+                    "SELECT (ipv4_c IS NULL) ipv4_null, (uuid_c IS NULL) uuid_null, " +
+                            "(char_c IS NULL) char_null, (str_c IS NULL) str_null, " +
+                            "(vc_c IS NULL) vc_null, (sym_c IS NULL) sym_null, " +
+                            "(l256_c IS NULL) l256_null, (geo_c IS NULL) geo_null FROM t"
+            );
+            assertSql(
+                    """
+                            ipv4_nn\tuuid_nn\tchar_nn\tstr_nn\tvc_nn\tsym_nn\tl256_nn\tgeo_nn
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
+                            """,
+                    "SELECT (ipv4_c IS NOT NULL) ipv4_nn, (uuid_c IS NOT NULL) uuid_nn, " +
+                            "(char_c IS NOT NULL) char_nn, (str_c IS NOT NULL) str_nn, " +
+                            "(vc_c IS NOT NULL) vc_nn, (sym_c IS NOT NULL) sym_nn, " +
+                            "(l256_c IS NOT NULL) l256_nn, (geo_c IS NOT NULL) geo_nn FROM t"
+            );
+
+            // WHERE x IS NULL on NOT NULL columns of these types matches zero rows via
+            // the eq-factory short-circuit. (JIT/intrinsic paths for these types still
+            // fall through to the factory layer for IS NULL.)
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ipv4_c IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE uuid_c IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE str_c IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE vc_c IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE sym_c IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l256_c IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE geo_c IS NULL");
+
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE ipv4_c IS NOT NULL");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE uuid_c IS NOT NULL");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE str_c IS NOT NULL");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE vc_c IS NOT NULL");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE sym_c IS NOT NULL");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE l256_c IS NOT NULL");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE geo_c IS NOT NULL");
+        });
+    }
+
+    @Test
     public void testAggregateOnNotNullColumnIsConsistent() throws Exception {
         assertMemoryLeak(() -> {
             // Every native aggregate kernel today (both the vectorized Vect.* / Rosti::keyed*
