@@ -35,7 +35,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-
+                        
                         """,
                 "SELECT bar(0, 0, 100, 10)",
                 null,
@@ -95,7 +95,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-
+                        
                         """,
                 "SELECT bar(-50, 0, 100, 10)",
                 null,
@@ -150,7 +150,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-
+                        
                         """,
                 "SELECT bar(50, 50, 50, 10)",
                 null,
@@ -180,7 +180,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-
+                        
                         """,
                 "SELECT bar(50, 0, NULL, 10)",
                 null,
@@ -195,7 +195,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-
+                        
                         """,
                 "SELECT bar(50, NULL, 100, 10)",
                 null,
@@ -210,7 +210,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-
+                        
                         """,
                 "SELECT bar(NULL, 0, 100, 10)",
                 null,
@@ -354,7 +354,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-
+                        
                         """,
                 "SELECT bar(50, 0, 100, 0)",
                 null,
@@ -369,7 +369,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-
+                        
                         """,
                 "SELECT bar(50, 0, 100, -5)",
                 null,
@@ -441,7 +441,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-
+                        
                         """,
                 "SELECT bar(50, 100, 0, 10)",
                 null,
