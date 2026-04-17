@@ -550,15 +550,17 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                         }
                     }
                 } else {
-                    if (size > 0) {
-                        long idx = firstIdx % capacity;
+                    // unbounded preceding: firstIdx never retreats; extend frame with every
+                    // previously-ineligible row whose timestamp is now at least minDiff behind.
+                    for (long i = frameSize; i < size; i++) {
+                        long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) >= minDiff) {
                             frameSize++;
-                            newFirstIdx = idx;
+                        } else {
+                            break;
                         }
                     }
-                    firstIdx = newFirstIdx;
                 }
 
                 if (frameSize >= n) {
@@ -951,15 +953,17 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                     }
                 }
             } else {
-                if (size > 0) {
-                    long idx = firstIdx % capacity;
+                // unbounded preceding: firstIdx never retreats; extend frame with every
+                // previously-ineligible row whose timestamp is now at least minDiff behind.
+                for (long i = frameSize, nn = size; i < nn; i++) {
+                    long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) >= minDiff) {
                         frameSize++;
-                        newFirstIdx = idx;
+                    } else {
+                        break;
                     }
                 }
-                firstIdx = newFirstIdx;
             }
 
             if (frameSize >= n) {
