@@ -217,7 +217,7 @@ impl ParquetDecoder {
                 continue;
             }
 
-            let col_info = QdbMetaCol { column_type, column_top, format, ascii };
+            let col_info = QdbMetaCol { column_type, column_top, format, ascii, not_null: false };
             match self.decode_column_chunk(
                 ctx,
                 column_chunk_bufs,
@@ -341,7 +341,7 @@ impl ParquetDecoder {
                 continue;
             }
 
-            let col_info = QdbMetaCol { column_type, column_top, format, ascii };
+            let col_info = QdbMetaCol { column_type, column_top, format, ascii, not_null: false };
 
             // Decode the column chunk with row filter
             match self.decode_column_chunk_filtered::<FILL_NULLS>(
@@ -2136,6 +2136,8 @@ impl ParquetDecoder {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
+        
         };
         self.decode_column_chunk(
             &mut ctx,

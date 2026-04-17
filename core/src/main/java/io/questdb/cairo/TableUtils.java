@@ -1758,12 +1758,13 @@ public final class TableUtils {
                     final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnId);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
                     final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
+                    final boolean isNotNull = metadata.isNotNull(columnIndex);
 
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
                             int encodeColumnType = columnType;
-                            if (!symbolTableProvider.containsNullValue(columnIndex)) {
-                                encodeColumnType |= Integer.MIN_VALUE;
+                            if (isNotNull || !symbolTableProvider.containsNullValue(columnIndex)) {
+                                encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                             }
 
                             partitionDescriptor.addColumn(
@@ -1809,7 +1810,7 @@ public final class TableUtils {
                             // recover the partition path
                             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
                         } else if (ColumnType.isVarSize(columnType)) {
-                            partitionDescriptor.addColumn(columnName, columnType, columnId, columnTop, parquetEncodingConfig);
+                            partitionDescriptor.addColumn(columnName, isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType, columnId, columnTop, parquetEncodingConfig);
 
                             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                             final long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
@@ -1842,7 +1843,7 @@ public final class TableUtils {
                             ff.madvise(fixedAddr, mapBytes, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.addColumn(
                                     columnName,
-                                    columnType,
+                                    isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                                     columnId,
                                     columnTop,
                                     fixedAddr,
@@ -1858,7 +1859,7 @@ public final class TableUtils {
                         // no rows in column
                         partitionDescriptor.addColumn(
                                 columnName,
-                                columnType,
+                                isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                                 columnId,
                                 partitionRowCount,
                                 parquetEncodingConfig

@@ -42,6 +42,14 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
     public static final int COLUMN_SECONDARY_ADDR_OFFSET = 5;
     public static final int COLUMN_SECONDARY_SIZE_OFFSET = 6;
     public static final int COLUMN_SIZE_OFFSET = 4;
+    /**
+     * Sign bit of the column type int sent across JNI. When set, the Rust encoder treats
+     * the column as NOT NULL: emits an all-ones RLE run for definition levels (fast path)
+     * and records the constraint in the QdbMeta JSON footer so it survives round-trip.
+     * The Parquet schema Repetition stays Optional regardless (the stability-under-O3
+     * invariant in parquet_write/schema.rs:26-42 must not be violated).
+     */
+    public static final int NOT_NULL_HINT_BIT = Integer.MIN_VALUE;
     public static final int PARQUET_ENCODING_CONFIG_OFFSET = 9;
     public static final int SYMBOL_OFFSET_ADDR_OFFSET = 7;
     public static final int SYMBOL_OFFSET_COUNT_OFFSET = 8;

@@ -126,6 +126,55 @@ public class PartitionDecoderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotNullRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            execute(
+                    "create table x (" +
+                            " a INT NOT NULL," +
+                            " b LONG," +
+                            " c SYMBOL NOT NULL," +
+                            " d VARCHAR NOT NULL," +
+                            " e DOUBLE," +
+                            " ts TIMESTAMP NOT NULL" +
+                            ") timestamp(ts) partition by day bypass wal"
+            );
+            execute("insert into x values (1, 10, 'a', 'v1', 1.5, '2024-01-01')");
+            execute("insert into x values (2, 20, 'b', 'v2', 2.5, '2024-01-01T01:00:00.000Z')");
+
+            long fd = -1;
+            long addr = 0;
+            long fileSize = 0;
+            try (
+                    Path path = new Path();
+                    PartitionDecoder partitionDecoder = new PartitionDecoder();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x_not_null.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                fd = TableUtils.openRO(ff, path.$(), LOG);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                partitionDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                final PartitionDecoder.Metadata meta = partitionDecoder.metadata();
+                Assert.assertTrue("a NOT NULL", meta.isNotNull(meta.getColumnIndex("a")));
+                Assert.assertFalse("b nullable", meta.isNotNull(meta.getColumnIndex("b")));
+                Assert.assertTrue("c NOT NULL symbol", meta.isNotNull(meta.getColumnIndex("c")));
+                Assert.assertTrue("d NOT NULL varchar", meta.isNotNull(meta.getColumnIndex("d")));
+                Assert.assertFalse("e nullable", meta.isNotNull(meta.getColumnIndex("e")));
+                Assert.assertTrue("ts NOT NULL designated timestamp", meta.isNotNull(meta.getColumnIndex("ts")));
+            } finally {
+                ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+        });
+    }
+
+    @Test
     public void testOutOfMemory() throws Exception {
         final long rows = 10;
         final FilesFacade ff = configuration.getFilesFacade();

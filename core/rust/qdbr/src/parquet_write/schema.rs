@@ -478,6 +478,7 @@ pub fn to_parquet_schema(
             column_top: column.column_top,
             format,
             ascii,
+            not_null: column.not_null_hint,
         });
     }
 

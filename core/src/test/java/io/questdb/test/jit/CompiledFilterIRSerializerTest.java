@@ -773,6 +773,47 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testOptionsNullChecksClearedWhenAllColumnsNotNull() throws Exception {
+        // Separate table with a mix of NOT NULL and nullable columns.
+        factory.close();
+        execute("drop table if exists y");
+        TableModel model = new TableModel(configuration, "y", PartitionBy.NONE);
+        model.col("nnint", ColumnType.INT).notNull()
+                .col("nnlong", ColumnType.LONG).notNull()
+                .col("nulint", ColumnType.INT)
+                .timestamp("ts");
+        AbstractCairoTest.create(model);
+
+        try (TableWriter writer = newOffPoolWriter(configuration, "y")) {
+            TableWriter.Row row = writer.newRow(0L);
+            row.putInt(writer.getColumnIndex("nnint"), 1);
+            row.putLong(writer.getColumnIndex("nnlong"), 10L);
+            row.append();
+            writer.commit();
+        }
+
+        factory = select("select * from y");
+        Assert.assertTrue(factory.supportsPageFrameCursor());
+        metadata = factory.getMetadata();
+
+        // Filter references only NOT NULL columns → bit 6 is cleared even with nullChecks=true.
+        int options = serialize("nnint = 1 and nnlong = 2", false, false, true);
+        assertOptionsNullChecks(options, false);
+
+        // Filter also references the nullable column → bit 6 stays set.
+        options = serialize("nnint = 1 and nulint = 2", false, false, true);
+        assertOptionsNullChecks(options, true);
+
+        // Filter on the designated timestamp (implicitly NOT NULL) alone → bit 6 is cleared.
+        options = serialize("ts > 0", false, false, true);
+        assertOptionsNullChecks(options, false);
+
+        // Caller-level nullChecks=false still wins.
+        options = serialize("nnint = 1 and nulint = 2", false, false, false);
+        assertOptionsNullChecks(options, false);
+    }
+
+    @Test
     public void testOptionsScalarFlag() throws Exception {
         int options = serialize("abyte = 0", true, false, false);
         assertOptionsHint(options);

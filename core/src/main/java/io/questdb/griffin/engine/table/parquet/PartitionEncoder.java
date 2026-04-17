@@ -173,9 +173,10 @@ public class PartitionEncoder {
             final int columnType = metadata.getColumnType(i);
             if (columnType > 0) {
                 final TableColumnMetadata columnMetadata = metadata.getColumnMetadata(i);
+                final int encodeColumnType = metadata.isNotNull(i) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType;
                 descriptor.addColumn(
                         metadata.getColumnName(i),
-                        columnType,
+                        encodeColumnType,
                         columnMetadata.getWriterIndex(),
                         0,
                         0,
@@ -217,13 +218,14 @@ public class PartitionEncoder {
                 }
 
                 final int parquetEncodingConfig = metadata.getColumnMetadata(i).getParquetEncodingConfig();
+                final boolean isNotNull = metadata.isNotNull(i);
                 if (ColumnType.isSymbol(columnType)) {
                     SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
                     final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
                     final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
                     int encodeColumnType = columnType;
-                    if (!symbolMapReader.containsNullValue()) {
-                        encodeColumnType |= Integer.MIN_VALUE;
+                    if (isNotNull || !symbolMapReader.containsNullValue()) {
+                        encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                     }
                     descriptor.addColumn(
                             columnName,
@@ -242,7 +244,7 @@ public class PartitionEncoder {
                     final MemoryR secondaryMem = tableReader.getColumn(primaryIndex + 1);
                     descriptor.addColumn(
                             columnName,
-                            columnType,
+                            isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                             columnId,
                             colTop,
                             primaryMem.addressOf(0),
@@ -256,7 +258,7 @@ public class PartitionEncoder {
                 } else {
                     descriptor.addColumn(
                             columnName,
-                            columnType,
+                            isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                             columnId,
                             colTop,
                             primaryMem.addressOf(0),

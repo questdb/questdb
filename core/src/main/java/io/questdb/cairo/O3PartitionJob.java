@@ -71,11 +71,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static final io.questdb.std.ThreadLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
             new io.questdb.std.ThreadLocal<>(O3ParquetMergeContext::new);
     public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT;
-    // High bit set on the column type signals the Rust parquet encoder that the
-    // symbol column contains no nulls, so it can emit an all-ones RLE run for
-    // definition levels instead of checking each row.  This is a write-time hint
-    // only — it does NOT change the parquet schema Repetition (always Optional).
-    private static final int PARQUET_SYMBOL_NOT_NULL_HINT = Integer.MIN_VALUE;
 
     public O3PartitionJob(MessageBus messageBus) {
         super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
@@ -282,11 +277,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             continue;
                         }
                         // The high bit is a write-time hint telling the Rust encoder
-                        // that this symbol column has no nulls, so it can emit a fast
-                        // all-ones RLE run for definition levels. It does NOT change
-                        // the parquet schema Repetition — symbols are always Optional.
-                        if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
-                            colType |= PARQUET_SYMBOL_NOT_NULL_HINT;
+                        // that the column contains no nulls, so it can emit a fast
+                        // all-ones RLE run for definition levels and the round-trip
+                        // reader can restore NOT NULL via QdbMeta. It does NOT change
+                        // the parquet schema Repetition — all columns stay Optional.
+                        final boolean noNulls = tableWriterMetadata.isNotNull(i)
+                                || (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag());
+                        if (noNulls) {
+                            colType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                         }
                         final int colId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
                         final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(i).getParquetEncodingConfig();
@@ -1533,6 +1531,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
             final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
             final boolean notTheTimestamp = columnIndex != timestampIndex;
+            final boolean isNotNull = tableWriterMetadata.isNotNull(columnIndex);
             final int columnOffset = getPrimaryColumnIndex(columnIndex);
             final MemoryCR oooMem1 = oooColumns.getQuick(columnOffset);
             final MemoryCR oooMem2 = oooColumns.getQuick(columnOffset + 1);
@@ -1575,7 +1574,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 partitionDescriptor.addColumn(
                         columnName,
-                        columnType,
+                        isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                         columnId,
                         0,
                         dstDataAddr,
@@ -1629,8 +1628,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         // High bit = no-null hint for def level encoding, not schema Repetition.
                         encodeColumnType = columnType;
-                        if (!symbolMapWriter.getNullFlag()) {
-                            encodeColumnType |= PARQUET_SYMBOL_NOT_NULL_HINT;
+                        if (isNotNull || !symbolMapWriter.getNullFlag()) {
+                            encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                         }
                     } catch (Throwable th) {
                         Unsafe.free(dstFixAddr, dstFixSize, MemoryTag.NATIVE_O3);
@@ -1653,7 +1652,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else {
                     partitionDescriptor.addColumn(
                             columnName,
-                            columnType,
+                            isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                             columnId,
                             0,
                             dstFixAddr,
@@ -2320,6 +2319,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
                     final boolean notTheTimestamp = columnIndex != timestampIndex;
+                    final boolean isNotNull = tableWriterMetadata.isNotNull(columnIndex);
                     final int columnOffset = getPrimaryColumnIndex(columnIndex);
                     int bi4 = ai * 4;
                     int bi2 = ai * 2;
@@ -2352,7 +2352,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         chunkDescriptor.addColumn(
                                 columnName,
-                                columnType,
+                                isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                                 columnId,
                                 0,
                                 dstDataAddr,
@@ -2397,8 +2397,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             // High bit = no-null hint for def level encoding, not schema Repetition.
                             int encodeColumnType = columnType;
-                            if (!symbolMapWriter.getNullFlag()) {
-                                encodeColumnType |= PARQUET_SYMBOL_NOT_NULL_HINT;
+                            if (isNotNull || !symbolMapWriter.getNullFlag()) {
+                                encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                             }
                             chunkDescriptor.addColumn(
                                     columnName,
@@ -2417,7 +2417,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         } else {
                             chunkDescriptor.addColumn(
                                     columnName,
-                                    columnType,
+                                    isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                                     columnId,
                                     0,
                                     dstFixAddr,

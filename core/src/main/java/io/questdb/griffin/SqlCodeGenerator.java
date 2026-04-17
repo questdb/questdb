@@ -187,8 +187,11 @@ import io.questdb.griffin.engine.groupby.vect.AvgDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgShortVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.CountDoubleNotNullVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountDoubleVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.CountIntNotNullVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountIntVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.CountLongNotNullVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedVectorRecordCursorFactory;
@@ -456,6 +459,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
     private static final ModelOperator backupWhereClauseRef = IQueryModel::backupWhereClause;
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> countConstructors = new IntObjHashMap<>();
+    /**
+     * Parallel map keyed by column type. When the source column is NOT NULL the
+     * vectorized aggregate can avoid the per-row sentinel scan — for non-keyed
+     * COUNT the entire native call is skipped and the row count is added
+     * directly. Missing entries fall back to the nullable variant.
+     */
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> countNotNullConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> ksumConstructors = new IntObjHashMap<>();
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
@@ -1315,7 +1325,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else if (isSingleColumnFunction(ast, "count")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
-            return countConstructors.get(metadata.getColumnType(columnIndex));
+            final int colType = metadata.getColumnType(columnIndex);
+            if (metadata.isNotNull(columnIndex)) {
+                final VectorAggregateFunctionConstructor notNullCtor = countNotNullConstructors.get(colType);
+                if (notNullCtor != null) {
+                    return notNullCtor;
+                }
+            }
+            return countConstructors.get(colType);
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
@@ -10450,6 +10467,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         countConstructors.put(DATE, CountLongVectorAggregateFunction::new);
         countConstructors.put(TIMESTAMP_MICRO, CountLongVectorAggregateFunction::new);
         countConstructors.put(TIMESTAMP_NANO, CountLongVectorAggregateFunction::new);
+
+        countNotNullConstructors.put(DOUBLE, CountDoubleNotNullVectorAggregateFunction::new);
+        countNotNullConstructors.put(INT, CountIntNotNullVectorAggregateFunction::new);
+        countNotNullConstructors.put(LONG, CountLongNotNullVectorAggregateFunction::new);
+        countNotNullConstructors.put(DATE, CountLongNotNullVectorAggregateFunction::new);
+        countNotNullConstructors.put(TIMESTAMP_MICRO, CountLongNotNullVectorAggregateFunction::new);
+        countNotNullConstructors.put(TIMESTAMP_NANO, CountLongNotNullVectorAggregateFunction::new);
 
         sumConstructors.put(DOUBLE, SumDoubleVectorAggregateFunction::new);
         sumConstructors.put(INT, SumIntVectorAggregateFunction::new);
