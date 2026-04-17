@@ -56,6 +56,9 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
     ) {
         Function floatFunc = args.getQuick(0);
         if (floatFunc.isConstant()) {
+            if (floatFunc.isNullConstant()) {
+                return VarcharConstant.NULL;
+            }
             final StringSink sink = Misc.getThreadLocalSink();
             sink.put(floatFunc.getFloat(null));
             return new VarcharConstant(Chars.toString(sink));
@@ -97,7 +100,7 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class FuncNotNull extends AbstractCastToVarcharFunction {
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
@@ -117,11 +120,6 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(arg.getFloat(rec));
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 }

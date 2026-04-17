@@ -99,7 +99,7 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class FuncNotNull extends AbstractCastToStrFunction {
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
@@ -119,11 +119,6 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             arg.getInterval(rec).toSink(sinkB, arg.getType());
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 }

@@ -87,7 +87,7 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class FuncNotNull extends AbstractCastToStrFunction {
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
@@ -112,11 +112,6 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         @Override
         public int getStrLen(Record rec) {
             return Uuid.UUID_LENGTH;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 }

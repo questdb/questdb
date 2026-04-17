@@ -90,7 +90,7 @@ public final class CastUuidToVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class FuncNotNull extends AbstractCastToVarcharFunction {
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
@@ -110,11 +110,6 @@ public final class CastUuidToVarcharFunctionFactory implements FunctionFactory {
             sinkB.clear();
             Numbers.appendUuid(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkB);
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 }

@@ -95,7 +95,7 @@ public class CastCharToVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class FuncNotNull extends AbstractCastToVarcharFunction {
+    private static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
@@ -115,11 +115,6 @@ public class CastCharToVarcharFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(arg.getChar(rec));
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 }

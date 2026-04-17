@@ -164,7 +164,7 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class Func128NotNull extends AbstractCastToVarcharFunction {
+    public static class Func128NotNull extends AbstractCastNotNullToVarcharFunction {
         private final Decimal128 decimal128 = new Decimal128();
         private final int fromPrecision;
         private final int fromScale;
@@ -192,11 +192,6 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
             sinkB.clear();
             Decimal128.toSink(sinkB, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 
@@ -236,7 +231,7 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class Func64NotNull extends AbstractCastToVarcharFunction {
+    public static class Func64NotNull extends AbstractCastNotNullToVarcharFunction {
         private final int fromPrecision;
         private final int fromScale;
         private final Utf8StringSink sinkA = new Utf8StringSink();
@@ -262,14 +257,9 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
             Decimal64.toSink(sinkB, arg.getDecimal64(rec), fromScale, fromPrecision);
             return sinkB;
         }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
-        }
     }
 
-    public static class FuncNotNull extends AbstractCastToVarcharFunction {
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
         private final Decimal256 decimal256 = new Decimal256();
         private final int fromPrecision;
         private final int fromScale;
@@ -313,11 +303,6 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
                     fromPrecision
             );
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 }

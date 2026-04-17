@@ -79,7 +79,7 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class FuncNotNull extends AbstractCastToVarcharFunction {
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
@@ -99,11 +99,6 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
             sinkB.clear();
             Numbers.appendLong256(arg.getLong256A(rec), sinkB);
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 }

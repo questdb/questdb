@@ -43,6 +43,9 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function intFunc = args.getQuick(0);
         if (intFunc.isConstant()) {
+            if (intFunc.isNullConstant()) {
+                return StrConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             sink.put(intFunc.getInt(null));
             return new StrConstant(Chars.toString(sink));
@@ -84,7 +87,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class FuncNotNull extends AbstractCastToStrFunction {
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
@@ -105,11 +108,6 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             Numbers.append(sinkB, (long) arg.getInt(rec), false);
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 }

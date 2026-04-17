@@ -59,6 +59,9 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
     ) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
+            if (func.isNullConstant()) {
+                return VarcharConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             sink.put(func.getTimestamp(null));
             return new VarcharConstant(Chars.toString(sink));
@@ -101,7 +104,7 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class FuncNotNull extends AbstractCastToVarcharFunction {
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
         private final TimestampDriver timestampDriver;
@@ -119,11 +122,6 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             return format(arg.getTimestamp(rec), sinkB);
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
 
         private Utf8Sequence format(long value, Utf8StringSink sink) {

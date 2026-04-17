@@ -87,7 +87,7 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class FuncNotNull extends AbstractCastToStrFunction {
+    private static class FuncNotNull extends AbstractCastNotNullToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
@@ -107,11 +107,6 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(arg.getChar(rec));
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 }

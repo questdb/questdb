@@ -167,6 +167,96 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastNullConstantToStringFoldsToNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // Without the isNullConstant() guard in each cast factory, the constant-fold
+            // branch formats INT_NULL / LONG_NULL / NaN / Long.MIN_VALUE via Numbers.append,
+            // which short-circuits to the 4-char text "null", producing a StrConstant("null")
+            // that is not semantically null. Confirm the guard folds to StrConstant.NULL /
+            // VarcharConstant.NULL so downstream IS NULL / COALESCE / output layers still
+            // see a real null.
+            assertSql(
+                    """
+                            i\tl\td\tf\tdate\tts\tip
+                            \t\t\t\t\t\t
+                            """,
+                    "SELECT cast(cast(null as int) as string) i," +
+                            " cast(cast(null as long) as string) l," +
+                            " cast(cast(null as double) as string) d," +
+                            " cast(cast(null as float) as string) f," +
+                            " cast(cast(null as date) as string) date," +
+                            " cast(cast(null as timestamp) as string) ts," +
+                            " cast(cast(null as ipv4) as string) ip"
+            );
+
+            assertSql(
+                    """
+                            i\tl\td\tf\tdate\tts\tip
+                            \t\t\t\t\t\t
+                            """,
+                    "SELECT cast(cast(null as int) as varchar) i," +
+                            " cast(cast(null as long) as varchar) l," +
+                            " cast(cast(null as double) as varchar) d," +
+                            " cast(cast(null as float) as varchar) f," +
+                            " cast(cast(null as date) as varchar) date," +
+                            " cast(cast(null as timestamp) as varchar) ts," +
+                            " cast(cast(null as ipv4) as varchar) ip"
+            );
+
+            // IS NULL against the folded constant is TRUE (would be FALSE with a StrConstant("null")).
+            assertSql("c\ntrue\n", "SELECT cast(cast(null as int) as string) IS NULL c");
+            assertSql("c\ntrue\n", "SELECT cast(cast(null as long) as varchar) IS NULL c");
+            assertSql("c\ntrue\n", "SELECT cast(cast(null as timestamp) as string) IS NULL c");
+        });
+    }
+
+    @Test
+    public void testCastToStringOnNotNullColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            // Phase 5: casting a NOT NULL column to STRING / VARCHAR must format the
+            // sentinel bit pattern as numeric text, never the literal "null".
+            execute("CREATE TABLE t (i INT NOT NULL, l LONG NOT NULL, d DOUBLE NOT NULL, ts TIMESTAMP NOT NULL, tsrow TIMESTAMP NOT NULL) TIMESTAMP(tsrow) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 100, 1.5, '2024-01-05T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                        (NULL, NULL, NULL, NULL, '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            // INT_NULL / LONG_NULL format as their MIN_VALUE numeric text. DOUBLE NaN
+            // formats to "NaN". TIMESTAMP_NULL (MIN_VALUE) falls back to the numeric
+            // bit pattern because the timestamp formatter itself short-circuits on it.
+            assertSql(
+                    """
+                            i_str\tl_str\td_str\tts_str
+                            1\t100\t1.5\t2024-01-05T00:00:00.000000Z
+                            -2147483648\t-9223372036854775808\tNaN\t-9223372036854775808
+                            """,
+                    "SELECT i::string i_str, l::string l_str, d::string d_str, ts::string ts_str FROM t ORDER BY tsrow"
+            );
+
+            assertSql(
+                    """
+                            i_v\tl_v\td_v\tts_v
+                            1\t100\t1.5\t2024-01-05T00:00:00.000000Z
+                            -2147483648\t-9223372036854775808\tNaN\t-9223372036854775808
+                            """,
+                    "SELECT i::varchar i_v, l::varchar l_v, d::varchar d_v, ts::varchar ts_v FROM t ORDER BY tsrow"
+            );
+
+            // Nullable columns continue to produce empty-field output for a null value.
+            execute("CREATE TABLE u (i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO u VALUES (NULL, NULL, '2024-01-01T00:00:00.000000Z')");
+            assertSql(
+                    """
+                            i_str\tl_str
+                            \t
+                            """,
+                    "SELECT i::string i_str, l::string l_str FROM u"
+            );
+        });
+    }
+
+    @Test
     public void testCreateTableAsSelectDoesNotPropagateNotNull() throws Exception {
         assertMemoryLeak(() -> {
             // CREATE TABLE AS SELECT does not propagate NOT NULL from source columns,
@@ -1474,56 +1564,6 @@ public class NotNullColumnTest extends AbstractCairoTest {
 
             // The non-IS-NULL arm still matches normally through the JIT.
             assertSql("count\n1\n", "SELECT count(*) FROM t WHERE x IS NULL OR x = 2");
-        });
-    }
-
-    @Test
-    public void testCastToStringOnNotNullColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            // Phase 5: casting a NOT NULL column to STRING / VARCHAR must format the
-            // sentinel bit pattern as numeric text, never the literal "null". The cast
-            // factory selects a FuncNotNull variant at newInstance time based on
-            // arg.isNotNull() and skips the sentinel-to-null branch entirely.
-            execute("CREATE TABLE t (i INT NOT NULL, l LONG NOT NULL, d DOUBLE NOT NULL, ts TIMESTAMP NOT NULL, tsrow TIMESTAMP NOT NULL) TIMESTAMP(tsrow) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO t VALUES
-                        (1, 100, 1.5, '2024-01-05T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
-                        (NULL, NULL, NULL, NULL, '2024-01-02T00:00:00.000000Z')
-                    """);
-
-            // INT_NULL / LONG_NULL format as their MIN_VALUE text representation.
-            // DOUBLE NaN (the null sentinel) formats to the string "NaN" per
-            // Numbers.append(double). TIMESTAMP_NULL (Long.MIN_VALUE) formats to the
-            // raw numeric bit pattern — FuncNotNull mirrors CursorPrinter here because
-            // the timestamp formatter itself short-circuits on the sentinel.
-            assertSql(
-                    """
-                            i_str\tl_str\td_str\tts_str
-                            1\t100\t1.5\t2024-01-05T00:00:00.000000Z
-                            -2147483648\t-9223372036854775808\tNaN\t-9223372036854775808
-                            """,
-                    "SELECT i::string i_str, l::string l_str, d::string d_str, ts::string ts_str FROM t ORDER BY tsrow"
-            );
-
-            assertSql(
-                    """
-                            i_v\tl_v\td_v\tts_v
-                            1\t100\t1.5\t2024-01-05T00:00:00.000000Z
-                            -2147483648\t-9223372036854775808\tNaN\t-9223372036854775808
-                            """,
-                    "SELECT i::varchar i_v, l::varchar l_v, d::varchar d_v, ts::varchar ts_v FROM t ORDER BY tsrow"
-            );
-
-            // Nullable (non-NOT NULL) columns still produce null text, unchanged.
-            execute("CREATE TABLE u (i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO u VALUES (NULL, NULL, '2024-01-01T00:00:00.000000Z')");
-            assertSql(
-                    """
-                            i_str\tl_str
-                            \t
-                            """,
-                    "SELECT i::string i_str, l::string l_str FROM u"
-            );
         });
     }
 }

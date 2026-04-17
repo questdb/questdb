@@ -45,6 +45,9 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function ipv4Func = args.getQuick(0);
         if (ipv4Func.isConstant()) {
+            if (ipv4Func.isNullConstant()) {
+                return StrConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             Numbers.intToIPv4Sink(sink, ipv4Func.getIPv4(null));
             return new StrConstant(Chars.toString(sink));
@@ -86,7 +89,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class FuncNotNull extends AbstractCastToStrFunction {
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
@@ -106,11 +109,6 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             Numbers.intToIPv4Sink(sinkB, arg.getIPv4(rec));
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
     }
 }

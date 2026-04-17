@@ -50,6 +50,9 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
+            if (func.isNullConstant()) {
+                return StrConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             ColumnType.getTimestampDriver(func.getType()).append(sink, func.getTimestamp(null));
             return new StrConstant(Chars.toString(sink));
@@ -91,7 +94,7 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class FuncNotNull extends AbstractCastToStrFunction {
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final TimestampDriver timestampDriver;
@@ -109,11 +112,6 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             return format(arg.getTimestamp(rec), sinkB);
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
         }
 
         private CharSequence format(long value, StringSink sink) {
