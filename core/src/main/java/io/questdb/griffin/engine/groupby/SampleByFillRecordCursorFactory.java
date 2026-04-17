@@ -26,11 +26,12 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -50,12 +51,18 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.std.IntList;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -233,6 +240,28 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private static final int HAS_PREV_SLOT = 1;
         private static final int KEY_INDEX_SLOT = 0;
         private static final int PREV_START_SLOT = 2;
+
+        private static long readColumnAsLongBits(Record record, int col, short type) {
+            return switch (type) {
+                case ColumnType.DOUBLE -> Double.doubleToRawLongBits(record.getDouble(col));
+                case ColumnType.FLOAT -> Float.floatToRawIntBits(record.getFloat(col));
+                case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> record.getInt(col);
+                case ColumnType.SHORT, ColumnType.GEOSHORT -> record.getShort(col);
+                case ColumnType.BYTE, ColumnType.GEOBYTE -> record.getByte(col);
+                case ColumnType.BOOLEAN -> record.getBool(col) ? 1 : 0;
+                case ColumnType.CHAR -> record.getChar(col);
+                case ColumnType.DATE, ColumnType.LONG, ColumnType.TIMESTAMP -> record.getLong(col);
+                case ColumnType.GEOLONG -> record.getGeoLong(col);
+                case ColumnType.DECIMAL8 -> record.getDecimal8(col);
+                case ColumnType.DECIMAL16 -> record.getDecimal16(col);
+                case ColumnType.DECIMAL32 -> record.getDecimal32(col);
+                case ColumnType.DECIMAL64 -> record.getDecimal64(col);
+                // Defensive: the optimizer gate rejects unsupported PREV source types
+                // before reaching here and routes those queries to the legacy path.
+                default ->
+                        throw new UnsupportedOperationException("unsupported column type for PREV fill: " + ColumnType.nameOf(type));
+            };
+        }
 
         private final long calendarOffset;
         private final int columnCount;
@@ -535,6 +564,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
+        private int fillMode(int col) {
+            return fillModes.getQuick(col);
+        }
+
+        private boolean hasKeyPrev() {
+            if (keysMap != null) {
+                return keysMapRecord.getValue().getLong(HAS_PREV_SLOT) != 0;
+            }
+            return hasSimplePrev;
+        }
+
         private void initialize() {
             TimestampDriver driver = timestampDriver;
             long fromTs = fromFunc == driver.getTimestampConstantNull() ? Numbers.LONG_NULL
@@ -674,28 +714,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
-        private static long readColumnAsLongBits(Record record, int col, short type) {
-            return switch (type) {
-                case ColumnType.DOUBLE -> Double.doubleToRawLongBits(record.getDouble(col));
-                case ColumnType.FLOAT -> Float.floatToRawIntBits(record.getFloat(col));
-                case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> record.getInt(col);
-                case ColumnType.SHORT, ColumnType.GEOSHORT -> record.getShort(col);
-                case ColumnType.BYTE, ColumnType.GEOBYTE -> record.getByte(col);
-                case ColumnType.BOOLEAN -> record.getBool(col) ? 1 : 0;
-                case ColumnType.CHAR -> record.getChar(col);
-                case ColumnType.DATE, ColumnType.LONG, ColumnType.TIMESTAMP -> record.getLong(col);
-                case ColumnType.GEOLONG -> record.getGeoLong(col);
-                case ColumnType.DECIMAL8 -> record.getDecimal8(col);
-                case ColumnType.DECIMAL16 -> record.getDecimal16(col);
-                case ColumnType.DECIMAL32 -> record.getDecimal32(col);
-                case ColumnType.DECIMAL64 -> record.getDecimal64(col);
-                // Defensive: the optimizer gate rejects unsupported PREV source types
-                // before reaching here and routes those queries to the legacy path.
-                default ->
-                        throw new UnsupportedOperationException("unsupported column type for PREV fill: " + ColumnType.nameOf(type));
-            };
-        }
-
         private void updatePerKeyPrev(MapValue value, Record record) {
             value.putLong(HAS_PREV_SLOT, 1L);
             for (int i = 0, n = prevSourceCols.size(); i < n; i++) {
@@ -708,17 +726,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
-        private boolean hasKeyPrev() {
-            if (keysMap != null) {
-                return keysMapRecord.getValue().getLong(HAS_PREV_SLOT) != 0;
-            }
-            return hasSimplePrev;
-        }
-
-        private int fillMode(int col) {
-            return fillModes.getQuick(col);
-        }
-
         /**
          * The default null/0/NaN returns at the tail of each getter are defensive:
          * the GROUP BY pipeline always supplies a fill mode (FILL_KEY, FILL_PREV_SELF,
@@ -729,14 +736,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             boolean isGapFilling;
 
             @Override
-            public io.questdb.cairo.arr.ArrayView getArray(int col, int columnType) {
+            public ArrayView getArray(int col, int columnType) {
                 if (!isGapFilling) return baseRecord.getArray(col, columnType);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getArray(null);
                 return null;
             }
 
             @Override
-            public io.questdb.std.BinarySequence getBin(int col) {
+            public BinarySequence getBin(int col) {
                 if (!isGapFilling) return baseRecord.getBin(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getBin(null);
                 return null;
@@ -786,7 +793,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             @Override
-            public void getDecimal128(int col, io.questdb.std.Decimal128 sink) {
+            public void getDecimal128(int col, Decimal128 sink) {
                 if (!isGapFilling) {
                     baseRecord.getDecimal128(col, sink);
                     return;
@@ -818,7 +825,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             @Override
-            public void getDecimal256(int col, io.questdb.std.Decimal256 sink) {
+            public void getDecimal256(int col, Decimal256 sink) {
                 if (!isGapFilling) {
                     baseRecord.getDecimal256(col, sink);
                     return;
@@ -1006,7 +1013,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             @Override
-            public void getLong256(int col, io.questdb.std.str.CharSink<?> sink) {
+            public void getLong256(int col, CharSink<?> sink) {
                 if (!isGapFilling) {
                     baseRecord.getLong256(col, sink);
                     return;
@@ -1026,7 +1033,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             @Override
-            public io.questdb.std.Long256 getLong256A(int col) {
+            public Long256 getLong256A(int col) {
                 if (!isGapFilling) return baseRecord.getLong256A(col);
                 int mode = fillMode(col);
                 if (mode == FILL_KEY) return keysMapRecord.getLong256A(outputColToKeyPos[col]);
@@ -1037,7 +1044,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             @Override
-            public io.questdb.std.Long256 getLong256B(int col) {
+            public Long256 getLong256B(int col) {
                 if (!isGapFilling) return baseRecord.getLong256B(col);
                 int mode = fillMode(col);
                 if (mode == FILL_KEY) return keysMapRecord.getLong256B(outputColToKeyPos[col]);
@@ -1128,7 +1135,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             @Override
-            public io.questdb.std.str.Utf8Sequence getVarcharA(int col) {
+            public Utf8Sequence getVarcharA(int col) {
                 if (!isGapFilling) return baseRecord.getVarcharA(col);
                 int mode = fillMode(col);
                 if (mode == FILL_KEY) return keysMapRecord.getVarcharA(outputColToKeyPos[col]);
@@ -1139,7 +1146,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             @Override
-            public io.questdb.std.str.Utf8Sequence getVarcharB(int col) {
+            public Utf8Sequence getVarcharB(int col) {
                 if (!isGapFilling) return baseRecord.getVarcharB(col);
                 int mode = fillMode(col);
                 if (mode == FILL_KEY) return keysMapRecord.getVarcharB(outputColToKeyPos[col]);
