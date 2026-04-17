@@ -3388,21 +3388,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int columnCount = groupByMetadata.getColumnCount();
             final IntList fillModes = new IntList(columnCount);
             constantFillFuncs = new ObjList<>(columnCount);
-            // Detect any PREV in fill values
-            boolean anyPrev = false;
-            for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
-                if (isPrevKeyword(fillValuesExprs.getQuick(i).token)) {
-                    anyPrev = true;
-                    break;
-                }
-            }
 
             // Detect key columns: output columns whose AST expression is a
             // LITERAL (column reference) that is not the timestamp floor function.
             // Key columns get FILL_KEY and do NOT consume a fill expression index.
             final ObjList<QueryColumn> bottomUpCols = model.getBottomUpColumns();
 
-            if (anyPrev && fillValuesExprs.size() == 1
+            if (fillValuesExprs.size() == 1
                     && isPrevKeyword(fillValuesExprs.getQuick(0).token)
                     && fillValuesExprs.getQuick(0).type == ExpressionNode.LITERAL) {
                 // bare FILL(PREV) — key columns get FILL_KEY, aggregates fill from self
@@ -3436,16 +3428,43 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ? fillValuesExprs.getQuick(fillIdx)
                             : (fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null);
                     if (fillExpr != null && isPrevKeyword(fillExpr.token)) {
-                        if (fillExpr.type == ExpressionNode.FUNCTION
+                        // Bare PREV in per-column list means self-prev for this slot (D-04 from .planning/phases/12-replace-safety-net-reclassification-with-legacy-fallback-and/12-CONTEXT.md).
+                        boolean isBarePrev = fillExpr.type == ExpressionNode.LITERAL;
+                        boolean isPrevWithLiteralArg = fillExpr.type == ExpressionNode.FUNCTION
                                 && fillExpr.paramCount == 1
                                 && fillExpr.rhs != null
-                                && fillExpr.rhs.type == ExpressionNode.LITERAL) {
+                                && fillExpr.rhs.type == ExpressionNode.LITERAL;
+                        if (!isBarePrev && !isPrevWithLiteralArg) {
+                            throw SqlException.$(fillExpr.position, "PREV argument must be a single column name");
+                        }
+                        if (isPrevWithLiteralArg) {
                             // PREV(col_name) — cross-column prev
                             CharSequence srcAlias = fillExpr.rhs.token;
                             int srcColIdx = groupByMetadata.getColumnIndexQuiet(srcAlias);
                             if (srcColIdx < 0) {
                                 throw SqlException.$(fillExpr.rhs.position,
                                         "PREV(col): column not found in output: ").put(srcAlias);
+                            }
+                            if (srcColIdx == timestampIndex) {
+                                throw SqlException.$(fillExpr.rhs.position,
+                                        "PREV cannot reference the designated timestamp column");
+                            }
+                            if (srcColIdx == col) {
+                                // PREV(self) — equivalent to bare PREV; normalize internally to avoid
+                                // a dead snapshot slot.
+                                fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
+                                constantFillFuncs.add(NullConstant.NULL);
+                                fillIdx++;
+                                continue;
+                            }
+                            short targetTag = ColumnType.tagOf(groupByMetadata.getColumnType(col));
+                            short sourceTag = ColumnType.tagOf(groupByMetadata.getColumnType(srcColIdx));
+                            if (targetTag != sourceTag) {
+                                throw SqlException.$(fillExpr.rhs.position,
+                                                "FILL(PREV(").put(srcAlias).put(")): source type ")
+                                        .put(ColumnType.nameOf(groupByMetadata.getColumnType(srcColIdx)))
+                                        .put(" cannot fill target column of type ")
+                                        .put(ColumnType.nameOf(groupByMetadata.getColumnType(col)));
                             }
                             fillModes.add(srcColIdx);
                         } else {
@@ -3466,6 +3485,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                     fillIdx++;
+                }
+                // Reject chains: a cross-column PREV whose source column is itself a
+                // cross-column PREV. Runtime-safe but semantically ambiguous; keep the
+                // grammar narrow until a clear use case emerges.
+                for (int col = 0; col < columnCount; col++) {
+                    int mode = fillModes.getQuick(col);
+                    if (mode >= 0 && fillModes.getQuick(mode) >= 0) {
+                        throw SqlException.$(fillValuesExprs.getQuick(0).position,
+                                "FILL(PREV) chains are not supported: source column is itself a cross-column PREV");
+                    }
                 }
             }
 
