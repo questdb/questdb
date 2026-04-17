@@ -104,7 +104,8 @@ public class PartitionEncoder {
                 0,
                 0,
                 DEFAULT_BLOOM_FILTER_FPP,
-                minCompressionRatio
+                minCompressionRatio,
+                -1L
         );
     }
 
@@ -120,7 +121,8 @@ public class PartitionEncoder {
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            long squashTracker
     ) {
         assert bloomFilterColumnCount >= 0;
         assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
@@ -152,7 +154,8 @@ public class PartitionEncoder {
                     bloomFilterColumnIndexesPtr,
                     bloomFilterColumnCount,
                     bloomFilterFpp,
-                    minCompressionRatio
+                    minCompressionRatio,
+                    squashTracker
             );
         } finally {
             descriptor.clear();
@@ -307,7 +310,8 @@ public class PartitionEncoder {
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            long squashTracker
     ) throws CairoException;
 
     static {

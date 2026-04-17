@@ -310,9 +310,15 @@ public class WriterPool extends AbstractPool {
         unlock(tableToken, null, false);
     }
 
-    private void addCommandToWriterQueue(Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
+    private void addCommandToWriterQueue(TableToken tableToken, Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
         TableWriter writer;
         while ((writer = e.writer) == null && e.owner != UNALLOCATED) {
+            // If the entry has been removed from the pool (e.g. distressed close),
+            // our reference is orphaned and the spin condition will never be satisfied.
+            // Bail out and let the caller retry.
+            if (entries.get(tableToken.getDirName()) != e) {
+                throw EntryUnavailableException.instance("please retry");
+            }
             Os.pause();
         }
         if (writer == null) {
@@ -481,7 +487,7 @@ public class WriterPool extends AbstractPool {
                     }
                 }
                 if (asyncWriterCommand != null) {
-                    addCommandToWriterQueue(e, asyncWriterCommand, thread);
+                    addCommandToWriterQueue(tableToken, e, asyncWriterCommand, thread);
                     return null;
                 }
 

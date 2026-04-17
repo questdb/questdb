@@ -8233,11 +8233,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
-        final ObjList<Function> functions = new ObjList<>(columnCount);
+        // Timestamp offset detection stores an index into bottom-up columns. Top-down pruning
+        // can remove or shift that column in the final projection, making the index stale.
+        // The alias is stable across pruning: resolve it in the final columns, or restore it
+        // as a hidden timestamp column below when it is no longer visible.
+        int modelTimestampIndex = model.getTimestampColumnIndex();
+        final CharSequence timestampOffsetAlias = model.getTimestampOffsetAlias();
+        if (timestampOffsetAlias != null) {
+            modelTimestampIndex = -1;
+            for (int i = 0; i < columnCount; i++) {
+                if (Chars.equalsIgnoreCase(timestampOffsetAlias, columns.getQuick(i).getAlias())) {
+                    modelTimestampIndex = i;
+                    break;
+                }
+            }
+        }
+        // +1 accounts for an internal timestamp column, which can be added conditionally later.
+        final int virtualColumnReservedSlots = columnCount + 1;
+        final ObjList<Function> functions = new ObjList<>(virtualColumnReservedSlots);
         final RecordMetadata baseMetadata = factory.getMetadata();
         // Lookup metadata will resolve column references, prioritising references to the projection
-        // over the references to the base table. +1 accounts for timestamp, which can be added conditionally later.
-        final int virtualColumnReservedSlots = columnCount + 1;
+        // over the references to the base table.
         final PriorityMetadata priorityMetadata = new PriorityMetadata(virtualColumnReservedSlots, baseMetadata);
         final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
         try {
@@ -8250,17 +8266,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 timestampColumn = null;
             }
 
-            // Check if the model has a detected timestamp offset - if so, use that column as timestamp
-            int modelTimestampIndex = model.getTimestampColumnIndex();
-
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
                 if (modelTimestampIndex == i) {
                     // Model explicitly indicates this column should be the timestamp
                     virtualMetadata.setTimestampIndex(i);
-                } else if (modelTimestampIndex < 0 && node.type == LITERAL && Chars.equalsNc(node.token, timestampColumn)) {
-                    // Only use literal match if model hasn't specified a timestamp index
+                } else if (
+                        timestampOffsetAlias == null
+                                && modelTimestampIndex < 0
+                                && node.type == LITERAL
+                                && Chars.equalsNc(node.token, timestampColumn)
+                ) {
+                    // Only use literal match when there is no derived timestamp selected by alias.
                     virtualMetadata.setTimestampIndex(i);
                 }
 
@@ -8288,9 +8306,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 int columnType = function.getType();
                 if (columnType == CURSOR) {
+                    Misc.free(function);
                     throw SqlException.$(node.position, "cursor function cannot be used as a column [column=").put(column.getAlias()).put(']');
                 }
-
+                if (modelTimestampIndex == i && !isTimestamp(columnType)) {
+                    Misc.free(function);
+                    throw SqlException.$(node.position, "TIMESTAMP column is required but not provided");
+                }
                 if (targetColumnType != -1 && targetColumnType != columnType) {
                     // This is an update and the target column does not match with column the update is trying to perform
                     if (isBuiltInWideningCast(function.getType(), targetColumnType)) {
@@ -8351,10 +8373,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 priorityMetadata.add(m);
             }
 
+            // Restore a pruned timestamp-offset projection needed by a downstream operator.
+            if (
+                    executionContext.isTimestampRequired()
+                            && timestampOffsetAlias != null
+                            && virtualMetadata.getTimestampIndex() == -1
+            ) {
+                final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
+                boolean isTimestampRestored = false;
+                for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+                    final QueryColumn qc = bottomUpColumns.getQuick(i);
+                    if (Chars.equalsIgnoreCase(timestampOffsetAlias, qc.getAlias())) {
+                        final Function timestampFunction = functionParser.parseFunction(
+                                qc.getAst(),
+                                priorityMetadata,
+                                executionContext
+                        );
+                        final int timestampType = timestampFunction.getType();
+                        if (!isTimestamp(timestampType)) {
+                            Misc.free(timestampFunction);
+                            throw SqlException.$(qc.getAst().position, "TIMESTAMP column is required but not provided");
+                        }
+                        functions.add(timestampFunction);
+                        virtualMetadata.setTimestampIndex(virtualMetadata.getColumnCount());
+                        final TableColumnMetadata m = new TableColumnMetadata(
+                                Chars.toString(qc.getAlias()),
+                                timestampType,
+                                timestampFunction.getMetadata()
+                        );
+                        virtualMetadata.add(m);
+                        priorityMetadata.add(m);
+                        isTimestampRestored = true;
+                        break;
+                    }
+                }
+                if (!isTimestampRestored) {
+                    throw SqlException.$(model.getModelPosition(), "TIMESTAMP column is required but not provided");
+                }
+            }
+
             // if timestamp was required and present in the base model but
             // not selected, we will need to add it
             if (
                     executionContext.isTimestampRequired()
+                            && timestampOffsetAlias == null
                             && timestampColumn != null
                             && virtualMetadata.getTimestampIndex() == -1
             ) {
