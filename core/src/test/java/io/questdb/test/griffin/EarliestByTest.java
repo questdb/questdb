@@ -817,10 +817,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Tests for EarliestByLightRecordCursorFactory (subquery with random access)
-    // =====================================================================
-
     @Test
     public void testEarliestOnSubQueryOrdered() throws Exception {
         // Triggers EarliestByLightRecordCursorFactory with orderedByTimestampAsc=true
@@ -903,10 +899,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Tests for EarliestByLightRecordCursorFactory (group by supports random access)
-    // =====================================================================
-
     @Test
     public void testEarliestOnGroupBySubQuery() throws Exception {
         assertMemoryLeak(() -> {
@@ -959,10 +951,6 @@ public class EarliestByTest extends AbstractCairoTest {
             assertSql(expected, query);
         });
     }
-
-    // =====================================================================
-    // Tests for EarliestByRecordCursorFactory (no random access - UNION ALL)
-    // =====================================================================
 
     @Test
     public void testEarliestOnUnionAllSubQuery() throws Exception {
@@ -1052,10 +1040,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Parser edge cases
-    // =====================================================================
-
     @Test
     public void testEarliestParserInvalidSyntax() throws Exception {
         assertMemoryLeak(() -> {
@@ -1095,6 +1079,21 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
+    // Guards the reverse of testEarliestAndLatestMixed: deprecated EARLIEST BY followed by
+    // new-syntax LATEST ON must also be rejected. See SqlParser's new-latest block guard.
+    @Test
+    public void testEarliestByThenLatestOnRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+
+            assertException(
+                    "SELECT s, ts FROM t EARLIEST BY s LATEST ON ts PARTITION BY s",
+                    34,
+                    "cannot use both LATEST and EARLIEST in the same query"
+            );
+        });
+    }
+
     @Test
     public void testEarliestOnNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -1123,10 +1122,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Additional code path coverage
-    // =====================================================================
 
     @Test
     public void testEarliestByMultiplePartitionColumns() throws Exception {
@@ -1394,10 +1389,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Targeted coverage: excluded symbol values path (ValueListRecordCursor)
-    // =====================================================================
-
     @Test
     public void testEarliestByExcludedSymbolNoFilter() throws Exception {
         // Triggers findRestrictedExcludedOnlyNoFilter in EarliestByValueListRecordCursor
@@ -1457,10 +1448,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Targeted coverage: non-existent symbol values (DeferredListValues)
-    // =====================================================================
 
     @Test
     public void testEarliestByNonExistentSymbolValue() throws Exception {
@@ -1526,10 +1513,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Targeted coverage: AllSymbols early termination
-    // =====================================================================
-
     @Test
     public void testEarliestByAllSymbolsEarlyTermination() throws Exception {
         // Tests early termination when all symbol combinations found in first partition
@@ -1563,10 +1546,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Targeted coverage: indexed symbol without WHERE (AllIndexed path)
-    // =====================================================================
 
     @Test
     public void testEarliestByIndexedSymbolNoFilter() throws Exception {
@@ -1602,10 +1581,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Targeted coverage: interval-filtered EARLIEST ON
-    // =====================================================================
-
     @Test
     public void testEarliestByWithIntervalFilterDeterministic() throws Exception {
         // Triggers IntervalPartitionFrameCursorFactory path in generateEarliestByTableQuery
@@ -1628,10 +1603,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Targeted coverage: LIMIT/OFFSET with EARLIEST ON
-    // =====================================================================
-
     @Test
     public void testEarliestByWithLimit() throws Exception {
         assertMemoryLeak(() -> {
@@ -1647,10 +1618,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Targeted coverage: DefaultCairoConfiguration
-    // =====================================================================
 
     @Test
     public void testEarliestByConfigurationDefaults() throws Exception {
@@ -1672,10 +1639,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Missing scenarios: table without designated timestamp
-    // =====================================================================
-
     @Test
     public void testEarliestOnTableWithoutDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -1688,10 +1651,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Missing scenarios: EARLIEST ON + SAMPLE BY interaction
-    // =====================================================================
 
     @Test
     public void testEarliestOnWithSampleBy() throws Exception {
@@ -1713,10 +1672,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Missing scenarios: non-timestamp column in ON position
-    // =====================================================================
-
     @Test
     public void testEarliestOnNonTimestampColumnErrors() throws Exception {
         assertMemoryLeak(() -> {
@@ -1729,10 +1684,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Missing scenarios: mixed symbol + non-symbol multi-key partition
-    // =====================================================================
 
     @Test
     public void testEarliestOnMixedSymbolAndIntPartitionKeys() throws Exception {
@@ -1786,10 +1737,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Missing scenarios: WAL out-of-order inserts
-    // =====================================================================
 
     @Test
     public void testEarliestOnWalOutOfOrderInserts() throws Exception {
@@ -1848,10 +1795,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Missing scenarios: EARLIEST ON with ORDER BY
-    // =====================================================================
-
     @Test
     public void testEarliestOnWithOrderByDescending() throws Exception {
         assertMemoryLeak(() -> {
@@ -1872,10 +1815,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Missing scenarios: EARLIEST ON with GROUP BY in subquery
-    // =====================================================================
 
     @Test
     public void testEarliestOnOverGroupBySubquery() throws Exception {
@@ -1899,10 +1838,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Missing scenarios: EARLIEST ON with multiple identical timestamps
-    // =====================================================================
-
     @Test
     public void testEarliestOnDuplicateTimestampsReturnsDeterministicResult() throws Exception {
         assertMemoryLeak(() -> {
@@ -1925,10 +1860,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Missing scenarios: EARLIEST ON with large number of distinct keys
-    // =====================================================================
-
     @Test
     public void testEarliestOnManyDistinctKeys() throws Exception {
         assertMemoryLeak(() -> {
@@ -1945,10 +1876,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Missing scenarios: EARLIEST ON with UNION ALL
-    // =====================================================================
 
     @Test
     public void testEarliestOnInUnionAllBranches() throws Exception {
@@ -1972,10 +1899,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // Missing scenarios: EARLIEST ON with empty result after filter
-    // =====================================================================
-
     @Test
     public void testEarliestOnWithFilterThatMatchesNothing() throws Exception {
         assertMemoryLeak(() -> {
@@ -1991,10 +1914,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Additional partition key types
-    // =====================================================================
 
     @Test
     public void testEarliestOnPartitionByBoolean() throws Exception {
@@ -2065,10 +1984,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // EXPLAIN PLAN output
-    // =====================================================================
-
     @Test
     public void testEarliestOnExplainPlan() throws Exception {
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
@@ -2111,6 +2026,23 @@ public class EarliestByTest extends AbstractCairoTest {
                     "SELECT * FROM t WHERE x > 0 EARLIEST ON ts PARTITION BY s1, s2",
                     "EarliestByAllSymbolsFiltered\n" +
                             "  filter: 0<x\n" +
+                            "    Row forward scan\n" +
+                            "      expectedSymbolsCount: 4611686014132420609\n" +
+                            "    Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    // Guards the NO_OP_FILTER cleanup in EarliestByAllSymbolsFilteredRecordCursor.getFilter():
+    // a query without a WHERE clause must NOT render a misleading 'filter: true' line.
+    @Test
+    public void testEarliestOnExplainPlanAllSymbolsFilteredNoFilter() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s1 SYMBOL, s2 SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM t EARLIEST ON ts PARTITION BY s1, s2",
+                    "EarliestByAllSymbolsFiltered\n" +
                             "    Row forward scan\n" +
                             "      expectedSymbolsCount: 4611686014132420609\n" +
                             "    Frame forward scan on: t\n"
@@ -2177,10 +2109,6 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
-    // =====================================================================
-    // IN (subquery) filter
-    // =====================================================================
-
     @Test
     public void testEarliestOnWithInSubquery() throws Exception {
         assertMemoryLeak(() -> {
@@ -2203,10 +2131,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Bind variables with NOT IN
-    // =====================================================================
 
     @Test
     public void testEarliestOnWithNotInBindVariable() throws Exception {
@@ -2272,10 +2196,6 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
-
-    // =====================================================================
-    // Regression: subquery collapse must not strip EARLIEST ON
-    // =====================================================================
 
     @Test
     public void testEarliestOnPreservedThroughArtificialStarSubquery() throws Exception {

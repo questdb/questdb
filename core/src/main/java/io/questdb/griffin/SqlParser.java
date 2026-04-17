@@ -3681,60 +3681,6 @@ public class SqlParser {
         return joinModel;
     }
 
-    private void parseLatestBy(GenericLexer lexer, IQueryModel model) throws SqlException {
-        CharSequence tok = optTok(lexer);
-        if (tok != null) {
-            if (isByKeyword(tok)) {
-                parseLatestByDeprecated(lexer, model);
-                return;
-            }
-            if (isOnKeyword(tok)) {
-                parseLatestByNew(lexer, model);
-                return;
-            }
-        }
-        throw SqlException.$((lexer.lastTokenPosition()), "'on' or 'by' expected");
-    }
-
-    private void parseLatestByDeprecated(GenericLexer lexer, IQueryModel model) throws SqlException {
-        // 'latest by' is already parsed at this point
-
-        CharSequence tok;
-        do {
-            model.addLatestBy(expectLiteral(lexer, model.getDecls()));
-            tok = SqlUtil.fetchNext(lexer);
-        } while (Chars.equalsNc(tok, ','));
-
-        model.setLatestByType(IQueryModel.LATEST_BY_DEPRECATED);
-
-        if (tok != null) {
-            lexer.unparseLast();
-        }
-    }
-
-    private void parseLatestByNew(GenericLexer lexer, IQueryModel model) throws SqlException {
-        // 'latest on' is already parsed at this point
-
-        // <timestamp>
-        final ExpressionNode timestamp = expectLiteral(lexer, model.getDecls());
-        model.setTimestamp(timestamp);
-        // 'partition by'
-        expectTok(lexer, "partition");
-        expectTok(lexer, "by");
-        // <columns>
-        CharSequence tok;
-        do {
-            model.addLatestBy(expectLiteral(lexer, model.getDecls()));
-            tok = SqlUtil.fetchNext(lexer);
-        } while (Chars.equalsNc(tok, ','));
-
-        model.setLatestByType(IQueryModel.LATEST_BY_NEW);
-
-        if (tok != null) {
-            lexer.unparseLast();
-        }
-    }
-
     private void parseEarliestBy(GenericLexer lexer, IQueryModel model) throws SqlException {
         CharSequence tok = optTok(lexer);
         if (tok != null) {
@@ -3771,6 +3717,9 @@ public class SqlParser {
 
         // <timestamp>
         final ExpressionNode timestamp = expectLiteral(lexer, model.getDecls());
+        if (model.getTimestamp() != null) {
+            throw SqlException.$(timestamp.position, "timestamp already specified");
+        }
         model.setTimestamp(timestamp);
         // 'partition by'
         expectTok(lexer, "partition");
@@ -3783,6 +3732,63 @@ public class SqlParser {
         } while (Chars.equalsNc(tok, ','));
 
         model.setEarliestByType(IQueryModel.EARLIEST_BY_NEW);
+
+        if (tok != null) {
+            lexer.unparseLast();
+        }
+    }
+
+    private void parseLatestBy(GenericLexer lexer, IQueryModel model) throws SqlException {
+        CharSequence tok = optTok(lexer);
+        if (tok != null) {
+            if (isByKeyword(tok)) {
+                parseLatestByDeprecated(lexer, model);
+                return;
+            }
+            if (isOnKeyword(tok)) {
+                parseLatestByNew(lexer, model);
+                return;
+            }
+        }
+        throw SqlException.$((lexer.lastTokenPosition()), "'on' or 'by' expected");
+    }
+
+    private void parseLatestByDeprecated(GenericLexer lexer, IQueryModel model) throws SqlException {
+        // 'latest by' is already parsed at this point
+
+        CharSequence tok;
+        do {
+            model.addLatestBy(expectLiteral(lexer, model.getDecls()));
+            tok = SqlUtil.fetchNext(lexer);
+        } while (Chars.equalsNc(tok, ','));
+
+        model.setLatestByType(IQueryModel.LATEST_BY_DEPRECATED);
+
+        if (tok != null) {
+            lexer.unparseLast();
+        }
+    }
+
+    private void parseLatestByNew(GenericLexer lexer, IQueryModel model) throws SqlException {
+        // 'latest on' is already parsed at this point
+
+        // <timestamp>
+        final ExpressionNode timestamp = expectLiteral(lexer, model.getDecls());
+        if (model.getTimestamp() != null) {
+            throw SqlException.$(timestamp.position, "timestamp already specified");
+        }
+        model.setTimestamp(timestamp);
+        // 'partition by'
+        expectTok(lexer, "partition");
+        expectTok(lexer, "by");
+        // <columns>
+        CharSequence tok;
+        do {
+            model.addLatestBy(expectLiteral(lexer, model.getDecls()));
+            tok = SqlUtil.fetchNext(lexer);
+        } while (Chars.equalsNc(tok, ','));
+
+        model.setLatestByType(IQueryModel.LATEST_BY_NEW);
 
         if (tok != null) {
             lexer.unparseLast();

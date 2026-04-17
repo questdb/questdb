@@ -145,6 +145,10 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     @Override
     protected void _close() {
         super._close();
+        // This factory takes ownership of the cloned deferred symbol function lists;
+        // release any closeable resources they hold.
+        Misc.freeObjList(includedSymbolFuncs);
+        Misc.freeObjList(excludedSymbolFuncs);
         Misc.free(filter);
         Misc.free(cursor);
     }

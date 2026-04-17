@@ -293,7 +293,12 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 // Process our own queue while we wait; required so a 1-worker configuration
                 // does not deadlock.
                 while (!doneLatch.done(queuedCount)) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    if (circuitBreaker.checkIfTripped()) {
+                        // Flip the shared breaker first so sibling workers abort their native
+                        // calls, then re-raise the SQL execution exception for this thread.
+                        sharedCircuitBreaker.cancel();
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    }
                     long seq = subSeq.next();
                     if (seq > -1) {
                         try {

@@ -88,6 +88,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void addEarliestBy(ExpressionNode earliestBy) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void addExpressionModel(ExpressionNode node) {
         throw new UnsupportedOperationException();
     }
@@ -114,11 +119,6 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void addJoinModel(IQueryModel joinModel) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void addEarliestBy(ExpressionNode earliestBy) {
         throw new UnsupportedOperationException();
     }
 

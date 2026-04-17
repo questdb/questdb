@@ -249,6 +249,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void addEarliestBy(ExpressionNode earliestBy) {
+        this.earliestBy.add(earliestBy);
+    }
+
+    @Override
     public void addExpressionModel(ExpressionNode node) {
         assert node.queryModel != null;
         expressionModels.add(node);
@@ -740,6 +745,16 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public ObjList<ExpressionNode> getEarliestBy() {
+        return earliestBy;
+    }
+
+    @Override
+    public int getEarliestByType() {
+        return earliestByType;
+    }
+
+    @Override
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
     }
@@ -823,26 +838,6 @@ public class QueryModel implements IQueryModel {
     @Override
     public int getLatestByType() {
         return latestByType;
-    }
-
-    @Override
-    public ObjList<ExpressionNode> getEarliestBy() {
-        return earliestBy;
-    }
-
-    @Override
-    public int getEarliestByType() {
-        return earliestByType;
-    }
-
-    @Override
-    public void setEarliestByType(int earliestByType) {
-        this.earliestByType = earliestByType;
-    }
-
-    @Override
-    public void addEarliestBy(ExpressionNode earliestBy) {
-        this.earliestBy.add(earliestBy);
     }
 
     @Override
@@ -1647,6 +1642,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setDistinct(boolean distinct) {
         this.distinct = distinct;
+    }
+
+    @Override
+    public void setEarliestByType(int earliestByType) {
+        this.earliestByType = earliestByType;
     }
 
     @Override

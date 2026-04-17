@@ -453,6 +453,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlCreateTableModelBatchSize;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
+    private final long sqlEarliestByRowCount;
     private final int sqlExplainModelPoolCapacity;
     private final int sqlExpressionPoolCapacity;
     private final double sqlFastMapLoadFactor;
@@ -484,7 +485,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinMetadataMaxResizes;
     private final int sqlJoinMetadataPageSize;
     private final long sqlLatestByRowCount;
-    private final long sqlEarliestByRowCount;
     private final int sqlLexerPoolCapacity;
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
@@ -4234,6 +4234,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSqlEarliestByRowCount() {
+            return sqlEarliestByRowCount;
+        }
+
+        @Override
         public int getSqlExpressionPoolCapacity() {
             return sqlExpressionPoolCapacity;
         }
@@ -4346,11 +4351,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSqlLatestByRowCount() {
             return sqlLatestByRowCount;
-        }
-
-        @Override
-        public long getSqlEarliestByRowCount() {
-            return sqlEarliestByRowCount;
         }
 
         @Override
@@ -4944,7 +4944,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean useWithinLatestByOptimisation() {
+        public boolean useWithinLatestEarliestByOptimisation() {
             return queryWithinLatestByOptimisationEnabled;
         }
     }

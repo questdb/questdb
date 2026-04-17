@@ -53,6 +53,11 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private boolean areRecordsFound;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int currentRow;
+    // Distinct symbol count targeted by the current scan. Zero means nothing to scan;
+    // a positive value bounds rowIds capacity and doubles as the early-exit counter
+    // inside the find* methods. Caching this avoids reading it back as (int)rowIds.getCapacity(),
+    // which is stale after rowIds.clear() and loses precision on the long->int cast.
+    private int distinctSymbolCount;
     private IntHashSet excludedSymbolKeys;
     private IntHashSet foundKeys;
     private int foundSize;
@@ -121,9 +126,11 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             filter.init(pageFrameCursor, executionContext);
             filter.toTop();
         }
+        distinctSymbolCount = 0;
         if (restrictedByIncludedValues) {
             if (includedSymbolKeys.size() > 0) {
-                rowIds.setCapacity(includedSymbolKeys.size());
+                distinctSymbolCount = includedSymbolKeys.size();
+                rowIds.setCapacity(distinctSymbolCount);
             }
         } else if (restrictedByExcludedValues) {
             final StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
@@ -149,7 +156,8 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
             distinctSymbols -= actuallyExcluded;
             if (distinctSymbols > 0) {
-                rowIds.setCapacity(distinctSymbols);
+                distinctSymbolCount = distinctSymbols;
+                rowIds.setCapacity(distinctSymbolCount);
             }
         } else {
             StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
@@ -158,7 +166,8 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
                 distinctSymbols++;
             }
             if (distinctSymbols > 0) {
-                rowIds.setCapacity(distinctSymbols);
+                distinctSymbolCount = distinctSymbols;
+                rowIds.setCapacity(distinctSymbolCount);
             }
         }
         areRecordsFound = false;
@@ -246,19 +255,19 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
                 }
             }
         } else if (restrictedByExcludedValues) {
-            int distinctSymbols = (int) rowIds.getCapacity();
-            if (filter != null) {
-                findRestrictedExcludedOnlyWithFilter(distinctSymbols);
-            } else {
-                findRestrictedExcludedOnlyNoFilter(distinctSymbols);
+            if (distinctSymbolCount > 0) {
+                if (filter != null) {
+                    findRestrictedExcludedOnlyWithFilter(distinctSymbolCount);
+                } else {
+                    findRestrictedExcludedOnlyNoFilter(distinctSymbolCount);
+                }
             }
         } else {
-            int distinctSymbols = (int) rowIds.getCapacity();
-            if (distinctSymbols > 0) {
+            if (distinctSymbolCount > 0) {
                 if (filter != null) {
-                    findAllWithFilter(distinctSymbols);
+                    findAllWithFilter(distinctSymbolCount);
                 } else {
-                    findAllNoFilter(distinctSymbols);
+                    findAllNoFilter(distinctSymbolCount);
                 }
             }
         }

@@ -204,7 +204,7 @@ public class ParallelEarliestByTest extends AbstractTest {
                     }
 
                     @Override
-                    public boolean useWithinLatestByOptimisation() {
+                    public boolean useWithinLatestEarliestByOptimisation() {
                         return true;
                     }
                 };
