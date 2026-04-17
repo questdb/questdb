@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 12-02-PLAN.md (SampleByFillRecordCursorFactory file-local cleanups)
-last_updated: "2026-04-17T10:50:46.447Z"
+stopped_at: Completed 12-03-PLAN.md (grammar rules, retro-fallback, housekeeping)
+last_updated: "2026-04-17T11:14:23.104Z"
 last_activity: 2026-04-17
 progress:
   total_phases: 12
   completed_phases: 10
   total_plans: 14
-  completed_plans: 12
-  percent: 86
+  completed_plans: 13
+  percent: 93
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 12 (replace-safety-net-reclassification-with-legacy-fallback-and) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-04-17
 
@@ -56,6 +56,7 @@ Progress: [##########] 100%
 Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 12 P01 | 12 | 3 tasks | 5 files |
 | Phase 12 P02 | 14min | 3 tasks | 1 files |
+| Phase 12-replace-safety-net-reclassification-with-legacy-fallback-and P03 | 22min | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 12]: Tier 1 cross-column gate preserves PREV(key_col): LITERAL-source branch passes through regardless of key column type, since the runtime reads key values from keysMapRecord
 - [Phase 12]: hasAnyConstantFill predicate uses instanceof NullConstant as the 'real user-supplied constant' distinguisher; NullConstant is the fill-slot sentinel for 'no constant here'
 - [Phase 12]: fillModes added as outer-class field on SampleByFillRecordCursorFactory (wired from existing constructor parameter) so hasAnyConstantFill in toPlan can iterate it
+- [Phase 12-replace-safety-net-reclassification-with-legacy-fallback-and]: Chain-walk through nested-model chain in each fallback catch is the deterministic two-step action - walks always, asserts on no-stash case
+- [Phase 12-replace-safety-net-reclassification-with-legacy-fallback-and]: Grammar rule order: D-08 first (malformed), then D-05 (PREV(ts)), then D-06 (self-normalize) via continue, then D-09 (type-tag), then D-07 (chain) as post-pass
+- [Phase 12-replace-safety-net-reclassification-with-legacy-fallback-and]: Nested try/catch at each of three generateFill call sites prevents outer catch (Throwable e) from swallowing FallbackToLegacyException - inner catch runs first before outer can close factory
 
 ### Roadmap Evolution
 
@@ -114,6 +118,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-17T10:50:46.445Z
-Stopped at: Completed 12-02-PLAN.md (SampleByFillRecordCursorFactory file-local cleanups)
+Last session: 2026-04-17T11:14:23.102Z
+Stopped at: Completed 12-03-PLAN.md (grammar rules, retro-fallback, housekeeping)
 Resume file: None

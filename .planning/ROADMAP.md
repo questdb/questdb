@@ -192,11 +192,11 @@ Plans:
   8. Code-quality items applied: FillRecord getters alphabetical, SampleByFillCursor members alphabetical, plain imports in place of FQNs, alphabetized import blocks, isKeyColumn next to isFastPathPrevSupportedType, anyPrev loop removed, Dates.parseOffset asserts.
   9. Full suite green: `mvn -pl core -Dtest='SampleByFillTest,SampleByTest,SampleByNanoTimestampTest,ExplainPlanTest' test` exits 0.
 
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 Plans:
 - [x] 12-01-PLAN.md — Scaffolding: FallbackToLegacyException + QueryModel.stashedSampleByNode + Tier 1 gate (LONG128/INTERVAL + cross-col PREV resolution) + stash write in rewriteSampleBy
 - [x] 12-02-PLAN.md — SampleByFillRecordCursorFactory refactor: hasExplicitTo LONG_NULL guard + toPlan fill= unconditional + alphabetize FillRecord getters and SampleByFillCursor members + FQN→plain imports + import block sort
-- [ ] 12-03-PLAN.md — SqlCodeGenerator overhaul: grammar rules D-05..D-09 + anyPrev loop removal + safety-net deletion + FallbackToLegacyException throw + try/catch at three generateFill call sites + isKeyColumn relocation + SampleByFillRecordCursorFactory import slot + Dates.parseOffset assert
+- [x] 12-03-PLAN.md — SqlCodeGenerator overhaul: grammar rules D-05..D-09 + anyPrev loop removal + safety-net deletion + FallbackToLegacyException throw + try/catch at three generateFill call sites + isKeyColumn relocation + SampleByFillRecordCursorFactory import slot + Dates.parseOffset assert
 - [ ] 12-04-PLAN.md — Tests: 5 retro-fallback + 1 TO-null + testSampleByFillNeedFix restore + 11 grammar tests (8 CONTEXT + 3 positives) + 5 FILL_KEY + ~15 assertSql→assertQueryNoLeakCheck conversions + plan-text assertion refresh across 4 test files
 
 ## Progress
@@ -216,4 +216,4 @@ Plans:
 | 9. Fix Critical Review Findings | 1/1 | Complete | 2026-04-13 |
 | 10. Fix Offset-Aware Bucket Alignment | 1/1 | Complete | 2026-04-13 |
 | 11. Hardening — Review Findings & Missing Test Coverage | 1/1 | Complete (retroactive) | 2026-04-13 |
-| 12. Replace safety-net reclassification with legacy fallback | 2/4 | In Progress|  |
+| 12. Replace safety-net reclassification with legacy fallback | 3/4 | In Progress|  |

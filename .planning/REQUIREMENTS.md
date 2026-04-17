@@ -61,7 +61,7 @@
 - [ ] **COR-01**: All 302 existing SampleByTest tests pass
 - [ ] **COR-02**: No native memory leaks (assertMemoryLeak passes for all tests)
 - [ ] **COR-03**: Query plan shows Async Group By (parallel execution) for fill queries
-- [ ] **COR-04**: Fill cursor output matches cursor-path output exactly for all fill modes
+- [x] **COR-04**: Fill cursor output matches cursor-path output exactly for all fill modes
 
 ## v2 Requirements
 
@@ -120,4 +120,4 @@
 | COR-01 | Phase 5: Verification and Hardening | Pending |
 | COR-02 | Phase 5: Verification and Hardening | Pending |
 | COR-03 | Phase 5: Verification and Hardening | Pending |
-| COR-04 | Phase 5: Verification and Hardening | Pending |
+| COR-04 | Phase 5: Verification and Hardening | Complete |
