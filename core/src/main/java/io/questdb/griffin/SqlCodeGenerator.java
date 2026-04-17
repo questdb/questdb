@@ -7348,7 +7348,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         boolean entity;
         // the model is considered entity when it doesn't add any value to its nested model
-        if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
+        if (metadata.getColumnCount() == selectColumnCount) {
             entity = true;
             for (int i = 0; i < selectColumnCount; i++) {
                 QueryColumn qc = columns.getQuick(i);
@@ -7360,9 +7360,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     break;
                 }
             }
+            if (entity && timestamp != null) {
+                // model declares an explicit timestamp; it's redundant only if the
+                // child already exposes the same designated timestamp column.
+                final int tsIndex = metadata.getTimestampIndex();
+                entity = tsIndex != -1 && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex));
+            }
         } else {
-            final int tsIndex = metadata.getTimestampIndex();
-            entity = timestamp != null && tsIndex != -1 && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex));
+            entity = false;
         }
 
         if (entity) {
