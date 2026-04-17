@@ -729,117 +729,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             boolean isGapFilling;
 
             @Override
-            public double getDouble(int col) {
-                if (!isGapFilling) return baseRecord.getDouble(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getDouble(outputColToKeyPos[col]);
-                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
-                    return keysMapRecord.getDouble(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return Double.longBitsToDouble(prevValue(col));
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDouble(null);
-                return Double.NaN;
-            }
-
-            @Override
-            public float getFloat(int col) {
-                if (!isGapFilling) return baseRecord.getFloat(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getFloat(outputColToKeyPos[col]);
-                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
-                    return keysMapRecord.getFloat(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return Float.intBitsToFloat((int) prevValue(col));
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getFloat(null);
-                return Float.NaN;
-            }
-
-            @Override
-            public int getInt(int col) {
-                if (!isGapFilling) return baseRecord.getInt(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getInt(outputColToKeyPos[col]);
-                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
-                    return keysMapRecord.getInt(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (int) prevValue(col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getInt(null);
-                return Numbers.INT_NULL;
-            }
-
-            @Override
-            public long getLong(int col) {
-                if (!isGapFilling) return baseRecord.getLong(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getLong(outputColToKeyPos[col]);
-                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
-                    return keysMapRecord.getLong(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong(null);
-                return Numbers.LONG_NULL;
-            }
-
-            @Override
-            public short getShort(int col) {
-                if (!isGapFilling) return baseRecord.getShort(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getShort(outputColToKeyPos[col]);
-                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
-                    return keysMapRecord.getShort(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (short) prevValue(col);
-                if (mode == FILL_CONSTANT) return (short) constantFills.getQuick(col).getInt(null);
-                return 0;
-            }
-
-            @Override
-            public byte getByte(int col) {
-                if (!isGapFilling) return baseRecord.getByte(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getByte(outputColToKeyPos[col]);
-                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
-                    return keysMapRecord.getByte(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (byte) prevValue(col);
-                if (mode == FILL_CONSTANT) return (byte) constantFills.getQuick(col).getInt(null);
-                return 0;
-            }
-
-            @Override
-            public boolean getBool(int col) {
-                if (!isGapFilling) return baseRecord.getBool(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getBool(outputColToKeyPos[col]);
-                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
-                    return keysMapRecord.getBool(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col) != 0;
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBool(null);
-                return false;
-            }
-
-            @Override
-            public char getChar(int col) {
-                if (!isGapFilling) return baseRecord.getChar(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getChar(outputColToKeyPos[col]);
-                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
-                    return keysMapRecord.getChar(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (char) prevValue(col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getChar(null);
-                return 0;
-            }
-
-            @Override
-            public long getTimestamp(int col) {
-                if (!isGapFilling) return baseRecord.getTimestamp(col);
-                if (col == timestampIndex) return fillTimestampFunc.value;
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getTimestamp(outputColToKeyPos[col]);
-                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
-                    return keysMapRecord.getTimestamp(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getTimestamp(null);
-                return Numbers.LONG_NULL;
-            }
-
-            @Override
             public io.questdb.cairo.arr.ArrayView getArray(int col, int columnType) {
                 if (!isGapFilling) return baseRecord.getArray(col, columnType);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getArray(null);
@@ -858,6 +747,42 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getBinLen(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getBinLen(null);
                 return -1;
+            }
+
+            @Override
+            public boolean getBool(int col) {
+                if (!isGapFilling) return baseRecord.getBool(col);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getBool(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getBool(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col) != 0;
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBool(null);
+                return false;
+            }
+
+            @Override
+            public byte getByte(int col) {
+                if (!isGapFilling) return baseRecord.getByte(col);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getByte(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getByte(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (byte) prevValue(col);
+                if (mode == FILL_CONSTANT) return (byte) constantFills.getQuick(col).getInt(null);
+                return 0;
+            }
+
+            @Override
+            public char getChar(int col) {
+                if (!isGapFilling) return baseRecord.getChar(col);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getChar(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getChar(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (char) prevValue(col);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getChar(null);
+                return 0;
             }
 
             @Override
@@ -949,6 +874,32 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             @Override
+            public double getDouble(int col) {
+                if (!isGapFilling) return baseRecord.getDouble(col);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getDouble(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getDouble(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return Double.longBitsToDouble(prevValue(col));
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDouble(null);
+                return Double.NaN;
+            }
+
+            @Override
+            public float getFloat(int col) {
+                if (!isGapFilling) return baseRecord.getFloat(col);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getFloat(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getFloat(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return Float.intBitsToFloat((int) prevValue(col));
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getFloat(null);
+                return Float.NaN;
+            }
+
+            @Override
             public byte getGeoByte(int col) {
                 if (!isGapFilling) return baseRecord.getGeoByte(col);
                 int mode = fillMode(col);
@@ -1006,6 +957,30 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (int) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getIPv4(null);
                 return Numbers.IPv4_NULL;
+            }
+
+            @Override
+            public int getInt(int col) {
+                if (!isGapFilling) return baseRecord.getInt(col);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getInt(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getInt(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (int) prevValue(col);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getInt(null);
+                return Numbers.INT_NULL;
+            }
+
+            @Override
+            public long getLong(int col) {
+                if (!isGapFilling) return baseRecord.getLong(col);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getLong(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getLong(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong(null);
+                return Numbers.LONG_NULL;
             }
 
             @Override
@@ -1073,6 +1048,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             @Override
+            public short getShort(int col) {
+                if (!isGapFilling) return baseRecord.getShort(col);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getShort(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getShort(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (short) prevValue(col);
+                if (mode == FILL_CONSTANT) return (short) constantFills.getQuick(col).getInt(null);
+                return 0;
+            }
+
+            @Override
             public CharSequence getStrA(int col) {
                 if (!isGapFilling) return baseRecord.getStrA(col);
                 int mode = fillMode(col);
@@ -1125,6 +1112,19 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     return keysMapRecord.getSymB(outputColToKeyPos[mode]);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getSymbolB(null);
                 return null;
+            }
+
+            @Override
+            public long getTimestamp(int col) {
+                if (!isGapFilling) return baseRecord.getTimestamp(col);
+                if (col == timestampIndex) return fillTimestampFunc.value;
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getTimestamp(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getTimestamp(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getTimestamp(null);
+                return Numbers.LONG_NULL;
             }
 
             @Override
