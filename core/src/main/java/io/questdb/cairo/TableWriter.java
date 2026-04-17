@@ -140,9 +140,9 @@ import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -174,9 +174,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
-        Any other partition is allowed to have 0 splits (1 partition in total).
+        Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
      */
-    private static final int MAX_MID_SUB_PARTITION_COUNT = 1;
     private static final Runnable NOOP = () -> {
     };
     private static final Row NOOP_ROW = new NoOpRow();
@@ -3012,7 +3011,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return SWITCH_NO_PARQUET;
         }
 
+        int partitionCount = txWriter.getPartitionCount();
         squashPartitionForce(partitionIndex);
+        int newPartitionCount = txWriter.getPartitionCount();
+        if (partitionCount != newPartitionCount) {
+            // The force-squash merged one or more split sub-partitions into this logical partition.
+            // The existing parquet file was produced before the squash, so it is now stale relative
+            // to the grown native partition.
+            LOG.info()
+                    .$("skipping switch to parquet, due to partition squash [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            return SWITCH_NO_PARQUET;
+        }
 
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
@@ -10369,7 +10380,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void squashPartitionRange(int maxLastSubPartitionCount, int partitionIndexLo, int partitionIndexHi) {
         if (partitionIndexHi > partitionIndexLo) {
             int subpartitions = partitionIndexHi - partitionIndexLo;
-            int optimalPartitionCount = partitionIndexHi == txWriter.getPartitionCount() ? maxLastSubPartitionCount : MAX_MID_SUB_PARTITION_COUNT;
+            int optimalPartitionCount = partitionIndexHi == txWriter.getPartitionCount() ? maxLastSubPartitionCount : configuration.getO3MidPartitionMaxSplits();
             if (subpartitions > Math.max(1, optimalPartitionCount)) {
                 squashSplitPartitions(partitionIndexLo, partitionIndexHi, optimalPartitionCount, false);
             } else if (subpartitions == 1) {
