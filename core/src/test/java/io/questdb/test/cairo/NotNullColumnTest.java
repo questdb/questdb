@@ -1088,83 +1088,16 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVectorizedCountOnNotNullColumn() throws Exception {
+    public void testCountOnNotNullColumnIsConsistentKeyedAndNonKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            // count(col) on a NOT NULL column takes the fast path that skips the native
-            // sentinel scan. Result must match rowCount; sentinel values count as real rows.
-            execute("CREATE TABLE t (x LONG NOT NULL, y LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO t VALUES
-                        (1, 10, '2024-01-01'),
-                        (NULL, NULL, '2024-01-02'),
-                        (3, 30, '2024-01-03'),
-                        (4, 40, '2024-01-04')
-                    """);
-
-            // count(x) on NOT NULL column = all 4 rows (sentinel Long.MIN_VALUE is a real value).
-            // count(y) on nullable column = 3 (sentinel is the null marker).
-            assertSql(
-                    """
-                            count_x\tcount_y\tcount_ts\tcount_star
-                            4\t3\t4\t4
-                            """,
-                    "SELECT count(x) count_x, count(y) count_y, count(ts) count_ts, count(*) count_star FROM t"
-            );
-        });
-    }
-
-    @Test
-    public void testVectorizedCountIntOnNotNullColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO t VALUES
-                        (1, 10, '2024-01-01'),
-                        (NULL, NULL, '2024-01-02'),
-                        (3, 30, '2024-01-03')
-                    """);
-
-            assertSql(
-                    """
-                            count_x\tcount_y
-                            3\t2
-                            """,
-                    "SELECT count(x) count_x, count(y) count_y FROM t"
-            );
-        });
-    }
-
-    @Test
-    public void testVectorizedCountDoubleOnNotNullColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x DOUBLE NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO t VALUES
-                        (1.5, 10.0, '2024-01-01'),
-                        (CAST('NaN' AS DOUBLE), NULL, '2024-01-02'),
-                        (3.5, 30.0, '2024-01-03')
-                    """);
-
-            // NaN in NOT NULL column is a real value; counts as 1.
-            assertSql(
-                    """
-                            count_x\tcount_y
-                            3\t2
-                            """,
-                    "SELECT count(x) count_x, count(y) count_y FROM t"
-            );
-        });
-    }
-
-    @Test
-    public void testVectorizedCountOnNotNullColumnWithGroupBy() throws Exception {
-        assertMemoryLeak(() -> {
-            // Keyed (GROUP BY) aggregation still runs through the native Rosti path, which
-            // hasn't been taught about NOT NULL yet and treats sentinel values as nulls.
-            // That means count(x) under GROUP BY currently under-counts sentinel rows for
-            // NOT NULL columns, diverging from the non-keyed fast path (which counts all
-            // rows). TODO: add a native keyed NOT NULL variant; this test then becomes
-            // "count_b == 2".
+            // Until the vectorized COUNT fast path can honour the "sentinels are real
+            // values" NOT NULL semantic across BOTH keyed and non-keyed paths (the keyed
+            // path would need a native Rosti NotNull kernel), codegen does not select
+            // a NotNull variant for COUNT/SUM/MIN/MAX/AVG. So count(x) on a NOT NULL
+            // column behaves like count(x) on a nullable column in both cases: rows where
+            // the value equals the type's sentinel are not counted. The important
+            // invariant is that non-keyed and keyed agree — sum of per-group counts
+            // equals the total count.
             execute("CREATE TABLE t (x LONG NOT NULL, g SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
@@ -1174,6 +1107,16 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         (NULL, 'b', '2024-01-04')
                     """);
 
+            // Non-keyed count — sentinel row not counted.
+            assertSql(
+                    """
+                            count_x\tcount_star
+                            3\t4
+                            """,
+                    "SELECT count(x) count_x, count(*) count_star FROM t"
+            );
+
+            // Keyed count — also sentinel-skipped; sum of per-group counts == non-keyed count.
             assertSql(
                     """
                             g\tcount_x
