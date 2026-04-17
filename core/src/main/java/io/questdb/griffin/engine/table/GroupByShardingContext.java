@@ -92,22 +92,23 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             PerWorkerLocks perWorkerLocks,
             int workerCount
     ) {
-        this.configuration = configuration;
-        this.keyTypes = keyTypes;
-        this.valueTypes = valueTypes;
-        this.perWorkerLocks = perWorkerLocks;
-        this.ownerFunctionUpdater = ownerFunctionUpdater;
-        this.perWorkerFunctionUpdaters = perWorkerFunctionUpdaters;
-
-        lastShardStats = new ObjList<>(NUM_SHARDS);
-        for (int i = 0; i < NUM_SHARDS; i++) {
-            lastShardStats.extendAndSet(i, new GroupByMapStats());
-        }
-        lastOwnerStats = new GroupByMapStats();
-        perWorkerFragments = new ObjList<>(workerCount);
-        destShards = new ObjList<>(NUM_SHARDS);
-        destShards.setPos(NUM_SHARDS);
         try {
+            this.configuration = configuration;
+            this.keyTypes = keyTypes;
+            this.valueTypes = valueTypes;
+            this.perWorkerLocks = perWorkerLocks;
+            this.ownerFunctionUpdater = ownerFunctionUpdater;
+            this.perWorkerFunctionUpdaters = perWorkerFunctionUpdaters;
+
+            lastShardStats = new ObjList<>(NUM_SHARDS);
+            for (int i = 0; i < NUM_SHARDS; i++) {
+                lastShardStats.extendAndSet(i, new GroupByMapStats());
+            }
+            lastOwnerStats = new GroupByMapStats();
+            perWorkerFragments = new ObjList<>(workerCount);
+            destShards = new ObjList<>(NUM_SHARDS);
+            destShards.setPos(NUM_SHARDS);
+
             ownerFragment = new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, ownerFunctionUpdater, workerCount, -1);
             for (int i = 0; i < workerCount; i++) {
                 final GroupByFunctionsUpdater workerUpdater = perWorkerFunctionUpdaters != null

@@ -432,7 +432,7 @@ public class OrderedMap implements Map, Reopenable {
         if (updater == null || valueSize == 0) {
             return;
         }
-        // OrderedMap.clear() only resets kPos and the offsets array -- it does NOT zero
+        // OrderedMap.clear() only resets kPos and the offsets array - it does NOT zero
         // the heap. probeBatch therefore cannot rely on fresh slots being zeroed, so
         // we always keep the scratch buffer and memcpy it into every new entry.
         final long buf = Unsafe.malloc(valueSize, heapMemoryTag);
