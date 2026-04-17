@@ -1427,4 +1427,53 @@ public class NotNullColumnTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testJitFoldsIsNullOnNotNullColumnInsideOrChain() throws Exception {
+        assertMemoryLeak(() -> {
+            // End-to-end check of the Phase 3 JIT fold. JIT serializes the ORIGINAL AST, not the
+            // Function-level simplified tree, so even when OrFunctionFactory folds
+            // `(NOT NULL col IS NULL) OR x` to `x` at Function level, JIT still processes the
+            // original `IS NULL` subtree. Without the Phase 3 fold the sentinel row would
+            // spuriously match `col IS NULL` through JIT.
+            execute("CREATE TABLE t (x INT NOT NULL, y LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 100, '2024-01-01'),
+                        (2, 200, '2024-01-02'),
+                        (NULL, NULL, '2024-01-03'),
+                        (3, 300, '2024-01-04')
+                    """);
+            // Row at 2024-01-03 stores the INT_NULL and LONG_NULL sentinels as real data. NOT NULL
+            // is satisfied because the column was written to; the value just happens to equal the
+            // sentinel bit pattern.
+
+            // Confirm the JIT path is taken for these filters (not the Java fallback).
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM t WHERE x IS NULL OR x = 10",
+                    """
+                            Async JIT Filter workers: 1
+                              filter: x=10
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+
+            // `x IS NULL OR x = 10` — the overall Function simplifies to `x = 10` (FALSE || x = x),
+            // which is non-constant, so codegen takes the JIT path. The JIT fold makes the
+            // `IS NULL` arm emit constant-false; otherwise JIT evaluates `x = -2^31` and matches
+            // the sentinel row at 2024-01-03.
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE x IS NULL OR x = 10");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE y IS NULL OR y = 1_000_000");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE null = x OR x = 10");
+
+            // `x IS NOT NULL OR x = 10` must match every row (including the sentinel row).
+            assertSql("count\n4\n", "SELECT count(*) FROM t WHERE x IS NOT NULL OR x = 10");
+            assertSql("count\n4\n", "SELECT count(*) FROM t WHERE x <> null OR x = 10");
+
+            // The non-IS-NULL arm still matches normally through the JIT.
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE x IS NULL OR x = 2");
+        });
+    }
 }

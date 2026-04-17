@@ -660,6 +660,69 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // pre-fold view of the column types so the scalar-mode sanity check does not misfire.
         serialize("nnint is null and nnlong is not null");
         assertIR("(i8 0L)(i8 1L)(=)(&&_sc)(i8 1L)(i8 1L)(=)(ret)");
+
+        // OR chains compose cleanly. Same-size → plain `||`. Mixed-size pure-OR → `||_sc`.
+        serialize("nnint is null or nulint = 2");
+        assertIR("(i32 2L)(i32 nulint)(=)(i8 0L)(i8 1L)(=)(||)(ret)");
+        serialize("nnint is null or nnlong is not null");
+        // Mixed-size pure-OR chain goes through serializePredicatesOrSc; the fold must still let
+        // the loop emit the chain-level `||_sc`.
+        assertIR("(i8 1L)(i8 1L)(=)(||_sc)(i8 0L)(i8 1L)(=)(ret)");
+
+        // Mixed AND/OR (not a pure chain) uses plain operators. Each folded subtree is still
+        // correctly replaced independently.
+        serialize("(nnint is null and nulint = 2) or nulint = 3");
+        assertIR("(i32 3L)(i32 nulint)(=)(i32 2L)(i32 nulint)(=)(i8 0L)(i8 1L)(=)(&&)(||)(ret)");
+
+        // The fold must NOT touch IN expressions — IN has its own serialization that handles
+        // NULL in the list via sentinel equality per arg. `col IN (null)` stays as an IN node.
+        serialize("nulint in (1, 2, null)");
+        assertIR("(i32 -2147483648L)(i32 nulint)(=)(i32 2L)(i32 nulint)(=)(i32 1L)(i32 nulint)(=)(||)(||)(ret)");
+    }
+
+    @Test
+    public void testJitIsNullOnNotNullExtendedTypesFoldsToFalse() throws Exception {
+        // Cover the Phase 1+2 "extended" types (IPv4, UUID, SYMBOL, GEOHASH) through the JIT fold.
+        // Each one has its own null sentinel shape — UUID uses (LONG_NULL, LONG_NULL), IPv4 uses
+        // a distinct INT sentinel, SYMBOL uses key INT_NULL, GEOHASH variants use a per-size null.
+        // The fold collapses all of them into the same three-instruction boolean sequence.
+        factory.close();
+        execute("drop table if exists y");
+        TableModel model = new TableModel(configuration, "y", PartitionBy.NONE);
+        model.col("nnipv4", ColumnType.IPv4).notNull()
+                .col("nnuuid", ColumnType.UUID).notNull()
+                .col("nnsym", ColumnType.SYMBOL).notNull()
+                .col("nngeob", ColumnType.GEOBYTE).notNull()
+                .col("nngeos", ColumnType.GEOSHORT).notNull()
+                .col("nngeoi", ColumnType.GEOINT).notNull()
+                .col("nngeol", ColumnType.GEOLONG).notNull()
+                .timestamp("ts");
+        AbstractCairoTest.create(model);
+
+        factory = select("select * from y");
+        Assert.assertTrue(factory.supportsPageFrameCursor());
+        metadata = factory.getMetadata();
+
+        serialize("nnipv4 is null");
+        assertIR("(i8 0L)(i8 1L)(=)(ret)");
+        serialize("nnipv4 is not null");
+        assertIR("(i8 1L)(i8 1L)(=)(ret)");
+        serialize("nnuuid is null");
+        assertIR("(i8 0L)(i8 1L)(=)(ret)");
+        serialize("nnuuid is not null");
+        assertIR("(i8 1L)(i8 1L)(=)(ret)");
+        serialize("nnsym is null");
+        assertIR("(i8 0L)(i8 1L)(=)(ret)");
+        serialize("nnsym is not null");
+        assertIR("(i8 1L)(i8 1L)(=)(ret)");
+        serialize("nngeob is null");
+        assertIR("(i8 0L)(i8 1L)(=)(ret)");
+        serialize("nngeos is not null");
+        assertIR("(i8 1L)(i8 1L)(=)(ret)");
+        serialize("nngeoi is null");
+        assertIR("(i8 0L)(i8 1L)(=)(ret)");
+        serialize("nngeol is not null");
+        assertIR("(i8 1L)(i8 1L)(=)(ret)");
     }
 
     @Test
