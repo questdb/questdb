@@ -400,6 +400,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     int getShowKind();
 
+    ExpressionNode getStashedSampleByNode();
+
     int getTableId();
 
     CharSequence getTableName();
@@ -633,6 +635,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setSkipped(boolean skipped);
 
     void setStandaloneUnnest(boolean standaloneUnnest);
+
+    void setStashedSampleByNode(ExpressionNode stashedSampleByNode);
 
     void setTableId(int id);
 
