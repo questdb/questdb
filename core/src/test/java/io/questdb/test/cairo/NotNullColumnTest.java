@@ -1088,6 +1088,77 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsNullProjectionOnNotNullColumnConstantFoldsToFalse() throws Exception {
+        assertMemoryLeak(() -> {
+            // `x IS NULL` in the SELECT list goes through FunctionParser -> EqIntFunctionFactory /
+            // EqDoubleFunctionFactory / etc. Our change propagates NOT NULL from column metadata
+            // into the ColumnFunction's isNotNull() and makes these factories return
+            // BooleanConstant.FALSE for NOT NULL columns. NegatingFunctionFactory flips to TRUE
+            // for IS NOT NULL.
+            execute("""
+                    CREATE TABLE t (
+                        i INT NOT NULL,
+                        l LONG NOT NULL,
+                        d DOUBLE NOT NULL,
+                        f FLOAT NOT NULL,
+                        nul_i INT,
+                        nul_l LONG,
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 10, 1.5, 0.5, 100, 1000, '2024-01-01'),
+                        (NULL, NULL, NULL, NULL, NULL, NULL, '2024-01-02'),
+                        (3, 30, 3.5, 2.5, 300, 3000, '2024-01-03')
+                    """);
+
+            // Projection: (col IS NULL) — false every row for NOT NULL columns (sentinel row included).
+            // Nullable columns still flag the sentinel row as null.
+            assertSql(
+                    """
+                            i_is_null\tl_is_null\td_is_null\tf_is_null\tnul_i_is_null\tnul_l_is_null
+                            false\tfalse\tfalse\tfalse\tfalse\tfalse
+                            false\tfalse\tfalse\tfalse\ttrue\ttrue
+                            false\tfalse\tfalse\tfalse\tfalse\tfalse
+                            """,
+                    "SELECT (i IS NULL) i_is_null, (l IS NULL) l_is_null, (d IS NULL) d_is_null, " +
+                            "(f IS NULL) f_is_null, (nul_i IS NULL) nul_i_is_null, (nul_l IS NULL) nul_l_is_null " +
+                            "FROM t ORDER BY ts"
+            );
+
+            // IS NOT NULL: true for NOT NULL columns, flips for nullable.
+            assertSql(
+                    """
+                            i_nn\tnul_i_nn
+                            true\ttrue
+                            true\tfalse
+                            true\ttrue
+                            """,
+                    "SELECT (i IS NOT NULL) i_nn, (nul_i IS NOT NULL) nul_i_nn FROM t ORDER BY ts"
+            );
+
+            // WHERE x IS NULL on NOT NULL columns matches zero rows — even the sentinel row.
+            // Behaviour here depends on the WHERE filter path picking up the constant-folded
+            // function (BooleanConstant.FALSE). JIT and the WhereClauseParser intrinsic pass
+            // can bypass the factory layer; if they do, they still sentinel-skip and this
+            // assertion would return 1 instead of 0 — a known gap tracked separately.
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE i IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE f IS NULL");
+
+            // WHERE x IS NOT NULL on NOT NULL columns matches every row.
+            assertSql("count\n3\n", "SELECT count(*) FROM t WHERE i IS NOT NULL");
+            assertSql("count\n3\n", "SELECT count(*) FROM t WHERE l IS NOT NULL");
+
+            // Sanity: the nullable column's IS NULL does find the sentinel row.
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE nul_i IS NULL");
+            assertSql("count\n2\n", "SELECT count(*) FROM t WHERE nul_i IS NOT NULL");
+        });
+    }
+
+    @Test
     public void testAggregateOnNotNullColumnIsConsistent() throws Exception {
         assertMemoryLeak(() -> {
             // Every native aggregate kernel today (both the vectorized Vect.* / Rosti::keyed*

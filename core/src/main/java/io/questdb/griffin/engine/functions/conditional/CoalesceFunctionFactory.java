@@ -158,7 +158,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         throw SqlException.$(sqlPos, "coalesce cannot be used with bind variables");
     }
 
-    private static boolean isNotNull(Long256 value) {
+    private static boolean isLong256NotNull(Long256 value) {
         return value != null &&
                 value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NULL ||
                 value.getLong1() != Numbers.LONG_NULL ||
@@ -494,7 +494,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public void getLong256(Record rec, CharSink<?> sink) {
             for (int i = 0; i < size; i++) {
                 Long256 value = args.getQuick(i).getLong256A(rec);
-                if (isNotNull(value)) {
+                if (isLong256NotNull(value)) {
                     Numbers.appendLong256(value, sink);
                     return;
                 }
@@ -506,7 +506,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             Long256 value = Long256Impl.NULL_LONG256;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong256A(rec);
-                if (isNotNull(value)) {
+                if (isLong256NotNull(value)) {
                     return value;
                 }
             }
@@ -518,7 +518,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             Long256 value = Long256Impl.NULL_LONG256;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong256B(rec);
-                if (isNotNull(value)) {
+                if (isLong256NotNull(value)) {
                     return value;
                 }
             }
@@ -975,7 +975,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public void getLong256(Record rec, CharSink<?> sink) {
             Long256 value = args0.getLong256A(rec);
-            if (!isNotNull(value)) {
+            if (!isLong256NotNull(value)) {
                 value = args1.getLong256A(rec);
             }
             Numbers.appendLong256(value, sink);
@@ -984,7 +984,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256A(Record rec) {
             Long256 value = args0.getLong256A(rec);
-            if (isNotNull(value)) {
+            if (isLong256NotNull(value)) {
                 return value;
             }
             return args1.getLong256A(rec);
@@ -993,7 +993,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256B(Record rec) {
             Long256 value = args0.getLong256B(rec);
-            if (isNotNull(value)) {
+            if (isLong256NotNull(value)) {
                 return value;
             }
             return args1.getLong256B(rec);

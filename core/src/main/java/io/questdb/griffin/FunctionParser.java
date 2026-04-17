@@ -180,15 +180,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         int columnType = metadata.getColumnType(index);
+        final boolean isNotNull = metadata.isNotNull(index);
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN -> BooleanColumn.newInstance(index);
             case ColumnType.BYTE -> ByteColumn.newInstance(index);
             case ColumnType.SHORT -> ShortColumn.newInstance(index);
             case ColumnType.CHAR -> new CharColumn(index);
-            case ColumnType.INT -> IntColumn.newInstance(index);
-            case ColumnType.LONG -> LongColumn.newInstance(index);
-            case ColumnType.FLOAT -> FloatColumn.newInstance(index);
-            case ColumnType.DOUBLE -> DoubleColumn.newInstance(index);
+            case ColumnType.INT -> IntColumn.newInstance(index, isNotNull);
+            case ColumnType.LONG -> LongColumn.newInstance(index, isNotNull);
+            case ColumnType.FLOAT -> FloatColumn.newInstance(index, isNotNull);
+            case ColumnType.DOUBLE -> DoubleColumn.newInstance(index, isNotNull);
             case ColumnType.STRING ->
                 // we cannot use a pooled StrColumn instance, because it is not thread-safe
                     new StrColumn(index);
@@ -197,8 +198,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     new VarcharColumn(index);
             case ColumnType.SYMBOL -> new SymbolColumn(index, metadata.isSymbolTableStatic(index));
             case ColumnType.BINARY -> BinColumn.newInstance(index);
-            case ColumnType.DATE -> DateColumn.newInstance(index);
-            case ColumnType.TIMESTAMP -> TimestampColumn.newInstance(index, columnType);
+            case ColumnType.DATE -> DateColumn.newInstance(index, isNotNull);
+            case ColumnType.TIMESTAMP -> TimestampColumn.newInstance(index, columnType, isNotNull);
             case ColumnType.RECORD -> new RecordColumn(index, metadata.getMetadata(index));
             case ColumnType.GEOBYTE -> GeoByteColumn.newInstance(index, columnType);
             case ColumnType.GEOSHORT -> GeoShortColumn.newInstance(index, columnType);
