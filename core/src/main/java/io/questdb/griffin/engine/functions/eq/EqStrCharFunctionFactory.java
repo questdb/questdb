@@ -33,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -60,6 +61,12 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         Function charFunc = args.getQuick(1);
 
         if (ColumnType.isNull(strFunc.getType()) || ColumnType.isNull(charFunc.getType())) {
+            // `col = NULL` / `NULL = col` on a NOT NULL operand is always false.
+            // NegatingFunctionFactory flips the constant for IS NOT NULL.
+            if ((ColumnType.isNull(strFunc.getType()) && charFunc.isNotNull())
+                    || (ColumnType.isNull(charFunc.getType()) && strFunc.isNotNull())) {
+                return BooleanConstant.FALSE;
+            }
             return new Func(strFunc, charFunc);
         }
 

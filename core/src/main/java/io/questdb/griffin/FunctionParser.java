@@ -185,7 +185,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.BOOLEAN -> BooleanColumn.newInstance(index);
             case ColumnType.BYTE -> ByteColumn.newInstance(index);
             case ColumnType.SHORT -> ShortColumn.newInstance(index);
-            case ColumnType.CHAR -> new CharColumn(index);
+            case ColumnType.CHAR -> new CharColumn(index, isNotNull);
             case ColumnType.INT -> IntColumn.newInstance(index, isNotNull);
             case ColumnType.LONG -> LongColumn.newInstance(index, isNotNull);
             case ColumnType.FLOAT -> FloatColumn.newInstance(index, isNotNull);
