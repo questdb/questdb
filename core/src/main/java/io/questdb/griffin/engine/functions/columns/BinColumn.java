@@ -34,16 +34,22 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class BinColumn extends BinFunction implements ColumnFunction {
     private static final ObjList<BinColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
+    private final boolean notNull;
 
-    private BinColumn(int columnIndex) {
+    private BinColumn(int columnIndex, boolean notNull) {
         this.columnIndex = columnIndex;
+        this.notNull = notNull;
     }
 
     public static BinColumn newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        return newInstance(columnIndex, false);
+    }
+
+    public static BinColumn newInstance(int columnIndex, boolean notNull) {
+        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new BinColumn(columnIndex);
+        return new BinColumn(columnIndex, notNull);
     }
 
     @Override
@@ -61,10 +67,15 @@ public class BinColumn extends BinFunction implements ColumnFunction {
         return columnIndex;
     }
 
+    @Override
+    public boolean isNotNull() {
+        return notNull;
+    }
+
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new BinColumn(i));
+            COLUMNS.setQuick(i, new BinColumn(i, false));
         }
     }
 }

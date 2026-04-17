@@ -197,7 +197,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 // we cannot use a pooled VarcharColumn instance, because it is not thread-safe
                     new VarcharColumn(index, isNotNull);
             case ColumnType.SYMBOL -> new SymbolColumn(index, metadata.isSymbolTableStatic(index), isNotNull);
-            case ColumnType.BINARY -> BinColumn.newInstance(index);
+            case ColumnType.BINARY -> BinColumn.newInstance(index, isNotNull);
             case ColumnType.DATE -> DateColumn.newInstance(index, isNotNull);
             case ColumnType.TIMESTAMP -> TimestampColumn.newInstance(index, columnType, isNotNull);
             case ColumnType.RECORD -> new RecordColumn(index, metadata.getMetadata(index));
