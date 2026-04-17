@@ -34,16 +34,26 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class IPv4Column extends IPv4Function implements ColumnFunction {
     private static final ObjList<IPv4Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
+    private final boolean notNull;
 
     public IPv4Column(int columnIndex) {
+        this(columnIndex, false);
+    }
+
+    public IPv4Column(int columnIndex, boolean notNull) {
         this.columnIndex = columnIndex;
+        this.notNull = notNull;
     }
 
     public static IPv4Column newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        return newInstance(columnIndex, false);
+    }
+
+    public static IPv4Column newInstance(int columnIndex, boolean notNull) {
+        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new IPv4Column(columnIndex);
+        return new IPv4Column(columnIndex, notNull);
     }
 
     @Override
@@ -60,6 +70,11 @@ public class IPv4Column extends IPv4Function implements ColumnFunction {
     }
 
     @Override
+    public boolean isNotNull() {
+        return notNull;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }
@@ -67,7 +82,7 @@ public class IPv4Column extends IPv4Function implements ColumnFunction {
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new IPv4Column(i));
+            COLUMNS.setQuick(i, new IPv4Column(i, false));
         }
     }
 }
