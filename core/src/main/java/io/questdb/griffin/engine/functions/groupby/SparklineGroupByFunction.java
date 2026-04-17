@@ -30,11 +30,15 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
@@ -52,7 +56,10 @@ import org.jetbrains.annotations.Nullable;
  * {@link GroupByAllocator}. Within a single worker page frames arrive in
  * rowId order, so per-worker buffers are sorted runs. During the merge phase
  * two sorted runs are combined with a merge-sort merge step into a fresh
- * buffer in the owner's allocator.
+ * buffer in the destination's allocator - the owner's allocator on the
+ * non-sharded merge path, or a per-worker allocator on the sharded merge
+ * path. Either way, the destination buffer lives in an allocator that
+ * outlives the merge until cursor close.
  * <p>
  * <b>MapValue layout</b> (3 slots):
  * <pre>
@@ -115,6 +122,32 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         this.widthPosition = widthPosition;
         // Each rendered char occupies 3 bytes of UTF-8.
         this.maxValues = maxBufferLength / 3;
+    }
+
+    @Override
+    public void clear() {
+        // Render caches hold native pointers into the GroupByAllocator. When
+        // the enclosing factory is reused across cursor runs the allocator
+        // is reset and the same addresses may be handed out again - stale
+        // cache entries would then point at freed memory. computeFirst also
+        // clears these on every new group, but the owner's instance on the
+        // sharded merge path sees groups only via merge() and would miss
+        // that reset.
+        cachedPairPtrA = 0;
+        cachedPairPtrB = 0;
+        cachedRenderLenA = 0;
+        cachedRenderLenB = 0;
+        cachedRenderPtrA = 0;
+        cachedRenderPtrB = 0;
+        lastRenderPtr = 0;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(arg);
+        Misc.free(minFunc);
+        Misc.free(maxFunc);
+        Misc.free(widthFunc);
     }
 
     @Override
@@ -230,6 +263,20 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     }
 
     @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        arg.init(symbolTableSource, executionContext);
+        if (minFunc != null) {
+            minFunc.init(symbolTableSource, executionContext);
+        }
+        if (maxFunc != null) {
+            maxFunc.init(symbolTableSource, executionContext);
+        }
+        if (widthFunc != null) {
+            widthFunc.init(symbolTableSource, executionContext);
+        }
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
@@ -265,14 +312,16 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
 
     /**
      * Merges the source worker's observation buffer into the destination
-     * (owner) buffer. Both are sorted by rowId within their respective
-     * workers. The merge produces a single sorted buffer via a merge-sort
-     * merge step, allocated in the owner's allocator.
+     * buffer. Both are sorted by rowId within their respective workers.
+     * The merge produces a single sorted buffer via a merge-sort merge
+     * step, allocated in the destination's allocator - either the owner's
+     * allocator on the non-sharded merge path or a per-worker allocator
+     * on the sharded merge path.
      * <p>
      * When dest is empty, the source buffer is copied into a fresh
-     * allocation in the owner's allocator rather than aliasing the raw
-     * pointer, because the source buffer lives in a worker allocator that
-     * will be reclaimed independently.
+     * allocation in the destination's allocator rather than aliasing the
+     * raw pointer, because the source buffer lives in a separate allocator
+     * that will be reclaimed independently.
      */
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
@@ -356,6 +405,20 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         sink.val(')');
     }
 
+    @Override
+    public void toTop() {
+        arg.toTop();
+        if (minFunc != null) {
+            minFunc.toTop();
+        }
+        if (maxFunc != null) {
+            maxFunc.toTop();
+        }
+        if (widthFunc != null) {
+            widthFunc.toTop();
+        }
+    }
+
     private char charForValue(double value, double min, double range) {
         if (range == 0.0) {
             return chars[chars.length - 1];
@@ -385,6 +448,15 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         // scan cost vs two separate full walks.
         double userMin = minFunc != null ? minFunc.getDouble(null) : Double.NaN;
         double userMax = maxFunc != null ? maxFunc.getDouble(null) : Double.NaN;
+        // When both bounds are user-supplied, reject an inverted range up
+        // front. Leaving it through produces a negative range that clamps
+        // every value to min and renders as a flat all-bottom line, which
+        // hides the bug from the user.
+        if (!Double.isNaN(userMin) && !Double.isNaN(userMax) && userMin > userMax) {
+            throw CairoException.nonCritical().position(functionPosition)
+                    .put(name).put("() min must not exceed max [min=")
+                    .put(userMin).put(", max=").put(userMax).put(']');
+        }
         double min, max;
         if (Double.isNaN(userMin) || Double.isNaN(userMax)) {
             double first = Unsafe.getUnsafe().getDouble(ptr + 8);

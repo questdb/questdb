@@ -32,68 +32,92 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBasicEmptyBar() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-                        
+
                         """,
-                "SELECT bar(0, 0, 100, 10)"
+                "SELECT bar(0, 0, 100, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
     @Test
     public void testBasicFullBar() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
                         ██████████
                         """,
-                "SELECT bar(100, 0, 100, 10)"
+                "SELECT bar(100, 0, 100, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
     @Test
     public void testBasicHalfBar() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
                         █████
                         """,
-                "SELECT bar(50, 0, 100, 10)"
+                "SELECT bar(50, 0, 100, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
     @Test
     public void testClampAboveMax() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
                         ██████████
                         """,
-                "SELECT bar(200, 0, 100, 10)"
+                "SELECT bar(200, 0, 100, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
     @Test
     public void testClampBelowMin() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-                        
+
                         """,
-                "SELECT bar(-50, 0, 100, 10)"
+                "SELECT bar(-50, 0, 100, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
     @Test
     public void testFractionalBlock() throws Exception {
         // 75/100 * 10 = 7.5 chars -> 7 full + half block (index 3 = U+258C)
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
                         ███████▌
                         """,
-                "SELECT bar(75, 0, 100, 10)"
+                "SELECT bar(75, 0, 100, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
@@ -106,69 +130,93 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
                     (50, '2024-01-01T00:00:00.000000Z'),
                     (100, '2024-01-01T01:00:00.000000Z')
                     """);
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             val\tbar
                             50\t█████
                             100\t██████████
                             """,
-                    "SELECT val, bar(val, 0, 100, 10) FROM t"
+                    "SELECT val, bar(val, 0, 100, 10) FROM t",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
 
     @Test
     public void testMinEqualsMax() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-                        
+
                         """,
-                "SELECT bar(50, 50, 50, 10)"
+                "SELECT bar(50, 50, 50, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
     @Test
     public void testNegativeRange() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
                         █████
                         """,
-                "SELECT bar(-50, -100, 0, 10)"
+                "SELECT bar(-50, -100, 0, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
     @Test
     public void testNullMax() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-                        
+
                         """,
-                "SELECT bar(50, 0, NULL, 10)"
+                "SELECT bar(50, 0, NULL, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
     @Test
     public void testNullMin() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-                        
+
                         """,
-                "SELECT bar(50, NULL, 100, 10)"
+                "SELECT bar(50, NULL, 100, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
     @Test
     public void testNullValue() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-                        
+
                         """,
-                "SELECT bar(NULL, 0, 100, 10)"
+                "SELECT bar(NULL, 0, 100, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
@@ -183,13 +231,17 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T01:10:00.000000Z'),
                     (70.0, '2024-01-01T01:20:00.000000Z')
                     """);
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\ttotal\tbar
                             2024-01-01T00:00:00.000000Z\t30.0\t██████
                             2024-01-01T01:00:00.000000Z\t100.0\t████████████████████
                             """,
-                    "SELECT ts, sum(amount) total, bar(sum(amount), 0, 100, 20) FROM t SAMPLE BY 1h"
+                    "SELECT ts, sum(amount) total, bar(sum(amount), 0, 100, 20) FROM t SAMPLE BY 1h",
+                    null,
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -206,7 +258,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
                     (75.0, '2024-01-01T03:00:00.000000Z'),
                     (100.0, '2024-01-01T04:00:00.000000Z')
                     """);
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             val\tbar
                             0.0\t
@@ -215,7 +267,11 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
                             75.0\t███████▌
                             100.0\t██████████
                             """,
-                    "SELECT val, bar(val, 0, 100, 10) FROM t"
+                    "SELECT val, bar(val, 0, 100, 10) FROM t",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -234,7 +290,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
             // Global OVER (): min=10, max=100, range=90
             // A: 10 -> 0 chars, 30 -> 20/90*20=4.44 -> 4 full + frac(3)=U+258D
             // B: 50 -> 40/90*20=8.88 -> 8 full + frac(7)=U+2589, 100 -> 20 full
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             symbol\tamount\tbar
                             A\t10.0\t
@@ -242,7 +298,11 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
                             B\t50.0\t████████▉
                             B\t100.0\t████████████████████
                             """,
-                    "SELECT symbol, amount, bar(amount, min(amount) OVER (), max(amount) OVER (), 20) FROM t ORDER BY symbol, amount"
+                    "SELECT symbol, amount, bar(amount, min(amount) OVER (), max(amount) OVER (), 20) FROM t ORDER BY symbol, amount",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -261,7 +321,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
             // OVER (PARTITION BY symbol): each symbol scales independently
             // A: min=10, max=30. 10->0 chars, 30->20 chars (full)
             // B: min=50, max=100. 50->0 chars, 100->20 chars (full)
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             symbol\tamount\tbar
                             A\t10.0\t
@@ -269,7 +329,11 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
                             B\t50.0\t
                             B\t100.0\t████████████████████
                             """,
-                    "SELECT symbol, amount, bar(amount, min(amount) OVER (PARTITION BY symbol), max(amount) OVER (PARTITION BY symbol), 20) FROM t ORDER BY symbol, amount"
+                    "SELECT symbol, amount, bar(amount, min(amount) OVER (PARTITION BY symbol), max(amount) OVER (PARTITION BY symbol), 20) FROM t ORDER BY symbol, amount",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -287,23 +351,31 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testZeroWidth() throws Exception {
         // width <= 0 returns null
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-                        
+
                         """,
-                "SELECT bar(50, 0, 100, 0)"
+                "SELECT bar(50, 0, 100, 0)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
     @Test
     public void testNegativeWidth() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-                        
+
                         """,
-                "SELECT bar(50, 0, 100, -5)"
+                "SELECT bar(50, 0, 100, -5)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 
@@ -326,7 +398,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
                     """);
             // Bars are empty, █, █████, ██████████. Shorter shared-prefix
             // strings sort first bytewise, giving ascending: 0, 10, 50, 100.
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             val\tbar
                             0.0\t
@@ -334,7 +406,11 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
                             50.0\t█████
                             100.0\t██████████
                             """,
-                    "SELECT val, bar(val, 0, 100, 10) bar FROM t ORDER BY bar"
+                    "SELECT val, bar(val, 0, 100, 10) bar FROM t ORDER BY bar",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -362,12 +438,16 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMinGreaterThanMax() throws Exception {
         // min > max returns null
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         bar
-                        
+
                         """,
-                "SELECT bar(50, 100, 0, 10)"
+                "SELECT bar(50, 100, 0, 10)",
+                null,
+                null,
+                true,
+                true
         ));
     }
 }

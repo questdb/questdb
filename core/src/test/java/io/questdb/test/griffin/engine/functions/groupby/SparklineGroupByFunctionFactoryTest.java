@@ -141,6 +141,41 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcatResult() throws Exception {
+        // The || operator consumes the sparkline output as a VARCHAR input
+        // to another function. The concat factory reads the Utf8Sequence
+        // returned by getVarcharA and copies into its own sink, so the
+        // bytes must stay valid past the getVarcharA call that produced
+        // them. A regression in the allocator-backed render buffer
+        // (premature free, aliasing across groups) would surface here as
+        // garbled output.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, grp SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (0.0, 'up',   '2024-01-01T00:00:00.000000Z'),
+                    (3.5, 'up',   '2024-01-01T01:00:00.000000Z'),
+                    (7.0, 'up',   '2024-01-01T02:00:00.000000Z'),
+                    (7.0, 'down', '2024-01-01T00:00:00.000000Z'),
+                    (3.5, 'down', '2024-01-01T01:00:00.000000Z'),
+                    (0.0, 'down', '2024-01-01T02:00:00.000000Z')
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            grp\tlabel
+                            down\ttrend: █▄▁ end
+                            up\ttrend: ▁▄█ end
+                            """,
+                    "SELECT grp, 'trend: ' || sparkline(val) || ' end' label FROM t ORDER BY grp",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testConstantValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -599,6 +634,28 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                             ▁▄█
                             """,
                     "SELECT sparkline(val) FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testInvertedExplicitMinMax() throws Exception {
+        // min > max is almost always a user error. Without the guard the
+        // negative range silently clamps every value to min and renders as
+        // an all-bottom line, which looks like valid output. Verify the
+        // function fails fast instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, '2024-01-01T01:00:00.000000Z'),
+                    (90.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            assertException(
+                    "SELECT sparkline(val, 100.0, 0.0, 3) FROM t",
+                    17,
+                    "sparkline() min must not exceed max [min=100.0, max=0.0]"
             );
         });
     }
