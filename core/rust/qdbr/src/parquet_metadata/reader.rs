@@ -297,6 +297,12 @@ impl<'a> ParquetMetaReader<'a> {
         self.header.feature_flags()
     }
 
+    /// Partition squash tracker, or `None` when the SQUASH_TRACKER bit is not
+    /// set. Consumed by the enterprise build; OSS does not read it today.
+    pub fn squash_tracker(&self) -> Option<i64> {
+        self.header.squash_tracker()
+    }
+
     /// Returns the raw file data slice.
     pub fn data(&self) -> &'a [u8] {
         self.data

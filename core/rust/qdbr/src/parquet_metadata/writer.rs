@@ -54,6 +54,7 @@ pub struct ParquetMetaWriter {
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     unused_bytes: u64,
+    squash_tracker: i64,
 }
 
 impl Default for ParquetMetaWriter {
@@ -70,6 +71,7 @@ impl ParquetMetaWriter {
             parquet_footer_offset: 0,
             parquet_footer_length: 0,
             unused_bytes: 0,
+            squash_tracker: -1,
         }
     }
 
@@ -121,6 +123,14 @@ impl ParquetMetaWriter {
 
     pub fn unused_bytes(&mut self, unused_bytes: u64) -> &mut Self {
         self.unused_bytes = unused_bytes;
+        self
+    }
+
+    /// Sets the partition squash tracker. The value is applied at `finish()`
+    /// time to survive any subsequent `designated_timestamp()` call (which
+    /// recreates the header builder). Passing `-1` omits the section.
+    pub fn squash_tracker(&mut self, value: i64) -> &mut Self {
+        self.squash_tracker = value;
         self
     }
 
@@ -181,6 +191,11 @@ impl ParquetMetaWriter {
 
         let bloom_filter_columns = self.header_builder.bloom_filter_columns.clone();
         let bloom_col_count = bloom_filter_columns.len();
+
+        // Apply the squash tracker (stored on the writer) just before we serialize
+        // the header — the header_builder can be recreated by designated_timestamp(),
+        // so we thread the value through at finish time.
+        self.header_builder.set_squash_tracker(self.squash_tracker);
 
         let mut buf = Vec::new();
 
@@ -651,6 +666,44 @@ mod tests {
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), 1);
         assert_eq!(reader.row_group_count(), 0);
+    }
+
+    #[test]
+    fn writer_round_trips_squash_tracker() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.squash_tracker(99);
+        let (bytes, footer_offset) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        assert!(reader.feature_flags().has_squash_tracker());
+        assert_eq!(reader.squash_tracker(), Some(99));
+    }
+
+    #[test]
+    fn writer_squash_tracker_default_omitted() {
+        // Never calling squash_tracker() must produce a file with the bit clear.
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (bytes, footer_offset) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        assert!(!reader.feature_flags().has_squash_tracker());
+        assert_eq!(reader.squash_tracker(), None);
+    }
+
+    #[test]
+    fn writer_squash_tracker_survives_designated_timestamp_reset() {
+        // designated_timestamp() rebuilds the header_builder; squash_tracker
+        // is stored on the writer and re-applied at finish() time.
+        let mut w = ParquetMetaWriter::new();
+        w.squash_tracker(7);
+        w.designated_timestamp(-1);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (bytes, footer_offset) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        assert_eq!(reader.squash_tracker(), Some(7));
     }
 
     #[test]

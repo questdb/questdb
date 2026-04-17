@@ -95,6 +95,11 @@ impl HeaderFeatureFlags {
     /// `[DESIGNATED_TIMESTAMP]` ascending. Only valid when `DESIGNATED_TIMESTAMP >= 0`.
     pub const SORTING_IS_DTS_ASC_BIT: u64 = 1 << 2;
 
+    /// Partition squash tracker is stored in the header feature sections as a
+    /// single `i64`. Omitted when the tracker value would be the unset
+    /// sentinel (-1). Consumed by the enterprise build.
+    pub const SQUASH_TRACKER_BIT: u64 = 1 << 3;
+
     pub const fn new() -> Self {
         Self(0)
     }
@@ -131,6 +136,14 @@ impl HeaderFeatureFlags {
 
     pub const fn with_sorting_is_dts_asc(self) -> Self {
         Self(self.0 | Self::SORTING_IS_DTS_ASC_BIT)
+    }
+
+    pub const fn has_squash_tracker(self) -> bool {
+        self.0 & Self::SQUASH_TRACKER_BIT != 0
+    }
+
+    pub const fn with_squash_tracker(self) -> Self {
+        Self(self.0 | Self::SQUASH_TRACKER_BIT)
     }
 
     /// Validates bit dependencies: bit 1 (external) requires bit 0 (bloom filters).

@@ -102,6 +102,9 @@ pub fn convert_from_parquet(
     let mut writer = ParquetMetaWriter::new();
     writer.designated_timestamp(designated_ts);
     writer.parquet_footer(parquet_footer_offset, parquet_footer_length);
+    if let Some(meta) = qdb_meta {
+        writer.squash_tracker(meta.squash_tracker);
+    }
 
     // Add sorting columns.
     for sc in &sorting_cols {
@@ -693,11 +696,13 @@ pub fn generate_parquet_metadata(
     parquet_footer_length: u32,
     bloom_bitsets: &[Vec<Option<Vec<u8>>>],
     unused_bytes: u64,
+    squash_tracker: i64,
 ) -> ParquetResult<(Vec<u8>, u64)> {
     let mut writer = ParquetMetaWriter::new();
     writer.designated_timestamp(designated_timestamp);
     writer.parquet_footer(parquet_footer_offset, parquet_footer_length);
     writer.unused_bytes(unused_bytes);
+    writer.squash_tracker(squash_tracker);
 
     for &sc_idx in sorting_columns {
         writer.add_sorting_column(sc_idx);
@@ -1158,6 +1163,51 @@ mod tests {
         // Without QdbMeta, the type is inferred from the parquet schema.
         // The test parquet has a Timestamp(Micros) column → ColumnTypeTag::Timestamp (8).
         assert_eq!(desc.col_type, ColumnTypeTag::Timestamp as i32);
+    }
+
+    #[test]
+    fn convert_propagates_squash_tracker_from_qdb_meta() {
+        // When QdbMeta.squash_tracker != -1, the _pm header carries it.
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+
+        let mut qdb_meta = extract_qdb_meta_from(&metadata).expect("test parquet has qdb meta");
+        qdb_meta.squash_tracker = 42;
+
+        let (pm_bytes, footer_offset) =
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        assert!(reader.feature_flags().has_squash_tracker());
+        assert_eq!(reader.squash_tracker(), Some(42));
+    }
+
+    #[test]
+    fn convert_omits_squash_tracker_when_neg_one() {
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+
+        let mut qdb_meta = extract_qdb_meta_from(&metadata).expect("test parquet has qdb meta");
+        qdb_meta.squash_tracker = -1;
+
+        let (pm_bytes, footer_offset) =
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        assert!(!reader.feature_flags().has_squash_tracker());
+        assert_eq!(reader.squash_tracker(), None);
+    }
+
+    #[test]
+    fn convert_without_qdb_meta_omits_squash_tracker() {
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+
+        let (pm_bytes, footer_offset) = convert_from_parquet(&metadata, None, 0, 0).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        assert!(!reader.feature_flags().has_squash_tracker());
+        assert_eq!(reader.squash_tracker(), None);
     }
 
     #[test]
@@ -2324,6 +2374,7 @@ mod tests {
             footer_length,
             &[],
             0,
+            -1,
         )
         .unwrap();
 
@@ -2396,6 +2447,7 @@ mod tests {
             50,
             &[],
             0,
+            -1,
         )
         .unwrap();
 
@@ -2530,6 +2582,7 @@ mod tests {
             50,
             &[],
             0,
+            -1,
         )
         .unwrap();
         let initial_size = initial_pm.len() as u64;
@@ -2675,6 +2728,7 @@ mod tests {
             50,
             bloom_bitsets,
             0,
+            -1,
         )
         .unwrap();
 
@@ -2831,6 +2885,7 @@ mod tests {
             50,
             &[],
             0,
+            -1,
         )
         .unwrap();
 

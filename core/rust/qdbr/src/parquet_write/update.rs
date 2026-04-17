@@ -840,6 +840,7 @@ impl ParquetUpdater {
                     footer_length,
                     bloom_bitsets,
                     self.result_unused_bytes,
+                    qdb_meta.squash_tracker,
                 )?;
                 self.result_parquet_meta_size = pm_bytes.len() as i64;
                 parquet_meta_file

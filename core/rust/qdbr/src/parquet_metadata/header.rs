@@ -81,6 +81,8 @@ pub struct FileHeader<'a> {
     data: &'a [u8],
     /// Bloom filter column indices (raw bytes of u32 array), if BLOOM_FILTERS bit is set.
     bloom_filter_columns: Option<&'a [u8]>,
+    /// Partition squash tracker, if SQUASH_TRACKER bit is set.
+    squash_tracker: Option<i64>,
 }
 
 impl<'a> FileHeader<'a> {
@@ -141,8 +143,10 @@ impl<'a> FileHeader<'a> {
         let names_end = Self::compute_names_area_end(data, raw.column_count)?;
 
         // Parse header feature sections (after name strings, in bit order).
+        let mut cursor = names_end;
+
+        // Bit 0: BLOOM_FILTERS header section.
         let bloom_filter_columns = if raw.feature_flags.has_bloom_filters() {
-            let mut cursor = names_end;
             // Read bloom_col_count: u32.
             if cursor + 4 > data.len() {
                 return Err(parquet_meta_err!(
@@ -177,6 +181,7 @@ impl<'a> FileHeader<'a> {
                 ));
             }
             let indices_slice = &data[cursor..cursor + indices_bytes];
+            cursor += indices_bytes;
 
             // Validate: each index < column_count, sorted ascending, unique.
             let mut prev: Option<u32> = None;
@@ -210,7 +215,22 @@ impl<'a> FileHeader<'a> {
             None
         };
 
-        Ok(Self { raw, data, bloom_filter_columns })
+        // Bit 3: SQUASH_TRACKER header section (single i64).
+        let squash_tracker = if raw.feature_flags.has_squash_tracker() {
+            if cursor + 8 > data.len() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "squash tracker header section: missing i64 payload"
+                ));
+            }
+            // Unwrap: cursor + 8 <= data.len() checked above.
+            let value = i64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+            Some(value)
+        } else {
+            None
+        };
+
+        Ok(Self { raw, data, bloom_filter_columns, squash_tracker })
     }
 
     /// Minimum byte size required for the header with the given column counts
@@ -272,6 +292,12 @@ impl<'a> FileHeader<'a> {
         } else {
             Some(v as u32)
         }
+    }
+
+    /// Partition squash tracker, or `None` when the SQUASH_TRACKER feature bit
+    /// is not set. Consumed by the enterprise build; OSS does not read it.
+    pub fn squash_tracker(&self) -> Option<i64> {
+        self.squash_tracker
     }
 
     /// Returns the effective sorting column count. When SORTING_IS_DTS_ASC is
@@ -462,6 +488,7 @@ pub struct FileHeaderBuilder {
     sorting_columns: Vec<u32>,
     pub(crate) bloom_filter_columns: Vec<u32>,
     pub(crate) bloom_filters_external: bool,
+    squash_tracker: Option<i64>,
 }
 
 impl FileHeaderBuilder {
@@ -472,6 +499,7 @@ impl FileHeaderBuilder {
             sorting_columns: Vec::new(),
             bloom_filter_columns: Vec::new(),
             bloom_filters_external: false,
+            squash_tracker: None,
         }
     }
 
@@ -518,6 +546,13 @@ impl FileHeaderBuilder {
         self
     }
 
+    /// Sets the partition squash tracker value. Passing `-1` clears it (the
+    /// flag bit and 8-byte payload are omitted on write).
+    pub fn set_squash_tracker(&mut self, value: i64) -> &mut Self {
+        self.squash_tracker = if value == -1 { None } else { Some(value) };
+        self
+    }
+
     /// Returns true when sorting can be encoded as the SORTING_IS_DTS_ASC flag
     /// instead of writing explicit sorting column entries.
     fn can_use_sorting_is_dts_asc(&self) -> bool {
@@ -554,6 +589,9 @@ impl FileHeaderBuilder {
             sorting_count = 0u32;
         } else {
             sorting_count = self.sorting_columns.len() as u32;
+        }
+        if self.squash_tracker.is_some() {
+            flags = flags.with_squash_tracker();
         }
 
         // Fixed header fields (32 bytes).
@@ -618,6 +656,11 @@ impl FileHeaderBuilder {
             for &idx in &self.bloom_filter_columns {
                 buf.extend_from_slice(&idx.to_le_bytes());
             }
+        }
+
+        // Bit 3: SQUASH_TRACKER header section (single i64).
+        if let Some(value) = self.squash_tracker {
+            buf.extend_from_slice(&value.to_le_bytes());
         }
 
         buf.len()
@@ -965,6 +1008,107 @@ mod tests {
         let hdr = FileHeader::new(&buf).unwrap();
         assert!(!hdr.feature_flags().has_bloom_filters());
         assert_eq!(hdr.bloom_filter_column_count(), 0);
+    }
+
+    // ── SQUASH_TRACKER tests ─────────────────────────────────────────
+
+    #[test]
+    fn squash_tracker_round_trip() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.set_squash_tracker(42);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(hdr.feature_flags().has_squash_tracker());
+        assert_eq!(hdr.squash_tracker(), Some(42));
+    }
+
+    #[test]
+    fn squash_tracker_absent_when_unset() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        // Do not call set_squash_tracker at all.
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(!hdr.feature_flags().has_squash_tracker());
+        assert_eq!(hdr.squash_tracker(), None);
+    }
+
+    #[test]
+    fn squash_tracker_neg_one_is_omitted() {
+        // -1 is the "unset" sentinel; writer must omit the flag and payload.
+        let mut builder_none = FileHeaderBuilder::new(-1);
+        builder_none.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut buf_none = Vec::new();
+        builder_none.write_to(&mut buf_none);
+
+        let mut builder_neg_one = FileHeaderBuilder::new(-1);
+        builder_neg_one.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder_neg_one.set_squash_tracker(-1);
+        let mut buf_neg_one = Vec::new();
+        builder_neg_one.write_to(&mut buf_neg_one);
+
+        assert_eq!(buf_none, buf_neg_one);
+        let hdr = FileHeader::new(&buf_neg_one).unwrap();
+        assert!(!hdr.feature_flags().has_squash_tracker());
+        assert_eq!(hdr.squash_tracker(), None);
+    }
+
+    #[test]
+    fn squash_tracker_coexists_with_bloom_filters() {
+        // Sequential navigation: BLOOM_FILTERS (bit 0) then SQUASH_TRACKER (bit 3).
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("c", 2, 7, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.set_bloom_filter_columns(&[0, 2]);
+        builder.set_squash_tracker(1234);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(hdr.feature_flags().has_bloom_filters());
+        assert!(hdr.feature_flags().has_squash_tracker());
+        assert_eq!(hdr.bloom_filter_column_count(), 2);
+        assert_eq!(hdr.bloom_filter_column(0).unwrap(), 0);
+        assert_eq!(hdr.bloom_filter_column(1).unwrap(), 2);
+        assert_eq!(hdr.squash_tracker(), Some(1234));
+    }
+
+    #[test]
+    fn squash_tracker_negative_values_round_trip() {
+        // Any non-(-1) negative value must round-trip verbatim — -1 is the only sentinel.
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.set_squash_tracker(i64::MIN);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert_eq!(hdr.squash_tracker(), Some(i64::MIN));
+    }
+
+    #[test]
+    fn squash_tracker_truncated_payload_rejected() {
+        // Build a header without squash_tracker, then set the flag manually
+        // without appending the 8-byte payload. Reader must reject as Truncated.
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let flags = HeaderFeatureFlags::SQUASH_TRACKER_BIT;
+        buf[8..16].copy_from_slice(&flags.to_le_bytes());
+
+        assert!(FileHeader::new(&buf).is_err());
     }
 
     // ── SORTING_IS_DTS_ASC tests ─────────────────────────────────────
