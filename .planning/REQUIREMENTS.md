@@ -58,8 +58,8 @@
 
 ### Correctness
 
-- [ ] **COR-01**: All 302 existing SampleByTest tests pass
-- [ ] **COR-02**: No native memory leaks (assertMemoryLeak passes for all tests)
+- [x] **COR-01**: All 302 existing SampleByTest tests pass
+- [x] **COR-02**: No native memory leaks (assertMemoryLeak passes for all tests)
 - [ ] **COR-03**: Query plan shows Async Group By (parallel execution) for fill queries
 - [x] **COR-04**: Fill cursor output matches cursor-path output exactly for all fill modes
 
@@ -117,7 +117,7 @@
 | PTSF-04 | Phase 7: PREV Type-Safe Fast Path | Complete |
 | PTSF-05 | Phase 7: PREV Type-Safe Fast Path | Complete |
 | PTSF-06 | Phase 7: PREV Type-Safe Fast Path | Complete |
-| COR-01 | Phase 5: Verification and Hardening | Pending |
-| COR-02 | Phase 5: Verification and Hardening | Pending |
+| COR-01 | Phase 5: Verification and Hardening | Complete |
+| COR-02 | Phase 5: Verification and Hardening | Complete |
 | COR-03 | Phase 5: Verification and Hardening | Pending |
 | COR-04 | Phase 5: Verification and Hardening | Complete |
