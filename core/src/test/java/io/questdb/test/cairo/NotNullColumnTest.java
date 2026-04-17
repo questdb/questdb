@@ -24,9 +24,11 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
@@ -727,6 +729,464 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             null\tnull\tnull\t2024-01-01T00:00:00.000000Z
                             """,
                     "SELECT * FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testRenameColumnPreservesNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t RENAME COLUMN x TO renamed_x");
+
+            try (TableReader reader = engine.getReader("t")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                assertTrue(metadata.isNotNull(metadata.getColumnIndex("renamed_x")));
+                assertFalse(metadata.isNotNull(metadata.getColumnIndex("y")));
+            }
+
+            // enforcement still applies under the new name
+            try {
+                execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
+                fail("Expected NOT NULL violation after rename");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=renamed_x");
+            }
+        });
+    }
+
+    @Test
+    public void testRenameColumnPreservesNotNullWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t RENAME COLUMN x TO renamed_x");
+            drainWalQueue();
+
+            try (TableReader reader = engine.getReader("t")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                assertTrue(metadata.isNotNull(metadata.getColumnIndex("renamed_x")));
+            }
+        });
+    }
+
+    @Test
+    public void testDropColumnAndReAddPreservesNewlyDeclaredNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t DROP COLUMN x");
+            execute("ALTER TABLE t ADD COLUMN x INT NOT NULL");
+
+            // new x column is NOT NULL; enforcement kicks in when writing
+            try (TableReader reader = engine.getReader("t")) {
+                assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("x")));
+            }
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation on re-added column");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testDropColumnAndReAddWithoutNotNullIsNullable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t DROP COLUMN x");
+            // re-add without NOT NULL: should be nullable (NOT NULL does NOT persist from the dropped column)
+            execute("ALTER TABLE t ADD COLUMN x INT");
+
+            try (TableReader reader = engine.getReader("t")) {
+                assertFalse(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("x")));
+            }
+            // re-added column is appended at the end
+            execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+            assertSql(
+                    """
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\tnull
+                            """,
+                    "SELECT * FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testCreateSymbolNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x SYMBOL NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+
+            try (TableReader reader = engine.getReader("t")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                assertTrue(metadata.isNotNull(metadata.getColumnIndex("x")));
+            }
+
+            execute("INSERT INTO t VALUES ('a', '2024-01-01')");
+            assertSql(
+                    """
+                            x\tts
+                            a\t2024-01-01T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testCreateSymbolWithCapacityAndNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // SYMBOL with all optional clauses followed by NOT NULL
+            execute("CREATE TABLE t (x SYMBOL CAPACITY 128 NOCACHE INDEX NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+
+            try (TableReader reader = engine.getReader("t")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int idx = metadata.getColumnIndex("x");
+                assertTrue(metadata.isNotNull(idx));
+                assertTrue(metadata.isColumnIndexed(idx));
+            }
+        });
+    }
+
+    @Test
+    public void testCtasPlusAlterRestoresNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (x INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src VALUES (1, '2024-01-01')");
+            execute("CREATE TABLE dst AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // CTAS strips NOT NULL, user re-applies with ALTER (no existing nulls -> succeeds)
+            assertFalse(getNotNull("dst", "x"));
+            execute("ALTER TABLE dst ALTER COLUMN x SET NOT NULL");
+            assertTrue(getNotNull("dst", "x"));
+
+            try {
+                execute("INSERT INTO dst (ts) VALUES ('2024-01-02')");
+                fail("Expected NOT NULL violation after ALTER");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+            }
+        });
+    }
+
+    @Test
+    public void testInformationSchemaColumnsShowsNullabilityWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                            qdb\tpublic\tt\tx\t0\t\tno\tinteger
+                            qdb\tpublic\tt\ty\t1\t\tyes\tdouble precision
+                            qdb\tpublic\tt\tts\t2\t\tno\ttimestamp without time zone
+                            """,
+                    "SELECT * FROM information_schema.columns() ORDER BY ordinal_position"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectPassesSourceNullAsSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            // INSERT AS SELECT consults row.append() enforcement: every column in the row
+            // is written (even when the source value is NULL, because the copier calls
+            // putXxx(sentinel)). Consistent with VALUES(NULL) design. The sentinel survives.
+            execute("CREATE TABLE src (x INT, y LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src VALUES (NULL, NULL, '2024-01-01')");
+            execute("CREATE TABLE dst (x INT NOT NULL, y LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO dst SELECT x, y, ts FROM src");
+
+            assertSql(
+                    """
+                            x\ty\tts
+                            -2147483648\t-9223372036854775808\t2024-01-01T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM dst"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectMissingNotNullColumnRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // When the SELECT doesn't provide a NOT NULL target column, enforcement kicks in.
+            execute("CREATE TABLE src (y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src VALUES (1.5, '2024-01-01')");
+            execute("CREATE TABLE dst (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO dst (y, ts) SELECT y, ts FROM src");
+                fail("Expected NOT NULL violation");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharNotNullEmptyStringAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            // Empty string '' is not NULL — it's a valid value for a NOT NULL column.
+            execute("CREATE TABLE t (x VARCHAR NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('', '2024-01-01')");
+            execute("INSERT INTO t VALUES ('a', '2024-01-02')");
+
+            assertSql(
+                    """
+                            x\tts
+                            \t2024-01-01T00:00:00.000000Z
+                            a\t2024-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testVarcharNotNullMissingRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x VARCHAR NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation for VARCHAR NOT NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testStringNotNullMissingRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x STRING NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation for STRING NOT NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolNotNullMissingRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x SYMBOL NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation for SYMBOL NOT NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testShortNotNullMissingRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x SHORT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation for SHORT NOT NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testByteNotNullMissingRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x BYTE NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation for BYTE NOT NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testGeoHashNotNullMissingRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x GEOHASH(5c) NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation for GEOHASH NOT NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testBinaryNotNullMissingRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x BINARY NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation for BINARY NOT NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNotNullMissingRejectedForNonDesignated() throws Exception {
+        assertMemoryLeak(() -> {
+            // ts is designated (automatically NOT NULL); extra_ts is explicit NOT NULL non-designated
+            execute("CREATE TABLE t (extra_ts TIMESTAMP NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation for non-designated TIMESTAMP NOT NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=extra_ts");
+            }
+        });
+    }
+
+    @Test
+    public void testUuidNotNullMissingRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x UUID NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation for UUID NOT NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testIpv4NotNullMissingRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x IPv4 NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+                fail("Expected NOT NULL violation for IPv4 NOT NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testFilterOnNotNullColumnAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            // Aggregates on NOT NULL columns should produce the same results as nullable
+            // (but conceptually could skip null checks). Verify correctness at minimum.
+            execute("CREATE TABLE t (x LONG NOT NULL, y LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 10, '2024-01-01'),
+                        (2, NULL, '2024-01-02'),
+                        (3, 30, '2024-01-03')
+                    """);
+
+            // SUM on NOT NULL column vs nullable column
+            assertSql(
+                    """
+                            sum_x\tsum_y\tcount_x\tcount_y\tmin_x\tmax_x
+                            6\t40\t3\t2\t1\t3
+                            """,
+                    "SELECT sum(x) sum_x, sum(y) sum_y, count(x) count_x, count(y) count_y, min(x) min_x, max(x) max_x FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testDetachAttachPartitionPreservesNotNull() throws Exception {
+        // Verify NOT NULL metadata survives a detach/attach round-trip, and that
+        // enforcement still kicks in for the attached data partition's table.
+        node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.DETACHED_DIR_MARKER);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 1.0, '2024-01-01T10:00:00.000000Z'),
+                        (2, 2.0, '2024-01-02T10:00:00.000000Z'),
+                        (3, 3.0, '2024-01-03T10:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE t DETACH PARTITION LIST '2024-01-01', '2024-01-02'");
+            assertTrue(getNotNull("t", "x"));
+            assertTrue(getNotNull("t", "ts"));
+            assertFalse(getNotNull("t", "y"));
+
+            execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01', '2024-01-02'");
+            assertTrue(getNotNull("t", "x"));
+            assertTrue(getNotNull("t", "ts"));
+            assertFalse(getNotNull("t", "y"));
+
+            assertSql(
+                    """
+                            x\ty\tts
+                            1\t1.0\t2024-01-01T10:00:00.000000Z
+                            2\t2.0\t2024-01-02T10:00:00.000000Z
+                            3\t3.0\t2024-01-03T10:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+
+            // enforcement still applies after attach
+            try {
+                execute("INSERT INTO t (ts) VALUES ('2024-01-04')");
+                fail("Expected NOT NULL violation after attach");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testFilterOnNotNullColumnWithAllColumnsNotNullJit() throws Exception {
+        assertMemoryLeak(() -> {
+            // Exercises the JIT path that hoists out null checks (CompiledFilterIRSerializer
+            // computes allColumnsNotNull and clears the null_check IR option bit).
+            execute("CREATE TABLE t (x INT NOT NULL, y LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 100, '2024-01-01'),
+                        (2, 200, '2024-01-02'),
+                        (3, 300, '2024-01-03'),
+                        (4, 400, '2024-01-04')
+                    """);
+
+            assertSql(
+                    """
+                            x\ty\tts
+                            2\t200\t2024-01-02T00:00:00.000000Z
+                            3\t300\t2024-01-03T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t WHERE x > 1 AND y < 400 AND x < 4 ORDER BY ts"
+            );
+
+            // sentinel values for NOT NULL columns should still pass the filter when non-null check would have excluded them
+            execute("INSERT INTO t VALUES (NULL, NULL, '2024-01-05')");
+            assertSql(
+                    """
+                            x\ty\tts
+                            -2147483648\t-9223372036854775808\t2024-01-05T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t WHERE x < 0 ORDER BY ts"
             );
         });
     }

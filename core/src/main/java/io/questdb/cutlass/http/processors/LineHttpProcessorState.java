@@ -449,7 +449,12 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .put(", errno: ").put(ex.getErrno())
                 .put(", error: ").put(ex.getFlyweightMessage());
         errorLine = line + 1;
-        return ex.isAuthorizationError() ? Status.SECURITY_ERROR : Status.INTERNAL_ERROR;
+        if (ex.isAuthorizationError()) {
+            return Status.SECURITY_ERROR;
+        }
+        // Non-critical CairoExceptions (e.g. NOT NULL constraint violations, other user-caused
+        // row-level errors) are bad requests, not internal server faults.
+        return ex.isCritical() ? Status.INTERNAL_ERROR : Status.APPEND_ERROR;
     }
 
     private Status handleUnknownParseError(Throwable ex) {

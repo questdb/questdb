@@ -295,6 +295,58 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAppendRejectsMissingNotNullColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE nn_tbl (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    // omit NOT NULL column x, only send y
+                    sender.table("nn_tbl")
+                            .doubleColumn("y", 1.5)
+                            .at(parseFloorPartialTimestamp("2024-01-01"), ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "NOT NULL constraint violation"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAppendAcceptsNotNullColumnWithValue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE nn_tbl (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    sender.table("nn_tbl")
+                            .longColumn("x", 42)
+                            .doubleColumn("y", 1.5)
+                            .at(parseFloorPartialTimestamp("2024-01-01"), ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                serverMain.awaitTxn("nn_tbl", 1);
+                serverMain.assertSql(
+                        "SELECT x, y FROM nn_tbl",
+                        "x\ty\n42\t1.5\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testArrayClear() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
