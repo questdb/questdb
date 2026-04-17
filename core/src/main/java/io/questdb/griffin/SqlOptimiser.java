@@ -8435,6 +8435,11 @@ public class SqlOptimiser implements Mutable {
                     nested.setFillOffset(sampleByOffset);
                 }
 
+                // Stash the original stride node so SqlCodeGenerator.generateFill
+                // can retro-fallback to the legacy cursor path when the fully
+                // resolved groupBy metadata contains an unsupported PREV source type.
+                nested.setStashedSampleByNode(sampleBy);
+
                 // clear sample by (but keep FILL and FROM-TO)
                 nested.setSampleBy(null);
                 nested.setSampleByOffset(null);
