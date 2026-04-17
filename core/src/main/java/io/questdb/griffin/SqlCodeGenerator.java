@@ -170,7 +170,6 @@ import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.FillRangeRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
@@ -179,6 +178,7 @@ import io.questdb.griffin.engine.groupby.SampleByFillNullNotKeyedRecordCursorFac
 import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillValueNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
@@ -1219,6 +1219,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return model.getTableNameExpr() == null
                 && model.getNestedModel() == null
                 && model.getHorizonJoinContext().getAlias() != null;
+    }
+
+    /**
+     * Returns true if the column at output index {@code col} is a GROUP BY key
+     * column (as opposed to an aggregate function or the timestamp floor).
+     * A column is a key column if its AST node is a LITERAL (plain column
+     * reference) and it is not the timestamp floor function column.
+     */
+    private static boolean isKeyColumn(int col, ObjList<QueryColumn> bottomUpCols, int timestampIndex) {
+        if (col == timestampIndex) {
+            return false;
+        }
+        if (col < bottomUpCols.size()) {
+            final ExpressionNode ast = bottomUpCols.getQuick(col).getAst();
+            return ast.type == ExpressionNode.LITERAL;
+        }
+        return false;
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -3378,9 +3395,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsetToken = offsetToken.subSequence(1, offsetToken.length() - 1);
                     }
                     final long parsed = Dates.parseOffset(offsetToken);
-                    if (parsed != Numbers.LONG_NULL) {
-                        calendarOffset = driver.fromMinutes(Numbers.decodeLowInt(parsed));
-                    }
+                    assert parsed != Numbers.LONG_NULL
+                            : "offset should have been validated in rewriteSampleBy: " + offsetToken;
+                    calendarOffset = driver.fromMinutes(Numbers.decodeLowInt(parsed));
                 }
             }
 
@@ -3657,23 +3674,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(groupByFactory);
             throw e;
         }
-    }
-
-    /**
-     * Returns true if the column at output index {@code col} is a GROUP BY key
-     * column (as opposed to an aggregate function or the timestamp floor).
-     * A column is a key column if its AST node is a LITERAL (plain column
-     * reference) and it is not the timestamp floor function column.
-     */
-    private static boolean isKeyColumn(int col, ObjList<QueryColumn> bottomUpCols, int timestampIndex) {
-        if (col == timestampIndex) {
-            return false;
-        }
-        if (col < bottomUpCols.size()) {
-            final ExpressionNode ast = bottomUpCols.getQuick(col).getAst();
-            return ast.type == ExpressionNode.LITERAL;
-        }
-        return false;
     }
 
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
