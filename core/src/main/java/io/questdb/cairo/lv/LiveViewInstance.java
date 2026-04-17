@@ -132,9 +132,25 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Populates the InMemoryTable from a cursor produced by compiling
-     * the live view's SELECT query. Called by LiveViewRefreshJob while
-     * the refresh latch is held.
+     * Appends rows from the cursor to the InMemoryTable without clearing it first.
+     * Called by LiveViewRefreshJob during incremental refresh.
+     */
+    public void appendIncremental(RecordCursor cursor) {
+        lock.writeLock().lock();
+        try {
+            if (dropped) {
+                return;
+            }
+            appendRows(cursor);
+            table.applyRetention(definition.getRetentionMicros());
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Clears the InMemoryTable and populates it from the cursor. Called by
+     * LiveViewRefreshJob during bootstrap and full recompute.
      */
     public void refresh(RecordCursor cursor) {
         lock.writeLock().lock();
@@ -143,65 +159,7 @@ public class LiveViewInstance implements QuietCloseable {
                 return;
             }
             table.clear();
-            Record record = cursor.getRecord();
-            int columnCount = table.getColumnCount();
-            while (cursor.hasNext()) {
-                for (int i = 0; i < columnCount; i++) {
-                    int type = table.getColumnType(i);
-                    switch (ColumnType.tagOf(type)) {
-                        case ColumnType.INT:
-                            table.putInt(i, record.getInt(i));
-                            break;
-                        case ColumnType.LONG:
-                            table.putLong(i, record.getLong(i));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            table.putLong(i, record.getTimestamp(i));
-                            break;
-                        case ColumnType.DATE:
-                            table.putLong(i, record.getDate(i));
-                            break;
-                        case ColumnType.DOUBLE:
-                            table.putDouble(i, record.getDouble(i));
-                            break;
-                        case ColumnType.FLOAT:
-                            table.putFloat(i, record.getFloat(i));
-                            break;
-                        case ColumnType.SHORT:
-                            table.putShort(i, record.getShort(i));
-                            break;
-                        case ColumnType.BYTE:
-                            table.putByte(i, record.getByte(i));
-                            break;
-                        case ColumnType.BOOLEAN:
-                            table.putBool(i, record.getBool(i));
-                            break;
-                        case ColumnType.CHAR:
-                            table.putChar(i, record.getChar(i));
-                            break;
-                        case ColumnType.SYMBOL:
-                            table.putSymbol(i, record.getSymA(i));
-                            break;
-                        case ColumnType.STRING:
-                            table.putStr(i, record.getStrA(i));
-                            break;
-                        case ColumnType.VARCHAR:
-                            table.putVarchar(i, record.getVarcharA(i));
-                            break;
-                        case ColumnType.BINARY:
-                            table.putBin(i, record.getBin(i));
-                            break;
-                        default:
-                            if (ColumnType.isArray(type)) {
-                                table.putArray(i, record.getArray(i, type), type);
-                            } else {
-                                table.putLong(i, record.getLong(i));
-                            }
-                            break;
-                    }
-                }
-                table.incrementRowCount();
-            }
+            appendRows(cursor);
             table.applyRetention(definition.getRetentionMicros());
         } finally {
             lock.writeLock().unlock();
@@ -294,6 +252,68 @@ public class LiveViewInstance implements QuietCloseable {
     public void unlockAfterRefresh() {
         if (!refreshLatch.compareAndSet(true, false)) {
             throw new IllegalStateException("refresh latch is not held");
+        }
+    }
+
+    private void appendRows(RecordCursor cursor) {
+        Record record = cursor.getRecord();
+        int columnCount = table.getColumnCount();
+        while (cursor.hasNext()) {
+            for (int i = 0; i < columnCount; i++) {
+                int type = table.getColumnType(i);
+                switch (ColumnType.tagOf(type)) {
+                    case ColumnType.INT:
+                        table.putInt(i, record.getInt(i));
+                        break;
+                    case ColumnType.LONG:
+                        table.putLong(i, record.getLong(i));
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        table.putLong(i, record.getTimestamp(i));
+                        break;
+                    case ColumnType.DATE:
+                        table.putLong(i, record.getDate(i));
+                        break;
+                    case ColumnType.DOUBLE:
+                        table.putDouble(i, record.getDouble(i));
+                        break;
+                    case ColumnType.FLOAT:
+                        table.putFloat(i, record.getFloat(i));
+                        break;
+                    case ColumnType.SHORT:
+                        table.putShort(i, record.getShort(i));
+                        break;
+                    case ColumnType.BYTE:
+                        table.putByte(i, record.getByte(i));
+                        break;
+                    case ColumnType.BOOLEAN:
+                        table.putBool(i, record.getBool(i));
+                        break;
+                    case ColumnType.CHAR:
+                        table.putChar(i, record.getChar(i));
+                        break;
+                    case ColumnType.SYMBOL:
+                        table.putSymbol(i, record.getSymA(i));
+                        break;
+                    case ColumnType.STRING:
+                        table.putStr(i, record.getStrA(i));
+                        break;
+                    case ColumnType.VARCHAR:
+                        table.putVarchar(i, record.getVarcharA(i));
+                        break;
+                    case ColumnType.BINARY:
+                        table.putBin(i, record.getBin(i));
+                        break;
+                    default:
+                        if (ColumnType.isArray(type)) {
+                            table.putArray(i, record.getArray(i, type), type);
+                        } else {
+                            table.putLong(i, record.getLong(i));
+                        }
+                        break;
+                }
+            }
+            table.incrementRowCount();
         }
     }
 }

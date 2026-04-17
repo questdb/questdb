@@ -85,10 +85,39 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    /**
+     * Returns a cursor for the initial live view bootstrap. Calls {@link Function#init}
+     * on ALL functions (including windows, which resets their state to zero — correct for
+     * first run). The cursor enters incremental mode so that {@link RecordCursor#close()}
+     * preserves window state instead of resetting it.
+     *
+     * @param baseCursor the already-opened base-table cursor
+     */
+    public RecordCursor getBootstrapCursor(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        cursor.ofBootstrap(baseCursor, executionContext);
+        return cursor;
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         cursor.of(baseCursor, executionContext);
+        return cursor;
+    }
+
+    public ObjList<Function> getFunctions() {
+        return functions;
+    }
+
+    /**
+     * Returns a cursor wrapping the given base cursor that drives window functions
+     * incrementally — without resetting their accumulated state from prior refreshes.
+     * Non-window functions are re-initialized to bind to the new cursor's symbol source.
+     *
+     * @param baseCursor a cursor over the new WAL segment rows
+     */
+    public RecordCursor getIncrementalCursor(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        cursor.ofIncremental(baseCursor, executionContext);
         return cursor;
     }
 
@@ -124,9 +153,19 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesIndex();
     }
 
-    private void resetFunctions() {
+    /**
+     * Clears all window functions to their initial state without freeing native
+     * resources. Called by the live view refresh job before a full recompute so
+     * that the subsequent bootstrap starts from a clean slate.
+     * <p>
+     * Uses {@link WindowFunction#toTop()} (which calls e.g. {@code map.clear()})
+     * rather than {@link WindowFunction#reset()} (which calls {@code map.close()}).
+     * The latter frees native memory, making the function unusable without a
+     * {@link Reopenable#reopen()}.
+     */
+    public void resetWindowFunctions() {
         for (int i = 0, n = windowFunctions.size(); i < n; i++) {
-            windowFunctions.getQuick(i).reset();
+            windowFunctions.getQuick(i).toTop();
         }
     }
 
@@ -144,6 +183,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     class WindowRecordCursor extends AbstractVirtualFunctionRecordCursor {
 
         private SqlExecutionCircuitBreaker circuitBreaker;
+        // When true, close() frees the base cursor but preserves window function state
+        // and keeps the cursor logically open for subsequent incremental refreshes.
+        private boolean isIncremental;
         private boolean isOpen;
 
         public WindowRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
@@ -159,9 +201,17 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             if (isOpen) {
-                super.close();
-                resetFunctions();
-                isOpen = false;
+                if (isIncremental) {
+                    // Free the base cursor but keep window state and the cursor logically open
+                    // so that subsequent ofIncremental() calls can continue accumulating.
+                    baseCursor = Misc.free(baseCursor);
+                } else {
+                    super.close();
+                    for (int i = 0, n = windowFunctions.size(); i < n; i++) {
+                        windowFunctions.getQuick(i).reset();
+                    }
+                    isOpen = false;
+                }
             }
         }
 
@@ -198,6 +248,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+            isIncremental = false;
             super.of(baseCursor);
             circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
@@ -210,6 +261,46 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
             Function.init(functions, baseCursor, executionContext, null);
+        }
+
+        /**
+         * Bootstrap entry point for live view refresh. Calls {@link Function#init} on ALL
+         * functions (resetting window state to zero) and enters incremental mode so that
+         * {@link #close()} preserves window state.
+         */
+        private void ofBootstrap(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+            isIncremental = true;
+            super.of(baseCursor);
+            circuitBreaker = executionContext.getCircuitBreaker();
+            if (!isOpen) {
+                isOpen = true;
+                try {
+                    reopen(functions);
+                } catch (Throwable t) {
+                    close();
+                    throw t;
+                }
+            }
+            Function.init(functions, baseCursor, executionContext, null);
+        }
+
+        /**
+         * Incremental entry point for live view refresh. Rebinds the base cursor
+         * but skips {@link Function#init} for window functions so that their accumulated
+         * state from prior refreshes is preserved. Non-window functions are re-initialized
+         * to bind to the new cursor's symbol source.
+         */
+        private void ofIncremental(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+            isIncremental = true;
+            super.of(baseCursor);
+            circuitBreaker = executionContext.getCircuitBreaker();
+            assert isOpen : "incremental cursor requires a prior bootstrap";
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                Function f = functions.getQuick(i);
+                if (!(f instanceof WindowFunction)) {
+                    f.init(baseCursor, executionContext);
+                }
+            }
         }
 
         private void reopen(ObjList<Function> list) {

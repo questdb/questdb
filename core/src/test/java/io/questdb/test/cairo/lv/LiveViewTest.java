@@ -437,6 +437,81 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewMultipleRefreshBatches() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_rn AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+
+        // batch 1
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 150.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('GOOG', 2800.0, '2024-01-01T00:00:01.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n",
+                "SELECT * FROM live_rn",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // batch 2
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 151.0, '2024-01-01T00:00:02.000000Z')," +
+                " ('MSFT', 400.0, '2024-01-01T00:00:03.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t151.0\t2024-01-01T00:00:02.000000Z\t2\n" +
+                        "MSFT\t400.0\t2024-01-01T00:00:03.000000Z\t1\n",
+                "SELECT * FROM live_rn",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // batch 3
+        execute("INSERT INTO trades VALUES" +
+                " ('GOOG', 2810.0, '2024-01-01T00:00:04.000000Z')," +
+                " ('AAPL', 152.0, '2024-01-01T00:00:05.000000Z')," +
+                " ('MSFT', 401.0, '2024-01-01T00:00:06.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t151.0\t2024-01-01T00:00:02.000000Z\t2\n" +
+                        "MSFT\t400.0\t2024-01-01T00:00:03.000000Z\t1\n" +
+                        "GOOG\t2810.0\t2024-01-01T00:00:04.000000Z\t2\n" +
+                        "AAPL\t152.0\t2024-01-01T00:00:05.000000Z\t3\n" +
+                        "MSFT\t401.0\t2024-01-01T00:00:06.000000Z\t2\n",
+                "SELECT * FROM live_rn",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
     public void testLiveViewQueryEmpty() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -512,6 +587,158 @@ public class LiveViewTest extends AbstractCairoTest {
         );
 
         execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testLiveViewRefreshAfterMultipleInserts() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_rn AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+
+        // bootstrap with first batch
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 150.0, '2024-01-01T00:00:00.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // multiple INSERTs before draining the queue: each INSERT creates
+        // a separate WAL transaction, so the refresh job processes multiple
+        // WAL txns in one pass
+        execute("INSERT INTO trades VALUES" +
+                " ('GOOG', 2800.0, '2024-01-01T00:00:01.000000Z')");
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 151.0, '2024-01-01T00:00:02.000000Z')");
+        execute("INSERT INTO trades VALUES" +
+                " ('MSFT', 400.0, '2024-01-01T00:00:03.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t151.0\t2024-01-01T00:00:02.000000Z\t2\n" +
+                        "MSFT\t400.0\t2024-01-01T00:00:03.000000Z\t1\n",
+                "SELECT * FROM live_rn",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testLiveViewRefreshAfterUpdate() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_rn AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+
+        // bootstrap
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 150.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('GOOG', 2800.0, '2024-01-01T00:00:01.000000Z')," +
+                " ('AAPL', 151.0, '2024-01-01T00:00:02.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // UPDATE produces a non-DATA WAL event, which triggers full recompute
+        execute("UPDATE trades SET price = 999.0 WHERE symbol = 'GOOG'");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // the full recompute must reflect the updated price
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t999.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t151.0\t2024-01-01T00:00:02.000000Z\t2\n",
+                "SELECT * FROM live_rn",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // verify that subsequent INSERT still works after the recompute
+        execute("INSERT INTO trades VALUES" +
+                " ('GOOG', 2810.0, '2024-01-01T00:00:03.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t999.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t151.0\t2024-01-01T00:00:02.000000Z\t2\n" +
+                        "GOOG\t2810.0\t2024-01-01T00:00:03.000000Z\t2\n",
+                "SELECT * FROM live_rn",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testLiveViewRefreshRowNumberNoPartition() throws Exception {
+        execute("CREATE TABLE events (val INT, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_seq AS" +
+                " SELECT val, ts, row_number() OVER () AS rn FROM events");
+
+        // bootstrap
+        execute("INSERT INTO events VALUES" +
+                " (10, '2024-01-01T00:00:00.000000Z')," +
+                " (20, '2024-01-01T00:00:01.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "val\tts\trn\n" +
+                        "10\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "20\t2024-01-01T00:00:01.000000Z\t2\n",
+                "SELECT * FROM live_seq",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // second batch: row_number continues from where it left off
+        execute("INSERT INTO events VALUES" +
+                " (30, '2024-01-01T00:00:02.000000Z')," +
+                " (40, '2024-01-01T00:00:03.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "val\tts\trn\n" +
+                        "10\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "20\t2024-01-01T00:00:01.000000Z\t2\n" +
+                        "30\t2024-01-01T00:00:02.000000Z\t3\n" +
+                        "40\t2024-01-01T00:00:03.000000Z\t4\n",
+                "SELECT * FROM live_seq",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_seq");
     }
 
     @Test

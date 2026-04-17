@@ -619,6 +619,7 @@ public class CairoEngine implements Closeable, WriterSource {
         matViewGraph.clear();
         matViewStateStore.clear();
         matViewTimerQueue.clear();
+        liveViewRegistry.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
