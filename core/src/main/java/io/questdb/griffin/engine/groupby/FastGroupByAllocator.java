@@ -60,7 +60,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
         this.defaultChunkSize = defaultChunkSize;
         this.maxChunkSize = maxChunkSize;
         this.aligned = aligned;
-        this.chunks = new DirectLongLongHashMap(8, 0.5, 0, 0, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+        this.chunks = new DirectLongLongHashMap(8, 0.7, 0, 0, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
     }
 
     // Allocated chunks total (bytes).
