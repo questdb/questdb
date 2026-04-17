@@ -554,7 +554,7 @@ public class OrderedMap implements Map, Reopenable {
             if (kPos + entrySize > heapLimit) {
                 resize(entrySize, kPos);
             }
-            Vect.memcpy(kPos, srcStartAddr, entrySize);
+            Unsafe.getUnsafe().copyMemory(srcStartAddr, kPos, entrySize);
             Unsafe.getUnsafe().putInt(destP, compressOffset(kPos - heapAddr));
             Unsafe.getUnsafe().putInt(destP + 4, hashCodeLo);
             kPos += alignedEntrySize;
@@ -609,7 +609,7 @@ public class OrderedMap implements Map, Reopenable {
             if (kPos + entrySize > heapLimit) {
                 resize(entrySize, kPos);
             }
-            Vect.memcpy(kPos, srcStartAddr, entrySize);
+            Unsafe.getUnsafe().copyMemory(srcStartAddr, kPos, entrySize);
             Unsafe.getUnsafe().putInt(destOffsetAddr, compressOffset(kPos - heapAddr));
             Unsafe.getUnsafe().putInt(destOffsetAddr + 4, hashCodeLo);
             kPos = Bytes.align8b(kPos + entrySize);
@@ -890,7 +890,7 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void copyFromRawKey(long srcPtr, long srcSize) {
             assert srcSize == keySize;
-            Vect.memcpy(appendAddr, srcPtr, srcSize);
+            Unsafe.getUnsafe().copyMemory(srcPtr, appendAddr, srcSize);
             appendAddr += srcSize;
         }
 
@@ -1158,7 +1158,7 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void copyFromRawKey(long srcPtr, long srcSize) {
             checkCapacity(srcSize);
-            Vect.memcpy(appendAddr, srcPtr, srcSize);
+            Unsafe.getUnsafe().copyMemory(srcPtr, appendAddr, srcSize);
             appendAddr += srcSize;
         }
 

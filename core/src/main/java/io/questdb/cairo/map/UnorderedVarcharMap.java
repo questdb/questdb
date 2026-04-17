@@ -328,17 +328,17 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             // dst key not found, insert src key-value pair
             if ((srcPtrWithUnstableFlags & PTR_UNSTABLE_MASK) == 0) {
                 // stable pointer
-                Vect.memcpy(destAddr, srcAddr, entrySize);
+                Unsafe.getUnsafe().copyMemory(srcAddr, destAddr, entrySize);
             } else {
                 // unstable pointer, copy key to our memory
                 long arenaPtr = allocator.malloc(srcSize);
-                Vect.memcpy(arenaPtr, srcPtrWithUnstableFlags & PTR_MASK, srcSize);
+                Unsafe.getUnsafe().copyMemory(srcPtrWithUnstableFlags & PTR_MASK, arenaPtr, srcSize);
                 long arenaPtrWithUnstableFlags = arenaPtr | PTR_UNSTABLE_MASK;
                 Unsafe.getUnsafe().putLong(destAddr, srcHashSizeFlags);
                 Unsafe.getUnsafe().putLong(destAddr + 8, arenaPtrWithUnstableFlags);
 
                 // copy value
-                Vect.memcpy(destAddr + KEY_SIZE, srcAddr + KEY_SIZE, entrySize - KEY_SIZE);
+                Unsafe.getUnsafe().copyMemory(srcAddr + KEY_SIZE, destAddr + KEY_SIZE, entrySize - KEY_SIZE);
             }
             size++;
             if (--free == 0) {
@@ -566,7 +566,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         } else {
             // unstable pointer, copy key to our memory
             long arenaPtr = allocator.malloc(keySize);
-            Vect.memcpy(arenaPtr, keyPtrWithUnstableFlag & PTR_MASK, keySize);
+            Unsafe.getUnsafe().copyMemory(keyPtrWithUnstableFlag & PTR_MASK, arenaPtr, keySize);
             long arenaPtrWithUnstableFlags = arenaPtr | PTR_UNSTABLE_MASK;
             Unsafe.getUnsafe().putLong(startAddress + 8, arenaPtrWithUnstableFlags);
         }
@@ -735,7 +735,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                     newAddr = newMemStart;
                 }
             }
-            Vect.memcpy(newAddr, addr, entrySize);
+            Unsafe.getUnsafe().copyMemory(addr, newAddr, entrySize);
         }
 
         Unsafe.free(memStart, memLimit - memStart, memoryTag);

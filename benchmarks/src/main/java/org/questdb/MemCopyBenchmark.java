@@ -28,7 +28,15 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -40,17 +48,18 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MemCopyBenchmark {
-    private final static long len = 1024 * 1024;
-    private static final byte[] a1 = new byte[(int) len];
-    private static final byte[] a2 = new byte[(int) len];
-    private static final long mem1 = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-    private static final long mem2 = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+    private static final long MAX_LEN = 4 * 1024 * 1024;
+    private static final long mem1 = Unsafe.malloc(MAX_LEN, MemoryTag.NATIVE_DEFAULT);
+    private static final long mem2 = Unsafe.malloc(MAX_LEN, MemoryTag.NATIVE_DEFAULT);
+
+    @Param({"32", "128", "512", "4096", "65536", "1048576", "4194304"})
+    public int len;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(MemCopyBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .warmupIterations(2)
+                .measurementIterations(3)
                 .forks(1)
                 .build();
 
@@ -63,34 +72,22 @@ public class MemCopyBenchmark {
     }
 
     @Benchmark
-    public void testAMemCpy() {
-        Vect.memcpy(mem2, mem1, len);
-    }
-
-    @Benchmark
-    public void testAMemSet() {
-        Vect.memset(mem1, len, 0);
-    }
-
-    @Benchmark
-    public void testArrayCopy() {
-        System.arraycopy(a1, 0, a2, 0, (int) len);
-    }
-
-    @Benchmark
-    public void testJavaCopyMemory() {
+    public void testUnsafeCopyMemory() {
         Unsafe.getUnsafe().copyMemory(mem1, mem2, len);
     }
 
     @Benchmark
-    public void testJavaSetMemory() {
+    public void testUnsafeSetMemory() {
         Unsafe.getUnsafe().setMemory(mem1, len, (byte) 0);
     }
 
     @Benchmark
-    public void testVanillaLoop() {
-        for (long i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(mem2 + i, Unsafe.getUnsafe().getByte(mem1 + i));
-        }
+    public void testVectMemcpy() {
+        Vect.memcpy(mem2, mem1, len);
+    }
+
+    @Benchmark
+    public void testVectMemset() {
+        Vect.memset(mem1, len, 0);
     }
 }

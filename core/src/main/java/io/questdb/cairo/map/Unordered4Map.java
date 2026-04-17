@@ -265,7 +265,7 @@ public class Unordered4Map implements Map, Reopenable {
                         src4Map.valueAt(src4Map.zeroMemStart)
                 );
             } else {
-                Vect.memcpy(zeroMemStart, src4Map.zeroMemStart, entrySize);
+                Unsafe.getUnsafe().copyMemory(src4Map.zeroMemStart, zeroMemStart, entrySize);
                 hasZero = true;
             }
             // Check if zero was the only element in the source map.
@@ -298,7 +298,7 @@ public class Unordered4Map implements Map, Reopenable {
                 destAddr = getNextAddress(destAddr);
             }
 
-            Vect.memcpy(destAddr, srcAddr, entrySize);
+            Unsafe.getUnsafe().copyMemory(srcAddr, destAddr, entrySize);
             size++;
             if (--free == 0) {
                 try {
@@ -359,7 +359,7 @@ public class Unordered4Map implements Map, Reopenable {
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -376,7 +376,7 @@ public class Unordered4Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
@@ -426,7 +426,7 @@ public class Unordered4Map implements Map, Reopenable {
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -442,7 +442,7 @@ public class Unordered4Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
@@ -634,7 +634,7 @@ public class Unordered4Map implements Map, Reopenable {
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -650,7 +650,7 @@ public class Unordered4Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
@@ -678,7 +678,7 @@ public class Unordered4Map implements Map, Reopenable {
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -694,7 +694,7 @@ public class Unordered4Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
@@ -742,13 +742,13 @@ public class Unordered4Map implements Map, Reopenable {
                     newAddr = newMemStart;
                 }
             }
-            Vect.memcpy(newAddr, addr, entrySize);
+            Unsafe.getUnsafe().copyMemory(addr, newAddr, entrySize);
         }
 
         // Copy the zero key entry to the new end-of-buffer slot.
         final long newZeroMemStart = newMemLimit;
         if (hasZero) {
-            Vect.memcpy(newZeroMemStart, zeroMemStart, entrySize);
+            Unsafe.getUnsafe().copyMemory(zeroMemStart, newZeroMemStart, entrySize);
         }
 
         Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag);
