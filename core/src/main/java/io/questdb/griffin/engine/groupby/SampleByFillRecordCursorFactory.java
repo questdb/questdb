@@ -49,6 +49,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long256Impl;
@@ -76,6 +77,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final RecordCursorFactory base;
     private final ObjList<Function> constantFills;
     private final SampleByFillCursor cursor;
+    private final IntList fillModes;
     private final Function fromFunc;
     private final boolean hasPrevFill;
     private final Map keysMap;
@@ -135,6 +137,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.timestampIndex = timestampIndex;
         this.timestampType = timestampType;
         this.constantFills = constantFills;
+        this.fillModes = fillModes;
         this.hasPrevFill = prevSourceCols != null && prevSourceCols.size() > 0;
         this.keysMap = keysMapLocal;
         this.cursor = cursorLocal;
@@ -186,6 +189,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         sink.attr("stride").val('\'').val(samplingInterval).val(samplingIntervalUnit).val('\'');
         if (hasPrevFill) {
             sink.attr("fill").val("prev");
+        } else if (hasAnyConstantFill()) {
+            sink.attr("fill").val("value");
+        } else {
+            sink.attr("fill").val("null");
         }
         sink.child(base);
     }
@@ -208,6 +215,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(toFunc);
         Misc.freeObjList(constantFills);
         Misc.free(keysMap);
+    }
+
+    private boolean hasAnyConstantFill() {
+        for (int i = 0, n = fillModes.size(); i < n; i++) {
+            if (fillModes.getQuick(i) == FILL_CONSTANT) {
+                Function f = constantFills.getQuick(i);
+                if (f != null && !(f instanceof NullConstant)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
@@ -524,6 +543,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             maxTimestamp = hasExplicitTo
                     ? driver.from(toFunc.getTimestamp(null), ColumnType.getTimestampType(toFunc.getType()))
                     : Numbers.LONG_NULL;
+            // Demote hasExplicitTo when the runtime-evaluated TO expression returns
+            // LONG_NULL. Object-identity check on toFunc above only catches the
+            // TimestampConstantNull singleton; TO null::timestamp, bind variables,
+            // and functions returning null at runtime reach here with maxTimestamp ==
+            // LONG_NULL but hasExplicitTo == true, which would otherwise promote
+            // maxTimestamp to Long.MAX_VALUE and skip the isBaseCursorExhausted
+            // short-circuit at line 362.
+            if (maxTimestamp == Numbers.LONG_NULL) hasExplicitTo = false;
 
             // Pass 1: key discovery (keyed queries only)
             if (keysMap != null) {
