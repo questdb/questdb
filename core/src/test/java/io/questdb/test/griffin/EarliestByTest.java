@@ -162,7 +162,7 @@ public class EarliestByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "EarliestByAllIndexed\n" +
-                            "    Index forward scan on: device_id\n" +
+                            "    Async index forward scan on: device_id workers: 2\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
                             "    Interval forward scan on: pos_test\n" +
                             (timestampType == TestTimestampType.MICRO ?
@@ -376,7 +376,7 @@ public class EarliestByTest extends AbstractCairoTest {
                             factory,
                             true,
                             localContext,
-                            true,
+                            false,
                             false
                     );
                 }
@@ -393,7 +393,7 @@ public class EarliestByTest extends AbstractCairoTest {
                             factory,
                             true,
                             localContext,
-                            true,
+                            false,
                             false
                     );
                 }
@@ -1276,14 +1276,16 @@ public class EarliestByTest extends AbstractCairoTest {
                     "('a', 3, '1970-01-01T00:00:00'), ('b', 4, '1970-01-01T02:00:00')");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            // Indexed symbol with single value filter
+            // Indexed symbol with single value filter.
+            // The indexed fast path exits on first match so it cannot report a concrete size,
+            // mirroring LatestByValueIndexedFilteredRecordCursor.size() == -1.
             assertQuery(
                     "ts\ts\tv\n" +
                             "1970-01-01T00:00:00.000000" + suffix + "\ta\t3\n",
                     "SELECT ts, s, v FROM t WHERE s = 'a' EARLIEST ON ts PARTITION BY s",
                     "ts",
                     true,
-                    true
+                    false
             );
         });
     }
@@ -1296,13 +1298,14 @@ public class EarliestByTest extends AbstractCairoTest {
                     "('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T03:00:00')");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // Indexed fast path exits on first match, no pre-computed size (matches LATEST).
             assertQuery(
                     "ts\ts\n" +
                             "1970-01-01T00:00:00.000000" + suffix + "\ta\n",
                     "SELECT ts, s FROM t WHERE s = 'a' EARLIEST ON ts PARTITION BY s",
                     "ts",
                     true,
-                    true
+                    false
             );
         });
     }

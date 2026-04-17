@@ -311,6 +311,13 @@ import io.questdb.griffin.engine.table.EarliestByDeferredListValuesFilteredRecor
 import io.questdb.griffin.engine.table.EarliestBySubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByLightRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueDeferredFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueDeferredIndexedFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueDeferredIndexedRowCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueIndexedFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueIndexedRowCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecord;
@@ -5700,6 +5707,90 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final int nKeyValues = intrinsicModel.keyValueFuncs.size();
                 final int nExcludedKeyValues = intrinsicModel.keyExcludedValueFuncs.size();
 
+                if (indexed && nExcludedKeyValues == 0) {
+                    assert nKeyValues > 0;
+                    // deal with key values as a list
+                    // 1. resolve each value of the list to "int"
+                    // 2. get first row in index for each value (stream)
+
+                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(earliestByIndex));
+                    final RowCursorFactory rcf;
+                    if (nKeyValues == 1) {
+                        final Function symbolValueFunc = intrinsicModel.keyValueFuncs.get(0);
+                        final int symbol = symbolValueFunc.isRuntimeConstant()
+                                ? SymbolTable.VALUE_NOT_FOUND
+                                : symbolMapReader.keyOf(symbolValueFunc.getStrA(null));
+
+                        if (filter == null) {
+                            if (symbol == SymbolTable.VALUE_NOT_FOUND) {
+                                rcf = new EarliestByValueDeferredIndexedRowCursorFactory(
+                                        earliestByIndex,
+                                        symbolValueFunc,
+                                        false
+                                );
+                            } else {
+                                rcf = new EarliestByValueIndexedRowCursorFactory(
+                                        earliestByIndex,
+                                        symbol,
+                                        false
+                                );
+                            }
+                            return new PageFrameRecordCursorFactory(
+                                    configuration,
+                                    metadata,
+                                    partitionFrameCursorFactory,
+                                    rcf,
+                                    false,
+                                    null,
+                                    false,
+                                    columnIndexes,
+                                    columnSizeShifts,
+                                    true,
+                                    true
+                            );
+                        }
+
+                        if (symbol == SymbolTable.VALUE_NOT_FOUND) {
+                            return new EarliestByValueDeferredIndexedFilteredRecordCursorFactory(
+                                    configuration,
+                                    metadata,
+                                    partitionFrameCursorFactory,
+                                    earliestByIndex,
+                                    symbolValueFunc,
+                                    filter,
+                                    columnIndexes,
+                                    columnSizeShifts
+                            );
+                        }
+                        return new EarliestByValueIndexedFilteredRecordCursorFactory(
+                                configuration,
+                                metadata,
+                                partitionFrameCursorFactory,
+                                earliestByIndex,
+                                symbol,
+                                filter,
+                                columnIndexes,
+                                columnSizeShifts
+                        );
+                    }
+
+                    return new EarliestByValuesIndexedFilteredRecordCursorFactory(
+                            configuration,
+                            metadata,
+                            partitionFrameCursorFactory,
+                            earliestByIndex,
+                            intrinsicModel.keyValueFuncs,
+                            symbolMapReader,
+                            filter,
+                            columnIndexes,
+                            columnSizeShifts
+                    );
+                }
+
+                assert nKeyValues > 0 || nExcludedKeyValues > 0;
+
+                // we have "earliest by" column values, but no index
+
                 if (nKeyValues > 1 || nExcludedKeyValues > 0) {
                     return new EarliestByDeferredListValuesFilteredRecordCursorFactory(
                             configuration,
@@ -5714,15 +5805,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
 
-                assert nKeyValues == 1 && nExcludedKeyValues == 0;
-                // single key value, no excluded values
-                return new EarliestByDeferredListValuesFilteredRecordCursorFactory(
+                assert nExcludedKeyValues == 0;
+
+                // we have a single symbol key
+                final Function symbolKeyFunc = intrinsicModel.keyValueFuncs.get(0);
+                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(earliestByIndex));
+                final int symbolKey = symbolKeyFunc.isRuntimeConstant()
+                        ? SymbolTable.VALUE_NOT_FOUND
+                        : symbolMapReader.keyOf(symbolKeyFunc.getStrA(null));
+                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                    return new EarliestByValueDeferredFilteredRecordCursorFactory(
+                            configuration,
+                            metadata,
+                            partitionFrameCursorFactory,
+                            earliestByIndex,
+                            symbolKeyFunc,
+                            filter,
+                            columnIndexes,
+                            columnSizeShifts
+                    );
+                }
+
+                return new EarliestByValueFilteredRecordCursorFactory(
                         configuration,
                         metadata,
                         partitionFrameCursorFactory,
                         earliestByIndex,
-                        intrinsicModel.keyValueFuncs,
-                        null,
+                        symbolKey,
                         filter,
                         columnIndexes,
                         columnSizeShifts
@@ -5734,6 +5843,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (indexed && filter == null && configuration.useWithinLatestByOptimisation()) {
                 return new EarliestByAllIndexedRecordCursorFactory(
+                        executionContext.getCairoEngine(),
                         configuration,
                         metadata,
                         partitionFrameCursorFactory,
@@ -9793,6 +9903,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int earliestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                 if (queryMeta.isColumnIndexed(earliestByColumnIndex)) {
                     return new EarliestByAllIndexedRecordCursorFactory(
+                            executionContext.getCairoEngine(),
                             configuration,
                             queryMeta,
                             new FullPartitionFrameCursorFactory(

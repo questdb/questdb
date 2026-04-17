@@ -2833,6 +2833,9 @@ public class SqlParser {
             if (model.getLatestByType() == IQueryModel.LATEST_BY_DEPRECATED) {
                 throw SqlException.$((lexer.lastTokenPosition()), "mix of new and deprecated 'latest by' syntax");
             }
+            if (model.getEarliestBy().size() > 0) {
+                throw SqlException.$(lexer.lastTokenPosition(), "cannot use both LATEST and EARLIEST in the same query");
+            }
             expectTok(lexer, "on");
             parseLatestByNew(lexer, model);
             tok = optTok(lexer);

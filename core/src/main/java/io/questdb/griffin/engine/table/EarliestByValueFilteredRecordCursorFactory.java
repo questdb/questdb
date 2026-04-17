@@ -25,44 +25,40 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
-import io.questdb.std.DirectLongList;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public class EarliestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
-    protected final DirectLongList prefixes;
+public class EarliestByValueFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+    private final PageFrameRecordCursor cursor;
+    private final Function filter;
 
-    public EarliestByAllIndexedRecordCursorFactory(
-            CairoEngine engine,
+    public EarliestByValueFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
+            int symbolKey,
+            @Nullable Function filter,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizeShifts,
-            @NotNull LongList prefixes
+            @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts,
-                configuration.getSqlEarliestByRowCount(), MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST);
-
-        try {
-            this.prefixes = new DirectLongList(Math.max(2, prefixes.size()), MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST);
-            for (int i = 0; i < prefixes.size(); i++) {
-                this.prefixes.add(prefixes.get(i));
-            }
-
-            this.cursor = new EarliestByAllIndexedRecordCursor(engine, configuration, metadata, columnIndex, rows, this.prefixes);
-        } catch (Throwable th) {
-            close();
-            throw th;
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        if (filter == null) {
+            this.cursor = new EarliestByValueRecordCursor(configuration, metadata, columnIndex, symbolKey);
+        } else {
+            this.cursor = new EarliestByValueFilteredRecordCursor(configuration, metadata, columnIndex, symbolKey, filter);
         }
+        this.filter = filter;
     }
 
     @Override
@@ -72,20 +68,24 @@ public class EarliestByAllIndexedRecordCursorFactory extends AbstractTreeSetReco
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("EarliestByAllIndexed");
+        sink.type("EarliestByValueFiltered");
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
     }
 
     @Override
-    public boolean usesIndex() {
-        return true;
+    protected void _close() {
+        super._close();
+        Misc.free(filter);
+        Misc.free(cursor);
     }
 
     @Override
-    protected void _close() {
-        super._close();
-        Misc.free(prefixes);
-        Misc.free(cursor);
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        cursor.of(pageFrameCursor, executionContext);
+        return cursor;
     }
 }

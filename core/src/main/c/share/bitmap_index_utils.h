@@ -267,4 +267,17 @@ void latest_scan_backward(
         uint32_t vblock_capacity_mask
 );
 
+void earliest_scan_forward(
+        uint64_t keys_memory_addr,
+        size_t keys_memory_size,
+        uint64_t values_memory_addr,
+        size_t value_memory_size,
+        uint64_t args_memory_addr,
+        int64_t unindexed_null_count,
+        int64_t max_value,
+        int64_t min_value,
+        int32_t frame_index,
+        uint32_t vblock_capacity_mask
+);
+
 #endif //QUESTDB_BITMAP_INDEX_UTILS_H

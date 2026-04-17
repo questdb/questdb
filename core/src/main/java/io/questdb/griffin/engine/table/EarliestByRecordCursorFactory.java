@@ -257,17 +257,25 @@ public class EarliestByRecordCursorFactory extends AbstractRecordCursorFactory {
             while (baseCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
+                // Skip NULL-timestamp rows so the map's key set matches
+                // EarliestByLightRecordCursorFactory; otherwise two planner paths
+                // would disagree on whether a key with only NULL timestamps shows up.
+                final long newTimestamp = baseRecord.getTimestamp(timestampIndex);
+                if (newTimestamp == Numbers.LONG_NULL) {
+                    index++;
+                    continue;
+                }
+
                 final MapKey key = earliestByMap.withKey();
                 recordSink.copy(baseRecord, key);
                 final MapValue value = key.createValue();
 
                 if (value.isNew()) {
                     value.putLong(RECORD_INDEX_VALUE_IDX, index);
-                    value.putTimestamp(TIMESTAMP_VALUE_IDX, baseRecord.getTimestamp(timestampIndex));
+                    value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
                 } else {
                     long prevTimestamp = value.getTimestamp(TIMESTAMP_VALUE_IDX);
-                    long newTimestamp = baseRecord.getTimestamp(timestampIndex);
-                    if (newTimestamp != Numbers.LONG_NULL && (prevTimestamp == Numbers.LONG_NULL || newTimestamp < prevTimestamp)) {
+                    if (newTimestamp < prevTimestamp) {
                         value.putLong(RECORD_INDEX_VALUE_IDX, index);
                         value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
                     }

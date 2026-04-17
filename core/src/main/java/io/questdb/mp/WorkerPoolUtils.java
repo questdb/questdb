@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
+import io.questdb.griffin.engine.table.EarliestByAllIndexedJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.std.AsyncMunmapJob;
 import io.questdb.std.Files;
@@ -70,6 +71,7 @@ public class WorkerPoolUtils {
         final int workerCount = sharedPoolQuery.getWorkerCount();
 
         sharedPoolQuery.assign(new LatestByAllIndexedJob(messageBus));
+        sharedPoolQuery.assign(new EarliestByAllIndexedJob(messageBus));
 
         if (configuration.isSqlParallelGroupByEnabled()) {
             sharedPoolQuery.assign(new GroupByVectorAggregateJob(messageBus));

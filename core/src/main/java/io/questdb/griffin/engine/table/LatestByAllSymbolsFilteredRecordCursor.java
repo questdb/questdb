@@ -77,7 +77,9 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     }
 
     public Function getFilter() {
-        return filter;
+        // Return null for the NO_OP_FILTER sentinel so EXPLAIN plans don't render
+        // a misleading `filter: true` when the query had no WHERE clause.
+        return filter != NO_OP_FILTER ? filter : null;
     }
 
     @Override
