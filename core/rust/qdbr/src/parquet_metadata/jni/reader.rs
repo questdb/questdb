@@ -114,6 +114,81 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_destroyNative
     }
 }
 
+/// Writes `(total_row_count: i64, squash_tracker: i64)` to `[dest_addr, dest_addr + 16)`.
+///
+/// `total_row_count` is the sum of `num_rows` across every row group in the
+/// `_pm` file. `squash_tracker` is `-1` when the `SQUASH_TRACKER` feature bit
+/// is absent. Used by the enterprise build to retrieve both values in a
+/// single JNI call; OSS consumers read the same values through Java-side
+/// accessors on [`super::ParquetMetaFileReader`].
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_readPartitionMeta0(
+    mut env: JNIEnv,
+    _class: JClass,
+    pm_addr: *const u8,
+    pm_size: u64,
+    dest_addr: i64,
+) {
+    let res = read_partition_meta_impl(pm_addr, pm_size);
+    match res {
+        Ok((row_count, squash_tracker)) => {
+            if dest_addr == 0 {
+                let err = fmt_err!(InvalidLayout, "dest_addr is null");
+                let _: () = err.into_cairo_exception().throw(&mut env);
+                return;
+            }
+            unsafe {
+                let dest = dest_addr as *mut i64;
+                dest.write_unaligned(row_count);
+                dest.add(1).write_unaligned(squash_tracker);
+            }
+        }
+        Err(mut err) => {
+            err.add_context("error in ParquetMetaFileReader.readPartitionMeta");
+            let _: () = err.into_cairo_exception().throw(&mut env);
+        }
+    }
+}
+
+/// Parses the `_pm` buffer and returns `(total_row_count, squash_tracker)`.
+/// Split from the JNI wrapper so unit tests can exercise the error paths
+/// without constructing a `JNIEnv`.
+fn read_partition_meta_impl(pm_addr: *const u8, pm_size: u64) -> ParquetResult<(i64, i64)> {
+    if pm_addr.is_null() {
+        return Err(fmt_err!(InvalidLayout, "_pm file pointer is null"));
+    }
+    let pm_size_usize = usize::try_from(pm_size).map_err(|_| {
+        fmt_err!(
+            InvalidLayout,
+            "_pm file size {} exceeds addressable range",
+            pm_size
+        )
+    })?;
+    let data: &[u8] = unsafe { slice::from_raw_parts(pm_addr, pm_size_usize) };
+    let reader = ParquetMetaReader::from_file_size(data, pm_size)?;
+    let mut row_count: i64 = 0;
+    for i in 0..reader.row_group_count() as usize {
+        let rg = reader.row_group(i)?;
+        let n = i64::try_from(rg.num_rows()).map_err(|_| {
+            fmt_err!(
+                InvalidLayout,
+                "row group {} num_rows {} exceeds i64::MAX",
+                i,
+                rg.num_rows()
+            )
+        })?;
+        row_count = row_count.checked_add(n).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "sum of row group row counts overflows i64 at row group {}",
+                i
+            )
+        })?;
+    }
+    let squash_tracker = reader.squash_tracker().unwrap_or(-1);
+    Ok((row_count, squash_tracker))
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_canSkipRowGroup0(
     mut env: JNIEnv,
@@ -370,6 +445,88 @@ mod tests {
             unsafe { JniParquetMetaReader::new(bytes.as_ptr(), bytes.len() as u64) }.unwrap();
         let res = jni_reader.reader().can_skip_row_group(5, &[], 0);
         assert!(res.is_err(), "row group index 5 out of range");
+    }
+
+    /// Builds a `_pm` with the given row-group sizes and optional squash_tracker.
+    fn build_pm_with_row_groups(row_group_sizes: &[u64], squash_tracker: Option<i64>) -> Vec<u8> {
+        let mut writer = ParquetMetaWriter::new();
+        writer
+            .designated_timestamp(-1)
+            .add_column(
+                "val",
+                0,
+                ColumnTypeTag::Long as i32,
+                ColumnFlags::new().with_repetition(FieldRepetition::Optional),
+                0,
+                PHYS_INT64,
+                0,
+                1,
+            )
+            .parquet_footer(0, 0);
+        if let Some(tracker) = squash_tracker {
+            writer.squash_tracker(tracker);
+        }
+        for &num_rows in row_group_sizes {
+            let mut rg = RowGroupBlockBuilder::new(1);
+            rg.set_num_rows(num_rows);
+            let mut chunk = ColumnChunkRaw::zeroed();
+            chunk.codec = Codec::Uncompressed as u8;
+            chunk.num_values = num_rows;
+            rg.set_column_chunk(0, chunk).unwrap();
+            writer.add_row_group(rg);
+        }
+        let (bytes, _) = writer.finish().unwrap();
+        bytes
+    }
+
+    #[test]
+    fn read_partition_meta_sums_row_groups_and_returns_tracker() {
+        let bytes = build_pm_with_row_groups(&[100, 250], Some(42));
+        let (row_count, squash_tracker) =
+            read_partition_meta_impl(bytes.as_ptr(), bytes.len() as u64).unwrap();
+        assert_eq!(row_count, 350);
+        assert_eq!(squash_tracker, 42);
+    }
+
+    #[test]
+    fn read_partition_meta_returns_neg_one_when_tracker_absent() {
+        let bytes = build_pm_with_row_groups(&[10, 20, 30], None);
+        let (row_count, squash_tracker) =
+            read_partition_meta_impl(bytes.as_ptr(), bytes.len() as u64).unwrap();
+        assert_eq!(row_count, 60);
+        assert_eq!(squash_tracker, -1);
+    }
+
+    #[test]
+    fn read_partition_meta_handles_zero_row_groups() {
+        // _pm with no row groups is unusual but must not underflow the accumulator.
+        let bytes = build_pm_with_row_groups(&[], Some(7));
+        let (row_count, squash_tracker) =
+            read_partition_meta_impl(bytes.as_ptr(), bytes.len() as u64).unwrap();
+        assert_eq!(row_count, 0);
+        assert_eq!(squash_tracker, 7);
+    }
+
+    #[test]
+    fn read_partition_meta_rejects_null_pointer() {
+        let res = read_partition_meta_impl(std::ptr::null(), 128);
+        assert!(res.is_err(), "null _pm pointer must error");
+    }
+
+    #[test]
+    fn read_partition_meta_rejects_truncated_buffer() {
+        let buf = [0u8; 3];
+        let res = read_partition_meta_impl(buf.as_ptr(), buf.len() as u64);
+        assert!(res.is_err(), "3-byte buffer cannot be a valid _pm file");
+    }
+
+    #[test]
+    fn read_partition_meta_rejects_corrupted_footer_length() {
+        // Trailer claims a footer length larger than the file — from_file_size must reject.
+        let mut buf = [0u8; 20];
+        buf[16..20].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        let res = read_partition_meta_impl(buf.as_ptr(), buf.len() as u64);
+        assert!(res.is_err(), "invalid footer length must error");
     }
 
     #[test]

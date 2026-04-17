@@ -491,6 +491,23 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.totalRowCount = rowCount;
     }
 
+    /**
+     * Writes the total row count (i64) at {@code destAddr} and the partition
+     * squash tracker (i64) at {@code destAddr + 8}. The squash tracker is
+     * {@code -1} when the {@code _pm} header has no {@code SQUASH_TRACKER}
+     * feature section. Caller must provide a 16-byte buffer.
+     * <p>
+     * Enterprise callers use this to retrieve both values in a single JNI
+     * round trip.
+     *
+     * @param destAddr address of a 16-byte buffer to receive the two longs
+     * @throws CairoException on malformed {@code _pm} data
+     */
+    public void readPartitionMeta(long destAddr) {
+        assert addr != 0;
+        readPartitionMeta0(addr, fileSize, destAddr);
+    }
+
     private static native boolean canSkipRowGroup0(
             long ptr,
             int rowGroupIndex,
@@ -502,6 +519,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static native long createNativeReader(long addr, long fileSize);
 
     private static native void destroyNativeReader(long ptr);
+
+    private static native void readPartitionMeta0(long pmAddr, long pmSize, long destAddr);
 
     /**
      * Computes the absolute memory address of a column chunk within a row group block.
