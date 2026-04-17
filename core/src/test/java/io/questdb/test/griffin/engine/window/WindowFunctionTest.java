@@ -11926,7 +11926,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
-                            1970-01-01T00:00:00.000003Z\t20.0
+                            1970-01-01T00:00:00.000003Z\tnull
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t20.0
                             """),
@@ -11954,9 +11954,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
-                            1970-01-01T00:00:00.000003Z\t20.0
-                            1970-01-01T00:00:00.000004Z\t30.0
-                            1970-01-01T00:00:00.000005Z\t40.0
+                            1970-01-01T00:00:00.000003Z\tnull
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t20.0
                             """),
                     "select ts, nth_value(val, 2) over (" +
                             "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
@@ -12164,10 +12164,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("""
                             ts\tnv3\tnv5\tnvlocked
                             1970-01-01T00:00:00.000001Z\tnull\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\tnull\tnull\t10.0
+                            1970-01-01T00:00:00.000002Z\tnull\tnull\tnull
                             1970-01-01T00:00:00.000003Z\t30.0\tnull\t10.0
-                            1970-01-01T00:00:00.000004Z\t40.0\tnull\t20.0
-                            1970-01-01T00:00:00.000005Z\t50.0\tnull\t30.0
+                            1970-01-01T00:00:00.000004Z\t40.0\tnull\t10.0
+                            1970-01-01T00:00:00.000005Z\t50.0\tnull\t10.0
                             """),
                     "select ts, " +
                             "nth_value(val, 3) over (order by ts rows between 2 preceding and current row) nv3, " +

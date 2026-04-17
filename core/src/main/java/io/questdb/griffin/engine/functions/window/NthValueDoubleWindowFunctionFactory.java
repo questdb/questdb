@@ -641,6 +641,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     public static class NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         protected final int bufferSize;
+        protected final int excludeCount;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final int frameSize;
@@ -664,10 +665,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 bufferSize = (int) Math.abs(rowsLo);
                 frameLoBounded = true;
             } else {
-                frameSize = 1;
-                bufferSize = (int) Math.abs(rowsHi);
+                frameSize = (int) Math.abs(rowsHi);
+                bufferSize = frameSize;
                 frameLoBounded = false;
             }
+            this.excludeCount = rowsHi < 0 ? (int) Math.abs(rowsHi) : 0;
             this.frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
             this.n = n;
@@ -675,111 +677,93 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         @Override
         public void computeNext(Record record) {
-            // map stores:
-            // 0 - (0-based) index of oldest value [0, bufferSize]
-            // 1 - native array start offset (relative to memory address)
-            // 2 - count of values in buffer
+            // Map slot layout:
+            //   frameLoBounded:  0=loIdx, 1=startOffset, 2=count (capped at bufferSize)
+            //   !frameLoBounded: 0=count (uncapped), 1=lockedValue (double bits as long)
 
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.createValue();
+            MapValue mapValue = key.createValue();
 
+            double d = arg.getDouble(record);
+
+            if (!frameLoBounded) {
+                // rows between unbounded preceding and K preceding: frame = rows [1, M-K].
+                // nth_value(n) locks to row n's value forever once the frame contains n rows.
+                long count;
+                if (mapValue.isNew()) {
+                    count = 0;
+                    mapValue.putLong(1, Double.doubleToRawLongBits(Double.NaN));
+                } else {
+                    count = mapValue.getLong(0);
+                }
+                count++;
+                if (count == n) {
+                    mapValue.putLong(1, Double.doubleToRawLongBits(d));
+                }
+                if (count >= n + bufferSize) {
+                    nthValue = Double.longBitsToDouble(mapValue.getLong(1));
+                } else {
+                    nthValue = Double.NaN;
+                }
+                mapValue.putLong(0, count);
+                return;
+            }
+
+            // frameLoBounded: rows between X preceding and [Y preceding | current row]
             long loIdx;
             long startOffset;
             long count;
-            double d = arg.getDouble(record);
 
-            if (value.isNew()) {
+            if (mapValue.isNew()) {
                 loIdx = 0;
                 count = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
-                value.putLong(1, startOffset);
+                mapValue.putLong(1, startOffset);
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
                 }
             } else {
-                loIdx = value.getLong(0);
-                startOffset = value.getLong(1);
-                count = value.getLong(2);
-
-                if (!frameLoBounded && count >= bufferSize + n - 1) {
-                    // frame starts from the very beginning and nth value is already locked in
-                    long nthIdx = (loIdx + bufferSize - count) % bufferSize;
-                    nthIdx = (nthIdx + n - 1) % bufferSize;
-                    nthValue = memory.getDouble(startOffset + nthIdx * Double.BYTES);
-                    return;
-                }
+                loIdx = mapValue.getLong(0);
+                startOffset = mapValue.getLong(1);
+                count = mapValue.getLong(2);
             }
 
-            // compute current frame size: how many elements are in the frame
             long effectiveCount = Math.min(count, bufferSize);
             long currentFrameSize;
-            if (frameLoBounded) {
+            if (frameIncludesCurrentValue) {
                 currentFrameSize = Math.min(effectiveCount, frameSize);
-                if (count == 0 && frameIncludesCurrentValue) {
-                    // current row enters the frame
-                    currentFrameSize = 1;
-                }
             } else {
-                // unbounded preceding: frame grows with each row
-                currentFrameSize = effectiveCount;
-                if (frameIncludesCurrentValue) {
-                    currentFrameSize = count + 1;
-                }
+                currentFrameSize = Math.max(0, Math.min(count + 1 - excludeCount, frameSize));
             }
 
-            if (frameLoBounded) {
-                if (count >= (bufferSize - frameSize) && count > 0) {
-                    // we have elements in the frame; the first frame element is at
-                    long frameStartIdx = (loIdx + bufferSize - effectiveCount) % bufferSize;
-                    currentFrameSize = Math.min(effectiveCount, frameSize);
-                    if (frameIncludesCurrentValue) {
-                        // d is about to be written at loIdx, but hasn't been written yet
-                        // frame includes current row
-                        if (n <= currentFrameSize) {
-                            long nthIdx = (frameStartIdx + n - 1) % bufferSize;
-                            nthValue = memory.getDouble(startOffset + nthIdx * Double.BYTES);
-                        } else if (n == currentFrameSize + 1) {
-                            nthValue = d;
-                        } else {
-                            nthValue = Double.NaN;
-                        }
-                    } else {
-                        if (n <= currentFrameSize) {
-                            long nthIdx = (frameStartIdx + n - 1) % bufferSize;
-                            nthValue = memory.getDouble(startOffset + nthIdx * Double.BYTES);
-                        } else {
-                            nthValue = Double.NaN;
-                        }
-                    }
-                } else if (count == 0 && frameIncludesCurrentValue) {
-                    nthValue = n == 1 ? d : Double.NaN;
-                } else {
-                    nthValue = Double.NaN;
-                }
-            } else {
-                // unbounded preceding
-                if (count == 0 && frameIncludesCurrentValue) {
-                    nthValue = n == 1 ? d : Double.NaN;
-                } else if (count > (bufferSize - frameSize)) {
-                    long frameStartIdx = (loIdx + bufferSize - effectiveCount) % bufferSize;
-                    if (n <= effectiveCount) {
+            if (currentFrameSize > 0 || (count == 0 && frameIncludesCurrentValue)) {
+                long frameStartIdx = (loIdx + bufferSize - effectiveCount) % bufferSize;
+                if (frameIncludesCurrentValue) {
+                    if (n <= currentFrameSize) {
                         long nthIdx = (frameStartIdx + n - 1) % bufferSize;
                         nthValue = memory.getDouble(startOffset + nthIdx * Double.BYTES);
-                    } else if (frameIncludesCurrentValue && n == effectiveCount + 1) {
+                    } else if (n == currentFrameSize + 1) {
                         nthValue = d;
                     } else {
                         nthValue = Double.NaN;
                     }
                 } else {
-                    nthValue = Double.NaN;
+                    if (n <= currentFrameSize) {
+                        long nthIdx = (frameStartIdx + n - 1) % bufferSize;
+                        nthValue = memory.getDouble(startOffset + nthIdx * Double.BYTES);
+                    } else {
+                        nthValue = Double.NaN;
+                    }
                 }
+            } else {
+                nthValue = Double.NaN;
             }
 
             count = Math.min(count + 1, bufferSize);
-            value.putLong(0, (loIdx + 1) % bufferSize);
-            value.putLong(2, count);
+            mapValue.putLong(0, (loIdx + 1) % bufferSize);
+            mapValue.putLong(2, count);
 
             memory.putDouble(startOffset + loIdx * Double.BYTES, d);
         }
@@ -825,12 +809,16 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between ");
-            sink.val(bufferSize);
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
             sink.val(" preceding and ");
             if (frameIncludesCurrentValue) {
                 sink.val("current row");
             } else {
-                sink.val(bufferSize + 1 - frameSize).val(" preceding");
+                sink.val(excludeCount).val(" preceding");
             }
             sink.val(')');
         }
@@ -1053,13 +1041,16 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     public static class NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
         protected final MemoryARW buffer;
         protected final int bufferSize;
+        protected final int excludeCount;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final int frameSize;
         protected final int n;
         protected long count = 0;
+        protected double lockedValue = Double.NaN;
         protected int loIdx = 0;
         protected double nthValue;
+        protected long totalCount = 0;
 
         public NthValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int n) {
             super(arg);
@@ -1076,6 +1067,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 frameLoBounded = false;
             }
 
+            excludeCount = rowsHi < 0 ? (int) Math.abs(rowsHi) : 0;
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.n = n;
@@ -1091,61 +1083,51 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         @Override
         public void computeNext(Record record) {
             double d = arg.getDouble(record);
-            long effectiveCount = Math.min(count, bufferSize);
 
-            if (!frameLoBounded && count >= bufferSize + n - 1) {
-                // frame start is locked in
-                long frameStartIdx = (loIdx + bufferSize - effectiveCount) % bufferSize;
-                long nthIdx = (frameStartIdx + n - 1) % bufferSize;
-                nthValue = buffer.getDouble((long) nthIdx * Double.BYTES);
-            } else if (frameLoBounded) {
-                long currentFrameElements = Math.min(effectiveCount, frameSize);
-                if (count >= (bufferSize - frameSize) && count > 0) {
-                    long frameStartIdx = (loIdx + bufferSize - effectiveCount) % bufferSize;
-                    if (frameIncludesCurrentValue) {
-                        if (n <= currentFrameElements) {
-                            long nthIdx = (frameStartIdx + n - 1) % bufferSize;
-                            nthValue = buffer.getDouble((long) nthIdx * Double.BYTES);
-                        } else if (n == currentFrameElements + 1) {
-                            nthValue = d;
-                        } else {
-                            nthValue = Double.NaN;
-                        }
-                    } else {
-                        if (n <= currentFrameElements) {
-                            long nthIdx = (frameStartIdx + n - 1) % bufferSize;
-                            nthValue = buffer.getDouble((long) nthIdx * Double.BYTES);
-                        } else {
-                            nthValue = Double.NaN;
-                        }
-                    }
-                } else if (count == 0 && frameIncludesCurrentValue) {
-                    nthValue = n == 1 ? d : Double.NaN;
-                } else {
-                    nthValue = Double.NaN;
+            if (!frameLoBounded) {
+                // rows between unbounded preceding and K preceding: frame = rows [1, M-K].
+                // nth_value(n) locks to row n's value forever once the frame contains n rows.
+                totalCount++;
+                if (totalCount == n) {
+                    lockedValue = d;
                 }
+                nthValue = totalCount >= n + bufferSize ? lockedValue : Double.NaN;
+                return;
+            }
+
+            // frameLoBounded: rows between X preceding and [Y preceding | current row]
+            long effectiveCount = Math.min(count, bufferSize);
+            long currentFrameElements;
+            if (frameIncludesCurrentValue) {
+                currentFrameElements = Math.min(effectiveCount, frameSize);
             } else {
-                // not frameLoBounded, not enough elements yet
-                if (count == 0 && frameIncludesCurrentValue) {
-                    nthValue = n == 1 ? d : Double.NaN;
-                } else if (count > (bufferSize - frameSize)) {
-                    long frameStartIdx = (loIdx + bufferSize - effectiveCount) % bufferSize;
-                    if (n <= effectiveCount) {
+                currentFrameElements = Math.max(0, Math.min(count + 1 - excludeCount, frameSize));
+            }
+
+            if (currentFrameElements > 0 || (count == 0 && frameIncludesCurrentValue)) {
+                long frameStartIdx = (loIdx + bufferSize - effectiveCount) % bufferSize;
+                if (frameIncludesCurrentValue) {
+                    if (n <= currentFrameElements) {
                         long nthIdx = (frameStartIdx + n - 1) % bufferSize;
                         nthValue = buffer.getDouble((long) nthIdx * Double.BYTES);
-                    } else if (frameIncludesCurrentValue && n == effectiveCount + 1) {
+                    } else if (n == currentFrameElements + 1) {
                         nthValue = d;
                     } else {
                         nthValue = Double.NaN;
                     }
                 } else {
-                    nthValue = Double.NaN;
+                    if (n <= currentFrameElements) {
+                        long nthIdx = (frameStartIdx + n - 1) % bufferSize;
+                        nthValue = buffer.getDouble((long) nthIdx * Double.BYTES);
+                    } else {
+                        nthValue = Double.NaN;
+                    }
                 }
+            } else {
+                nthValue = Double.NaN;
             }
 
             count = Math.min(count + 1, bufferSize);
-
-            // overwrite oldest element
             buffer.putDouble((long) loIdx * Double.BYTES, d);
             loIdx = (loIdx + 1) % bufferSize;
         }
@@ -1174,9 +1156,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         @Override
         public void reopen() {
             nthValue = Double.NaN;
+            lockedValue = Double.NaN;
             loIdx = 0;
             initBuffer();
             count = 0;
+            totalCount = 0;
         }
 
         @Override
@@ -1184,8 +1168,10 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             super.reset();
             buffer.close();
             nthValue = Double.NaN;
+            lockedValue = Double.NaN;
             loIdx = 0;
             count = 0;
+            totalCount = 0;
         }
 
         @Override
@@ -1194,12 +1180,16 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             sink.val('(').val(arg).val(',').val(n).val(')');
             sink.val(" over (");
             sink.val(" rows between ");
-            sink.val(bufferSize);
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
             sink.val(" preceding and ");
             if (frameIncludesCurrentValue) {
                 sink.val("current row");
             } else {
-                sink.val(bufferSize + 1 - frameSize).val(" preceding");
+                sink.val(excludeCount).val(" preceding");
             }
             sink.val(')');
         }
@@ -1208,9 +1198,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         public void toTop() {
             super.toTop();
             nthValue = Double.NaN;
+            lockedValue = Double.NaN;
             loIdx = 0;
             initBuffer();
             count = 0;
+            totalCount = 0;
         }
 
         private void initBuffer() {
