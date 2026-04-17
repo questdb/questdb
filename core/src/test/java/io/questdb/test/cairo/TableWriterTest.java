@@ -2846,6 +2846,125 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetLinksPmSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            final TableToken token;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                token = writer.getTableToken();
+                TxWriter tx = writer.getTxWriter();
+
+                long partitionTs = tx.getPartitionTimestampByIndex(0);
+                int partitionIndex = tx.getPartitionIndex(partitionTs);
+                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+
+                // Stamp data.parquet and _pm stubs into the non-active partition dir.
+                // switchNativePartitionWithParquet only checks existence and hard-links,
+                // so empty stubs exercise the code path without needing a real encode.
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch _pm", FF.touch(p.$()));
+                }
+
+                // Bump writer.txn past partition.nameTxn so the switch creates a
+                // distinct destination dir.
+                populateRow(writer, rnd, tx.getMaxTimestamp(), timestampDriver.fromMicros(interval));
+                writer.commit();
+
+                // Mark the partition as parquet-generated so the switch passes the
+                // isPartitionParquetGenerated guard.
+                tx.setPartitionParquetGenerated(partitionIndex, true);
+
+                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
+                Assert.assertEquals(TableWriter.SWITCH_OK, rc);
+            }
+
+            try (TableReader reader = engine.getReader(token)) {
+                long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                long newNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, newNameTxn);
+                    Assert.assertTrue("_pm must survive switchNativePartitionWithParquet", FF.exists(p.$()));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetWithoutPmSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            final TableToken token;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                token = writer.getTableToken();
+                TxWriter tx = writer.getTxWriter();
+
+                long partitionTs = tx.getPartitionTimestampByIndex(0);
+                int partitionIndex = tx.getPartitionIndex(partitionTs);
+                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+
+                // Stamp only data.parquet. An older partition converted before the
+                // _pm work has no sidecar, and the switch must tolerate that.
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+                }
+
+                populateRow(writer, rnd, tx.getMaxTimestamp(), timestampDriver.fromMicros(interval));
+                writer.commit();
+
+                tx.setPartitionParquetGenerated(partitionIndex, true);
+
+                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
+                Assert.assertEquals("switch must succeed even without _pm", TableWriter.SWITCH_OK, rc);
+            }
+
+            try (TableReader reader = engine.getReader(token)) {
+                long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                long newNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, newNameTxn);
+                    Assert.assertTrue("data.parquet must survive", FF.exists(p.$()));
+
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, newNameTxn);
+                    Assert.assertFalse("_pm must not be created when source is missing", FF.exists(p.$()));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTableDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             try {

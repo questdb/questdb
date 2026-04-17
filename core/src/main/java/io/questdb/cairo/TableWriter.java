@@ -3105,6 +3105,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(']');
             }
 
+            // Also hard-link the _pm sidecar so cold reads can resolve column
+            // chunks after the switch. Older partitions may not have _pm, so
+            // skip when the source file is missing.
+            setPathForParquetPartitionMetadata(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
+            if (ff.exists(path.$())) {
+                if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not hard link parquet metadata sidecar [table=")
+                            .put(tableToken.getTableName())
+                            .put(", from=").put(path)
+                            .put(", to=").put(other)
+                            .put(']');
+                }
+            }
+
             LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
             linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
