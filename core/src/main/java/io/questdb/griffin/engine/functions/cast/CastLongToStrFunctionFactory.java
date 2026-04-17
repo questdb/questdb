@@ -47,7 +47,10 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
             sink.put(func.getLong(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (func.isNotNull()) {
+            return new FuncNotNull(func);
+        }
+        return new Func(func);
     }
 
     public static class Func extends AbstractCastToStrFunction {
@@ -78,6 +81,36 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value);
             return sinkB;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            // checkNaN=false preserves LONG_NULL (MIN_VALUE) as numeric text rather than
+            // short-circuiting to the literal "null".
+            Numbers.append(sinkA, arg.getLong(rec), false);
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            Numbers.append(sinkB, arg.getLong(rec), false);
+            return sinkB;
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return true;
         }
     }
 }

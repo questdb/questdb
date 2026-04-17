@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -52,7 +53,55 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.get(0));
+        Function arg = args.get(0);
+        if (arg.isNotNull()) {
+            return new FuncNotNull(arg);
+        }
+        return new Func(arg);
+    }
+
+    public static class FuncNotNull extends StrFunction implements UnaryFunction {
+        private final Function arg;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            Numbers.appendLong256(arg.getLong256A(rec), sinkA);
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            Numbers.appendLong256(arg.getLong256A(rec), sinkB);
+            return sinkB;
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val("::string");
+        }
     }
 
     public static class Func extends StrFunction implements UnaryFunction {

@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -62,7 +63,38 @@ public final class CastUuidToVarcharFunctionFactory implements FunctionFactory {
                 return VarcharConstant.NULL;
             }
         }
+        if (func.isNotNull()) {
+            return new FuncNotNull(func);
+        }
         return new Func(func);
+    }
+
+    public static class FuncNotNull extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            sinkA.clear();
+            Numbers.appendUuid(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkA);
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            sinkB.clear();
+            Numbers.appendUuid(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkB);
+            return sinkB;
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return true;
+        }
     }
 
     public static class Func extends AbstractCastToVarcharFunction {

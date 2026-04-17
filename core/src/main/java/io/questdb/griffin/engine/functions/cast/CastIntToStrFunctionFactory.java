@@ -47,7 +47,10 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
             sink.put(intFunc.getInt(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (intFunc.isNotNull()) {
+            return new FuncNotNull(intFunc);
+        }
+        return new Func(intFunc);
     }
 
     public static class Func extends AbstractCastToStrFunction {
@@ -78,6 +81,36 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value);
             return sinkB;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            // Numbers.append(sink, long, false) preserves INT_NULL (MIN_VALUE) as numeric text
+            // rather than short-circuiting to the literal "null".
+            Numbers.append(sinkA, (long) arg.getInt(rec), false);
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            Numbers.append(sinkB, (long) arg.getInt(rec), false);
+            return sinkB;
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return true;
         }
     }
 }

@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -50,7 +51,39 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.get(0));
+        Function arg = args.get(0);
+        if (arg.isNotNull()) {
+            return new FuncNotNull(arg);
+        }
+        return new Func(arg);
+    }
+
+    public static class FuncNotNull extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            sinkA.clear();
+            Numbers.appendLong256(arg.getLong256A(rec), sinkA);
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            sinkB.clear();
+            Numbers.appendLong256(arg.getLong256A(rec), sinkB);
+            return sinkB;
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return true;
+        }
     }
 
     public static class Func extends AbstractCastToVarcharFunction {

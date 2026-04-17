@@ -53,7 +53,43 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
                 return StrConstant.NULL;
             }
         }
+        if (func.isNotNull()) {
+            return new FuncNotNull(func);
+        }
         return new Func(func);
+    }
+
+    public static class FuncNotNull extends AbstractCastToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            Numbers.appendUuid(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkA);
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            Numbers.appendUuid(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkB);
+            return sinkB;
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+            return Uuid.UUID_LENGTH;
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return true;
+        }
     }
 
     public static class Func extends AbstractCastToStrFunction {

@@ -49,7 +49,38 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
             Numbers.intToIPv4Sink(sink, ipv4Func.getIPv4(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (ipv4Func.isNotNull()) {
+            return new FuncNotNull(ipv4Func);
+        }
+        return new Func(ipv4Func);
+    }
+
+    public static class FuncNotNull extends AbstractCastToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            Numbers.intToIPv4Sink(sinkA, arg.getIPv4(rec));
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            Numbers.intToIPv4Sink(sinkB, arg.getIPv4(rec));
+            return sinkB;
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return true;
+        }
     }
 
     public static class Func extends AbstractCastToStrFunction {
