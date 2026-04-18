@@ -29,8 +29,6 @@ import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
-import java.nio.charset.StandardCharsets;
-
 /**
  * Emits QWP schema sections for egress result batches.
  * <p>
@@ -58,7 +56,8 @@ public final class QwpEgressSchemaWriter {
 
     /**
      * Writes a full-mode schema (mode 0x00 + schema_id + per-column definitions).
-     * Column name is UTF-8 encoded; length is varint-prefixed.
+     * Column name is UTF-8 encoded (pre-cached on the column def); length is
+     * varint-prefixed.
      *
      * @return address just past the schema block
      */
@@ -67,7 +66,7 @@ public final class QwpEgressSchemaWriter {
         long p = QwpVarint.encode(bufAddr + 1, schemaId);
         for (int i = 0, n = columns.size(); i < n; i++) {
             QwpEgressColumnDef col = columns.getQuick(i);
-            byte[] nameBytes = col.getName() == null ? new byte[0] : col.getName().getBytes(StandardCharsets.UTF_8);
+            byte[] nameBytes = col.getNameUtf8();
             p = QwpVarint.encode(p, nameBytes.length);
             for (byte b : nameBytes) {
                 Unsafe.getUnsafe().putByte(p++, b);
@@ -79,14 +78,14 @@ public final class QwpEgressSchemaWriter {
 
     /**
      * Worst-case serialized size of a full-mode schema. Used to ensure the wire buffer
-     * has space before encoding.
+     * has space before encoding. Reads the pre-cached UTF-8 byte length so it does
+     * not allocate.
      */
     public static int worstCaseFullSize(ObjList<QwpEgressColumnDef> columns) {
         int total = 1 /* mode */ + QwpVarint.MAX_VARINT_BYTES /* schema id */;
         for (int i = 0, n = columns.size(); i < n; i++) {
             QwpEgressColumnDef col = columns.getQuick(i);
-            int nameLen = col.getName() == null ? 0 : col.getName().getBytes(StandardCharsets.UTF_8).length;
-            total += QwpVarint.MAX_VARINT_BYTES + nameLen + 1 /* type */;
+            total += QwpVarint.MAX_VARINT_BYTES + col.getNameUtf8().length + 1 /* type */;
         }
         return total;
     }

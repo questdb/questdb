@@ -29,9 +29,6 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -39,31 +36,20 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 
-import java.nio.charset.StandardCharsets;
-
 /**
  * Column-major accumulator for one QWP egress {@code RESULT_BATCH} table block.
  * <p>
- * Phase-1 design tradeoff: row accumulation uses heap-boxed values per row
- * (simple, correct, allocates). The emit path serialises column-by-column
- * into a caller-owned native wire buffer so the outbound frame is zero-copy
- * from the wire buffer to the socket.
+ * Each column has its own {@link QwpColumnScratch} with type-specialised native
+ * buffers. {@code appendRow} writes directly to native memory (no JVM-heap
+ * allocations on the hot path after warmup). {@code emitTableBlock} memcpys
+ * the scratch into the caller-owned wire buffer in one pass per column.
  * <p>
- * One instance is reused across batches on the same connection.
+ * One instance is reused across batches on the same connection; the scratch
+ * buffers grow to the maximum size observed and never shrink.
  */
 public class QwpResultBatchBuffer implements QuietCloseable {
 
-    /**
-     * Sentinel placeholder for NULL entries in the per-column value list.
-     */
-    private static final Object NULL = new Object();
-    // reusable scratch for variable-length column byte serialisation built up row-by-row
-    private final ObjList<byte[]> byteScratch = new ObjList<>();
-    // columns[ci]: list of boxed values (Object = NULL sentinel, or type-specific box)
-    private final ObjList<ObjList<Object>> columnValues = new ObjList<>();
-    // per-column dicts for SYMBOL, built during append, emitted on flush
-    private final ObjList<CharSequenceIntHashMap> symbolDict = new ObjList<>();
-    private final ObjList<ObjList<String>> symbolDictOrder = new ObjList<>();
+    private final ObjList<QwpColumnScratch> scratches = new ObjList<>();
     private ObjList<QwpEgressColumnDef> columns;
     private int columnCount;
     private int rowCount;
@@ -72,184 +58,187 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Starts a new batch with the given schema. Clears per-column value lists.
-     */
-    public void beginBatch(ObjList<QwpEgressColumnDef> columns) {
-        this.columns = columns;
-        this.columnCount = columns.size();
-        this.rowCount = 0;
-        while (columnValues.size() < columnCount) {
-            columnValues.add(new ObjList<>());
-            symbolDict.add(new CharSequenceIntHashMap());
-            symbolDictOrder.add(new ObjList<>());
-            byteScratch.add(null);
-        }
-        for (int i = 0; i < columnCount; i++) {
-            columnValues.getQuick(i).clear();
-            symbolDict.getQuick(i).clear();
-            symbolDictOrder.getQuick(i).clear();
-        }
-    }
-
-    @Override
-    public void close() {
-        reset();
-        columnValues.clear();
-        symbolDict.clear();
-        symbolDictOrder.clear();
-        byteScratch.clear();
-    }
-
-    /**
-     * Appends one row's worth of values from the given record, dispatching per column wire type.
+     * Appends one row's worth of values from the given record.
      */
     public void appendRow(Record record) {
         for (int ci = 0; ci < columnCount; ci++) {
             QwpEgressColumnDef def = columns.getQuick(ci);
-            ObjList<Object> values = columnValues.getQuick(ci);
-            byte wire = def.getWireType();
+            QwpColumnScratch scratch = scratches.getQuick(ci);
             int qdbType = def.getQuestdbColumnType();
+            byte wire = def.getWireType();
             switch (wire) {
-                case QwpConstants.TYPE_BOOLEAN -> values.add(record.getBool(ci) ? Boolean.TRUE : Boolean.FALSE);
-                case QwpConstants.TYPE_BYTE -> values.add((long) record.getByte(ci));
-                case QwpConstants.TYPE_SHORT -> values.add((long) record.getShort(ci));
-                case QwpConstants.TYPE_CHAR -> values.add((long) record.getChar(ci));
-                case QwpConstants.TYPE_INT -> {
+                case QwpConstants.TYPE_BOOLEAN:
+                    scratch.appendBool(record.getBool(ci));
+                    break;
+                case QwpConstants.TYPE_BYTE:
+                    scratch.appendByte(record.getByte(ci));
+                    break;
+                case QwpConstants.TYPE_SHORT:
+                    scratch.appendShort(record.getShort(ci));
+                    break;
+                case QwpConstants.TYPE_CHAR:
+                    scratch.appendChar(record.getChar(ci));
+                    break;
+                case QwpConstants.TYPE_INT: {
                     int v = record.getInt(ci);
-                    values.add(v == Numbers.INT_NULL ? NULL : (long) v);
+                    if (v == Numbers.INT_NULL) scratch.appendNull();
+                    else scratch.appendInt(v);
+                    break;
                 }
-                case QwpConstants.TYPE_LONG -> {
+                case QwpConstants.TYPE_LONG: {
                     long v = record.getLong(ci);
-                    values.add(v == Numbers.LONG_NULL ? NULL : v);
+                    if (v == Numbers.LONG_NULL) scratch.appendNull();
+                    else scratch.appendLong(v);
+                    break;
                 }
-                case QwpConstants.TYPE_DATE -> {
+                case QwpConstants.TYPE_DATE: {
                     long v = record.getDate(ci);
-                    values.add(v == Numbers.LONG_NULL ? NULL : v);
+                    if (v == Numbers.LONG_NULL) scratch.appendNull();
+                    else scratch.appendLong(v);
+                    break;
                 }
-                case QwpConstants.TYPE_TIMESTAMP, QwpConstants.TYPE_TIMESTAMP_NANOS -> {
+                case QwpConstants.TYPE_TIMESTAMP:
+                case QwpConstants.TYPE_TIMESTAMP_NANOS: {
                     long v = record.getTimestamp(ci);
-                    values.add(v == Numbers.LONG_NULL ? NULL : v);
+                    if (v == Numbers.LONG_NULL) scratch.appendNull();
+                    else scratch.appendLong(v);
+                    break;
                 }
-                case QwpConstants.TYPE_FLOAT -> {
+                case QwpConstants.TYPE_FLOAT: {
                     float v = record.getFloat(ci);
-                    values.add(Float.isNaN(v) ? NULL : v);
+                    if (Float.isNaN(v)) scratch.appendNull();
+                    else scratch.appendFloat(v);
+                    break;
                 }
-                case QwpConstants.TYPE_DOUBLE -> {
+                case QwpConstants.TYPE_DOUBLE: {
                     double v = record.getDouble(ci);
-                    values.add(Double.isNaN(v) ? NULL : v);
+                    if (Double.isNaN(v)) scratch.appendNull();
+                    else scratch.appendDouble(v);
+                    break;
                 }
-                case QwpConstants.TYPE_STRING -> {
+                case QwpConstants.TYPE_STRING: {
                     CharSequence cs = record.getStrA(ci);
-                    values.add(cs == null ? NULL : cs.toString());
+                    if (cs == null) scratch.appendNull();
+                    else scratch.appendString(cs);
+                    break;
                 }
-                case QwpConstants.TYPE_VARCHAR -> {
+                case QwpConstants.TYPE_VARCHAR: {
                     Utf8Sequence us = record.getVarcharA(ci);
-                    values.add(us == null ? NULL : copyUtf8(us));
+                    if (us == null) scratch.appendNull();
+                    else scratch.appendVarchar(us);
+                    break;
                 }
-                case QwpConstants.TYPE_SYMBOL -> {
+                case QwpConstants.TYPE_SYMBOL: {
                     CharSequence cs = record.getSymA(ci);
-                    if (cs == null) {
-                        values.add(NULL);
-                    } else {
-                        String s = cs.toString();
-                        CharSequenceIntHashMap dict = symbolDict.getQuick(ci);
-                        int id = dict.get(s);
-                        if (id == -1) {
-                            id = symbolDictOrder.getQuick(ci).size();
-                            dict.put(s, id);
-                            symbolDictOrder.getQuick(ci).add(s);
-                        }
-                        values.add((long) id);
-                    }
+                    if (cs == null) scratch.appendNull();
+                    else scratch.appendSymbol(cs);
+                    break;
                 }
-                case QwpConstants.TYPE_UUID -> {
+                case QwpConstants.TYPE_UUID: {
                     long lo = record.getLong128Lo(ci);
                     long hi = record.getLong128Hi(ci);
-                    // Null UUID is both halves == LONG_NULL
-                    if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
-                        values.add(NULL);
-                    } else {
-                        values.add(new long[]{lo, hi});
-                    }
+                    if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) scratch.appendNull();
+                    else scratch.appendUuid(lo, hi);
+                    break;
                 }
-                case QwpConstants.TYPE_LONG256 -> {
+                case QwpConstants.TYPE_LONG256: {
                     Long256 l256 = record.getLong256A(ci);
                     if (l256 == null || (l256.getLong0() == Numbers.LONG_NULL
                             && l256.getLong1() == Numbers.LONG_NULL
                             && l256.getLong2() == Numbers.LONG_NULL
                             && l256.getLong3() == Numbers.LONG_NULL)) {
-                        values.add(NULL);
+                        scratch.appendNull();
                     } else {
-                        values.add(new long[]{l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3()});
+                        scratch.appendLong256(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3());
                     }
+                    break;
                 }
-                case QwpConstants.TYPE_GEOHASH -> {
-                    long bits = readGeoBits(record, ci, def.getPrecisionBits(), qdbType);
-                    // QuestDB uses -1 as the universal geohash NULL sentinel across all widths;
-                    // when the narrower sentinel (BYTE_NULL = -1, SHORT_NULL = -1, INT_NULL = -1)
-                    // is widened to long it sign-extends to -1L.
-                    if (bits == -1L) {
-                        values.add(NULL);
-                    } else {
-                        values.add(bits);
-                    }
+                case QwpConstants.TYPE_GEOHASH: {
+                    int precBits = def.getPrecisionBits();
+                    long bits = readGeoBits(record, ci, precBits);
+                    if (bits == -1L) scratch.appendNull();
+                    else scratch.appendGeohash(bits, (precBits + 7) >>> 3);
+                    break;
                 }
-                case QwpConstants.TYPE_DECIMAL64 -> {
+                case QwpConstants.TYPE_DECIMAL64: {
                     long v = record.getDecimal64(ci);
-                    values.add(v == Numbers.LONG_NULL ? NULL : v);
+                    if (v == Numbers.LONG_NULL) scratch.appendNull();
+                    else scratch.appendLong(v);
+                    break;
                 }
-                case QwpConstants.TYPE_DECIMAL128 -> {
-                    Decimal128 sink = new Decimal128();
-                    record.getDecimal128(ci, sink);
-                    if (sink.isNull()) {
-                        values.add(NULL);
-                    } else {
-                        // Snapshot: Decimal128 is mutable, so clone the two longs
-                        values.add(new long[]{sink.getLow(), sink.getHigh()});
-                    }
+                case QwpConstants.TYPE_DECIMAL128: {
+                    record.getDecimal128(ci, scratch.decimal128Sink);
+                    if (scratch.decimal128Sink.isNull()) scratch.appendNull();
+                    else scratch.appendDecimal128(scratch.decimal128Sink.getLow(), scratch.decimal128Sink.getHigh());
+                    break;
                 }
-                case QwpConstants.TYPE_DECIMAL256 -> {
-                    Decimal256 sink = new Decimal256();
-                    record.getDecimal256(ci, sink);
-                    if (sink.isNull()) {
-                        values.add(NULL);
-                    } else {
-                        values.add(new long[]{sink.getLl(), sink.getLh(), sink.getHl(), sink.getHh()});
-                    }
+                case QwpConstants.TYPE_DECIMAL256: {
+                    record.getDecimal256(ci, scratch.decimal256Sink);
+                    if (scratch.decimal256Sink.isNull()) scratch.appendNull();
+                    else scratch.appendDecimal256(
+                            scratch.decimal256Sink.getLl(),
+                            scratch.decimal256Sink.getLh(),
+                            scratch.decimal256Sink.getHl(),
+                            scratch.decimal256Sink.getHh());
+                    break;
                 }
-                case QwpConstants.TYPE_DOUBLE_ARRAY, QwpConstants.TYPE_LONG_ARRAY -> {
+                case QwpConstants.TYPE_DOUBLE_ARRAY:
+                case QwpConstants.TYPE_LONG_ARRAY: {
                     ArrayView av = record.getArray(ci, qdbType);
                     if (av == null || av.isNull()) {
-                        values.add(NULL);
+                        scratch.appendNull();
                     } else {
-                        values.add(serialiseArray(av, wire));
+                        appendArrayBytesDirect(scratch, av, wire);
                     }
+                    break;
                 }
-                default -> throw new UnsupportedOperationException(
-                        "QWP egress append: unsupported wire type 0x" + Integer.toHexString(wire & 0xFF));
+                default:
+                    throw new UnsupportedOperationException(
+                            "QWP egress append: unsupported wire type 0x" + Integer.toHexString(wire & 0xFF));
             }
         }
         rowCount++;
     }
 
     /**
+     * Starts a new batch with the given schema. Re-sizes the scratch pool and resets each scratch.
+     */
+    public void beginBatch(ObjList<QwpEgressColumnDef> columns) {
+        this.columns = columns;
+        this.columnCount = columns.size();
+        this.rowCount = 0;
+        while (scratches.size() < columnCount) {
+            scratches.add(new QwpColumnScratch());
+        }
+        for (int i = 0; i < columnCount; i++) {
+            scratches.getQuick(i).beginBatch(columns.getQuick(i));
+        }
+    }
+
+    @Override
+    public void close() {
+        for (int i = 0, n = scratches.size(); i < n; i++) {
+            scratches.getQuick(i).close();
+        }
+        scratches.clear();
+        columns = null;
+        rowCount = 0;
+        columnCount = 0;
+    }
+
+    /**
      * Emits the full table block body for this batch starting at {@code wireBuf}:
      * name_length (=0) + row_count + column_count + schema + column data sections.
      *
-     * @param wireBuf         native buffer start
-     * @param wireLimit       exclusive end of the caller-owned buffer
-     * @param schemaId        server-assigned schema id
-     * @param writeFullSchema true for first batch of a query, false for subsequent references
      * @return number of bytes written, or -1 if the data would overflow wireLimit
      */
     public int emitTableBlock(long wireBuf, long wireLimit, long schemaId, boolean writeFullSchema) {
         long p = wireBuf;
         if (p >= wireLimit) return -1;
         // Anonymous result-set: empty name
-        Unsafe.getUnsafe().putByte(p++, (byte) 0); // name_length = 0
+        Unsafe.getUnsafe().putByte(p++, (byte) 0);
         p = QwpVarint.encode(p, rowCount);
         p = QwpVarint.encode(p, columnCount);
-        // Schema
         if (writeFullSchema) {
             int needed = QwpEgressSchemaWriter.worstCaseFullSize(columns);
             if (p + needed > wireLimit) return -1;
@@ -258,9 +247,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             if (p + 1 + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
             p = QwpEgressSchemaWriter.writeReference(p, schemaId);
         }
-        // Columns
         for (int ci = 0; ci < columnCount; ci++) {
-            p = emitColumn(ci, p, wireLimit);
+            p = emitColumn(scratches.getQuick(ci), p, wireLimit);
             if (p < 0) return -1;
         }
         return (int) (p - wireBuf);
@@ -275,320 +263,186 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     public void reset() {
-        for (int i = 0, n = columnValues.size(); i < n; i++) {
-            columnValues.getQuick(i).clear();
-            symbolDict.getQuick(i).clear();
-            symbolDictOrder.getQuick(i).clear();
+        for (int i = 0, n = scratches.size(); i < n; i++) {
+            scratches.getQuick(i).beginBatch(null);
         }
         rowCount = 0;
         columnCount = 0;
         columns = null;
     }
 
-    private static byte[] copyUtf8(Utf8Sequence us) {
-        int n = us.size();
-        byte[] out = new byte[n];
-        for (int i = 0; i < n; i++) {
-            out[i] = us.byteAt(i);
+    /**
+     * Serialises an array into {@code scratch.arrayHeapAddr} without allocating a {@code byte[]}.
+     * Format: {@code [nDims u8] [dim lengths: nDims × i32 LE] [values: product(dims) × 8 bytes LE]}.
+     */
+    private static void appendArrayBytesDirect(QwpColumnScratch scratch, ArrayView av, byte wireType) {
+        int nDims = av.getDimCount();
+        int elements = 1;
+        for (int d = 0; d < nDims; d++) elements *= av.getDimLen(d);
+        int totalBytes = 1 + 4 * nDims + 8 * elements;
+        scratch.ensureArrayHeapCapacity(scratch.arrayHeapPos + totalBytes);
+        long p = scratch.arrayHeapAddr + scratch.arrayHeapPos;
+        Unsafe.getUnsafe().putByte(p++, (byte) nDims);
+        for (int d = 0; d < nDims; d++) {
+            Unsafe.getUnsafe().putInt(p, av.getDimLen(d));
+            p += 4;
         }
-        return out;
+        if (wireType == QwpConstants.TYPE_DOUBLE_ARRAY) {
+            for (int i = 0; i < elements; i++) {
+                Unsafe.getUnsafe().putLong(p, Double.doubleToRawLongBits(av.getDouble(i)));
+                p += 8;
+            }
+        } else {
+            for (int i = 0; i < elements; i++) {
+                Unsafe.getUnsafe().putLong(p, av.getLong(i));
+                p += 8;
+            }
+        }
+        scratch.arrayHeapPos += totalBytes;
+        scratch.markNonNullAndAdvanceRow();
     }
 
-    private static long readGeoBits(Record record, int col, int precisionBits, int questdbColumnType) {
-        short tag = ColumnType.tagOf(questdbColumnType);
-        // Geohash tags: GEOBYTE, GEOSHORT, GEOINT, GEOLONG (sized by precision)
+    /**
+     * Copies the null flag + bitmap (if any) for this column to the wire. Also
+     * memcpys the dense value bytes for the simple cases (BOOLEAN, fixed-width).
+     */
+    private long emitColumn(QwpColumnScratch scratch, long p, long wireLimit) {
+        // 1. Null flag + optional bitmap
+        if (scratch.nullCount == 0) {
+            if (p >= wireLimit) return -1;
+            Unsafe.getUnsafe().putByte(p++, (byte) 0);
+        } else {
+            int bitmapBytes = (rowCount + 7) >>> 3;
+            if (p + 1 + bitmapBytes > wireLimit) return -1;
+            Unsafe.getUnsafe().putByte(p++, (byte) 1);
+            Unsafe.getUnsafe().copyMemory(scratch.nullBitmapAddr, p, bitmapBytes);
+            p += bitmapBytes;
+        }
+
+        byte wire = scratch.def.getWireType();
+        int nonNull = scratch.nonNullCount;
+
+        if (wire == QwpConstants.TYPE_BOOLEAN) {
+            int bytes = (nonNull + 7) >>> 3;
+            if (p + bytes > wireLimit) return -1;
+            Unsafe.getUnsafe().copyMemory(scratch.valuesAddr, p, bytes);
+            return p + bytes;
+        }
+        if (wire == QwpConstants.TYPE_STRING || wire == QwpConstants.TYPE_VARCHAR) {
+            return emitStringColumn(scratch, p, wireLimit);
+        }
+        if (wire == QwpConstants.TYPE_SYMBOL) {
+            return emitSymbolColumn(scratch, p, wireLimit);
+        }
+        if (wire == QwpConstants.TYPE_GEOHASH) {
+            if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
+            p = QwpVarint.encode(p, scratch.def.getPrecisionBits());
+            if (p + scratch.valuesPos > wireLimit) return -1;
+            Unsafe.getUnsafe().copyMemory(scratch.valuesAddr, p, scratch.valuesPos);
+            return p + scratch.valuesPos;
+        }
+        if (wire == QwpConstants.TYPE_DOUBLE_ARRAY || wire == QwpConstants.TYPE_LONG_ARRAY) {
+            if (p + scratch.arrayHeapPos > wireLimit) return -1;
+            Unsafe.getUnsafe().copyMemory(scratch.arrayHeapAddr, p, scratch.arrayHeapPos);
+            return p + scratch.arrayHeapPos;
+        }
+
+        // Decimal: scale byte prefix, then dense values
+        if (wire == QwpConstants.TYPE_DECIMAL64
+                || wire == QwpConstants.TYPE_DECIMAL128
+                || wire == QwpConstants.TYPE_DECIMAL256) {
+            if (p + 1 > wireLimit) return -1;
+            Unsafe.getUnsafe().putByte(p++, (byte) scratch.def.getScale());
+            if (p + scratch.valuesPos > wireLimit) return -1;
+            Unsafe.getUnsafe().copyMemory(scratch.valuesAddr, p, scratch.valuesPos);
+            return p + scratch.valuesPos;
+        }
+
+        // Generic fixed-width (BYTE/SHORT/INT/CHAR/LONG/FLOAT/DOUBLE/DATE/TIMESTAMP/TIMESTAMP_NANOS/UUID/LONG256)
+        if (p + scratch.valuesPos > wireLimit) return -1;
+        Unsafe.getUnsafe().copyMemory(scratch.valuesAddr, p, scratch.valuesPos);
+        return p + scratch.valuesPos;
+    }
+
+    private static long emitStringColumn(QwpColumnScratch scratch, long p, long wireLimit) {
+        int nonNull = scratch.nonNullCount;
+        long offsetsBytes = 4L * (nonNull + 1);
+        long bytesBytes = scratch.stringHeapPos;
+        if (p + offsetsBytes + bytesBytes > wireLimit) return -1;
+        // offset[0] = 0; offsets[1..nonNull] were populated during append.
+        Unsafe.getUnsafe().putInt(p, 0);
+        // Copy offsets[1..nonNull] from scratch.stringOffsetsAddr (which stores them at indices 1..nonNull)
+        // to p + 4 .. p + 4 * nonNull + 4.
+        Unsafe.getUnsafe().copyMemory(
+                scratch.stringOffsetsAddr + 4L, p + 4L, 4L * nonNull);
+        Unsafe.getUnsafe().copyMemory(scratch.stringHeapAddr, p + offsetsBytes, bytesBytes);
+        return p + offsetsBytes + bytesBytes;
+    }
+
+    private static long emitSymbolColumn(QwpColumnScratch scratch, long p, long wireLimit) {
+        int dictSize = scratch.symbolDictOrder.size();
+        if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
+        p = QwpVarint.encode(p, dictSize);
+        for (int e = 0; e < dictSize; e++) {
+            // Entries remain on the heap (Strings in the dict); encode length + UTF-8 bytes.
+            String entry = scratch.symbolDictOrder.getQuick(e);
+            int entryLen = utf8Length(entry);
+            if (p + QwpVarint.MAX_VARINT_BYTES + entryLen > wireLimit) return -1;
+            p = QwpVarint.encode(p, entryLen);
+            p = writeUtf8(entry, p);
+        }
+        // Per-row varint IDs: each row's dict id is in scratch.symbolIdsAddr[row] (i32).
+        int nonNull = scratch.nonNullCount;
+        for (int i = 0; i < nonNull; i++) {
+            if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
+            int id = Unsafe.getUnsafe().getInt(scratch.symbolIdsAddr + 4L * i);
+            p = QwpVarint.encode(p, id);
+        }
+        return p;
+    }
+
+    private static long readGeoBits(Record record, int col, int precisionBits) {
         if (precisionBits <= 7) return record.getGeoByte(col);
         if (precisionBits <= 15) return record.getGeoShort(col);
         if (precisionBits <= 31) return record.getGeoInt(col);
         return record.getGeoLong(col);
     }
 
-    /**
-     * Serialises an {@link ArrayView} to the per-row wire form:
-     * [nDims u8] [dim lengths: nDims x i32 LE] [values: product(dims) x (8 bytes LE)].
-     */
-    private static byte[] serialiseArray(ArrayView av, byte wireType) {
-        int nDims = av.getDimCount();
-        int total = 1 + 4 * nDims;
-        int elements = 1;
-        for (int d = 0; d < nDims; d++) {
-            elements *= av.getDimLen(d);
+    private static int utf8Length(String s) {
+        int len = 0;
+        for (int i = 0, n = s.length(); i < n; i++) {
+            char c = s.charAt(i);
+            if (c < 0x80) len++;
+            else if (c < 0x800) len += 2;
+            else if (Character.isHighSurrogate(c) && i + 1 < n && Character.isLowSurrogate(s.charAt(i + 1))) {
+                len += 4;
+                i++;
+            } else len += 3;
         }
-        int valueSize = wireType == QwpConstants.TYPE_DOUBLE_ARRAY ? 8 : 8;
-        total += elements * valueSize;
-        byte[] out = new byte[total];
-        int p = 0;
-        out[p++] = (byte) nDims;
-        for (int d = 0; d < nDims; d++) {
-            int len = av.getDimLen(d);
-            out[p++] = (byte) len;
-            out[p++] = (byte) (len >>> 8);
-            out[p++] = (byte) (len >>> 16);
-            out[p++] = (byte) (len >>> 24);
-        }
-        if (wireType == QwpConstants.TYPE_DOUBLE_ARRAY) {
-            for (int i = 0; i < elements; i++) {
-                long bits = Double.doubleToRawLongBits(av.getDouble(i));
-                putLongLE(out, p, bits);
-                p += 8;
-            }
-        } else {
-            for (int i = 0; i < elements; i++) {
-                long v = av.getLong(i);
-                putLongLE(out, p, v);
-                p += 8;
-            }
-        }
-        return out;
+        return len;
     }
 
-    private static long writeNullBitmap(long wireBuf, ObjList<Object> values, int rowCount) {
-        int nullCount = 0;
-        for (int i = 0; i < rowCount; i++) {
-            if (values.getQuick(i) == NULL) nullCount++;
-        }
-        if (nullCount == 0) {
-            Unsafe.getUnsafe().putByte(wireBuf, (byte) 0);
-            return wireBuf + 1;
-        }
-        Unsafe.getUnsafe().putByte(wireBuf, (byte) 1);
-        long p = wireBuf + 1;
-        int bytes = (rowCount + 7) >>> 3;
-        // Zero the bitmap region first
-        for (int b = 0; b < bytes; b++) Unsafe.getUnsafe().putByte(p + b, (byte) 0);
-        for (int i = 0; i < rowCount; i++) {
-            if (values.getQuick(i) == NULL) {
-                long addr = p + (i >>> 3);
-                byte cur = Unsafe.getUnsafe().getByte(addr);
-                Unsafe.getUnsafe().putByte(addr, (byte) (cur | (1 << (i & 7))));
-            }
-        }
-        return p + bytes;
-    }
-
-    private static void putLongLE(byte[] out, int off, long v) {
-        out[off] = (byte) v;
-        out[off + 1] = (byte) (v >>> 8);
-        out[off + 2] = (byte) (v >>> 16);
-        out[off + 3] = (byte) (v >>> 24);
-        out[off + 4] = (byte) (v >>> 32);
-        out[off + 5] = (byte) (v >>> 40);
-        out[off + 6] = (byte) (v >>> 48);
-        out[off + 7] = (byte) (v >>> 56);
-    }
-
-    /**
-     * Emits one column's section (null flag + bitmap + values). Returns new wire position,
-     * or -1 on overflow (computed conservatively at entry and by each sub-step).
-     */
-    private long emitColumn(int ci, long wireBuf, long wireLimit) {
-        QwpEgressColumnDef def = columns.getQuick(ci);
-        byte wire = def.getWireType();
-        ObjList<Object> values = columnValues.getQuick(ci);
-        // Worst-case headroom check: null_flag + bitmap
-        long worstNull = 1 + ((rowCount + 7) >>> 3);
-        if (wireBuf + worstNull > wireLimit) return -1;
-        long p = writeNullBitmap(wireBuf, values, rowCount);
-        return switch (wire) {
-            case QwpConstants.TYPE_BOOLEAN -> emitBoolean(values, p, wireLimit);
-            case QwpConstants.TYPE_BYTE -> emitFixedWidth(values, p, wireLimit, 1);
-            case QwpConstants.TYPE_SHORT, QwpConstants.TYPE_CHAR -> emitFixedWidth(values, p, wireLimit, 2);
-            case QwpConstants.TYPE_INT, QwpConstants.TYPE_FLOAT -> emitFixedWidth(values, p, wireLimit, 4);
-            case QwpConstants.TYPE_LONG, QwpConstants.TYPE_DOUBLE, QwpConstants.TYPE_TIMESTAMP,
-                 QwpConstants.TYPE_TIMESTAMP_NANOS, QwpConstants.TYPE_DATE -> emitFixedWidth(values, p, wireLimit, 8);
-            case QwpConstants.TYPE_DECIMAL64 -> emitDecimal(values, def.getScale(), p, wireLimit, 8);
-            case QwpConstants.TYPE_UUID -> emitLongPair(values, p, wireLimit);
-            case QwpConstants.TYPE_DECIMAL128 -> emitDecimalPair(values, def.getScale(), p, wireLimit);
-            case QwpConstants.TYPE_LONG256 -> emitLongQuad(values, p, wireLimit);
-            case QwpConstants.TYPE_DECIMAL256 -> emitDecimalQuad(values, def.getScale(), p, wireLimit);
-            case QwpConstants.TYPE_STRING, QwpConstants.TYPE_VARCHAR -> emitStringOrVarchar(values, wire, p, wireLimit);
-            case QwpConstants.TYPE_SYMBOL -> emitSymbol(ci, p, wireLimit);
-            case QwpConstants.TYPE_GEOHASH -> emitGeohash(values, def.getPrecisionBits(), p, wireLimit);
-            case QwpConstants.TYPE_DOUBLE_ARRAY, QwpConstants.TYPE_LONG_ARRAY -> emitArray(values, p, wireLimit);
-            default ->
-                    throw new UnsupportedOperationException("QWP egress emit: unsupported wire type 0x" + Integer.toHexString(wire & 0xFF));
-        };
-    }
-
-    private long emitDecimal(ObjList<Object> values, int scale, long p, long wireLimit, int sizeBytes) {
-        if (p + 1 > wireLimit) return -1;
-        Unsafe.getUnsafe().putByte(p++, (byte) scale);
-        return emitFixedWidth(values, p, wireLimit, sizeBytes);
-    }
-
-    private long emitDecimalPair(ObjList<Object> values, int scale, long p, long wireLimit) {
-        if (p + 1 > wireLimit) return -1;
-        Unsafe.getUnsafe().putByte(p++, (byte) scale);
-        return emitLongPair(values, p, wireLimit);
-    }
-
-    private long emitDecimalQuad(ObjList<Object> values, int scale, long p, long wireLimit) {
-        if (p + 1 > wireLimit) return -1;
-        Unsafe.getUnsafe().putByte(p++, (byte) scale);
-        return emitLongQuad(values, p, wireLimit);
-    }
-
-    private long emitArray(ObjList<Object> values, long p, long wireLimit) {
-        // Write scale prefix? No — arrays don't have scale. Precede with... per spec, just per-row bytes.
-        for (int i = 0; i < rowCount; i++) {
-            Object v = values.getQuick(i);
-            if (v == NULL) continue;
-            byte[] raw = (byte[]) v;
-            if (p + raw.length > wireLimit) return -1;
-            for (byte b : raw) Unsafe.getUnsafe().putByte(p++, b);
-        }
-        return p;
-    }
-
-    private long emitBoolean(ObjList<Object> values, long p, long wireLimit) {
-        // Count non-null values; pack 8 per byte
-        int nonNull = 0;
-        for (int i = 0; i < rowCount; i++) if (values.getQuick(i) != NULL) nonNull++;
-        int bytes = (nonNull + 7) >>> 3;
-        if (p + bytes > wireLimit) return -1;
-        for (int b = 0; b < bytes; b++) Unsafe.getUnsafe().putByte(p + b, (byte) 0);
-        int bitIdx = 0;
-        for (int i = 0; i < rowCount; i++) {
-            Object v = values.getQuick(i);
-            if (v == NULL) continue;
-            if ((Boolean) v) {
-                long addr = p + (bitIdx >>> 3);
-                byte cur = Unsafe.getUnsafe().getByte(addr);
-                Unsafe.getUnsafe().putByte(addr, (byte) (cur | (1 << (bitIdx & 7))));
-            }
-            bitIdx++;
-        }
-        return p + bytes;
-    }
-
-    private long emitFixedWidth(ObjList<Object> values, long p, long wireLimit, int sizeBytes) {
-        for (int i = 0; i < rowCount; i++) {
-            Object v = values.getQuick(i);
-            if (v == NULL) continue;
-            long bits = asLongBits(v, sizeBytes);
-            if (p + sizeBytes > wireLimit) return -1;
-            switch (sizeBytes) {
-                case 1 -> Unsafe.getUnsafe().putByte(p, (byte) bits);
-                case 2 -> Unsafe.getUnsafe().putShort(p, (short) bits);
-                case 4 -> Unsafe.getUnsafe().putInt(p, (int) bits);
-                case 8 -> Unsafe.getUnsafe().putLong(p, bits);
-                default -> throw new IllegalStateException();
-            }
-            p += sizeBytes;
-        }
-        return p;
-    }
-
-    private long emitGeohash(ObjList<Object> values, int precisionBits, long p, long wireLimit) {
-        // Precision varint first, then packed per-value
-        if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-        p = QwpVarint.encode(p, precisionBits);
-        int bytesPerValue = (precisionBits + 7) >>> 3;
-        for (int i = 0; i < rowCount; i++) {
-            Object v = values.getQuick(i);
-            if (v == NULL) continue;
-            long bits = (Long) v;
-            if (p + bytesPerValue > wireLimit) return -1;
-            for (int b = 0; b < bytesPerValue; b++) {
-                Unsafe.getUnsafe().putByte(p++, (byte) (bits >>> (b * 8)));
-            }
-        }
-        return p;
-    }
-
-    private long emitLongPair(ObjList<Object> values, long p, long wireLimit) {
-        for (int i = 0; i < rowCount; i++) {
-            Object v = values.getQuick(i);
-            if (v == NULL) continue;
-            long[] pair = (long[]) v;
-            if (p + 16 > wireLimit) return -1;
-            Unsafe.getUnsafe().putLong(p, pair[0]);
-            Unsafe.getUnsafe().putLong(p + 8, pair[1]);
-            p += 16;
-        }
-        return p;
-    }
-
-    private long emitLongQuad(ObjList<Object> values, long p, long wireLimit) {
-        for (int i = 0; i < rowCount; i++) {
-            Object v = values.getQuick(i);
-            if (v == NULL) continue;
-            long[] quad = (long[]) v;
-            if (p + 32 > wireLimit) return -1;
-            Unsafe.getUnsafe().putLong(p, quad[0]);
-            Unsafe.getUnsafe().putLong(p + 8, quad[1]);
-            Unsafe.getUnsafe().putLong(p + 16, quad[2]);
-            Unsafe.getUnsafe().putLong(p + 24, quad[3]);
-            p += 32;
-        }
-        return p;
-    }
-
-    /**
-     * STRING/VARCHAR encoding: (N+1) x uint32 offset array, then concatenated UTF-8 bytes,
-     * where N = non-null value count.
-     */
-    private long emitStringOrVarchar(ObjList<Object> values, byte wireType, long p, long wireLimit) {
-        int nonNull = 0;
-        for (int i = 0; i < rowCount; i++) if (values.getQuick(i) != NULL) nonNull++;
-        // Size upper bound check
-        long offsetArraySize = 4L * (nonNull + 1);
-        if (p + offsetArraySize > wireLimit) return -1;
-
-        long offsetsStart = p;
-        long bytesStart = p + offsetArraySize;
-        long bytesPos = bytesStart;
-        int nonNullIdx = 0;
-        Unsafe.getUnsafe().putInt(offsetsStart, 0);
-        for (int i = 0; i < rowCount; i++) {
-            Object v = values.getQuick(i);
-            if (v == NULL) continue;
-            byte[] raw;
-            if (wireType == QwpConstants.TYPE_STRING) {
-                raw = ((String) v).getBytes(StandardCharsets.UTF_8);
+    private static long writeUtf8(String s, long p) {
+        for (int i = 0, n = s.length(); i < n; i++) {
+            char c = s.charAt(i);
+            if (c < 0x80) {
+                Unsafe.getUnsafe().putByte(p++, (byte) c);
+            } else if (c < 0x800) {
+                Unsafe.getUnsafe().putByte(p++, (byte) (0xC0 | (c >> 6)));
+                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | (c & 0x3F)));
+            } else if (Character.isHighSurrogate(c) && i + 1 < n && Character.isLowSurrogate(s.charAt(i + 1))) {
+                int cp = Character.toCodePoint(c, s.charAt(i + 1));
+                i++;
+                Unsafe.getUnsafe().putByte(p++, (byte) (0xF0 | (cp >> 18)));
+                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | ((cp >> 12) & 0x3F)));
+                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | ((cp >> 6) & 0x3F)));
+                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | (cp & 0x3F)));
             } else {
-                raw = (byte[]) v;
+                Unsafe.getUnsafe().putByte(p++, (byte) (0xE0 | (c >> 12)));
+                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | ((c >> 6) & 0x3F)));
+                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | (c & 0x3F)));
             }
-            if (bytesPos + raw.length > wireLimit) return -1;
-            for (byte b : raw) Unsafe.getUnsafe().putByte(bytesPos++, b);
-            nonNullIdx++;
-            Unsafe.getUnsafe().putInt(offsetsStart + 4L * nonNullIdx, (int) (bytesPos - bytesStart));
-        }
-        return bytesPos;
-    }
-
-    /**
-     * SYMBOL per-table dict mode: [dict_size varint] [for each entry: entry_len varint + UTF-8]
-     * [for each non-null row: dict_index varint].
-     */
-    private long emitSymbol(int ci, long p, long wireLimit) {
-        ObjList<String> order = symbolDictOrder.getQuick(ci);
-        ObjList<Object> values = columnValues.getQuick(ci);
-        int dictSize = order.size();
-        if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-        p = QwpVarint.encode(p, dictSize);
-        for (int e = 0; e < dictSize; e++) {
-            byte[] raw = order.getQuick(e).getBytes(StandardCharsets.UTF_8);
-            if (p + QwpVarint.MAX_VARINT_BYTES + raw.length > wireLimit) return -1;
-            p = QwpVarint.encode(p, raw.length);
-            for (byte b : raw) Unsafe.getUnsafe().putByte(p++, b);
-        }
-        for (int i = 0; i < rowCount; i++) {
-            Object v = values.getQuick(i);
-            if (v == NULL) continue;
-            long id = (Long) v;
-            if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-            p = QwpVarint.encode(p, id);
         }
         return p;
     }
-
-    private long asLongBits(Object v, int sizeBytes) {
-        if (v instanceof Long l) return l;
-        if (v instanceof Boolean b) return b ? 1L : 0L;
-        if (v instanceof Double d) return Double.doubleToRawLongBits(d);
-        if (v instanceof Float f) return Float.floatToRawIntBits(f) & 0xFFFFFFFFL;
-        throw new IllegalStateException("unexpected boxed type " + v.getClass());
-    }
-
 }

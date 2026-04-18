@@ -27,13 +27,22 @@ package io.questdb.cutlass.qwp.codec;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * Flyweight definition of one result-set column: name, QuestDB column type,
  * and the derived QWP wire type code. For decimal types the scale is recorded;
  * for geohash types the precision in bits.
  */
 public class QwpEgressColumnDef {
+    private static final byte[] EMPTY_NAME = new byte[0];
     private String name;
+    /**
+     * UTF-8 encoded {@link #name}, cached at {@link #of} time so the schema writer
+     * doesn't have to re-encode per emit (and worst-case-size estimation can match the
+     * real encoded length without a second allocation).
+     */
+    private byte[] nameUtf8 = new byte[0];
     private int precisionBits; // geohash only
     private int questdbColumnType;
     private int scale; // decimal only
@@ -41,6 +50,10 @@ public class QwpEgressColumnDef {
 
     public String getName() {
         return name;
+    }
+
+    public byte[] getNameUtf8() {
+        return nameUtf8;
     }
 
     public int getPrecisionBits() {
@@ -61,6 +74,7 @@ public class QwpEgressColumnDef {
 
     public void of(String name, int questdbColumnType) {
         this.name = name;
+        this.nameUtf8 = name == null ? EMPTY_NAME : name.getBytes(StandardCharsets.UTF_8);
         this.questdbColumnType = questdbColumnType;
         this.wireType = QwpColumnTypeMapper.toWireType(questdbColumnType);
         if (wireType == QwpConstants.TYPE_DECIMAL64
