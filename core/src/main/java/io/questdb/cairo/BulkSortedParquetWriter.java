@@ -309,9 +309,13 @@ public class BulkSortedParquetWriter {
                     ParquetCompression.COMPRESSION_UNCOMPRESSED,
                     true,  // statistics enabled
                     false, // raw array encoding
-                    0,     // default row group size
-                    0,     // default data page size
-                    ParquetVersion.PARQUET_VERSION_V1
+                    0L,    // default row group size
+                    0L,    // default data page size
+                    ParquetVersion.PARQUET_VERSION_V1,
+                    0L,    // bloom filter column indexes ptr (no bloom filters)
+                    0,     // bloom filter column count
+                    PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP,
+                    0.0    // min compression ratio (disabled)
             );
 
             // Open output file

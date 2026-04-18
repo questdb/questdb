@@ -50,6 +50,7 @@ public class HybridCairoConfiguration extends DefaultCairoConfiguration {
 
     private final RoutingFilesFacade routingFf;
     private CharSequence sqlCopyInputRoot;
+    private CharSequence sqlCopyInputWorkRoot;
 
     public HybridCairoConfiguration(CharSequence dbRoot) {
         this(dbRoot, new RoutingFilesFacade(
@@ -86,6 +87,11 @@ public class HybridCairoConfiguration extends DefaultCairoConfiguration {
         return sqlCopyInputRoot;
     }
 
+    @Override
+    public CharSequence getSqlCopyInputWorkRoot() {
+        return sqlCopyInputWorkRoot;
+    }
+
     /**
      * Returns the RoutingFilesFacade for direct memory-table registration.
      */
@@ -99,5 +105,9 @@ public class HybridCairoConfiguration extends DefaultCairoConfiguration {
      */
     public void setSqlCopyInputRoot(CharSequence root) {
         this.sqlCopyInputRoot = root;
+    }
+
+    public void setSqlCopyInputWorkRoot(CharSequence root) {
+        this.sqlCopyInputWorkRoot = root;
     }
 }
