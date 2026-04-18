@@ -98,6 +98,8 @@ class SortedRecordCursor implements DelegatingRecordCursor {
         if (!isOpen) {
             isOpen = true;
             chain.reopen();
+        } else {
+            chain.clear();
         }
         SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
         chainCursor = chain.getCursor(baseCursor);
