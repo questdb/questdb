@@ -2652,5 +2652,188 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testEarliestOnExplainPlanValueFilteredVariants() throws Exception {
+        // Consolidated plan assertions for the single-value EARLIEST ON factories
+        // whose toPlan methods were otherwise unreached. Covers:
+        //   - EarliestByValueFilteredRecordCursorFactory (non-indexed literal +
+        //     filter): type "EarliestByValueFiltered"
+        //   - EarliestByValueFilteredRecordCursorFactory (non-indexed literal,
+        //     no filter): chained child is EarliestByValueRecordCursor, not the
+        //     filtered cursor
+        //   - EarliestByValueDeferredFilteredRecordCursorFactory (non-indexed
+        //     bind variable + filter): type "EarliestByValueDeferredFiltered"
+        //   - EarliestByValueDeferredIndexedRowCursorFactory (indexed bind
+        //     variable, no filter): "Index forward scan ... deferred: true"
+        //   - EarliestByValueDeferredIndexedFilteredRecordCursorFactory
+        //     (indexed bind variable + filter): deferred indexed filtered plan.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE plain (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE idx (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO plain VALUES ('a', 1, '1970-01-01T00:00:00')");
+            execute("INSERT INTO idx   VALUES ('a', 1, '1970-01-01T00:00:00')");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "a");
+
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM plain WHERE s = 'a' AND v > 0 EARLIEST ON ts PARTITION BY s",
+                    "EarliestByValueFiltered\n" +
+                            "    Row forward scan\n" +
+                            "      symbolFilter: s=0\n" +
+                            "      filter: 0<v\n" +
+                            "    Frame forward scan on: plain\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM plain WHERE s = 'a' EARLIEST ON ts PARTITION BY s",
+                    "EarliestByValueFiltered\n" +
+                            "    Row forward scan\n" +
+                            "      symbolFilter: s=0\n" +
+                            "    Frame forward scan on: plain\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM plain WHERE s = :sym AND v > 0 EARLIEST ON ts PARTITION BY s",
+                    "EarliestByValueDeferredFiltered\n" +
+                            "  filter: 0<v\n" +
+                            "  symbolFilter: s=:sym::string\n" +
+                            "    Frame forward scan on: plain\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM idx WHERE s = :sym EARLIEST ON ts PARTITION BY s",
+                    "PageFrame\n" +
+                            "    Index forward scan on: s deferred: true\n" +
+                            "      filter: s=:sym::string\n" +
+                            "    Frame forward scan on: idx\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM idx WHERE s = :sym AND v > 0 EARLIEST ON ts PARTITION BY s",
+                    "Index forward scan on: s\n" +
+                            "  filter: 0<v\n" +
+                            "  symbolFilter: s=:sym::string\n" +
+                            "    Frame forward scan on: idx\n"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedFilteredNoMatch() throws Exception {
+        // Exercises the no-match end of EarliestByValueIndexedFilteredRecordCursor
+        // .findRecord(): the bitmap index has rows for the requested symbol in
+        // every frame, but the extra filter rejects all of them. The outer loop
+        // must then exhaust every frame without ever setting isRecordFound.
+        // Separately, the indexed multi-value path must produce an empty result
+        // when no requested symbol passes the filter, covering the same exhaust
+        // branch in EarliestByValuesIndexedFilteredRecordCursor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', 1, '1970-01-01T00:00:00'), " +
+                    "('a', 2, '1970-01-01T01:00:00'), " +
+                    "('a', 3, '1970-01-02T00:00:00'), " +
+                    "('b', 4, '1970-01-02T01:00:00')");
+
+            // Single-value indexed + filter that matches nothing.
+            assertQuery(
+                    "ts\ts\tv\n",
+                    "SELECT ts, s, v FROM t WHERE s = 'a' AND v > 100 EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // Multi-value indexed + filter that matches nothing.
+            assertQuery(
+                    "ts\ts\tv\n",
+                    "SELECT ts, s, v FROM t WHERE s IN ('a', 'b') AND v > 100 EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedBindVarInListPartialResolution() throws Exception {
+        // Hits the deferredSymbolKeys branch of
+        // EarliestByValuesIndexedRecordCursor.buildTreeMap() and the mirror
+        // branch in EarliestByValuesIndexedFilteredRecordCursor.buildTreeMap().
+        // A bind variable in an IN list is a runtime constant: it is NOT
+        // resolved at compile time, so it ends up in deferredSymbolFuncs and,
+        // once the cursor opens, the resolved key goes into deferredSymbolKeys.
+        // Combined with a literal in the same IN list, both symbolKeys and
+        // deferredSymbolKeys get populated, so both inner loops run.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', 10, '1970-01-01T00:00:00'), " +
+                    "('a', 20, '1970-01-01T01:00:00'), " +
+                    "('b', 30, '1970-01-01T02:00:00'), " +
+                    "('b', 40, '1970-01-01T03:00:00')");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "b");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+
+            // No extra filter -> EarliestByValuesIndexedRecordCursor with both
+            // literal 'a' (symbolKeys) and deferred :sym resolving to 'b'
+            // (deferredSymbolKeys).
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T02:00:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t WHERE s IN ('a', :sym) EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Extra filter -> EarliestByValuesIndexedFilteredRecordCursor on the
+            // same split, exercising the filtered deferred-keys inner loop.
+            assertQuery(
+                    "ts\ts\tv\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\ta\t20\n" +
+                            "1970-01-01T02:00:00.000000" + suffix + "\tb\t30\n",
+                    "SELECT ts, s, v FROM t WHERE s IN ('a', :sym) AND v >= 20 EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnLightUnorderedSubqueryWithNullTimestamps() throws Exception {
+        // Drives EarliestByLightRecordCursorFactory.buildMapForUnorderedSubQuery()
+        // down its NULL-timestamp continue branch. The sub-query preserves its
+        // natural order (no ORDER BY ts), so the light factory picks the
+        // unordered build path; rows with NULL ts must be skipped instead of
+        // pinning the key, matching the ordered-subquery semantics.
+        assertMemoryLeak(() -> {
+            // No designated timestamp so the ts column can hold NULLs.
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ")");
+            execute("INSERT INTO t VALUES " +
+                    "('a', 1, NULL), " +
+                    "('a', 2, '1970-01-01T02:00:00'), " +
+                    "('a', 3, '1970-01-01T01:00:00'), " +
+                    "('b', 4, NULL), " +
+                    "('b', 5, '1970-01-01T00:00:00'), " +
+                    "('c', 6, NULL)");
+
+            // A sub-select without ORDER BY ts is not timestamp-ascending, so
+            // the EarliestBy light factory falls into the unordered build path.
+            assertSql(
+                    "s\tv\n" +
+                            "a\t3\n" +
+                            "b\t5\n",
+                    "SELECT s, v FROM (SELECT s, v, ts FROM t LIMIT 100) EARLIEST ON ts PARTITION BY s ORDER BY s"
+            );
+        });
+    }
 }
 
