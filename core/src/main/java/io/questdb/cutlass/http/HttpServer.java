@@ -36,6 +36,7 @@ import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -179,6 +180,19 @@ public class HttpServer implements Closeable {
                 @Override
                 public HttpRequestHandler newInstance() {
                     return new QwpWebSocketHttpProcessor(cairoEngine, httpServerConfiguration);
+                }
+            });
+
+            // QWP egress endpoint (query results, WebSocket only)
+            server.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjHashSet<String> getUrls() {
+                    return httpServerConfiguration.getContextPathQWPRead();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new QwpEgressHttpProcessor(cairoEngine, httpServerConfiguration, sharedQueryWorkerCount);
                 }
             });
         }
