@@ -83,7 +83,7 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
     }
 
     @Override
-    public OrderedMapVarSizeCursor init(long heapStart, long heapLimit, int size) {
+    public OrderedMapVarSizeCursor init(long heapStart, int size) {
         this.heapAddr = this.heapStart = heapStart;
         this.remaining = this.size = size;
         return this;

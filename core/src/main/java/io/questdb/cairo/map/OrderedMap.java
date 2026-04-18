@@ -301,7 +301,7 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public MapRecordCursor getCursor() {
-        return cursor.init(heapAddr, heapLimit, size);
+        return cursor.init(heapAddr, size);
     }
 
     @Override
@@ -330,7 +330,7 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public void initCursor(MapRecordCursor cursor) {
-        ((OrderedMapCursor) cursor).init(heapAddr, heapLimit, size);
+        ((OrderedMapCursor) cursor).init(heapAddr, size);
     }
 
     @Override
@@ -357,7 +357,7 @@ public class OrderedMap implements Map, Reopenable {
             OrderedMapFixedSizeRecord rec = ((OrderedMapFixedSizeRecord) record).clone();
             c = new OrderedMapFixedSizeCursor(rec, this);
         }
-        return c.init(heapAddr, heapLimit, size);
+        return c.init(heapAddr, size);
     }
 
     @Override
