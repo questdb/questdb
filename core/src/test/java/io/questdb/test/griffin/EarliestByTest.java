@@ -2533,5 +2533,124 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testEarliestByIndexedSingleLiteralAcrossEmptyPartition() throws Exception {
+        // Indexed symbol, single literal, no extra filter, but the first partition
+        // contains no rows for the requested symbol. This forces
+        // EarliestByValueIndexedRowCursorFactory.getCursor() to take the
+        // indexReaderCursor.hasNext() == false branch (returning EmptyRowCursor)
+        // for the first partition, then resolve successfully in the next one.
+        // Also pins the toPlan output so the Index forward scan plan stays stable.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('b', '1970-01-01T00:00:00'), " +
+                    "('b', '1970-01-01T06:00:00'), " +
+                    "('a', '1970-01-02T01:00:00'), " +
+                    "('b', '1970-01-02T02:00:00'), " +
+                    "('a', '1970-01-02T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // 'a' exists only on 1970-01-02. The 1970-01-01 partition frame must
+            // hand back an EmptyRowCursor before the scan advances to 1970-01-02.
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-02T01:00:00.000000" + suffix + "\ta\n",
+                    "SELECT ts, s FROM t WHERE s = 'a' EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedSingleLiteralExplainPlan() throws Exception {
+        // Covers EarliestByValueIndexedRowCursorFactory.toPlan. The existing
+        // behavioural tests only iterate the cursor; without a plan assertion the
+        // toPlan method stayed uncovered and any accidental rewording of the
+        // "Index forward scan ... filter: s=N" line would go unnoticed.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T00:00:00')");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, s FROM t WHERE s = 'a' EARLIEST ON ts PARTITION BY s",
+                    "PageFrame\n" +
+                            "    Index forward scan on: s\n" +
+                            "      filter: s=1\n" +
+                            "    Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByNonIndexedSingleLiteralNoFilter() throws Exception {
+        // Non-indexed symbol, single literal, no extra WHERE filter -> routes to
+        // EarliestByValueFilteredRecordCursorFactory with filter == null, which
+        // instantiates EarliestByValueRecordCursor (the non-filtered single-value
+        // cursor). Previously existing tests always supplied an additional filter,
+        // so the filter == null constructor branch went uncovered.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', '1970-01-01T02:00:00'), " +
+                    "('b', '1970-01-01T00:00:00'), " +
+                    "('a', '1970-01-01T00:30:00'), " +
+                    "('a', '1970-01-01T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:30:00.000000" + suffix + "\ta\n",
+                    "SELECT ts, s FROM t WHERE s = 'a' EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByNonIndexedSingleBindVarWithFilter() throws Exception {
+        // Non-indexed symbol, runtime-constant bind variable key value, extra WHERE
+        // filter -> routes to EarliestByValueDeferredFilteredRecordCursorFactory.
+        // Its createCursorFor() returns EarliestByValueFilteredRecordCursor on the
+        // filter != null branch. The existing non-indexed deferred tests do not
+        // pass an extra filter, so that branch went uncovered.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', 5,  '1970-01-01T00:00:00'), " +
+                    "('a', 30, '1970-01-01T01:00:00'), " +
+                    "('a', 10, '1970-01-01T02:00:00'), " +
+                    "('b', 50, '1970-01-01T00:30:00')");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "a");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // v=5 has the earliest ts but fails v >= 20, so v=30 wins for 'a'.
+            assertQuery(
+                    "ts\ts\tv\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\ta\t30\n",
+                    "SELECT ts, s, v FROM t WHERE s = :sym AND v >= 20 EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // Unknown bind value: the factory keeps resolving at each cursor open
+            // and must return an empty result without throwing.
+            bindVariableService.setStr("sym", "zzz");
+            assertQuery(
+                    "ts\ts\tv\n",
+                    "SELECT ts, s, v FROM t WHERE s = :sym AND v >= 20 EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
 }
 
