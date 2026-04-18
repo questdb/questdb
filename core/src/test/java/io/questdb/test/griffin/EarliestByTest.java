@@ -2359,5 +2359,179 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testEarliestByIndexedSingleLiteralWithFilter() throws Exception {
+        // Indexed symbol, single literal key value, extra WHERE filter -> routes to
+        // EarliestByValueIndexedFilteredRecordCursorFactory + EarliestByValueIndexedFilteredRecordCursor.
+        // The cursor must walk the bitmap index forward and skip rows that fail the
+        // additional filter, returning the earliest surviving row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', 5,  '1970-01-01T00:00:00'), " +
+                    "('a', 30, '1970-01-01T01:00:00'), " +
+                    "('a', 10, '1970-01-01T02:00:00'), " +
+                    "('b', 50, '1970-01-01T00:30:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // v=5 is earliest by ts for 'a' but fails v >= 20, so v=30 wins.
+            assertQuery(
+                    "ts\ts\tv\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\ta\t30\n",
+                    "SELECT ts, s, v FROM t WHERE s = 'a' AND v >= 20 EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertPlanNoLeakCheck(
+                    "SELECT ts, s, v FROM t WHERE s = 'a' AND v >= 20 EARLIEST ON ts PARTITION BY s",
+                    "Index forward scan on: s\n" +
+                            "  filter: v>=20\n" +
+                            "  symbolFilter: s=1\n" +
+                            "    Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedSingleBindVarNoFilter() throws Exception {
+        // Indexed symbol, single runtime-constant (bind variable) key value, no extra
+        // filter -> routes to EarliestByValueDeferredIndexedRowCursorFactory wrapped in
+        // PageFrameRecordCursorFactory. The symbol key is unknown at compile time, so
+        // the factory must resolve it against the symbol table at cursor-prepare time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', '1970-01-01T02:00:00'), " +
+                    "('a', '1970-01-01T00:00:00'), " +
+                    "('b', '1970-01-01T00:30:00'), " +
+                    "('b', '1970-01-01T03:00:00')");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "a");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n",
+                    "SELECT ts, s FROM t WHERE s = :sym EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // Re-running with a different bind value must pick the earliest row for 'b'.
+            bindVariableService.setStr("sym", "b");
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:30:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t WHERE s = :sym EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // Unknown symbol must return an empty cursor without throwing.
+            bindVariableService.setStr("sym", "zzz");
+            assertQuery(
+                    "ts\ts\n",
+                    "SELECT ts, s FROM t WHERE s = :sym EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedSingleBindVarWithFilter() throws Exception {
+        // Indexed symbol, single runtime-constant key value AND an extra filter ->
+        // routes to EarliestByValueDeferredIndexedFilteredRecordCursorFactory. The
+        // factory must resolve the bind value and build an
+        // EarliestByValueIndexedFilteredRecordCursor on top of the bitmap index.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', 5,  '1970-01-01T00:00:00'), " +
+                    "('a', 30, '1970-01-01T01:00:00'), " +
+                    "('a', 10, '1970-01-01T02:00:00'), " +
+                    "('b', 50, '1970-01-01T00:30:00'), " +
+                    "('b', 80, '1970-01-01T02:30:00')");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "a");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // v=5 has earliest ts but fails v >= 20, so v=30 wins for 'a'.
+            assertQuery(
+                    "ts\ts\tv\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\ta\t30\n",
+                    "SELECT ts, s, v FROM t WHERE s = :sym AND v >= 20 EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // Change the bind value and re-run the same factory: 'b' passes the filter
+            // already at its earliest row.
+            bindVariableService.setStr("sym", "b");
+            assertQuery(
+                    "ts\ts\tv\n" +
+                            "1970-01-01T00:30:00.000000" + suffix + "\tb\t50\n",
+                    "SELECT ts, s, v FROM t WHERE s = :sym AND v >= 20 EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedMultiValueInNoFilter() throws Exception {
+        // Indexed symbol, multi-value IN list (two literals), no extra filter -> routes
+        // to EarliestByValuesIndexedFilteredRecordCursorFactory with filter == null,
+        // which instantiates EarliestByValuesIndexedRecordCursor (the non-filtered
+        // multi-value bitmap forward scan). Each distinct requested key must land its
+        // own earliest row via the index.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('c', '1970-01-01T00:00:00'), " +
+                    "('a', '1970-01-01T00:30:00'), " +
+                    "('b', '1970-01-01T01:00:00'), " +
+                    "('a', '1970-01-01T02:00:00'), " +
+                    "('b', '1970-01-01T03:00:00'), " +
+                    "('c', '1970-01-01T04:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:30:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t WHERE s IN ('a', 'b') EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Mixing known and unknown literals: the unknown one is registered as a
+            // deferred key and contributes no rows, while the known ones still resolve.
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:30:00.000000" + suffix + "\ta\n",
+                    "SELECT ts, s FROM t WHERE s IN ('a', 'zzz') EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertPlanNoLeakCheck(
+                    "SELECT ts, s FROM t WHERE s IN ('a', 'b') EARLIEST ON ts PARTITION BY s",
+                    "Index forward scan on: s\n" +
+                            "  symbolFilter: s in [2,3]\n" +
+                            "    Frame forward scan on: t\n"
+            );
+        });
+    }
 }
 
