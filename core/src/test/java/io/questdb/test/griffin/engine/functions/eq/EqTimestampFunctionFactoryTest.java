@@ -24,14 +24,21 @@
 
 package io.questdb.test.griffin.engine.functions.eq;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -213,6 +220,40 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
     }
 
     @Test
+    public void testMatchedRuntimeConstAndConstantPrefersConstant() throws Exception {
+        CountingTimestampFunction runtimeConst = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
+                false,
+                true
+        );
+        CountingTimestampFunction constant = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
+                true,
+                false
+        );
+        ObjList<Function> args = new ObjList<>();
+        args.add(runtimeConst);
+        args.add(constant);
+
+        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
+            Assert.assertSame(constant, ((BinaryFunction) function).getLeft());
+            Assert.assertSame(runtimeConst, ((BinaryFunction) function).getRight());
+            Assert.assertEquals(1, constant.getTimestampCalls);
+            Assert.assertEquals(0, runtimeConst.getTimestampCalls);
+
+            function.init(null, sqlExecutionContext);
+            Assert.assertEquals(1, constant.getTimestampCalls);
+            Assert.assertEquals(0, runtimeConst.getTimestampCalls);
+
+            Assert.assertTrue(function.getBool(null));
+            Assert.assertEquals(1, constant.getTimestampCalls);
+            Assert.assertEquals(1, runtimeConst.getTimestampCalls);
+        }
+    }
+
+    @Test
     public void testNotEqualsNewInstancePaths() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (a timestamp, b timestamp, ts timestamp, ts_ns timestamp_ns)");
@@ -360,5 +401,35 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new EqTimestampFunctionFactory();
+    }
+
+    private static class CountingTimestampFunction extends TimestampFunction {
+        private final boolean constant;
+        private final boolean runtimeConstant;
+        private final long value;
+        private int getTimestampCalls;
+
+        private CountingTimestampFunction(int timestampType, long value, boolean constant, boolean runtimeConstant) {
+            super(timestampType);
+            this.value = value;
+            this.constant = constant;
+            this.runtimeConstant = runtimeConstant;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            getTimestampCalls++;
+            return value;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return constant;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return runtimeConstant;
+        }
     }
 }

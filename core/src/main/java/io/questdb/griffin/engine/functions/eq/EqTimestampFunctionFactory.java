@@ -78,7 +78,11 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
             // No precision conversion needed. Normalize so the cached side is on the
             // left, then cache const and runtime-const sides to avoid repeating any
             // implicit STRING / SYMBOL to TIMESTAMP cast on every row.
-            if (!left.isConstant() && !left.isRuntimeConstant() && (right.isConstant() || right.isRuntimeConstant())) {
+            if (!left.isConstant() && right.isConstant()) {
+                Function tmpFn = left;
+                left = right;
+                right = tmpFn;
+            } else if (!left.isConstant() && !left.isRuntimeConstant() && right.isRuntimeConstant()) {
                 Function tmpFn = left;
                 left = right;
                 right = tmpFn;
