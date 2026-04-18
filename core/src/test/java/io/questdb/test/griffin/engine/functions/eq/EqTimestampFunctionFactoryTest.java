@@ -56,7 +56,7 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             execute("insert into x values " +
                     "('2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001Z'), " +
                     "('2020-01-01T00:00:00.000002Z', '2020-01-01T00:00:00.000003Z')");
-            assertSql("""
+            assertQueryNoLeakCheck("""
                             column
                             true
                             false
@@ -75,14 +75,14 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             execute("insert into x values " +
                     "('2020-01-01T00:00:00.000001000Z'), " +
                     "('2020-01-01T00:00:00.000002000Z')");
-            assertSql("""
+            assertQueryNoLeakCheck("""
                             column
                             true
                             false
                             """,
                     "select '2020-01-01T00:00:00.000001Z'::timestamp = ts from x");
             // Flipped: triggers the initial swap-normalization path as well.
-            assertSql("""
+            assertQueryNoLeakCheck("""
                             column
                             true
                             false
@@ -101,7 +101,7 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             execute("insert into x values " +
                     "('2020-01-01T00:00:00.000001Z'), " +
                     "('2020-01-01T00:00:00.000002Z')");
-            assertSql("""
+            assertQueryNoLeakCheck("""
                             column
                             true
                             false
@@ -124,7 +124,7 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                     "('2020-01-01T00:00:00.000002Z')");
             bindVariableService.clear();
             bindVariableService.setStr("bind", "2020-01-01T00:00:00.000002Z");
-            assertSql("""
+            assertQueryNoLeakCheck("""
                             column
                             false
                             true
@@ -145,7 +145,7 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                     "('2020-01-01T00:00:00.000002000Z')");
             bindVariableService.clear();
             bindVariableService.setTimestamp("bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
-            assertSql("""
+            assertQueryNoLeakCheck("""
                             column
                             false
                             true
@@ -153,7 +153,7 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                     "select ts = :bind from x");
             // Flipped: exercises the initial swap-normalization before the
             // left-converts left-runtime-const path.
-            assertSql("""
+            assertQueryNoLeakCheck("""
                             column
                             false
                             true
@@ -174,13 +174,13 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                     "('2020-01-01T00:00:00.000002Z')");
             bindVariableService.clear();
             bindVariableService.setTimestamp("bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
-            assertSql("""
+            assertQueryNoLeakCheck("""
                             column
                             false
                             true
                             """,
                     "select ts = :bind from x");
-            assertSql("""
+            assertQueryNoLeakCheck("""
                             column
                             false
                             true
