@@ -403,7 +403,7 @@ public class BulkSortedParquetWriter {
         }
     }
 
-    private static long drainBuffer(FilesFacade ff, long fd, long fileOffset, long buffer) {
+    static long drainBuffer(FilesFacade ff, long fd, long fileOffset, long buffer) {
         if (buffer == 0) {
             return fileOffset;
         }
@@ -711,7 +711,7 @@ public class BulkSortedParquetWriter {
      * Copy a variable-width value from a source RG buffer to the output chunk,
      * growing the output data buffer if needed.
      */
-    private static void copyVarValue(
+    static void copyVarValue(
             RowGroupBuffers srcBuf,
             int col,
             int srcRow,
@@ -781,7 +781,7 @@ public class BulkSortedParquetWriter {
     /**
      * Grow a var-column data buffer if needed.
      */
-    private static void ensureVarCapacity(long[] addrs, long[] capacities, int col, long needed, int memoryTag) {
+    static void ensureVarCapacity(long[] addrs, long[] capacities, int col, long needed, int memoryTag) {
         if (needed > capacities[col]) {
             long newCap = Math.max(capacities[col] * 2, needed);
             addrs[col] = Unsafe.realloc(addrs[col], capacities[col], newCap, memoryTag);
@@ -793,7 +793,7 @@ public class BulkSortedParquetWriter {
      * Flush an output chunk to the streaming writer with drain loop,
      * then free or defer the buffers.
      */
-    private static long flushOutputChunk(
+    static long flushOutputChunk(
             FilesFacade ff,
             long outputFd,
             long fileOffset,
@@ -932,7 +932,7 @@ public class BulkSortedParquetWriter {
     /**
      * Get the aux entry size for a variable-width column type.
      */
-    private static long getAuxEntrySize(int colType) {
+    static long getAuxEntrySize(int colType) {
         if (colType == ColumnType.VARCHAR) {
             return 16; // VarcharTypeDriver.AUX_WIDTH
         }
