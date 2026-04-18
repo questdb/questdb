@@ -29,6 +29,7 @@ import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
@@ -111,12 +112,7 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
     }
 
     @Test
-    public void testLeftConvertRightRunTimeConstFunc() throws Exception {
-        // LeftConvertRightRunTimeConstFunc: column on the lower-precision side
-        // (MICRO), runtime-const bind variable on the higher-precision side
-        // (STRING, which resolves to TIMESTAMP_NS via implicit cast). The bug fix
-        // caches the bind variable's timestamp in init() so the STRING parse does
-        // not repeat per row.
+    public void testStringBindTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp)");
             execute("insert into x values " +
@@ -130,6 +126,33 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                             true
                             """,
                     "select ts = :bind from x");
+        });
+    }
+
+    @Test
+    public void testStringBindTimestampNsColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp_ns)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000002000Z'), " +
+                    "('2020-01-01T00:00:00.000002123Z'), " +
+                    "('2020-01-01T00:00:00.000002124Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr("bind", "2020-01-01T00:00:00.000002123Z");
+            assertQueryNoLeakCheck("""
+                            column
+                            false
+                            true
+                            false
+                            """,
+                    "select ts = :bind from x");
+            assertQueryNoLeakCheck("""
+                            column
+                            false
+                            true
+                            false
+                            """,
+                    "select :bind = ts from x");
         });
     }
 
@@ -186,6 +209,69 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                             true
                             """,
                     "select :bind = ts from x");
+        });
+    }
+
+    @Test
+    public void testNotEqualsNewInstancePaths() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a timestamp, b timestamp, ts timestamp, ts_ns timestamp_ns)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001000Z'), " +
+                    "('2020-01-01T00:00:00.000002Z', '2020-01-01T00:00:00.000003Z', '2020-01-01T00:00:00.000002Z', '2020-01-01T00:00:00.000002000Z'), " +
+                    "('2020-01-01T00:00:00.000003Z', '2020-01-01T00:00:00.000004Z', '2020-01-01T00:00:00.000003Z', '2020-01-01T00:00:00.000004000Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr("str_bind", "2020-01-01T00:00:00.000002Z");
+            bindVariableService.setTimestamp("micro_bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
+            assertQueryNoLeakCheck("""
+                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\tcolumn6
+                            false\tfalse\tfalse\ttrue\ttrue\ttrue\ttrue
+                            true\ttrue\tfalse\tfalse\tfalse\tfalse\tfalse
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
+                            """,
+                    "select " +
+                            "a != b, " +
+                            "ts != '2020-01-01T00:00:00.000001Z'::timestamp, " +
+                            "ts != ts_ns, " +
+                            "ts != '2020-01-01T00:00:00.000002000Z'::timestamp_ns, " +
+                            "ts != :str_bind, " +
+                            ":micro_bind != ts_ns, " +
+                            ":micro_bind != ts " +
+                            "from x");
+        });
+    }
+
+    @Test
+    public void testNullTimestampHandling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, ts_ns timestamp_ns)");
+            execute("insert into x values " +
+                    "(null, null), " +
+                    "('2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001000Z'), " +
+                    "(null, '2020-01-01T00:00:00.000002000Z'), " +
+                    "('2020-01-01T00:00:00.000003Z', null)");
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("null_bind", Numbers.LONG_NULL);
+            bindVariableService.setStr("null_str_bind", null);
+            assertQueryNoLeakCheck("""
+                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\tcolumn6\tcolumn7\tcolumn8\tcolumn9
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
+                            false\tfalse\ttrue\tfalse\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse
+                            true\ttrue\ttrue\ttrue\ttrue\tfalse\tfalse\ttrue\tfalse\ttrue
+                            false\tfalse\ttrue\tfalse\tfalse\ttrue\ttrue\ttrue\ttrue\tfalse
+                            """,
+                    "select " +
+                            "null::timestamp = ts, " +
+                            "ts = null::timestamp, " +
+                            "null::timestamp = null::timestamp, " +
+                            ":null_bind = ts, " +
+                            "ts = :null_bind, " +
+                            "null::timestamp = ts_ns, " +
+                            "ts_ns = null::timestamp, " +
+                            "null::timestamp = null::timestamp_ns, " +
+                            ":null_bind = ts_ns, " +
+                            "ts = :null_str_bind " +
+                            "from x");
         });
     }
 
