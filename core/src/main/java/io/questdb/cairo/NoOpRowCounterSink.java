@@ -90,8 +90,12 @@ public class NoOpRowCounterSink implements SortedRowSink {
     }
 
     /**
-     * @return {@code true} iff {@link #onFinish} has delivered exactly the
-     *         number of rows declared in {@link #onStart}.
+     * Compare {@link #getRowCount} against the {@code totalRows} the merger
+     * declared in {@link #onStart}. Only meaningful once {@link #onFinish}
+     * has been called; mid-stream values are indistinguishable from a
+     * completed stream of matching length.
+     *
+     * @return {@code true} iff the two counters match.
      */
     public boolean rowCountMatchesExpected() {
         return rowCount == expectedRows;
