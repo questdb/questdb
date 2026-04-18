@@ -251,7 +251,7 @@ public final class Unsafe {
             incrMallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            throw CairoException.nonCritical().setOutOfMemory(true)
+            CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [rssMemUsed=")
                     .putSize(getRssMemUsed())
                     .put(", rssMemLimit=")
@@ -260,6 +260,8 @@ public final class Unsafe {
                     .putSize(size)
                     .put(", memoryTag=").put(MemoryTag.nameOf(memoryTag))
                     .put(']');
+            System.err.println(e.getFlyweightMessage());
+            throw e;
         }
     }
 
@@ -272,7 +274,7 @@ public final class Unsafe {
             incrReallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            throw CairoException.nonCritical().setOutOfMemory(true)
+            CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [rssMemUsed=")
                     .putSize(getRssMemUsed())
                     .put(", rssMemLimit=")
@@ -283,6 +285,8 @@ public final class Unsafe {
                     .putSize(newSize)
                     .put(", memoryTag=").put(MemoryTag.nameOf(memoryTag))
                     .put(']');
+            System.err.println(e.getFlyweightMessage());
+            throw e;
         }
     }
 
