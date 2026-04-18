@@ -362,11 +362,11 @@ public class ExternalSortedParquetImporter {
                     .$("phaseB done [rowsDelivered=").$(delivered)
                     .I$();
         } catch (Throwable t) {
-            // If the sink was started but we couldn't finish, leave it un-finished
-            // so the caller can distinguish a complete stream from a torn one.
-            // No onFinish call on the error path.
+            // Failures after onStart leave the sink mid-stream; the caller
+            // distinguishes a complete stream from a torn one via the
+            // exception propagating out of phaseB.
             if (isStarted) {
-                LOG.error().$("phaseB failed after onStart; skipping onFinish [err=").$(t).I$();
+                LOG.error().$("phaseB failed after onStart [err=").$(t).I$();
             }
             throw t;
         } finally {
@@ -461,6 +461,50 @@ public class ExternalSortedParquetImporter {
             if (fd != -1) {
                 runFf.close(fd);
             }
+        }
+    }
+
+    private static long createRunWriter(
+            PartitionDecoder.Metadata meta,
+            int tsColumnIndex,
+            int effectiveTsType,
+            int columnCount,
+            int rgRows,
+            int memoryTag
+    ) {
+        final long allocator = Unsafe.getNativeAllocator(memoryTag);
+        try (
+                DirectUtf8Sink columnNames = new DirectUtf8Sink(256);
+                DirectLongList columnMetadata = new DirectLongList(2L * columnCount, memoryTag)
+        ) {
+            for (int c = 0; c < columnCount; c++) {
+                final int startSize = columnNames.size();
+                columnNames.put(meta.getColumnName(c));
+                final int nameSize = columnNames.size() - startSize;
+                columnMetadata.add(nameSize);
+                final int colType = (c == tsColumnIndex) ? effectiveTsType : meta.getColumnType(c);
+                columnMetadata.add((long) c << 32 | (colType & 0xFFFFFFFFL));
+            }
+
+            return PartitionEncoder.createStreamingParquetWriter(
+                    allocator,
+                    columnCount,
+                    columnNames.ptr(),
+                    columnNames.size(),
+                    columnMetadata.getAddress(),
+                    tsColumnIndex,
+                    false, // ascending
+                    ParquetCompression.WRITER_COMPRESSION_SNAPPY,
+                    true,  // statistics enabled
+                    false, // raw array encoding
+                    (long) rgRows,
+                    RUN_DATA_PAGE_SIZE,
+                    ParquetVersion.PARQUET_VERSION_V1,
+                    0L,
+                    0,
+                    PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP,
+                    0.0
+            );
         }
     }
 
@@ -666,50 +710,6 @@ public class ExternalSortedParquetImporter {
                     Unsafe.free(outAuxAddrs[c], outAuxSizes[c], memoryTag);
                 }
             }
-        }
-    }
-
-    private static long createRunWriter(
-            PartitionDecoder.Metadata meta,
-            int tsColumnIndex,
-            int effectiveTsType,
-            int columnCount,
-            int rgRows,
-            int memoryTag
-    ) {
-        final long allocator = Unsafe.getNativeAllocator(memoryTag);
-        try (
-                DirectUtf8Sink columnNames = new DirectUtf8Sink(256);
-                DirectLongList columnMetadata = new DirectLongList(2L * columnCount, memoryTag)
-        ) {
-            for (int c = 0; c < columnCount; c++) {
-                final int startSize = columnNames.size();
-                columnNames.put(meta.getColumnName(c));
-                final int nameSize = columnNames.size() - startSize;
-                columnMetadata.add(nameSize);
-                final int colType = (c == tsColumnIndex) ? effectiveTsType : meta.getColumnType(c);
-                columnMetadata.add((long) c << 32 | (colType & 0xFFFFFFFFL));
-            }
-
-            return PartitionEncoder.createStreamingParquetWriter(
-                    allocator,
-                    columnCount,
-                    columnNames.ptr(),
-                    columnNames.size(),
-                    columnMetadata.getAddress(),
-                    tsColumnIndex,
-                    false, // ascending
-                    ParquetCompression.WRITER_COMPRESSION_SNAPPY,
-                    true,  // statistics enabled
-                    false, // raw array encoding
-                    (long) rgRows,
-                    RUN_DATA_PAGE_SIZE,
-                    ParquetVersion.PARQUET_VERSION_V1,
-                    0L,
-                    0,
-                    PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP,
-                    0.0
-            );
         }
     }
 
