@@ -197,6 +197,195 @@ public class ExternalSortedParquetImporter {
     }
 
     /**
+     * Phase B: k-way merge the sorted runs produced by {@link #phaseA} into a
+     * single globally-sorted stream delivered to {@code sink}.
+     * <p>
+     * Each run is assumed to be a single-row-group parquet file as produced by
+     * Phase A. The merger opens one decoder per run, decodes each run's
+     * row group once, then advances cursors via a min-heap keyed on the
+     * current ts of each run's head row. Rows are delivered to {@code sink}
+     * via {@link SortedRowSink#acceptRow} in ascending ts order; ties between
+     * runs are broken by insertion order (stable).
+     * <p>
+     * Runs are left intact — the caller retains ownership and must close them
+     * (which frees their memfd pages). The merger releases its own decoders
+     * and buffers before returning.
+     * <p>
+     * Memory: this milestone decodes every run's row group simultaneously.
+     * That is safe for test fixtures and small inputs but is NOT bounded by
+     * available RAM on adversarial workloads like hits.parquet; page-level
+     * streaming / wave merging is planned for a later milestone.
+     *
+     * @param runFf          facade hosting the run files (must match the
+     *                       facade passed to {@link #phaseA})
+     * @param runs           runs to merge, non-empty
+     * @param tsColumnName   name of the timestamp column in each run
+     * @param sink           receives {@code onStart}, N {@code acceptRow}
+     *                       calls in sorted order, then {@code onFinish}
+     */
+    public static void phaseB(
+            FilesFacade runFf,
+            ObjList<RunHandle> runs,
+            CharSequence tsColumnName,
+            SortedRowSink sink
+    ) {
+        final int memoryTag = MemoryTag.NATIVE_IMPORT;
+        final int runCount = runs.size();
+        if (runCount == 0) {
+            throw CairoException.nonCritical()
+                    .put("phaseB requires at least one run");
+        }
+
+        final long[] fds = new long[runCount];
+        final long[] addrs = new long[runCount];
+        final long[] sizes = new long[runCount];
+        final PartitionDecoder[] decoders = new PartitionDecoder[runCount];
+        final RowGroupBuffers[] buffers = new RowGroupBuffers[runCount];
+        final long[] tsPtrs = new long[runCount];
+        final int[] rgSizes = new int[runCount];
+        for (int k = 0; k < runCount; k++) {
+            fds[k] = -1;
+        }
+        DirectIntList columns = null;
+        boolean isStarted = false;
+
+        try {
+            // 1. Open every run file and construct its decoder.
+            for (int k = 0; k < runCount; k++) {
+                final RunHandle run = runs.getQuick(k);
+                try (Path p = new Path()) {
+                    p.put(run.path);
+                    fds[k] = TableUtils.openRO(runFf, p.$(), LOG);
+                    sizes[k] = runFf.length(fds[k]);
+                    addrs[k] = TableUtils.mapRO(runFf, fds[k], sizes[k], MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
+                decoders[k] = new PartitionDecoder();
+                decoders[k].of(addrs[k], sizes[k], MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            }
+
+            // 2. Resolve schema from run 0; verify the rest match on column count
+            //    and that each run holds exactly one row group.
+            final PartitionDecoder.Metadata meta0 = decoders[0].metadata();
+            final int columnCount = meta0.getColumnCount();
+            final int tsColIdx = meta0.getColumnIndex(tsColumnName);
+            if (tsColIdx < 0) {
+                throw CairoException.nonCritical()
+                        .put("timestamp column not found in runs [column=")
+                        .put(tsColumnName)
+                        .put(']');
+            }
+            for (int k = 0; k < runCount; k++) {
+                final PartitionDecoder.Metadata m = decoders[k].metadata();
+                if (m.getColumnCount() != columnCount) {
+                    throw CairoException.nonCritical()
+                            .put("run ").put(k)
+                            .put(" column count ").put(m.getColumnCount())
+                            .put(" does not match run 0 (").put(columnCount).put(')');
+                }
+                if (m.getRowGroupCount() != 1) {
+                    throw CairoException.nonCritical()
+                            .put("phaseB expects single-row-group runs [run=")
+                            .put(k)
+                            .put(", rowGroups=").put(m.getRowGroupCount())
+                            .put(']');
+                }
+            }
+
+            // 3. Build the shared column projection and decode every run.
+            columns = new DirectIntList(2L * columnCount, memoryTag);
+            for (int c = 0; c < columnCount; c++) {
+                columns.add(c);
+                columns.add(meta0.getColumnType(c));
+            }
+
+            long totalRows = 0;
+            for (int k = 0; k < runCount; k++) {
+                final int rgRows = decoders[k].metadata().getRowGroupSize(0);
+                rgSizes[k] = rgRows;
+                totalRows += rgRows;
+                buffers[k] = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                if (rgRows > 0) {
+                    decoders[k].decodeRowGroup(buffers[k], columns, 0, 0, rgRows);
+                    tsPtrs[k] = buffers[k].getChunkDataPtr(tsColIdx);
+                }
+            }
+
+            LOG.info()
+                    .$("phaseB start [runs=").$(runCount)
+                    .$(", rows=").$(totalRows)
+                    .$(", tsColumn=").$(tsColumnName)
+                    .I$();
+
+            sink.onStart(meta0, tsColIdx, totalRows);
+            isStarted = true;
+
+            // 4. Seed the heap with each non-empty run's first ts.
+            final long[] heapTs = new long[runCount + 1];
+            final int[] heapIdx = new int[runCount + 1];
+            int heapSize = 0;
+            final int[] cursors = new int[runCount];
+            for (int k = 0; k < runCount; k++) {
+                if (rgSizes[k] > 0) {
+                    final long ts = Unsafe.getUnsafe().getLong(tsPtrs[k]);
+                    heapSize = BulkSortedParquetWriter.heapPush(heapTs, heapIdx, heapSize, ts, k);
+                }
+            }
+
+            // 5. Merge loop. Pop the head, feed the sink, advance the cursor.
+            long delivered = 0;
+            while (heapSize > 0) {
+                final int k = heapIdx[1];
+                heapSize = BulkSortedParquetWriter.heapPop(heapTs, heapIdx, heapSize);
+                final int row = cursors[k];
+                final long ts = Unsafe.getUnsafe().getLong(tsPtrs[k] + row * 8L);
+                sink.acceptRow(buffers[k], row, ts);
+                delivered++;
+                cursors[k]++;
+                if (cursors[k] < rgSizes[k]) {
+                    final long nextTs = Unsafe.getUnsafe().getLong(tsPtrs[k] + cursors[k] * 8L);
+                    heapSize = BulkSortedParquetWriter.heapPush(heapTs, heapIdx, heapSize, nextTs, k);
+                }
+            }
+
+            if (delivered != totalRows) {
+                throw CairoException.critical(0)
+                        .put("phaseB delivered ").put(delivered)
+                        .put(" rows but expected ").put(totalRows);
+            }
+
+            sink.onFinish();
+
+            LOG.info()
+                    .$("phaseB done [rowsDelivered=").$(delivered)
+                    .I$();
+        } catch (Throwable t) {
+            // If the sink was started but we couldn't finish, leave it un-finished
+            // so the caller can distinguish a complete stream from a torn one.
+            // No onFinish call on the error path.
+            if (isStarted) {
+                LOG.error().$("phaseB failed after onStart; skipping onFinish [err=").$(t).I$();
+            }
+            throw t;
+        } finally {
+            for (int k = 0; k < runCount; k++) {
+                if (buffers[k] != null) {
+                    Misc.free(buffers[k]);
+                }
+                if (decoders[k] != null) {
+                    Misc.free(decoders[k]);
+                }
+                if (addrs[k] != 0) {
+                    runFf.munmap(addrs[k], sizes[k], MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
+                if (fds[k] != -1) {
+                    runFf.close(fds[k]);
+                }
+            }
+            Misc.free(columns);
+        }
+    }
+
+    /**
      * Test helper: walks the ts column of a run and returns -1 if every value
      * is monotonically non-decreasing, or the row index of the first offending
      * pair otherwise. Opens and maps the run via {@code runFf}, decodes only

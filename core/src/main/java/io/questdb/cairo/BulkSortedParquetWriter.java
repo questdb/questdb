@@ -856,7 +856,7 @@ public class BulkSortedParquetWriter {
 
     // ---- Min-heap helpers (1-indexed) ----
 
-    private static int heapPush(long[] ts, int[] idx, int size, long newTs, int newIdx) {
+    static int heapPush(long[] ts, int[] idx, int size, long newTs, int newIdx) {
         size++;
         ts[size] = newTs;
         idx[size] = newIdx;
@@ -868,7 +868,7 @@ public class BulkSortedParquetWriter {
         return size;
     }
 
-    private static int heapPop(long[] ts, int[] idx, int size) {
+    static int heapPop(long[] ts, int[] idx, int size) {
         ts[1] = ts[size];
         idx[1] = idx[size];
         size--;
@@ -892,7 +892,7 @@ public class BulkSortedParquetWriter {
         return size;
     }
 
-    private static void heapSwap(long[] ts, int[] idx, int a, int b) {
+    static void heapSwap(long[] ts, int[] idx, int a, int b) {
         long tmpTs = ts[a]; ts[a] = ts[b]; ts[b] = tmpTs;
         int tmpIdx = idx[a]; idx[a] = idx[b]; idx[b] = tmpIdx;
     }
