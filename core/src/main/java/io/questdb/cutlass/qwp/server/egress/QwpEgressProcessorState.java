@@ -25,6 +25,8 @@
 package io.questdb.cutlass.qwp.server.egress;
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
@@ -54,6 +56,27 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private int recvBufferLen;
     private SecurityContext securityContext;
     private boolean wsHandshakeSent;
+
+    /**
+     * Streaming-state for an in-flight query. Populated when the query starts; cleared
+     * (and resources freed) on completion, error, or disconnect. Lets the upgrade
+     * processor's {@code resumeSend} continue iteration from the cursor's current
+     * position after a {@code PeerIsSlowToReadException} parks the connection.
+     */
+    private boolean streamingActive;
+    private long streamingBatchSeq;
+    private int streamingColumnCount;
+    private RecordCursor streamingCursor;
+    private RecordCursorFactory streamingFactory;
+    private boolean streamingFullSchemaSent;
+    private long streamingRequestId;
+    /**
+     * Set true the moment {@code sendResultEnd} is initiated (whether it succeeds or
+     * throws {@code PeerIsSlowToReadException}). Lets {@code resumeSend} know not to
+     * re-issue the {@code RESULT_END} after flushing the deferred bytes.
+     */
+    private boolean streamingResultEndInitiated;
+    private int streamingSchemaId;
 
     public QwpEgressProcessorState(io.questdb.cairo.CairoConfiguration cairoConfiguration) {
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
@@ -85,7 +108,27 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return columnDefsPool;
     }
 
+    public void beginStreaming(
+            long requestId,
+            RecordCursorFactory factory,
+            RecordCursor cursor,
+            int columnCount,
+            int schemaId
+    ) {
+        // Caller has confirmed nothing is currently streaming; otherwise we'd leak
+        // the previous factory/cursor. The state should already be clear at this point.
+        this.streamingRequestId = requestId;
+        this.streamingFactory = factory;
+        this.streamingCursor = cursor;
+        this.streamingColumnCount = columnCount;
+        this.streamingSchemaId = schemaId;
+        this.streamingBatchSeq = 0;
+        this.streamingFullSchemaSent = false;
+        this.streamingActive = true;
+    }
+
     public void clear() {
+        endStreaming();
         recvBufferLen = 0;
         wsHandshakeSent = false;
         fd = -1;
@@ -94,6 +137,62 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         nextSchemaId = 0;
         batchBuffer.reset();
         bindVariableService.clear();
+    }
+
+    /**
+     * Releases the in-flight cursor + factory and marks streaming inactive.
+     * Idempotent — safe to call from completion, error, or disconnect paths.
+     */
+    public void endStreaming() {
+        streamingActive = false;
+        streamingCursor = Misc.free(streamingCursor);
+        streamingFactory = Misc.free(streamingFactory);
+        streamingColumnCount = 0;
+        streamingSchemaId = 0;
+        streamingBatchSeq = 0;
+        streamingFullSchemaSent = false;
+        streamingResultEndInitiated = false;
+    }
+
+    public boolean isStreamingResultEndInitiated() {
+        return streamingResultEndInitiated;
+    }
+
+    public void markStreamingResultEndInitiated() {
+        streamingResultEndInitiated = true;
+    }
+
+    public long getStreamingBatchSeq() {
+        return streamingBatchSeq;
+    }
+
+    public int getStreamingColumnCount() {
+        return streamingColumnCount;
+    }
+
+    public RecordCursor getStreamingCursor() {
+        return streamingCursor;
+    }
+
+    public long getStreamingRequestId() {
+        return streamingRequestId;
+    }
+
+    public int getStreamingSchemaId() {
+        return streamingSchemaId;
+    }
+
+    public boolean isStreamingActive() {
+        return streamingActive;
+    }
+
+    public boolean isStreamingFullSchemaSent() {
+        return streamingFullSchemaSent;
+    }
+
+    public void onStreamingBatchSent() {
+        streamingBatchSeq++;
+        streamingFullSchemaSent = true;
     }
 
     @Override

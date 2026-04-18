@@ -175,6 +175,12 @@ Reusing the ingress encoding has two consequences:
   per-row dimension header. Symbol bind parameters are encoded as STRING
   rather than SYMBOL (no dictionary for a single value).
 
+**Server leniency note**: the Phase 1 server decoder accepts a SYMBOL wire
+type code for a bind parameter and treats it identically to STRING (single
+UTF-8 value, dispatched to {@code BindVariableService.setStr}). Compliant
+clients should still send STRING. A future revision may tighten this to
+reject SYMBOL bind type codes.
+
 ### request_id
 
 64-bit client-assigned identifier. It is echoed back by every
@@ -296,6 +302,29 @@ Client to server. Extends the byte-credit window.
 
 See §14 for the flow-control model.
 
+## 11.5 NULL Sentinel Conventions Inherited from QuestDB
+
+QuestDB uses sentinel values (not a separate null bitmap) for several primitive
+types in its internal storage. The egress wire format inherits these conventions
+verbatim — the per-cell value IS the sentinel, and the row appears as NULL in the
+null bitmap. Implementations consuming egress should treat the following as
+indistinguishable from explicit NULL:
+
+| QuestDB type | NULL sentinel | Notes |
+|---|---|---|
+| INT, IPv4 | `Numbers.INT_NULL = Integer.MIN_VALUE` for INT; `Numbers.IPv4_NULL = 0` for IPv4 | The address `0.0.0.0` cannot be represented as a non-null IPv4. |
+| LONG, DATE, TIMESTAMP, TIMESTAMP_NANOS, DECIMAL64 | `Numbers.LONG_NULL = Long.MIN_VALUE` | |
+| FLOAT | `Float.NaN` | Any NaN, including `0.0f / 0.0f`, is treated as NULL. |
+| DOUBLE | `Double.NaN` | Same as FLOAT — any NaN is NULL. |
+| GEOHASH (all widths) | `-1` (sign-extends across BYTE/SHORT/INT/LONG storage) | A geohash whose bit pattern is "all ones" cannot be represented as non-null. |
+| UUID | both halves `Numbers.LONG_NULL` | A UUID with both halves Long.MIN_VALUE is NULL. |
+| LONG256 | all four longs `Numbers.LONG_NULL` | |
+| BOOLEAN, BYTE, SHORT, CHAR | (no NULL sentinel) | These types **cannot** carry NULL in QuestDB; INSERT NULL stores `false`/`0` and the wire row has the null bitmap bit clear. |
+
+Servers writing egress and clients reading it MUST agree on these sentinels. The
+spec does not introduce a separate "QWP NaN" representation — a row carrying
+`NaN` in the dense values array is simultaneously marked NULL in the null bitmap.
+
 ## 12. Schema and Symbol Dictionary Scope
 
 ### Schema registry (per connection)
@@ -312,25 +341,48 @@ On disconnect, both sides reset the registry.
 
 ### Symbol dictionary (per connection)
 
-Egress uses **global delta dictionary mode** (`FLAG_DELTA_SYMBOL_DICT`)
-exclusively. The server accumulates symbol entries across all queries on the
-connection. The lifecycle mirrors the ingress dictionary, with directions
-reversed:
+### Phase 1 — per-batch inline dictionary
 
-- The server maintains a global mapping of symbol strings to sequential
+In Phase 1 the server uses **per-batch inline dictionary mode** (the same scheme
+as ingress §12 "Per-Table Dictionary Mode"). Each `RESULT_BATCH` carries its own
+SYMBOL dictionary inline, immediately before the per-row dict-index varints:
+
+```
+[ Null flag + bitmap (see ingress §11) ]
+dict_size: varint
+For each entry:
+  entry_length: varint
+  entry_data:   UTF-8 bytes
+For each non-null row:
+  dict_index:   varint
+```
+
+The server's message header flags byte is **always `0`** for Phase 1 — neither
+`FLAG_GORILLA` nor `FLAG_DELTA_SYMBOL_DICT` is set. The client mirror does not
+maintain a connection-scoped symbol dict and does not inspect the flags byte
+for the dict bit.
+
+Trade-off: repeated queries on the same connection retransmit every distinct
+symbol string, which is bandwidth-suboptimal for BI dashboards refreshing the
+same SELECTs but keeps the wire format and both decoders simple.
+
+### Future — connection-scoped delta dictionary (Phase 2 backlog item)
+
+The `FLAG_DELTA_SYMBOL_DICT` mechanic from ingress is reserved for a future
+egress upgrade. When implemented:
+
+- The server will maintain a global mapping of symbol strings to sequential
   integer IDs starting at 0.
-- Each `RESULT_BATCH` may carry a delta dictionary section at the start of
-  the payload (after the `msg_kind`/`request_id`/`batch_seq` header,
-  immediately before the table block) listing newly added symbols.
-- The client accumulates the delta entries for the lifetime of the
-  connection.
-- Symbol columns in result batches contain varint-encoded global IDs.
+- Each `RESULT_BATCH` may carry a delta dictionary section at the start of the
+  payload (after the `msg_kind`/`request_id`/`batch_seq` header, immediately
+  before the table block) listing newly added symbols.
+- The client will accumulate the delta entries for the lifetime of the connection.
+- Symbol columns in result batches will contain varint-encoded global IDs.
 - On disconnect, both sides reset the dictionary.
 
-Per-connection scope is the design choice that pays off for repeated queries
-(BI dashboards, dashboards refreshing the same SELECTs) at the cost of
-unbounded growth on long-lived connections that surface high-cardinality
-symbols. The server enforces the symbol-dictionary limit (§16) by failing
+Per-connection scope pays off for repeated queries (BI dashboards) at the cost
+of unbounded growth on long-lived connections that surface high-cardinality
+symbols. The server will enforce the symbol-dictionary limit (§16) by failing
 queries that would push the connection's dictionary past the cap.
 
 ## 13. Cursor Lifecycle

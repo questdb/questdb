@@ -148,15 +148,16 @@ public class QwpEgressReadBenchmark {
     }
 
     private static void ingestRows() {
-        System.out.printf("Ingesting %,d rows over ILP/HTTP...%n", ROW_COUNT);
+        System.out.printf("Ingesting %,d rows over QWP/WebSocket...%n", ROW_COUNT);
         long start = System.nanoTime();
         String[] symbols = {"AAPL", "MSFT", "GOOG", "AMZN", "META", "TSLA", "NVDA", "NFLX"};
-        try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + HTTP_PORT + ";auto_flush_rows=50000;")) {
+        try (Sender sender = Sender.fromConfig("ws::addr=" + HOST + ":" + HTTP_PORT + ";auto_flush_rows=50000;")) {
             for (long i = 1; i <= ROW_COUNT; i++) {
+                // ILP requires all symbol() calls before any non-symbol column setters.
                 sender.table(TABLE_NAME)
+                        .symbol("sym", symbols[(int) (i % symbols.length)])
                         .longColumn("id", i)
                         .doubleColumn("price", i * 1.5)
-                        .symbol("sym", symbols[(int) (i % symbols.length)])
                         .stringColumn("note", "n" + (i & 0xFFF))
                         .at(i * 10_000L, ChronoUnit.MICROS); // 10ms spacing
                 if (i % PROGRESS_INTERVAL == 0) {
@@ -196,7 +197,8 @@ public class QwpEgressReadBenchmark {
         final long[] bytesSeen = {0};
         final long[] checksum = {0};
         long start = System.nanoTime();
-        try (QwpQueryClient client = QwpQueryClient.newPlainText(HOST, HTTP_PORT)) {
+        try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                "ws::addr=" + HOST + ":" + HTTP_PORT + ";client_id=qwp-egress-bench/1.0;")) {
             client.connect();
             client.execute("SELECT id, price, sym, note FROM " + TABLE_NAME, new QwpColumnBatchHandler() {
                 @Override

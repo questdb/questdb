@@ -25,6 +25,8 @@ Low priority polish.
 | 7 | LZ4 / Zstd batch compression — flag bit is already reserved in the spec, negotiated on handshake | Medium | 2–3× bandwidth savings on text-heavy results. |
 | 8 | Multiple in-flight queries per connection with a fair scheduler | Medium | Relevant for BI dashboard clients that want to multiplex several queries on one socket. Phase 1 hard-limits to one in-flight query. |
 | 9 | Native byte-keyed symbol dict to eliminate the last allocation source (HashMap entry + `String.toString()` per unique SYMBOL value per batch) | Medium | Small absolute gain unless symbol cardinality is very high. |
+| 10 | Connection-scoped delta SYMBOL dictionary (`FLAG_DELTA_SYMBOL_DICT`) — save bandwidth on dashboards that re-query the same set of symbols. Spec already describes the future shape; Phase 1 ships the simpler per-batch inline dict. | Medium | Bandwidth win for repeated-query workloads (BI dashboards). |
+| 11 | Tighten SYMBOL bind handling — server is currently lenient and accepts SYMBOL wire type by routing it through STRING. Either reject SYMBOL bind type code at the decoder, or formalise the leniency in the spec. | Tiny | Cleanup; no functional issue. |
 
 ## Not-yet-scoped, but likely Phase 3
 

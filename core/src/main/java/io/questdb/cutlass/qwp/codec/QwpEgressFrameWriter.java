@@ -102,21 +102,54 @@ public final class QwpEgressFrameWriter {
     }
 
     /**
-     * Writes a QUERY_ERROR frame body: msg_kind + request_id + status + msg_len (u16) + msg_bytes (UTF-8).
-     * Truncates the message to 64 KiB - 1 to fit msg_len.
+     * Writes a QUERY_ERROR frame body from a {@link CharSequence}, encoding UTF-8
+     * directly into {@code bufAddr} without the intermediate {@code String} +
+     * {@code byte[]} allocation. Truncates if the encoded UTF-8 exceeds {@code msgCapBytes}
+     * (caller chooses; spec caps the wire field at 65535 since msg_len is u16).
      *
      * @return address just past the body
      */
-    public static long writeQueryError(long bufAddr, long requestId, byte status, byte[] msgBytes) {
+    public static long writeQueryError(long bufAddr, long requestId, byte status, CharSequence msg, int msgCapBytes) {
         Unsafe.getUnsafe().putByte(bufAddr, QwpEgressMsgKind.QUERY_ERROR);
         Unsafe.getUnsafe().putLong(bufAddr + 1, requestId);
         Unsafe.getUnsafe().putByte(bufAddr + 9, status);
-        int msgLen = Math.min(msgBytes.length, 0xFFFF);
-        Unsafe.getUnsafe().putShort(bufAddr + 10, (short) msgLen);
-        for (int i = 0; i < msgLen; i++) {
-            Unsafe.getUnsafe().putByte(bufAddr + 12 + i, msgBytes[i]);
+        long bytesStart = bufAddr + 12;
+        int written = 0;
+        if (msg != null) {
+            int charLen = msg.length();
+            int cap = Math.min(msgCapBytes, 0xFFFF);
+            for (int i = 0; i < charLen && written < cap; i++) {
+                char c = msg.charAt(i);
+                if (c < 0x80) {
+                    if (written + 1 > cap) break;
+                    Unsafe.getUnsafe().putByte(bytesStart + written, (byte) c);
+                    written++;
+                } else if (c < 0x800) {
+                    if (written + 2 > cap) break;
+                    Unsafe.getUnsafe().putByte(bytesStart + written, (byte) (0xC0 | (c >> 6)));
+                    Unsafe.getUnsafe().putByte(bytesStart + written + 1, (byte) (0x80 | (c & 0x3F)));
+                    written += 2;
+                } else if (Character.isHighSurrogate(c) && i + 1 < charLen
+                        && Character.isLowSurrogate(msg.charAt(i + 1))) {
+                    if (written + 4 > cap) break;
+                    int cp = Character.toCodePoint(c, msg.charAt(i + 1));
+                    i++;
+                    Unsafe.getUnsafe().putByte(bytesStart + written, (byte) (0xF0 | (cp >> 18)));
+                    Unsafe.getUnsafe().putByte(bytesStart + written + 1, (byte) (0x80 | ((cp >> 12) & 0x3F)));
+                    Unsafe.getUnsafe().putByte(bytesStart + written + 2, (byte) (0x80 | ((cp >> 6) & 0x3F)));
+                    Unsafe.getUnsafe().putByte(bytesStart + written + 3, (byte) (0x80 | (cp & 0x3F)));
+                    written += 4;
+                } else {
+                    if (written + 3 > cap) break;
+                    Unsafe.getUnsafe().putByte(bytesStart + written, (byte) (0xE0 | (c >> 12)));
+                    Unsafe.getUnsafe().putByte(bytesStart + written + 1, (byte) (0x80 | ((c >> 6) & 0x3F)));
+                    Unsafe.getUnsafe().putByte(bytesStart + written + 2, (byte) (0x80 | (c & 0x3F)));
+                    written += 3;
+                }
+            }
         }
-        return bufAddr + 12 + msgLen;
+        Unsafe.getUnsafe().putShort(bufAddr + 10, (short) written);
+        return bytesStart + written;
     }
 
     /**

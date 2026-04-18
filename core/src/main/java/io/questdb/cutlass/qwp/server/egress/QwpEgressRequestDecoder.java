@@ -57,6 +57,19 @@ public class QwpEgressRequestDecoder {
      * count returned by the decoder.
      */
     private final QwpVarint.DecodeResult varintScratch = new QwpVarint.DecodeResult();
+    /**
+     * Reusable scratch fields for {@link #decodeBind}: the per-bind position cursor
+     * and the parsed null flag that {@link #readNullFlag} returns into. Holding them
+     * as instance fields removes the {@code long[1]} allocation per bind.
+     */
+    private boolean bindIsNull;
+    /**
+     * Reusable view passed to {@link BindVariableService#setVarchar} and the
+     * scratch StringSink passed to {@link BindVariableService#setStr}. Both
+     * implementations copy the value out, so we can safely reuse these flyweights.
+     */
+    private final io.questdb.std.str.DirectUtf8String varcharBindView = new io.questdb.std.str.DirectUtf8String();
+    private final StringSink stringBindScratch = new StringSink();
 
     /**
      * Decodes a CANCEL frame body. Caller has already verified msg_kind == 0x14
@@ -145,20 +158,25 @@ public class QwpEgressRequestDecoder {
 
     /**
      * Reads the null flag byte and (if present) the 1-byte single-row bitmap.
-     * Returns true if the bind value is NULL.
+     * Stores the parsed null status in {@link #bindIsNull} and returns the
+     * position just past the null section. Zero allocation.
      */
-    private static boolean readNullFlag(long[] cursor, long limit) throws QwpParseException {
-        long p = cursor[0];
-        if (p >= limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated null flag");
-        byte flag = Unsafe.getUnsafe().getByte(p++);
-        if (flag == 0) {
-            cursor[0] = p;
-            return false;
+    private long readNullFlag(long start, long limit) throws QwpParseException {
+        if (start >= limit) {
+            throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated null flag");
         }
-        if (p >= limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated null bitmap");
-        byte bitmap = Unsafe.getUnsafe().getByte(p++);
-        cursor[0] = p;
-        return (bitmap & 0x01) != 0;
+        byte flag = Unsafe.getUnsafe().getByte(start);
+        long p = start + 1;
+        if (flag == 0) {
+            bindIsNull = false;
+            return p;
+        }
+        if (p >= limit) {
+            throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated null bitmap");
+        }
+        byte bitmap = Unsafe.getUnsafe().getByte(p);
+        bindIsNull = (bitmap & 0x01) != 0;
+        return p + 1;
     }
 
     private long decodeBind(long start, long limit, int index, BindVariableService bindVars)
@@ -167,9 +185,8 @@ public class QwpEgressRequestDecoder {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind ").put(index).put(": truncated type code");
         }
         byte type = Unsafe.getUnsafe().getByte(start);
-        long[] cursor = {start + 1};
-        boolean isNull = readNullFlag(cursor, limit);
-        long p = cursor[0];
+        long p = readNullFlag(start + 1, limit);
+        boolean isNull = bindIsNull;
 
         switch (type) {
             case QwpConstants.TYPE_BOOLEAN -> {
@@ -261,6 +278,9 @@ public class QwpEgressRequestDecoder {
                     p += 8;
                 }
             }
+            // SYMBOL bind: spec §6 says clients should send STRING wire type for symbol-typed
+            // placeholders (no per-value dict). The server is lenient and accepts SYMBOL wire
+            // type by routing it through the same single-UTF-8-value path. See M1 in code-review.
             case QwpConstants.TYPE_STRING, QwpConstants.TYPE_SYMBOL -> {
                 if (isNull) {
                     bindVars.setStr(index);
@@ -270,10 +290,11 @@ public class QwpEgressRequestDecoder {
                     int strLen = Unsafe.getUnsafe().getInt(p + 4); // offset[1] - offset[0] (offset[0] = 0)
                     p += 8;
                     if (p + strLen > limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated STRING bytes");
-                    StringSink scratch = scratchSink();
-                    scratch.clear();
-                    Utf8s.utf8ToUtf16(p, p + strLen, scratch);
-                    bindVars.setStr(index, scratch.toString());
+                    // Reuse stringBindScratch — StrBindVariable.setValue copies the CharSequence
+                    // into its own utf16Sink, so the scratch can be freely reused for the next bind.
+                    stringBindScratch.clear();
+                    Utf8s.utf8ToUtf16(p, p + strLen, stringBindScratch);
+                    bindVars.setStr(index, stringBindScratch);
                     p += strLen;
                 }
             }
@@ -285,8 +306,9 @@ public class QwpEgressRequestDecoder {
                     int strLen = Unsafe.getUnsafe().getInt(p + 4);
                     p += 8;
                     if (p + strLen > limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated VARCHAR bytes");
-                    // BindVariableService.setVarchar wants Utf8Sequence; build a copy.
-                    bindVars.setVarchar(index, new io.questdb.std.str.Utf8String(copyBytes(p, strLen), false));
+                    // Reuse varcharBindView — StrBindVariable.setValue(Utf8Sequence) copies into
+                    // its own utf8Sink, so the view can be re-pointed for the next bind.
+                    bindVars.setVarchar(index, varcharBindView.of(p, p + strLen));
                     p += strLen;
                 }
             }
@@ -388,17 +410,4 @@ public class QwpEgressRequestDecoder {
         return p;
     }
 
-    private byte[] copyBytes(long src, int len) {
-        byte[] out = new byte[len];
-        for (int i = 0; i < len; i++) {
-            out[i] = Unsafe.getUnsafe().getByte(src + i);
-        }
-        return out;
-    }
-
-    private final StringSink scratchSink = new StringSink();
-
-    private StringSink scratchSink() {
-        return scratchSink;
-    }
 }

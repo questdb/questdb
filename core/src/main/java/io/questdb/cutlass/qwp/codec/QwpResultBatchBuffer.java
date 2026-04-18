@@ -111,12 +111,15 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_FLOAT: {
+                    // QuestDB FLOAT NULL == NaN. Spec §11.5 documents that NaN values
+                    // (including a "legitimate" NaN such as 0/0) round-trip as NULL.
                     float v = record.getFloat(ci);
                     if (Float.isNaN(v)) scratch.appendNull();
                     else scratch.appendFloat(v);
                     break;
                 }
                 case QwpConstants.TYPE_DOUBLE: {
+                    // Same NaN-as-NULL convention as FLOAT (spec §11.5).
                     double v = record.getDouble(ci);
                     if (Double.isNaN(v)) scratch.appendNull();
                     else scratch.appendDouble(v);
