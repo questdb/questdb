@@ -112,7 +112,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     @SuppressWarnings("unused")
     public static CairoException entityIsDisabled(CharSequence entityName) {
-        return nonCritical().put("entity is disabled [name=").put(entityName).put(']');
+        return authorization().put("entity is disabled [name=").put(entityName).put(']');
     }
 
     public static CairoException fileNotFound() {

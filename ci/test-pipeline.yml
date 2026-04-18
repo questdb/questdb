@@ -208,6 +208,7 @@ stages:
               echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
             displayName: "Install JDK and Maven"
             condition: eq(variables['SHOULD_RUN'], 'true')
+          - template: templates/detect-local-client.yml
           - download: current
             artifact: jacoco-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -225,10 +226,10 @@ stages:
             displayName: "Compile with Maven"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
-              mavenPomFile: "core/pom.xml"
+              mavenPomFile: "pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
               goals: "compile"
-              options: "--batch-mode -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+              options: "--batch-mode -pl core -am -DskipTests $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: $(jdk)
 
           - task: Maven@3
