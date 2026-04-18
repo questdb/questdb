@@ -890,7 +890,7 @@ derived from `fillModes` scan) or refactor the constructor to remove it. Claude'
 
 ---
 
-## 8. Validation Architecture
+## Validation Architecture
 
 ### Test Framework
 
