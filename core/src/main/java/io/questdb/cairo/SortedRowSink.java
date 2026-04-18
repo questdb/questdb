@@ -73,6 +73,11 @@ public interface SortedRowSink extends QuietCloseable {
      * Called once before any {@link #acceptRow}. Sinks that need to pre-size
      * buffers should do so from {@code totalRows}; sinks that need schema
      * information should read it from {@code meta}.
+     * <p>
+     * Do not retain {@code meta} past this call — the metadata is a view on
+     * the merger's internal decoder and becomes invalid once the merger
+     * releases its resources. Copy out any column names, types or other
+     * fields you will need later before returning from this method.
      *
      * @param meta           metadata of the first run (all runs share a schema)
      * @param tsColumnIndex  index of the timestamp column in {@code meta}

@@ -204,12 +204,15 @@ public class ExternalSortedParquetImporter {
      * Phase A. The merger opens one decoder per run, decodes each run's
      * row group once, then advances cursors via a min-heap keyed on the
      * current ts of each run's head row. Rows are delivered to {@code sink}
-     * via {@link SortedRowSink#acceptRow} in ascending ts order; ties between
-     * runs are broken by insertion order (stable).
+     * via {@link SortedRowSink#acceptRow} in ascending ts order. When two or
+     * more runs have the same head ts, the order in which they are popped is
+     * unspecified but deterministic — do not rely on insertion-order tiebreak.
      * <p>
      * Runs are left intact — the caller retains ownership and must close them
      * (which frees their memfd pages). The merger releases its own decoders
-     * and buffers before returning.
+     * and buffers before returning. The sink is also owned by the caller;
+     * phaseB never calls {@link SortedRowSink#close}, so the caller must
+     * close it whether the stream completed or was torn by an exception.
      * <p>
      * Memory: this milestone decodes every run's row group simultaneously.
      * That is safe for test fixtures and small inputs but is NOT bounded by
