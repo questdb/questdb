@@ -3,6 +3,7 @@ use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_read::column_sink::var::{
     BinaryColumnSink, RawArrayColumnSink, StringColumnSink, VarcharColumnSink,
+    VarcharSliceColumnSink, VarcharSliceSpillSink,
 };
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decode::decimal::{
@@ -14,8 +15,9 @@ use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConve
 use crate::parquet_read::decoders::{
     int32::DayToMillisConverter, int32::Int32ToDoubleConverter, BasePrimitiveDictDecoder,
     BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder,
-    FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder, RleBooleanDecoder,
-    RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
+    DeltaLAVarcharSliceDecoder, FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder,
+    RleBooleanDecoder, RleDictVarcharSliceDecoder, RleDictionaryDecoder,
+    RleLocalIsGlobalSymbolDictDecoder,
 };
 use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
@@ -69,6 +71,7 @@ impl ColumnChunkBuffers {
             aux_vec: AcVec::new_in(allocator),
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
+            page_buffers: Vec::new(),
         }
     }
 
@@ -92,6 +95,8 @@ impl ColumnChunkBuffers {
         self.aux_vec.clear();
         self.aux_size = 0;
         self.aux_ptr = ptr::null_mut();
+
+        self.page_buffers.clear();
     }
 }
 
@@ -107,12 +112,6 @@ impl ColumnChunkStats {
         }
     }
 }
-
-const LONG256_NULL: [u8; 32] = [
-    0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0,
-    0, 128,
-];
-const DOUBLE_NULL: [u8; 8] = [0, 0, 0, 0, 0, 0, 248, 127];
 
 #[derive(Clone, Copy)]
 struct FilterDecodeContext<'a> {
@@ -779,6 +778,27 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Date,
+        ) => {
+            let dict_decoder =
+                ConvertablePrimitiveDictDecoder::try_new(dict_page, DayToMillisConverter::new())?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::TIMESTAMP,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
         (encoding, dict, logical_type, ColumnTypeTag::Double) => {
             let scale = match logical_type {
                 Some(PrimitiveLogicalType::Decimal(_, scale)) => scale,
@@ -999,6 +1019,29 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 )?;
                 Ok(true)
             }
+            (Encoding::RleDictionary | Encoding::PlainDictionary, ColumnTypeTag::Uuid) => {
+                let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                    dict.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?,
+                    Int128ToUuidConverter::new(),
+                )?;
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        mode.source_row_count(),
+                        nulls::UUID,
+                        bufs,
+                    )?,
+                )?;
+                Ok(true)
+            }
             _ => Ok(false),
         },
         (src_len, Some(PrimitiveLogicalType::Decimal(_, _)), _)
@@ -1046,6 +1089,28 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 )?;
                 Ok(true)
             }
+            (Encoding::RleDictionary | Encoding::PlainDictionary, 16, ColumnTypeTag::Long128) => {
+                let dict_decoder = BasePrimitiveDictDecoder::<Long128, Long128>::try_new(
+                    dict.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?,
+                )?;
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        mode.source_row_count(),
+                        Long128::NULL,
+                        bufs,
+                    )?,
+                )?;
+                Ok(true)
+            }
             (Encoding::Plain, 32, ColumnTypeTag::Long256) => {
                 decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
@@ -1055,6 +1120,28 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         bufs,
                         Long256::NULL,
                     ),
+                )?;
+                Ok(true)
+            }
+            (Encoding::RleDictionary | Encoding::PlainDictionary, 32, ColumnTypeTag::Long256) => {
+                let dict_decoder = BasePrimitiveDictDecoder::<Long256, Long256>::try_new(
+                    dict.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?,
+                )?;
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        mode.source_row_count(),
+                        Long256::NULL,
+                        bufs,
+                    )?,
                 )?;
                 Ok(true)
             }
@@ -1157,18 +1244,42 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
-                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
                         row_hi,
                         row_count,
-                        &LONG256_NULL,
                     )?;
                     decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
+                    )?;
+                    Ok(true)
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    dict_page,
+                    ColumnTypeTag::String,
+                ) => {
+                    let dict_page = dict_page.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
+                    let mut slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_hi,
+                        row_count,
+                    )?;
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(true)
                 }
@@ -1198,6 +1309,60 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         mode,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
+                    Ok(true)
+                }
+                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::VarcharSlice) => {
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut DeltaLAVarcharSliceDecoder::try_new(
+                            values_buffer,
+                            bufs,
+                            col_info.ascii.unwrap_or(false),
+                        )?,
+                    )?;
+                    Ok(true)
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    ColumnTypeTag::VarcharSlice,
+                ) => {
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut RleDictVarcharSliceDecoder::try_new(
+                            values_buffer,
+                            dict_page,
+                            bufs,
+                            col_info.ascii.unwrap_or(false),
+                        )?,
+                    )?;
+                    Ok(true)
+                }
+                (Encoding::Plain, _, ColumnTypeTag::VarcharSlice) => {
+                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut VarcharSliceColumnSink::new(
+                            &mut slicer,
+                            bufs,
+                            col_info.ascii.unwrap_or(false),
+                        ),
+                    )?;
+                    Ok(true)
+                }
+                (Encoding::DeltaByteArray, _, ColumnTypeTag::VarcharSlice) => {
+                    let mut slicer =
+                        DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
+                    let mut spill_sink = VarcharSliceSpillSink::new(
+                        &mut slicer,
+                        bufs,
+                        col_info.ascii.unwrap_or(false),
+                    );
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut spill_sink)?;
+                    // fixup_pointers deferred to end-of-chunk (see decode_column_chunk)
                     Ok(true)
                 }
                 (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
@@ -1290,13 +1455,12 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     Some(dict_page),
                     ColumnTypeTag::Binary,
                 ) => {
-                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
                         row_hi,
                         row_count,
-                        &[],
                     )?;
                     decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
@@ -1437,13 +1601,8 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Array,
         ) => {
             let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-            let mut slicer = RleDictionarySlicer::try_new(
-                values_buffer,
-                dict_decoder,
-                row_hi,
-                row_count,
-                &DOUBLE_NULL,
-            )?;
+            let mut slicer =
+                RleDictionarySlicer::try_new(values_buffer, dict_decoder, row_hi, row_count)?;
             decode_array_page_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut slicer, bufs)?;
             Ok(true)
         }
@@ -1564,7 +1723,7 @@ pub(super) fn decode_page0<T: Pushable>(
         sink.skip(row_lo)?;
         sink.push_slice(row_hi - row_lo)?;
     }
-    sink.result()
+    Ok(())
 }
 
 /// Process bitmap runs using word-at-a-time approach with trailing_ones/trailing_zeros.
@@ -1741,7 +1900,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
         if rows_filter.is_empty() {
             sink.push_nulls(output_count)?;
-            return sink.result();
+            return Ok(());
         }
     } else {
         if rows_filter.is_empty() {
@@ -1776,7 +1935,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
                     } else {
                         if filter_idx >= filter_len {
-                            return sink.result();
+                            return Ok(());
                         }
                         let run_end_pos = run_start_pos + length;
                         if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
@@ -1843,7 +2002,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
 
                         if filter_idx >= filter_len {
-                            return sink.result();
+                            return Ok(());
                         }
                     }
 
@@ -1874,7 +2033,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
                     } else {
                         if filter_idx >= filter_len {
-                            return sink.result();
+                            return Ok(());
                         }
                         let run_end_pos = run_start_pos + length;
                         if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
@@ -1942,7 +2101,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
 
                         if filter_idx >= filter_len {
-                            return sink.result();
+                            return Ok(());
                         }
                     }
 
@@ -2014,8 +2173,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
             }
         }
     }
-
-    sink.result()
+    Ok(())
 }
 
 #[inline]
@@ -2317,7 +2475,12 @@ mod tests {
 
         for column_index in 0..column_count {
             let column_type = decoder.columns[column_index].column_type.unwrap();
-            let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+            let col_info = QdbMetaCol {
+                column_type,
+                column_top: 0,
+                format: None,
+                ascii: None,
+            };
             for row_group_index in 0..row_group_count {
                 decoder
                     .decode_column_chunk(
@@ -2370,7 +2533,12 @@ mod tests {
             for row_hi in row_lo + 1..row_group_size {
                 for column_index in 0..column_count {
                     let column_type = decoder.columns[column_index].column_type.unwrap();
-                    let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+                    let col_info = QdbMetaCol {
+                        column_type,
+                        column_top: 0,
+                        format: None,
+                        ascii: None,
+                    };
                     for row_group_index in 0..row_group_count {
                         decoder
                             .decode_column_chunk(
@@ -2440,6 +2608,7 @@ mod tests {
                                 column_type: ColumnTypeTag::Boolean.into_type(),
                                 column_top: 0,
                                 format: None,
+                                ascii: None,
                             },
                         )
                         .unwrap();
@@ -2463,76 +2632,81 @@ mod tests {
         let row_group_size = 1000;
         let data_page_size = 1000;
         let version = Version::V1;
-        let mut columns = Vec::new();
-
-        let mut expected_buffs: Vec<(ColumnBuffers, ColumnType)> = Vec::new();
-        let expected_int_buff =
-            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
-        columns.push(create_fix_column(
-            columns.len() as i32,
-            row_count,
-            "int_col",
-            expected_int_buff.data_vec.as_ref(),
-            ColumnTypeTag::Int.into_type(),
-        ));
-        expected_buffs.push((expected_int_buff, ColumnTypeTag::Int.into_type()));
-
-        let expected_long_buff =
-            create_col_data_buff::<i64, 8, _>(row_count, LONG_NULL, |int| int.to_le_bytes());
-        columns.push(create_fix_column(
-            columns.len() as i32,
-            row_count,
-            "long_col",
-            expected_long_buff.data_vec.as_ref(),
-            ColumnTypeTag::Long.into_type(),
-        ));
-        expected_buffs.push((expected_long_buff, ColumnTypeTag::Long.into_type()));
-
-        let string_buffers = create_col_data_buff_string(row_count, 3);
-        columns.push(create_var_column(
-            columns.len() as i32,
-            row_count,
-            "string_col",
-            string_buffers.data_vec.as_ref(),
-            string_buffers.aux_vec.as_ref().unwrap(),
-            ColumnTypeTag::String.into_type(),
-        ));
-        expected_buffs.push((string_buffers, ColumnTypeTag::String.into_type()));
-
-        let varchar_buffers = create_col_data_buff_varchar(row_count, 3);
-        columns.push(create_var_column(
-            columns.len() as i32,
-            row_count,
-            "varchar_col",
-            varchar_buffers.data_vec.as_ref(),
-            varchar_buffers.aux_vec.as_ref().unwrap(),
-            ColumnTypeTag::Varchar.into_type(),
-        ));
-        expected_buffs.push((varchar_buffers, ColumnTypeTag::Varchar.into_type()));
-
-        let symbol_buffs = create_col_data_buff_symbol(row_count, 10);
-        columns.push(create_symbol_column(
-            columns.len() as i32,
-            row_count,
-            "symbol_col",
-            symbol_buffs.data_vec.as_ref(),
-            symbol_buffs.sym_chars.as_ref().unwrap(),
-            symbol_buffs.sym_offsets.as_ref().unwrap(),
-            ColumnTypeTag::Symbol.into_type(),
-        ));
-        expected_buffs.push((symbol_buffs, ColumnTypeTag::Varchar.into_type()));
-
-        let array_buffers = create_col_data_buff_array(row_count, 3);
         let array_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
-        columns.push(create_var_column(
-            columns.len() as i32,
-            row_count,
-            "array_col",
-            array_buffers.data_vec.as_ref(),
-            array_buffers.aux_vec.as_ref().unwrap(),
-            array_type,
-        ));
-        expected_buffs.push((array_buffers, array_type));
+
+        let expected_buffs: Vec<(ColumnBuffers, ColumnType)> = vec![
+            (
+                create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes()),
+                ColumnTypeTag::Int.into_type(),
+            ),
+            (
+                create_col_data_buff::<i64, 8, _>(row_count, LONG_NULL, |int| int.to_le_bytes()),
+                ColumnTypeTag::Long.into_type(),
+            ),
+            (
+                create_col_data_buff_string(row_count, 3),
+                ColumnTypeTag::String.into_type(),
+            ),
+            (
+                create_col_data_buff_varchar(row_count, 3),
+                ColumnTypeTag::Varchar.into_type(),
+            ),
+            (
+                create_col_data_buff_symbol(row_count, 10),
+                ColumnTypeTag::Varchar.into_type(),
+            ),
+            (create_col_data_buff_array(row_count, 3), array_type),
+        ];
+
+        let columns = vec![
+            create_fix_column(
+                0,
+                row_count,
+                "int_col",
+                expected_buffs[0].0.data_vec.as_ref(),
+                ColumnTypeTag::Int.into_type(),
+            ),
+            create_fix_column(
+                1,
+                row_count,
+                "long_col",
+                expected_buffs[1].0.data_vec.as_ref(),
+                ColumnTypeTag::Long.into_type(),
+            ),
+            create_var_column(
+                2,
+                row_count,
+                "string_col",
+                expected_buffs[2].0.data_vec.as_ref(),
+                expected_buffs[2].0.aux_vec.as_ref().unwrap(),
+                ColumnTypeTag::String.into_type(),
+            ),
+            create_var_column(
+                3,
+                row_count,
+                "varchar_col",
+                expected_buffs[3].0.data_vec.as_ref(),
+                expected_buffs[3].0.aux_vec.as_ref().unwrap(),
+                ColumnTypeTag::Varchar.into_type(),
+            ),
+            create_symbol_column(
+                4,
+                row_count,
+                "symbol_col",
+                expected_buffs[4].0.data_vec.as_ref(),
+                expected_buffs[4].0.sym_chars.as_ref().unwrap(),
+                expected_buffs[4].0.sym_offsets.as_ref().unwrap(),
+                ColumnTypeTag::Symbol.into_type(),
+            ),
+            create_var_column(
+                5,
+                row_count,
+                "array_col",
+                expected_buffs[5].0.data_vec.as_ref(),
+                expected_buffs[5].0.aux_vec.as_ref().unwrap(),
+                array_type,
+            ),
+        ];
 
         assert_columns(
             row_count,
@@ -2550,55 +2724,62 @@ mod tests {
         let row_group_size = 1000;
         let data_page_size = 1000;
         let version = Version::V2;
-        let mut columns = Vec::new();
-        let mut expected_buffs: Vec<(ColumnBuffers, ColumnType)> = Vec::new();
 
-        let expected_bool_buff = create_col_data_buff_bool(row_count);
-        columns.push(create_fix_column(
-            columns.len() as i32,
-            row_count,
-            "bool_col",
-            expected_bool_buff.data_vec.as_ref(),
-            ColumnTypeTag::Boolean.into_type(),
-        ));
-        expected_buffs.push((expected_bool_buff, ColumnTypeTag::Boolean.into_type()));
+        let expected_buffs: Vec<(ColumnBuffers, ColumnType)> = vec![
+            (
+                create_col_data_buff_bool(row_count),
+                ColumnTypeTag::Boolean.into_type(),
+            ),
+            (
+                create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| {
+                    short.to_le_bytes()
+                }),
+                ColumnTypeTag::Short.into_type(),
+            ),
+            (
+                create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| {
+                    short.to_le_bytes()
+                }),
+                ColumnTypeTag::Char.into_type(),
+            ),
+            (
+                create_col_data_buff::<i128, 16, _>(row_count, UUID_NULL, |uuid| {
+                    uuid.to_le_bytes()
+                }),
+                ColumnTypeTag::Uuid.into_type(),
+            ),
+        ];
 
-        let expected_col_buff =
-            create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| {
-                short.to_le_bytes()
-            });
-        columns.push(create_fix_column(
-            columns.len() as i32,
-            row_count,
-            "short_col",
-            expected_col_buff.data_vec.as_ref(),
-            ColumnTypeTag::Short.into_type(),
-        ));
-        expected_buffs.push((expected_col_buff, ColumnTypeTag::Short.into_type()));
-
-        let expected_bool_buff =
-            create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| {
-                short.to_le_bytes()
-            });
-        columns.push(create_fix_column(
-            columns.len() as i32,
-            row_count,
-            "char_col",
-            expected_bool_buff.data_vec.as_ref(),
-            ColumnTypeTag::Char.into_type(),
-        ));
-        expected_buffs.push((expected_bool_buff, ColumnTypeTag::Char.into_type()));
-
-        let expected_uuid_buff =
-            create_col_data_buff::<i128, 16, _>(row_count, UUID_NULL, |uuid| uuid.to_le_bytes());
-        columns.push(create_fix_column(
-            columns.len() as i32,
-            row_count,
-            "uuid_col",
-            expected_uuid_buff.data_vec.as_ref(),
-            ColumnTypeTag::Uuid.into_type(),
-        ));
-        expected_buffs.push((expected_uuid_buff, ColumnTypeTag::Uuid.into_type()));
+        let columns = vec![
+            create_fix_column(
+                0,
+                row_count,
+                "bool_col",
+                expected_buffs[0].0.data_vec.as_ref(),
+                ColumnTypeTag::Boolean.into_type(),
+            ),
+            create_fix_column(
+                1,
+                row_count,
+                "short_col",
+                expected_buffs[1].0.data_vec.as_ref(),
+                ColumnTypeTag::Short.into_type(),
+            ),
+            create_fix_column(
+                2,
+                row_count,
+                "char_col",
+                expected_buffs[2].0.data_vec.as_ref(),
+                ColumnTypeTag::Char.into_type(),
+            ),
+            create_fix_column(
+                3,
+                row_count,
+                "uuid_col",
+                expected_buffs[3].0.data_vec.as_ref(),
+                ColumnTypeTag::Uuid.into_type(),
+            ),
+        ];
 
         assert_columns(
             row_count,
@@ -2660,7 +2841,7 @@ mod tests {
                         0,
                         row_group_size,
                         column_index,
-                        QdbMetaCol { column_type, column_top: 0, format },
+                        QdbMetaCol { column_type, column_top: 0, format, ascii: None },
                     )
                     .unwrap();
 
@@ -3249,6 +3430,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -3275,6 +3457,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -3302,6 +3485,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -3716,6 +3900,7 @@ mod tests {
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -3756,6 +3941,7 @@ mod tests {
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         let rows_filter = vec![1i64];
@@ -3804,6 +3990,7 @@ mod tests {
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, 1).unwrap();
@@ -3845,6 +4032,7 @@ mod tests {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
             decode_page(
                 &page,
@@ -3898,6 +4086,7 @@ mod tests {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -3942,6 +4131,7 @@ mod tests {
             column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -3986,6 +4176,7 @@ mod tests {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -4022,6 +4213,7 @@ mod tests {
             column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4059,6 +4251,7 @@ mod tests {
                 column_type: ColumnType::new(tag, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
 
             decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4106,6 +4299,7 @@ mod tests {
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
+                    ascii: None,
                 };
 
                 decode_page_filtered::<false>(
@@ -4161,6 +4355,7 @@ mod tests {
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
+                    ascii: None,
                 };
                 decode_page(
                     &page,
@@ -4212,6 +4407,7 @@ mod tests {
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
+                    ascii: None,
                 };
                 decode_page_filtered::<true>(
                     &page,
@@ -4228,6 +4424,180 @@ mod tests {
                 .unwrap();
                 assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
             }
+        }
+    }
+
+    fn make_date_type() -> PrimitiveType {
+        PrimitiveType {
+            field_info: FieldInfo {
+                name: "date_col".to_string(),
+                repetition: Repetition::Optional,
+                id: None,
+            },
+            logical_type: Some(PrimitiveLogicalType::Date),
+            converted_type: None,
+            physical_type: PhysicalType::Int32,
+        }
+    }
+
+    const MILLIS_PER_DAY: i64 = 86_400_000;
+    const DATE_NULL: [u8; 8] = i64::MIN.to_le_bytes();
+
+    #[test]
+    fn test_decode_date_dict_unfiltered() {
+        // Date dictionary stores INT32 days, decoder converts to i64 millis.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let dict_days = [100i32, 200, 365];
+        let dict_page = make_dict_page_i32(&dict_days);
+
+        let indices = [0u32, 1, 2, 1, 0, 2];
+        let primitive_type = make_date_type();
+
+        let mut expected = Vec::new();
+        for &idx in &indices {
+            let day = dict_days[idx as usize];
+            let millis = (day as i64) * MILLIS_PER_DAY;
+            expected.extend_from_slice(&millis.to_le_bytes());
+        }
+
+        for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
+            let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            let col_info = QdbMetaCol {
+                column_type: ColumnTypeTag::Date.into_type(),
+                column_top: 0,
+                format: None,
+                ascii: None,
+            };
+
+            decode_page(
+                &page,
+                Some(&dict_page),
+                &mut bufs,
+                col_info,
+                0,
+                indices.len(),
+            )
+            .unwrap();
+
+            assert_eq!(
+                bufs.data_vec.as_slice(),
+                expected.as_slice(),
+                "Date dict decode mismatch for encoding {:?}",
+                encoding
+            );
+            assert_eq!(bufs.aux_size, 0, "aux_size should be 0 for Date column");
+        }
+    }
+
+    #[test]
+    fn test_decode_date_dict_filtered_no_fill_nulls() {
+        // Filtered decode without filling nulls for non-matching rows.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let dict_days = [10i32, 50, 100];
+        let dict_page = make_dict_page_i32(&dict_days);
+        let indices = [0u32, 1, 2, 1, 0];
+        let primitive_type = make_date_type();
+        let rows_filter = vec![1i64, 3]; // Select rows 1 and 3
+
+        let mut expected = Vec::new();
+        for &row in &rows_filter {
+            let idx = indices[row as usize];
+            let millis = (dict_days[idx as usize] as i64) * MILLIS_PER_DAY;
+            expected.extend_from_slice(&millis.to_le_bytes());
+        }
+
+        for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
+            let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            let col_info = QdbMetaCol {
+                column_type: ColumnTypeTag::Date.into_type(),
+                column_top: 0,
+                format: None,
+                ascii: None,
+            };
+
+            decode_page_filtered::<false>(
+                &page,
+                Some(&dict_page),
+                &mut bufs,
+                col_info,
+                0,
+                indices.len(),
+                0,
+                0,
+                indices.len(),
+                &rows_filter,
+            )
+            .unwrap();
+
+            assert_eq!(
+                bufs.data_vec.as_slice(),
+                expected.as_slice(),
+                "Date dict filtered decode mismatch for encoding {:?}",
+                encoding
+            );
+            assert_eq!(bufs.aux_size, 0, "aux_size should be 0 for Date column");
+        }
+    }
+
+    #[test]
+    fn test_decode_date_dict_filtered_fill_nulls() {
+        // Filtered decode with nulls filled for non-matching rows.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let dict_days = [7i32, 30, 365];
+        let dict_page = make_dict_page_i32(&dict_days);
+        let indices = [0u32, 1, 2, 1, 0];
+        let primitive_type = make_date_type();
+        let rows_filter = vec![0i64, 2, 4]; // Select rows 0, 2, 4
+
+        let mut expected = Vec::new();
+        for (row, &idx) in indices.iter().enumerate() {
+            if rows_filter.contains(&(row as i64)) {
+                let millis = (dict_days[idx as usize] as i64) * MILLIS_PER_DAY;
+                expected.extend_from_slice(&millis.to_le_bytes());
+            } else {
+                expected.extend_from_slice(&DATE_NULL);
+            }
+        }
+
+        for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
+            let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            let col_info = QdbMetaCol {
+                column_type: ColumnTypeTag::Date.into_type(),
+                column_top: 0,
+                format: None,
+                ascii: None,
+            };
+
+            decode_page_filtered::<true>(
+                &page,
+                Some(&dict_page),
+                &mut bufs,
+                col_info,
+                0,
+                indices.len(),
+                0,
+                0,
+                indices.len(),
+                &rows_filter,
+            )
+            .unwrap();
+
+            assert_eq!(
+                bufs.data_vec.as_slice(),
+                expected.as_slice(),
+                "Date dict filtered fill_nulls decode mismatch for encoding {:?}",
+                encoding
+            );
+            assert_eq!(bufs.aux_size, 0, "aux_size should be 0 for Date column");
         }
     }
 
@@ -4340,9 +4710,6 @@ mod tests {
             &mut self,
             _count: usize,
         ) -> super::super::super::parquet::error::ParquetResult<()> {
-            Ok(())
-        }
-        fn result(&self) -> super::super::super::parquet::error::ParquetResult<()> {
             Ok(())
         }
     }

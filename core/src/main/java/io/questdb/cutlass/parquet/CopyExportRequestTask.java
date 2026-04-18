@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,9 +25,11 @@
 package io.questdb.cutlass.parquet;
 
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -37,8 +39,10 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -54,6 +58,10 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
 
 public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private final StreamPartitionParquetExporter streamPartitionParquetExporter = new StreamPartitionParquetExporter();
+    private @Nullable BindVariableService bindVariableService;
+    private @Nullable CharSequence bloomFilterColumns;
+    private int bloomFilterColumnsPosition = -1;
+    private double bloomFilterFpp = Double.NaN;
     private int compressionCodec;
     private int compressionLevel;
     private @Nullable CreateTableOperation createOp;
@@ -76,8 +84,38 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private RecordCursorFactory tempTableFactory;
     private @Nullable StreamWriteParquetCallBack writeCallback;
 
+    public static void validateBloomFilterColumns(@Nullable CharSequence columns, RecordMetadata meta, int position) throws SqlException {
+        if (columns == null || columns.isEmpty()) {
+            return;
+        }
+        int start = 0;
+        int len = columns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || columns.charAt(i) == ',') {
+                int nameStart = start;
+                int nameEnd = i;
+                while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
+                    nameStart++;
+                }
+                while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
+                    nameEnd--;
+                }
+                if (nameEnd <= nameStart) {
+                    throw SqlException.$(position > 0 ? position + start : 0, "empty column name in bloom_filter_columns");
+                }
+                CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                if (meta.getColumnIndexQuiet(columnName) < 0) {
+                    throw SqlException.$(position > 0 ? position + start : 0,
+                            "bloom_filter_columns contains non-existent column: ").put(columnName);
+                }
+                start = i + 1;
+            }
+        }
+    }
+
     @Override
     public void clear() {
+        this.bindVariableService = null;
         this.selectFactory = Misc.free(selectFactory);
         this.entry = null;
         this.exportMode = null;
@@ -106,6 +144,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         metadata = null;
         streamPartitionParquetExporter.clear();
         descending = false;
+        bloomFilterColumns = null;
+        bloomFilterColumnsPosition = -1;
+        bloomFilterFpp = Double.NaN;
     }
 
     @Override
@@ -117,6 +158,22 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             pageFrameCursor = Misc.free(pageFrameCursor);
         }
         Misc.free(streamPartitionParquetExporter);
+    }
+
+    public @Nullable BindVariableService getBindVariableService() {
+        return bindVariableService;
+    }
+
+    public @Nullable CharSequence getBloomFilterColumns() {
+        return bloomFilterColumns;
+    }
+
+    public int getBloomFilterColumnsPosition() {
+        return bloomFilterColumnsPosition;
+    }
+
+    public double getBloomFilterFpp() {
+        return bloomFilterFpp;
     }
 
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -234,8 +291,13 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             RecordMetadata metadata,
             StreamWriteParquetCallBack writeCallback,
             ParquetExportMode exportMode,
-            @Nullable String selectText
+            @Nullable String selectText,
+            @Nullable CharSequence bloomFilterColumns,
+            int bloomFilterColumnsPosition,
+            double bloomFilterFpp,
+            @Nullable BindVariableService bindVariableService
     ) {
+        this.bindVariableService = bindVariableService;
         this.entry = entry;
         this.tableName = tableName;
         this.fileName = fileName;
@@ -255,6 +317,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.nowTimestampType = nowTimestampType;
         this.exportMode = exportMode;
         this.selectText = selectText;
+        this.bloomFilterColumns = bloomFilterColumns;
+        this.bloomFilterColumnsPosition = bloomFilterColumnsPosition;
+        this.bloomFilterFpp = bloomFilterFpp;
     }
 
     public void setCreateOp(@Nullable CreateTableOperation createOp) {
@@ -286,6 +351,36 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public void setWriteCallback(@Nullable StreamWriteParquetCallBack writeCallback) {
         this.writeCallback = writeCallback;
+    }
+
+    protected static void parseBloomFilterColumnIndexes(CharSequence columns, RecordMetadata meta, DirectIntList indexes, int bloomFilterColumnsPosition) {
+        int start = 0;
+        int len = columns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || columns.charAt(i) == ',') {
+                int nameStart = start;
+                int nameEnd = i;
+                while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
+                    nameStart++;
+                }
+                while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
+                    nameEnd--;
+                }
+                if (nameStart >= nameEnd) {
+                    throw CairoException.nonCritical().put("empty column name in bloom_filter_columns")
+                            .position(bloomFilterColumnsPosition > 0 ? bloomFilterColumnsPosition + start : 0);
+                }
+                CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                int columnIndex = meta.getColumnIndexQuiet(columnName);
+                if (columnIndex >= 0) {
+                    indexes.add(columnIndex);
+                } else {
+                    throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName)
+                            .position(bloomFilterColumnsPosition > 0 ? bloomFilterColumnsPosition + start : 0);
+                }
+                start = i + 1;
+            }
+        }
     }
 
     public enum Phase {
@@ -335,6 +430,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     public class StreamPartitionParquetExporter implements Mutable, QuietCloseable {
         // Buffer header size: [8 bytes data_len][8 bytes rows_written_to_row_groups]
         private static final int BUFFER_HEADER_SIZE = 2 * Long.BYTES;
+        private DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
@@ -352,9 +448,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         @Override
         public void clear() {
             // free memory after one query finished, will re-malloc on next query
-            columnNames.close();
-            columnData.close();
-            columnMetadata.close();
+            Misc.free(columnNames);
+            Misc.free(columnData);
+            Misc.free(columnMetadata);
+            Misc.free(bloomFilterColumnIndexes);
             closeWriter();
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
@@ -371,6 +468,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             columnNames = Misc.free(columnNames);
             columnData = Misc.free(columnData);
             columnMetadata = Misc.free(columnMetadata);
+            bloomFilterColumnIndexes = Misc.free(bloomFilterColumnIndexes);
         }
 
         public void finishExport() throws Exception {
@@ -471,9 +569,12 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 columnNames.put(columnName);
                 columnMetadata.add(columnNames.size() - startSize);
                 final int columnType = meta.getColumnType(i);
-                // GenericRecordMetadata (hybrid/cursor paths) returns i;
                 // table metadata returns the physical writer column index.
-                final int writerIdx = meta.getWriterIndex(i);
+                int writerIdx = meta.getWriterIndex(i);
+                if (writerIdx < 0) {
+                    // GenericRecordMetadata (hybrid/cursor paths) returns -1, use i instead
+                    writerIdx = i;
+                }
 
                 // A SYMBOL column needs symbol-table metadata when it is a
                 // real table column.  In the hybrid path (baseColumnMap != null)
@@ -491,11 +592,28 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     if (!symbolTable.containsNullValue()) {
                         symbolColumnType |= 1 << 31;
                     }
-                    columnMetadata.add((long) writerIdx << 32 | symbolColumnType);
+                    // Mask to 32 bits: symbolColumnType can have bit 31 set (no-null flag),
+                    // making it negative. Without the mask, Java sign-extends it to 64 bits
+                    // before the OR, clobbering writerIdx in the upper 32 bits.
+                    columnMetadata.add((long) writerIdx << 32 | (symbolColumnType & 0xFFFFFFFFL));
                 } else {
-                    columnMetadata.add((long) writerIdx << 32 | columnType);
+                    columnMetadata.add((long) writerIdx << 32 | (columnType & 0xFFFFFFFFL));
                 }
             }
+
+            long bloomFilterIndexesPtr = 0;
+            int bloomFilterCount = 0;
+            double fpp = Double.isNaN(bloomFilterFpp) ? DEFAULT_BLOOM_FILTER_FPP : bloomFilterFpp;
+
+            if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
+                bloomFilterColumnIndexes.reopen();
+                parseBloomFilterColumnIndexes(bloomFilterColumns, metadata, bloomFilterColumnIndexes, bloomFilterColumnsPosition);
+                if (bloomFilterColumnIndexes.size() > 0) {
+                    bloomFilterIndexesPtr = bloomFilterColumnIndexes.getAddress();
+                    bloomFilterCount = (int) bloomFilterColumnIndexes.size();
+                }
+            }
+
             streamWriter = createStreamingParquetWriter(
                     Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),
                     meta.getColumnCount(),
@@ -509,7 +627,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     rawArrayEncoding,
                     rowGroupSize,
                     dataPageSize,
-                    parquetVersion
+                    parquetVersion,
+                    bloomFilterIndexesPtr,
+                    bloomFilterCount,
+                    fpp,
+                    0.0
             );
         }
 
@@ -537,9 +659,18 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
                     final int columnType = metadata.getColumnType(i);
                     final long pageAddress = frame.getPageAddress(i);
+                    // Var-size columns may have an empty .d file when all values are inlined
+                    // into the aux vector (see FwdTableReaderPageFrameCursor for the producer
+                    // contract); use the aux address as the column-top detector to avoid
+                    // materialising live rows as NULL.
+                    final long localColTop;
+                    if (ColumnType.isVarSize(columnType)) {
+                        localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;
+                    } else {
+                        localColTop = pageAddress > 0 ? 0 : frameRowCount;
+                    }
 
                     // Assert alignment for SIMD operations in Rust parquet encoder
                     assert pageAddress == 0 || isAlignedForColumnType(pageAddress, columnType)
@@ -631,22 +762,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         private static int getRequiredAlignmentForSimd(int columnType) {
-            switch (ColumnType.tagOf(columnType)) {
+            return switch (ColumnType.tagOf(columnType)) {
                 // Types using Simd<i64, 8> or Simd<f64, 8>
-                case ColumnType.LONG:
-                case ColumnType.DOUBLE:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DATE:
-                    return 8;
+                case ColumnType.LONG, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.DATE -> 8;
                 // Types using Simd<i32, 16> or Simd<f32, 16>
-                case ColumnType.INT:
-                case ColumnType.FLOAT:
-                case ColumnType.SYMBOL:
-                    return 4;
+                case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL -> 4;
                 // All other types use scalar paths - no SIMD alignment required
-                default:
-                    return 1;
-            }
+                default -> 1;
+            };
         }
 
         /**

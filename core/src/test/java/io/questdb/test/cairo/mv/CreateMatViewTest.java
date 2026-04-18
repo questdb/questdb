@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -64,6 +64,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
     private static final String TABLE2 = "table2";
     private static final String TABLE3 = "table3";
     private static final String VIEW1 = "view1";
+
+    @Before
+    public void beforeAll() {
+        node1.setProperty(PropertyKey.CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED, true);
+    }
 
     @Before
     public void setUp() {
@@ -217,6 +222,23 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String sql = "with t as (select ts, avg(v) as avgv from " + TABLE2 + ") select ts, avgv from t sample by 30s";
             assertExceptionNoLeakCheck(
                     "create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day",
+                    40,
+                    "base table is not referenced in materialized view query"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewBaseTableNoReferenceAndDoesNotExist() throws Exception {
+        // Regression test: when WITH BASE specifies a table that doesn't exist
+        // and isn't referenced in the query, getTableTokenIfExists() returns null
+        // and the subsequent .isView() call throws NPE instead of SqlException.
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String sql = "select ts, avg(v) from " + TABLE1 + " sample by 30s";
+            assertExceptionNoLeakCheck(
+                    "create materialized view test with base nonexistent_table as (" + sql + ") partition by day",
                     40,
                     "base table is not referenced in materialized view query"
             );
@@ -890,8 +912,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery(
                     """
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
-                            2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
                             1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
+                            2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
                             """,
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag,walEnabled,directoryName,dedup,ttlValue,ttlUnit,table_type from tables()",
                     false,
@@ -941,8 +963,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery(
                     """
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
-                            2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
                             1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
+                            2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
                             """,
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag,walEnabled,directoryName,dedup,ttlValue,ttlUnit,table_type from tables()",
                     false,

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -94,11 +94,15 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         if (isExhausted) {
             return false;
         }
+        buildValueConditionally();
+        isExhausted = true;
+        return true;
+    }
+
+    void buildValueConditionally() {
         if (!isValueBuilt) {
             buildValue();
         }
-        isExhausted = true;
-        return true;
     }
 
     @Override

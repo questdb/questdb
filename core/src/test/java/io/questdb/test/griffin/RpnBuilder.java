@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,7 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.ExpressionParserListener;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -153,7 +153,7 @@ public class RpnBuilder implements ExpressionParserListener {
                 if (i > 0) sink.put(", ");
                 serializeExpressionToRpn(orderBy.getQuick(i));
                 int dir = wc.getOrderByDirection().getQuick(i);
-                if (dir == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                if (dir == IQueryModel.ORDER_DIRECTION_DESCENDING) {
                     sink.put(" desc");
                 }
             }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,9 +31,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Factory for single-threaded read_parquet() SQL function.
@@ -41,56 +44,41 @@ import io.questdb.std.str.Path;
 public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFactory {
     private ReadParquetRecordCursor cursor;
     private Path path;
-    private boolean randomAccessEnabled;
-    private int sortColumnIndex = -1;
-    private SortedReadParquetCursor sortedCursor;
+    private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata) {
         super(metadata);
         this.path = new Path().of(path);
     }
 
-    /**
-     * @param sortColumnIndex metadata column index for two-pass decode, or -1
-     *                        to eagerly decode all columns
-     */
-    public void enableRandomAccess(int sortColumnIndex) {
-        this.randomAccessEnabled = true;
-        this.sortColumnIndex = sortColumnIndex;
-    }
-
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        if (cursor == null) {
+            final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+            cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
+        }
         try {
-            if (sortColumnIndex >= 0) {
-                if (sortedCursor == null) {
-                    sortedCursor = new SortedReadParquetCursor(
-                            configuration.getFilesFacade(), getMetadata(), sortColumnIndex
-                    );
-                }
-                sortedCursor.of(path.$());
-                return sortedCursor;
-            } else {
-                if (cursor == null) {
-                    cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata());
-                    if (randomAccessEnabled) {
-                        cursor.enableRandomAccess();
-                    }
-                }
-                cursor.of(path.$());
-                return cursor;
-            }
+            cursor.of(path.$(), executionContext);
+            return cursor;
         } catch (Throwable th) {
-            Misc.free(cursor);
-            Misc.free(sortedCursor);
+            cursor.close();
             throw th;
         }
     }
 
     @Override
+    public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
+        return true;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return randomAccessEnabled;
+        return false;
+    }
+
+    @Override
+    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+        this.pushdownFilterConditions = pushdownFilterConditions;
     }
 
     @Override
@@ -102,7 +90,7 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     @Override
     protected void _close() {
         cursor = Misc.free(cursor);
-        sortedCursor = Misc.free(sortedCursor);
         path = Misc.free(path);
+        Misc.freeObjListAndClear(pushdownFilterConditions);
     }
 }

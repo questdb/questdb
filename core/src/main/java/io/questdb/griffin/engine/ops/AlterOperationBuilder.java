@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,7 +45,7 @@ public class AlterOperationBuilder implements Mutable {
 
     // the builder and the operation it builds share the extraInfo list
     public AlterOperationBuilder() {
-        this.op = new AlterOperation(extraInfo, extraStrInfo);
+        this.op = createAlterOperation(extraInfo, extraStrInfo);
     }
 
     public void addColumnToList(
@@ -300,6 +300,16 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofSetParquetEncoding(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int parquetEncodingConfig) {
+        this.command = SET_PARQUET_ENCODING;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        this.extraInfo.add(parquetEncodingConfig);
+        return this;
+    }
+
     public AlterOperationBuilder ofSetTtl(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
         this.command = SET_TTL;
         this.tableNamePosition = tableNamePosition;
@@ -327,5 +337,14 @@ public class AlterOperationBuilder implements Mutable {
 
     public void setDedupKeyFlag(int writerColumnIndex) {
         extraInfo.add(writerColumnIndex);
+    }
+
+    public void setParquetConversionOptions(@Nullable CharSequence bloomFilterColumns, double fpp) {
+        extraStrInfo.add(bloomFilterColumns);
+        extraInfo.add(Double.doubleToLongBits(fpp));
+    }
+
+    protected AlterOperation createAlterOperation(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
     }
 }

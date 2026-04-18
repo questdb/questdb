@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -88,7 +88,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
     // state
     // cache entry index is always a negative value
-    private int cacheEntryIndex = 0;
+    private int cacheEntryIndex = Integer.MIN_VALUE;
     private int columnIndex;
     private long columnName;
     private int columnType;
@@ -454,7 +454,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
             if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameAsChars, udpConfiguration.getMaxFileNameLength())) {
-                writer.addColumn(colNameAsChars, valueType);
+                // Using AllowAllSecurityContext, currently there is no authentication on the UDP interface
+                writer.addColumn(colNameAsChars, valueType, AllowAllSecurityContext.INSTANCE);
                 // Writer index can be different from column count, it keeps deleted columns in metadata
                 int columnIndex = writer.getColumnIndex(colNameAsChars);
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
@@ -505,7 +506,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void switchTable(CachedCharSequence tableName, int entryIndex) {
-        if (this.cacheEntryIndex != 0) {
+        if (this.cacheEntryIndex != Integer.MIN_VALUE) {
             // add previous writer to commit list
             CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);
             if (e.writer != null) {

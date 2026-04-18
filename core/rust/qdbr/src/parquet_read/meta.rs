@@ -1,5 +1,5 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::error::ParquetResult;
+use crate::parquet::error::{ParquetError, ParquetErrorReason, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use nonmax::NonMaxU32;
@@ -19,7 +19,7 @@ use std::io::{Read, Seek};
 /// Extract the questdb-specific metadata from the parquet file metadata.
 /// Error if the JSON is not valid or the version is not supported.
 /// Returns `None` if the metadata is not present.
-fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMeta>> {
+pub(crate) fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMeta>> {
     let Some(key_value_meta) = file_metadata.key_value_metadata.as_ref() else {
         return Ok(None);
     };
@@ -42,6 +42,17 @@ impl ParquetDecoder {
         let metadata = read_metadata_with_size(reader, file_size)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
+
+        // Discard QDB metadata when the schema length doesn't match the Parquet
+        // column count. This happens when an external tool rewrites the file
+        // (e.g. drops partition columns) but preserves the original key-value
+        // metadata. Positional lookups into a stale schema return wrong types.
+        //
+        // Note: col_len is the number of leaf (primitive) columns from
+        // schema_descr.columns(). For all column types QuestDB currently writes
+        // (including arrays encoded as LIST groups), each top-level field
+        // produces exactly one leaf column, so this matches qdb_meta.schema.len().
+        let qdb_meta = qdb_meta.filter(|m| m.schema.len() == col_len);
         let mut row_group_sizes: AcVec<u32> =
             AcVec::with_capacity_in(metadata.row_groups.len(), allocator.clone())?;
         let mut row_group_sizes_acc: AcVec<usize> =
@@ -56,7 +67,11 @@ impl ParquetDecoder {
             accumulated_size += row_group_size;
         }
 
-        assert_eq!(accumulated_size, metadata.num_rows);
+        if accumulated_size != metadata.num_rows {
+            let mut err = ParquetError::new(ParquetErrorReason::Layout);
+            err.add_context("row group sizes do not sum to total row count");
+            return Err(err);
+        }
 
         let mut timestamp_index: Option<NonMaxU32> = None;
 
@@ -139,6 +154,8 @@ impl ParquetDecoder {
             }
         }
 
+        let unused_bytes = qdb_meta.as_ref().map(|m| m.unused_bytes).unwrap_or(0);
+
         // TODO(eugenels): add some validation
         Ok(Self {
             allocator,
@@ -153,6 +170,7 @@ impl ParquetDecoder {
             columns_ptr: columns.as_ptr(),
             columns,
             row_group_sizes_acc,
+            unused_bytes,
         })
     }
 
@@ -505,6 +523,7 @@ mod tests {
                 0,
                 false,
                 false,
+                0,
             )
             .unwrap(),
         )

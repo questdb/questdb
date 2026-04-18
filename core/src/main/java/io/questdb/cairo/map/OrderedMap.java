@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -297,6 +297,24 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
+    public MapRecordCursor newCursor() {
+        OrderedMapCursor c;
+        if (keySize == -1) {
+            OrderedMapVarSizeRecord rec = ((OrderedMapVarSizeRecord) record).clone();
+            c = new OrderedMapVarSizeCursor(rec, this);
+        } else {
+            OrderedMapFixedSizeRecord rec = ((OrderedMapFixedSizeRecord) record).clone();
+            c = new OrderedMapFixedSizeCursor(rec, this);
+        }
+        return c.init(heapAddr, heapLimit, size);
+    }
+
+    @Override
+    public void initCursor(MapRecordCursor cursor) {
+        ((OrderedMapCursor) cursor).init(heapAddr, heapLimit, size);
+    }
+
+    @Override
     public long getHeapSize() {
         return heapLimit - heapAddr;
     }
@@ -413,7 +431,12 @@ public class OrderedMap implements Map, Reopenable {
         Unsafe.getUnsafe().putInt(offsetAddr + 4, hashCodeLo);
         size++;
         if (--free == 0) {
-            rehash();
+            try {
+                rehash();
+            } catch (CairoException e) {
+                free = 1;
+                throw e;
+            }
         }
         return valueOf(keyWriter.startAddr, keyWriter.appendAddr, true, value);
     }
@@ -463,7 +486,12 @@ public class OrderedMap implements Map, Reopenable {
             kPos += alignedEntrySize;
             size++;
             if (--free == 0) {
-                rehash();
+                try {
+                    rehash();
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -513,7 +541,12 @@ public class OrderedMap implements Map, Reopenable {
             kPos = Bytes.align8b(kPos + entrySize);
             size++;
             if (--free == 0) {
-                rehash();
+                try {
+                    rehash();
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -575,9 +608,9 @@ public class OrderedMap implements Map, Reopenable {
             return;
         }
 
-        mask = (int) newKeyCapacity - 1;
         final long newOffsetsAddr = Unsafe.malloc(newKeyCapacity << 3, listMemoryTag);
         Vect.memset(newOffsetsAddr, newKeyCapacity << 3, 0);
+        final int newMask = (int) newKeyCapacity - 1;
 
         for (int i = 0; i < keyCapacity; i++) {
             long offsetAddr = offsetsAddr + ((long) i << 3);
@@ -586,11 +619,11 @@ public class OrderedMap implements Map, Reopenable {
                 continue;
             }
             int hashCodeLo = Unsafe.getUnsafe().getInt(offsetAddr + 4);
-            int index = hashCodeLo & mask;
+            int index = hashCodeLo & newMask;
 
             long newOffsetAddr = newOffsetsAddr + ((long) index << 3);
             while (Unsafe.getUnsafe().getInt(newOffsetAddr) > 0) {
-                index = (index + 1) & mask;
+                index = (index + 1) & newMask;
                 newOffsetAddr = newOffsetsAddr + ((long) index << 3);
             }
             Unsafe.getUnsafe().putInt(newOffsetAddr, rawOffset);
@@ -598,6 +631,7 @@ public class OrderedMap implements Map, Reopenable {
         }
         Unsafe.free(offsetsAddr, (long) keyCapacity << 3, listMemoryTag);
         offsetsAddr = newOffsetsAddr;
+        mask = newMask;
         free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
         keyCapacity = (int) newKeyCapacity;
     }
@@ -1152,7 +1186,7 @@ public class OrderedMap implements Map, Reopenable {
         public void putVarchar(Utf8Sequence value) {
             int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
             checkCapacity(byteCount);
-            VarcharTypeDriver.appendPlainValue(appendAddr, value, false);
+            VarcharTypeDriver.appendPlainValue(appendAddr, value, true);
             appendAddr += byteCount;
         }
 

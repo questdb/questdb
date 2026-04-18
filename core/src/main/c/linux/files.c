@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -29,6 +29,11 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <errno.h>
+
+// MADV_POPULATE_WRITE was added in Linux 5.14
+#ifndef MADV_POPULATE_WRITE
+#define MADV_POPULATE_WRITE 23
+#endif
 #include <limits.h>
 #include <string.h>
 #include <stdio.h>
@@ -139,20 +144,23 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixFadvSequential(JNIEnv *
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_madvise0
         (JNIEnv *e, jclass cls, jlong address, jlong len, jint advise) {
-    void *memAddr = (void *) address;
-    return posix_madvise(memAddr, (off_t) len, advise);
+    return madvise((void *) address, (size_t) len, advise);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getMadvPopulateWrite(JNIEnv *e, jclass cls) {
+    return MADV_POPULATE_WRITE;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixMadvRandom(JNIEnv *e, jclass cls) {
-    return POSIX_MADV_RANDOM;
+    return MADV_RANDOM;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixMadvSequential(JNIEnv *e, jclass cls) {
-    return POSIX_MADV_SEQUENTIAL;
+    return MADV_SEQUENTIAL;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixMadvDontneed(JNIEnv *e, jclass cls) {
-    return POSIX_MADV_DONTNEED;
+    return MADV_DONTNEED;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus

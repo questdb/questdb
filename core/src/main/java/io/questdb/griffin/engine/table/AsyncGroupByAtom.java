@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -293,6 +293,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     // thread-unsafe
     public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
         return ownerGroupByFunctions;
+    }
+
+    // thread-unsafe
+    public ObjList<Function> getOwnerKeyFunctions() {
+        return ownerKeyFunctions;
     }
 
     // thread-unsafe

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -689,20 +689,189 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 103501, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 103571, params, "test_table");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 107317, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 107387, params, "test_table");
                     params.put("row_group_size", "500");
-                    testHttpClient.assertGetParquet("/exp", 113699, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 113839, params, "test_table");
                     params.put("row_group_size", "999");
-                    testHttpClient.assertGetParquet("/exp", 109701, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 109831, params, "test_table");
                     params.put("row_group_size", "201");
-                    testHttpClient.assertGetParquet("/exp", 134752, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 135156, params, "test_table");
                     params.put("row_group_size", "2001");
-                    testHttpClient.assertGetParquet("/exp", 106002, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 106096, params, "test_table");
                     params.put("row_group_size", "10000");
-                    testHttpClient.assertGetParquet("/exp", 103501, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 103571, params, "test_table");
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{"test_table"}, 10, 10091);
+                });
+    }
+
+    @Test
+    public void testParquetExportBloomFilterColumnsMultiple() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE bloom_multi_test AS (" +
+                            "SELECT x AS id, 'name_' || x AS name, x * 1.5 AS value " +
+                            "FROM long_sequence(10000)" +
+                            ")", sqlExecutionContext);
+                    params.clear();
+                    params.put("fmt", "parquet");
+                    testHttpClient.assertGetParquet("/exp", 128290, params, "SELECT * FROM bloom_multi_test");
+                    params.put("bloom_filter_columns", "id,name,value");
+                    params.put("bloom_filter_fpp", "0.05");
+                    testHttpClient.assertGetParquet("/exp", 177541, params, "SELECT * FROM bloom_multi_test");
+                });
+    }
+
+    @Test
+    public void testParquetExportBloomFilterColumnsNonExistent() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE bloom_noexist_test AS (" +
+                            "SELECT x AS id, 'name_' || x AS name " +
+                            "FROM long_sequence(100)" +
+                            ")", sqlExecutionContext);
+                    params.clear();
+                    params.put("query", "SELECT * FROM bloom_noexist_test");
+                    params.put("fmt", "parquet");
+
+                    params.put("bloom_filter_columns", "no_such_col");
+                    String expectedError = "{\"query\":\"SELECT * FROM bloom_noexist_test\"," +
+                            "\"error\":\"bloom_filter_columns contains non-existent column: no_such_col\"," +
+                            "\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+
+                    params.put("bloom_filter_columns", "id,no_such_col,name");
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                });
+    }
+
+    @Test
+    public void testParquetExportBloomFilterColumnsSingle() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE bloom_single_test AS (" +
+                            "SELECT x AS id, 'name_' || x AS name " +
+                            "FROM long_sequence(10000)" +
+                            ")", sqlExecutionContext);
+                    params.clear();
+                    params.put("fmt", "parquet");
+                    testHttpClient.assertGetParquet("/exp", 81711, params, "SELECT * FROM bloom_single_test");
+                    params.put("bloom_filter_columns", "id");
+                    testHttpClient.assertGetParquet("/exp", 98128, params, "SELECT * FROM bloom_single_test");
+                });
+    }
+
+    @Test
+    public void testParquetExportBloomFilterColumnsWithSpaces() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE bloom_spaces_test AS (" +
+                            "SELECT x AS id, 'name_' || x AS name, x * 1.5 AS value " +
+                            "FROM long_sequence(1000)" +
+                            ")", sqlExecutionContext);
+                    params.clear();
+                    params.put("fmt", "parquet");
+                    params.put("bloom_filter_columns", " id , name , value ");
+                    testHttpClient.assertGetParquet("/exp", 19917, params, "bloom_spaces_test");
+                    params.put("bloom_filter_columns", "id ,name,value");
+                    testHttpClient.assertGetParquet("/exp", 19917, params, "bloom_spaces_test");
+                });
+    }
+
+    @Test
+    public void testParquetExportBloomFilterFppBoundaryOne() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE bloom_fpp_one_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+                    params.clear();
+                    params.put("query", "SELECT * FROM bloom_fpp_one_test");
+                    params.put("fmt", "parquet");
+                    params.put("bloom_filter_fpp", "1");
+
+                    String expectedError = "{\"query\":\"SELECT * FROM bloom_fpp_one_test\",\"error\":\"bloom_filter_fpp must be between 0 and 1 (exclusive): 1\",\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                });
+    }
+
+    @Test
+    public void testParquetExportBloomFilterFppBoundaryZero() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE bloom_fpp_zero_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+                    params.clear();
+                    params.put("query", "SELECT * FROM bloom_fpp_zero_test");
+                    params.put("fmt", "parquet");
+                    params.put("bloom_filter_fpp", "0");
+
+                    String expectedError = "{\"query\":\"SELECT * FROM bloom_fpp_zero_test\",\"error\":\"bloom_filter_fpp must be between 0 and 1 (exclusive): 0\",\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                });
+    }
+
+    @Test
+    public void testParquetExportBloomFilterFppGreaterThanOne() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE bloom_fpp_gt1_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+                    params.clear();
+                    params.put("query", "SELECT * FROM bloom_fpp_gt1_test");
+                    params.put("fmt", "parquet");
+                    params.put("bloom_filter_fpp", "1.5");
+
+                    String expectedError = "{\"query\":\"SELECT * FROM bloom_fpp_gt1_test\",\"error\":\"bloom_filter_fpp must be between 0 and 1 (exclusive): 1.5\",\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                });
+    }
+
+    @Test
+    public void testParquetExportBloomFilterFppInvalidValue() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE bloom_fpp_invalid_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+                    params.clear();
+                    params.put("query", "SELECT * FROM bloom_fpp_invalid_test");
+                    params.put("fmt", "parquet");
+                    params.put("bloom_filter_fpp", "not_a_number");
+
+                    String expectedError = "{\"query\":\"SELECT * FROM bloom_fpp_invalid_test\",\"error\":\"invalid bloom_filter_fpp value: not_a_number\",\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                });
+    }
+
+    @Test
+    public void testParquetExportBloomFilterFppNegative() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE bloom_fpp_neg_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+                    params.clear();
+                    params.put("query", "SELECT * FROM bloom_fpp_neg_test");
+                    params.put("fmt", "parquet");
+                    params.put("bloom_filter_fpp", "-0.5");
+
+                    String expectedError = "{\"query\":\"SELECT * FROM bloom_fpp_neg_test\",\"error\":\"bloom_filter_fpp must be between 0 and 1 (exclusive): -0.5\",\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                });
+    }
+
+    @Test
+    public void testParquetExportBloomFilterFppValid() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE bloom_fpp_valid_test AS (" +
+                            "SELECT x AS id FROM long_sequence(10000)" +
+                            ")", sqlExecutionContext);
+                    params.clear();
+                    params.put("fmt", "parquet");
+                    params.put("bloom_filter_columns", "id");
+                    params.put("bloom_filter_fpp", "0.01");
+                    testHttpClient.assertGetParquet("/exp", 56804, params, "SELECT * FROM bloom_fpp_valid_test");
+
+                    params.put("bloom_filter_fpp", "0.1");
+                    testHttpClient.assertGetParquet("/exp", 48612, params, "SELECT * FROM bloom_fpp_valid_test");
+
+                    params.put("bloom_filter_fpp", "0.99");
+                    testHttpClient.assertGetParquet("/exp", 42465, params, "SELECT * FROM bloom_fpp_valid_test");
                 });
     }
 
@@ -1088,6 +1257,22 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "invalid_codec");
                     String expectedError = "{\"query\":\"SELECT * FROM codec_invalid_test\",\"error\":\"invalid compression codec[invalid_codec], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw\",\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                });
+    }
+
+    @Test
+    public void testParquetExportInvalidCompressionLevel() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE level_invalid_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+
+                    params.clear();
+                    params.put("query", "SELECT * FROM level_invalid_test");
+                    params.put("fmt", "parquet");
+                    params.put("compression_codec", "gzip");
+                    params.put("compression_level", "-1");
+                    String expectedError = "{\"query\":\"SELECT * FROM level_invalid_test\",\"error\":\"GZIP compression level must be between 0 and 9\",\"position\":0}";
                     testHttpClient.assertGet("/exp", expectedError, params, null, null);
                 });
     }
@@ -1877,6 +2062,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     // fires, causing the server to disconnect rather than send an error.
                     try {
                         testHttpClient.assertGetContains("/exp", "timeout, query aborted", params);
+                    } catch (AssertionError ae) {
+                        // Depending on timing, the exporter may detect the timeout and cancel the query, resulting in a different error message.  Accept either.
+                        TestUtils.assertContains(ae.getMessage(), "cancelled by user");
                     } catch (HttpClientException e) {
                         String msg = e.getMessage();
                         Assert.assertTrue(
@@ -1929,7 +2117,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
 
-                    testHttpClient.assertGetParquet("/exp", 1962, tableName);
+                    testHttpClient.assertGetParquet("/exp", 1968, tableName);
                 });
     }
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -738,7 +739,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                             // adding a new column before calling writer.tick() will result in ReaderOutOfDateException
                             // thrown from UpdateOperator as this changes table structure
                             // recompile should be successful so the UPDATE completes
-                            writer.addColumn("newCol", ColumnType.INT);
+                            writer.addColumn("newCol", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                             first = false;
                         }
                     }

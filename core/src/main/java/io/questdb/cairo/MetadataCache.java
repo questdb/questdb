@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,8 +31,8 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -65,6 +65,7 @@ public class MetadataCache implements QuietCloseable {
     private final CharSequenceObjHashMap<CairoTable> tableMap = new CharSequenceObjHashMap<>();
     private ColumnVersionReader columnVersionReader;
     private MemoryCMR metaMem = Vm.getCMRInstance();
+    private TxReader txReader;
     private long version;
 
     public MetadataCache(CairoEngine engine) {
@@ -74,6 +75,7 @@ public class MetadataCache implements QuietCloseable {
     @Override
     public void close() {
         metaMem = Misc.free(metaMem);
+        txReader = Misc.free(txReader);
         tableMap.clear();
     }
 
@@ -201,7 +203,8 @@ public class MetadataCache implements QuietCloseable {
                     .$(", version=").$(metadataVersion)
                     .I$();
 
-            table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
+            int partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+            table.setPartitionBy(partitionBy);
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
@@ -242,6 +245,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
                 column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                column.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, writerIndex));
                 column.setWriterIndex(writerIndex);
 
                 boolean isDesignated = writerIndex == timestampWriterIndex;
@@ -270,6 +274,25 @@ public class MetadataCache implements QuietCloseable {
                 table.upsertColumn(column);
             }
 
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                try {
+                    if (txReader == null) {
+                        txReader = new TxReader(engine.getConfiguration().getFilesFacade());
+                    }
+                    Path txnPath = Path.getThreadLocal2(engine.getConfiguration().getDbRoot());
+                    txReader.ofRO(txnPath.concat(token.getDirName()).concat(TableUtils.TXN_FILE_NAME).$(), table.getTimestampType(), partitionBy);
+                    if (txReader.unsafeLoadAll()) {
+                        table.setHasParquetPartitions(txReader.hasParquetPartitions());
+                    } else {
+                        table.setHasParquetPartitions(true);
+                    }
+                } catch (CairoException e) {
+                    LOG.error().$("could not read partition format, assuming parquet [table=").$(token)
+                            .$(", error=").$((Throwable) e).I$();
+                    table.setHasParquetPartitions(true);
+                }
+            }
+
             tableMap.put(table.getTableName(), table);
             LOG.debug().$("hydrated metadata [table=").$(token).I$();
         } catch (Throwable e) {
@@ -295,6 +318,7 @@ public class MetadataCache implements QuietCloseable {
             }
         } finally {
             Misc.free(metaMem);
+            Misc.free(txReader);
         }
     }
 
@@ -397,16 +421,18 @@ public class MetadataCache implements QuietCloseable {
         }
 
         @Override
-        public boolean isVisibleTable(@NotNull CharSequence tableName) {
-            CairoConfiguration configuration = engine.getConfiguration();
-
-            // sys table
-            if (Chars.startsWith(tableName, configuration.getSystemTableNamePrefix())
-                    && !Chars.startsWith(tableName, configuration.getParquetExportTableNamePrefix())) {
+        public boolean isVisibleTable(@NotNull String tableName) {
+            final CairoConfiguration configuration = engine.getConfiguration();
+            if (
+                    engine.getTableFlagResolver().isSystem(tableName)
+                            && !Chars.startsWith(tableName, configuration.getParquetExportTableNamePrefix())
+                            && !Chars.equalsIgnoreCase(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            && !Chars.equalsIgnoreCase(tableName, TelemetryTask.TABLE_NAME)
+            ) {
                 return false;
             }
 
-            // telemetry table
+            // special handling for telemetry tables
             if (configuration.getTelemetryConfiguration().hideTables()
                     && (Chars.equals(tableName, TelemetryTask.TABLE_NAME)
                     || Chars.equals(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))
@@ -414,12 +440,7 @@ public class MetadataCache implements QuietCloseable {
                 return false;
             }
 
-            // query tracing table
-            if (Chars.equals(tableName, QueryTracingJob.TABLE_NAME)) {
-                return false;
-            }
-
-            return TableUtils.isFinalTableName((String) tableName, configuration.getTempRenamePendingTablePrefix());
+            return TableUtils.isFinalTableName(tableName, configuration.getTempRenamePendingTablePrefix());
         }
 
         /**
@@ -431,7 +452,7 @@ public class MetadataCache implements QuietCloseable {
          * @return the current version of the snapshot
          */
         @Override
-        public long snapshot(CharSequenceObjHashMap<CairoTable> localCache, long priorVersion) {
+        public long snapshot(CharSequenceObjMap<CairoTable> localCache, long priorVersion) {
             if (priorVersion >= getVersion()) {
                 return priorVersion;
             }
@@ -551,6 +572,7 @@ public class MetadataCache implements QuietCloseable {
             table.setPartitionBy(tableMetadata.getPartitionBy());
             table.setMaxUncommittedRows(tableMetadata.getMaxUncommittedRows());
             table.setO3MaxLag(tableMetadata.getO3MaxLag());
+            table.setHasParquetPartitions(tableMetadata.hasParquetPartitions());
             int timestampWriterIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
@@ -578,6 +600,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 column.setSymbolTableStaticFlag(columnMetadata.isSymbolTableStatic());
                 column.setDedupKeyFlag(columnMetadata.isDedupKeyFlag());
+                column.setParquetEncodingConfig(columnMetadata.getParquetEncodingConfig());
 
                 int writerIndex = columnMetadata.getWriterIndex();
                 column.setWriterIndex(writerIndex);
@@ -634,6 +657,14 @@ public class MetadataCache implements QuietCloseable {
                 CairoTable fromTab = tableMap.valueAt(index);
                 tableMap.removeAt(index);
                 tableMap.put(toTableToken.getTableName(), new CairoTable(toTableToken, fromTab));
+            }
+        }
+
+        @Override
+        public void setHasParquetPartitions(@NotNull TableToken tableToken, boolean hasParquetPartitions) {
+            CairoTable table = tableMap.get(tableToken.getTableName());
+            if (table != null && tableToken.equals(table.getTableToken())) {
+                table.setHasParquetPartitions(hasParquetPartitions);
             }
         }
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -164,9 +164,18 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             final int adjustedType = adjustedMetadata.getColumnType(i);
 
             if (baseColIdx >= 0) {
-                // Pass-through column: read directly from page frame
-                long localColTop = frame.getPageAddress(baseColIdx) > 0 ? 0 : frameRowCount;
-                long pageAddress = frame.getPageAddress(baseColIdx);
+                // Pass-through column: read directly from page frame.
+                // Var-size columns may have an empty .d file when all values are inlined into
+                // the aux vector (see FwdTableReaderPageFrameCursor for the producer contract);
+                // use the aux address as the column-top detector to avoid materialising live
+                // rows as NULL.
+                final long pageAddress = frame.getPageAddress(baseColIdx);
+                final long localColTop;
+                if (ColumnType.isVarSize(adjustedType)) {
+                    localColTop = frame.getAuxPageAddress(baseColIdx) > 0 ? 0 : frameRowCount;
+                } else {
+                    localColTop = pageAddress > 0 ? 0 : frameRowCount;
+                }
 
                 columnData.add(localColTop);
                 columnData.add(pageAddress);
@@ -409,6 +418,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         int adjustedType = columnType;
         if (ColumnType.isSymbol(columnType)) {
             adjustedType = ColumnType.STRING;
+        } else if (columnType == ColumnType.VARCHAR_SLICE) {
+            adjustedType = ColumnType.VARCHAR;
         }
 
         computedBufferIdx.setQuick(i, computedCount);
@@ -532,7 +543,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             case ColumnType.FLOAT -> dataBuf.putFloat(record.getFloat(col));
             case ColumnType.DOUBLE -> dataBuf.putDouble(record.getDouble(col));
             case ColumnType.STRING -> StringTypeDriver.appendValue(auxBuf, dataBuf, record.getStrA(col));
-            case ColumnType.VARCHAR -> VarcharTypeDriver.appendValue(auxBuf, dataBuf, record.getVarcharA(col));
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE ->
+                    VarcharTypeDriver.appendValue(auxBuf, dataBuf, record.getVarcharA(col));
             case ColumnType.SYMBOL -> {
                 // Symbols get converted to STRING in adjusted metadata
                 CharSequence sym = record.getSymA(col);

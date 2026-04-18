@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
+import org.jetbrains.annotations.NotNull;
 
 public interface TableStructure {
 
@@ -36,6 +37,10 @@ public interface TableStructure {
     int getColumnType(int columnIndex);
 
     int getIndexBlockCapacity(int columnIndex);
+
+    default int getParquetEncodingConfig(int columnIndex) {
+        return 0;
+    }
 
     default MatViewDefinition getMatViewDefinition() {
         return null;
@@ -69,6 +74,10 @@ public interface TableStructure {
         return null;
     }
 
+    default boolean hasParquetPartitions() {
+        return false;
+    }
+
     default void init(TableToken tableToken) {
     }
 
@@ -85,4 +94,7 @@ public interface TableStructure {
     }
 
     boolean isWalEnabled();
+
+    default void onCreated(@NotNull CairoEngine engine, @NotNull TableToken tableToken) {
+    }
 }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -1959,6 +1959,87 @@ public class NumbersTest {
         assertParseNanosException("_28989__");
         assertParseNanosException("90902__");
         assertParseNanosException("123_");
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietConsecutiveUnderscores() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("1__0")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietEmpty() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietLeadingUnderscore() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("_100")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietMaxValue() {
+        assertEquals(Integer.MAX_VALUE, Numbers.parseNonNegativeIntQuiet(new Utf8String("2147483647")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietMaxValueWithUnderscores() {
+        assertEquals(Integer.MAX_VALUE, Numbers.parseNonNegativeIntQuiet(new Utf8String("2_147_483_647")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietMultiDigit() {
+        assertEquals(12345, Numbers.parseNonNegativeIntQuiet(new Utf8String("12345")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietNegativeSign() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("-1")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietNonDigit() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("abc")));
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("12x")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietNull() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(null));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietOnlyUnderscores() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("_")));
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("___")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietOverflowMultiply() {
+        // val > Integer.MAX_VALUE / 10
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("2147483650")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietOverflowWrap() {
+        // Integer.MAX_VALUE + 1 causes r < val
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("2147483648")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietSingleDigit() {
+        assertEquals(0, Numbers.parseNonNegativeIntQuiet(new Utf8String("0")));
+        assertEquals(5, Numbers.parseNonNegativeIntQuiet(new Utf8String("5")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietTrailingUnderscore() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("100_")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietUnderscore() {
+        assertEquals(1000, Numbers.parseNonNegativeIntQuiet(new Utf8String("1_000")));
+        assertEquals(1_000_000, Numbers.parseNonNegativeIntQuiet(new Utf8String("1_000_000")));
     }
 
     @Test

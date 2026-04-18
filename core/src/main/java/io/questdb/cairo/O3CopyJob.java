@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -859,7 +859,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         for (; row < count; row++) {
             w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }
-        w.setMaxValue(row + rowAdjust);
+        // The bitmap index header stores the inclusive(!) max row id.
+        w.setMaxValue(row + rowAdjust - 1);
     }
 
     // lowest timestamp of partition where data is headed

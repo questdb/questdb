@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -122,7 +122,6 @@ import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
-import io.questdb.std.RoutingFilesFacade;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -137,7 +136,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.AbstractTelemetryTask;
 import io.questdb.tasks.TelemetryMatViewTask;
 import io.questdb.tasks.TelemetryTask;
@@ -164,6 +162,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final ThreadLocal<MatViewRefreshTask> tlMatViewRefreshTask = new ThreadLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
+    private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
@@ -197,6 +196,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final ViewGraph viewGraph;
     private final ViewWalWriterPool viewWalWriterPool;
+    private final SimpleWaitingLock walPurgeJobLock = new SimpleWaitingLock();
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private volatile boolean closing;
@@ -553,7 +553,6 @@ public class CairoEngine implements Closeable, WriterSource {
             w.clearCache();
         }
         viewGraph.clear();
-        viewStateStore.clear();
         matViewGraph.clear();
         matViewStateStore.clear();
         matViewTimerQueue.clear();
@@ -616,13 +615,13 @@ public class CairoEngine implements Closeable, WriterSource {
             BlockFileWriter blockFileWriter,
             Path path,
             boolean ifNotExists,
-            CreateMatViewOperation struct,
+            CreateMatViewOperation operation,
             boolean keepLock,
             boolean inVolume
     ) {
         securityContext.authorizeMatViewCreate();
-        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
-        final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
+        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final MatViewDefinition matViewDefinition = operation.getMatViewDefinition();
         try {
             if (matViewGraph.addView(matViewDefinition)) {
                 matViewStateStore.createViewState(matViewDefinition);
@@ -670,27 +669,13 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume,
             int tableKind
     ) {
-        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, inVolume, false, tableKind);
-    }
-
-    public @NotNull TableToken createTable(
-            SecurityContext securityContext,
-            MemoryMARW mem,
-            Path path,
-            boolean ifNotExists,
-            TableStructure struct,
-            boolean keepLock,
-            boolean inVolume,
-            boolean isMemoryTable,
-            int tableKind
-    ) {
         if (tableKind != TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT && Chars.startsWith(struct.getTableName(), configuration.getParquetExportTableNamePrefix())) {
             throw CairoException.nonCritical().put("table name cannot start with reserved prefix [tableName=").put(struct.getTableName())
                     .put(", parquetExportPrefix=").put(configuration.getParquetExportTableNamePrefix())
                     .put(']');
         }
         securityContext.authorizeTableCreate(tableKind);
-        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, isMemoryTable, tableKind);
+        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, tableKind);
     }
 
     public @NotNull ViewDefinition createView(
@@ -699,12 +684,12 @@ public class CairoEngine implements Closeable, WriterSource {
             BlockFileWriter blockFileWriter,
             Path path,
             boolean ifNotExists,
-            CreateViewOperation struct,
+            CreateViewOperation operation,
             @Nullable RecordMetadata metadata
     ) {
         securityContext.authorizeViewCreate();
-        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, false, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
-        final ViewDefinition viewDefinition = struct.getViewDefinition();
+        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final ViewDefinition viewDefinition = operation.getViewDefinition();
         try {
             if (viewGraph.addView(viewDefinition)) {
                 viewStateStore.createViewState(viewDefinition, metadata);
@@ -745,15 +730,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno())
                                 .put("could not remove table [table=").put(tableToken).put(", thread=").put(Thread.currentThread().getId()).put(']');
-                    }
-
-                    // Unregister memory table from RoutingFilesFacade if applicable.
-                    FilesFacade ff = configuration.getFilesFacade();
-                    if (ff instanceof RoutingFilesFacade rff) {
-                        String tableDirPath = configuration.getDbRoot() + Files.SEPARATOR + tableToken.getDirName();
-                        if (rff.isMemoryTable(tableDirPath)) {
-                            rff.unregisterMemoryTable(tableDirPath);
-                        }
                     }
 
                     tableNameRegistry.dropTable(tableToken);
@@ -802,6 +778,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public BackupSeqPartLock getBackupSeqPartLock() {
+        return backupSeqPartLock;
+    }
+
     @TestOnly
     public int getBusyReaderCount() {
         return readerPool.getBusyCount();
@@ -845,7 +825,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull DdlListener getDdlListener(TableToken tableToken) {
-        return tableFlagResolver.isSystem(tableToken.getTableName()) ? DefaultDdlListener.INSTANCE : ddlListener;
+        return getDdlListener(tableToken.getTableName());
+    }
+
+    public @NotNull DdlListener getDdlListener(String tableName) {
+        return tableFlagResolver.isSystem(tableName) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
     public FrameFactory getFrameFactory() {
@@ -1369,6 +1353,11 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.isTableDropped(tableToken);
     }
 
+    @TestOnly
+    public boolean isWalPurgeJobLocked() {
+        return walPurgeJobLock.isLocked();
+    }
+
     public boolean isWalTable(TableToken tableToken) {
         return tableToken.isWal();
     }
@@ -1655,7 +1644,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     boolean renamed = false;
                     try {
                         try (WalWriter walWriter = getWalWriter(fromTableToken)) {
-                            long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr);
+                            long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr, securityContext);
                             LOG.info().$("renaming table [from='").$safe(fromTableName)
                                     .$("', to='").$safe(toTableName)
                                     .$("', wal=").$(walWriter.getWalId())
@@ -1719,7 +1708,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             enqueueCompileView(fromTableToken);
             enqueueCompileView(toTableToken);
-            getDdlListener(fromTableToken).onTableRenamed(securityContext, fromTableToken, toTableToken);
+            getDdlListener(fromTableToken).onTableRenamed(fromTableToken, toTableToken);
 
             return toTableToken;
         } else {
@@ -1763,7 +1752,6 @@ public class CairoEngine implements Closeable, WriterSource {
         this.configReloader = configReloader;
     }
 
-    @SuppressWarnings("unused")
     public void setDdlListener(@NotNull DdlListener ddlListener) {
         this.ddlListener = ddlListener;
     }
@@ -1811,16 +1799,20 @@ public class CairoEngine implements Closeable, WriterSource {
         this.walLocker = walLocker;
     }
 
-    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
-        this.checkpointAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
-    }
-
     public void signalClose() {
         closing = true;
     }
 
     public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         checkpointAgent.checkpointCreate(circuitBreaker, true, false);
+    }
+
+    public boolean tryLockWalPurgeJob(long timeout, TimeUnit timeUnit) {
+        boolean isLocked = tryLockWalPurgeJob0(timeout, timeUnit);
+        if (isLocked) {
+            backupSeqPartLock.onLocked();
+        }
+        return isLocked;
     }
 
     public void unlock(
@@ -1850,6 +1842,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockTableName(TableToken tableToken) {
         tableNameRegistry.unlockTableName(tableToken);
+    }
+
+    public void unlockWalPurgeJob() {
+        walPurgeJobLock.unlock();
     }
 
     public void unlockWalWriters(TableToken tableToken) {
@@ -2034,7 +2030,6 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock,
             boolean inVolume,
-            boolean isMemoryTable,
             int tableKind
     ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
@@ -2066,16 +2061,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 boolean locked = true;
                 if (lockedReason == null) {
                     try {
-                        // Register memory table with RoutingFilesFacade before file creation.
-                        if (isMemoryTable) {
-                            FilesFacade ff = configuration.getFilesFacade();
-                            if (ff instanceof RoutingFilesFacade rff) {
-                                rff.registerMemoryTable(
-                                        configuration.getDbRoot() + Files.SEPARATOR + tableToken.getDirName()
-                                );
-                            }
-                        }
-
                         if (inVolume) {
                             createTableOrMatViewInVolumeUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         } else {
@@ -2094,7 +2079,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             locked = false;
                             LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
-                        getDdlListener(tableToken).onTableOrViewOrMatViewCreated(securityContext, tableToken, tableKind);
+                        onTableOrViewOrMatViewCreated(securityContext, struct, tableToken, tableKind);
                         tableNameRegistry.registerName(tableToken);
                     } catch (Throwable e) {
                         keepLock = false;
@@ -2127,7 +2112,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private @NotNull ViewMetadata getViewMetadata(TableToken tableToken) {
-        final ViewState state = getViewStateStore().getViewState(tableToken);
+        final ViewState state = viewStateStore.getViewState(tableToken);
         if (state == null) {
             throw CairoException.viewDoesNotExist(tableToken.getTableName());
         }
@@ -2140,6 +2125,26 @@ public class CairoEngine implements Closeable, WriterSource {
 
         // this event will result in recompiling of dependent views, and updating their state
         enqueueCompileView(droppedToken);
+    }
+
+    private void onTableOrViewOrMatViewCreated(
+            SecurityContext securityContext,
+            TableStructure struct,
+            TableToken tableToken,
+            int tableKind
+    ) {
+        final DdlListener ddlListener = getDdlListener(tableToken);
+        ddlListener.onTableOrViewOrMatViewCreated(securityContext, tableToken, tableKind);
+        try {
+            struct.onCreated(this, tableToken);
+        } catch (Throwable th) {
+            try {
+                ddlListener.onTableOrViewOrMatViewDropped(tableToken);
+            } catch (Throwable rollbackEx) {
+                th.addSuppressed(rollbackEx);
+            }
+            throw th;
+        }
     }
 
     private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {
@@ -2167,24 +2172,17 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         try {
-            // Check if this is a soft link (table in secondary volume)
-            if (ff.isSoftLink(fromPath.$())) {
-                renameTableInVolume(ff, fromPath, toPath, root, toTableToken);
-            } else {
-                // Regular table, use standard rename
-                toPath.of(root).concat(toTableToken).$();
-                if (ff.rename(fromPath.$(), toPath.$()) != Files.FILES_RENAME_OK) {
-                    final int error = ff.errno();
-                    LOG.error()
-                            .$("could not rename [from='").$(fromPath)
-                            .$("', to='").$(toPath)
-                            .$("', error=").$(error)
-                            .I$();
-                    throw CairoException.critical(error)
-                            .put("could not rename [from='").put(fromPath)
-                            .put("', to='").put(toPath)
-                            .put(']');
-                }
+            if (ff.rename(fromPath.$(), toPath.$()) != Files.FILES_RENAME_OK) {
+                final int error = ff.errno();
+                LOG.error()
+                        .$("could not rename [from='").$(fromPath)
+                        .$("', to='").$(toPath)
+                        .$("', error=").$(error)
+                        .I$();
+                throw CairoException.critical(error)
+                        .put("could not rename [from='").put(fromPath)
+                        .put("', to='").put(toPath)
+                        .put(']');
             }
             tableNameRegistry.registerName(toTableToken);
             return toTableToken;
@@ -2194,61 +2192,11 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private void renameTableInVolume(FilesFacade ff, Path fromPath, Path toPath, CharSequence root, TableToken toTableToken) {
-        // Read the symlink target (e.g., /volume/oldTableName)
-        Path volumePath = Path.getThreadLocal2("");
-        if (!ff.readLink(fromPath, volumePath)) {
-            throw CairoException.critical(ff.errno())
-                    .put("could not read symlink target [path=").put(fromPath).put(']');
+    private boolean tryLockWalPurgeJob0(long timeout, TimeUnit timeUnit) {
+        if (timeout == 0) {
+            return walPurgeJobLock.tryLock();
         }
-
-        // Calculate new volume path by replacing table name
-        // volumePath = /volume/oldTableName -> /volume/newTableName
-        int lastSlash = Utf8s.lastIndexOfAscii(volumePath, '/');
-        if (lastSlash < 0) {
-            throw CairoException.critical(0)
-                    .put("invalid symlink target [path=").put(volumePath).put(']');
-        }
-
-        // Build the new volume path: take volume root + new table dir name
-        // First save the volume path size, trim it, copy the root portion, then restore
-        int volumePathSize = volumePath.size();
-        volumePath.trimTo(lastSlash + 1);
-        Path newVolumePath = Path.PATH.get();
-        newVolumePath.of(volumePath).concat(toTableToken.getDirName()).$();
-        // Restore volumePath for later use
-        volumePath.trimTo(volumePathSize);
-
-        // 1. Remove old symlink first
-        if (ff.unlink(fromPath.$()) != 0) {
-            throw CairoException.critical(ff.errno())
-                    .put("could not remove symlink [path=").put(fromPath).put(']');
-        }
-
-        // 2. Rename directory in volume
-        if (ff.rename(volumePath.$(), newVolumePath.$()) != Files.FILES_RENAME_OK) {
-            // Try to restore symlink on failure
-            ff.softLink(volumePath.$(), fromPath.$());
-            throw CairoException.critical(ff.errno())
-                    .put("could not rename volume directory [from=").put(volumePath)
-                    .put(", to=").put(newVolumePath).put(']');
-        }
-
-        // 3. Create new symlink pointing to the renamed volume directory
-        toPath.of(root).concat(toTableToken).$();
-        if (ff.softLink(newVolumePath.$(), toPath.$()) != 0) {
-            // Try to restore on failure
-            ff.rename(newVolumePath.$(), volumePath.$());
-            ff.softLink(volumePath.$(), fromPath.$());
-            throw CairoException.critical(ff.errno())
-                    .put("could not create new symlink [path=").put(toPath).put(']');
-        }
-
-        LOG.info().$("renamed table in volume [from=").$(fromPath)
-                .$(", to=").$(toPath)
-                .$(", volumeFrom=").$(volumePath)
-                .$(", volumeTo=").$(newVolumePath)
-                .I$();
+        return walPurgeJobLock.tryLock(timeout, timeUnit);
     }
 
     private void tryRepairTable(TableToken tableToken, CairoException rethrow) {
@@ -2308,6 +2256,10 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected void clearDdlListener() {
+        ddlListener.clear();
     }
 
     protected @NotNull MatViewGraph createMatViewGraph() {

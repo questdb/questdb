@@ -51,6 +51,11 @@ impl RowGroupMetaData {
         &self.columns
     }
 
+    /// Takes ownership of the column chunk metadata, leaving an empty vec.
+    pub fn take_columns(&mut self) -> Vec<ColumnChunkMetaData> {
+        std::mem::take(&mut self.columns)
+    }
+
     /// Number of rows in this row group.
     pub fn num_rows(&self) -> usize {
         self.num_rows
@@ -103,7 +108,7 @@ impl RowGroupMetaData {
     }
 
     /// Method to convert to Thrift.
-    pub(crate) fn into_thrift(self) -> RowGroup {
+    pub fn into_thrift(self) -> RowGroup {
         let file_offset = self
             .columns
             .iter()

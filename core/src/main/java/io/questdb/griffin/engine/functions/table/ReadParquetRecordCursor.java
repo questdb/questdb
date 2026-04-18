@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,12 +30,18 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
@@ -45,8 +51,8 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
@@ -66,44 +72,54 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Page frame cursor for single-threaded read_parquet() SQL function.
- * <p>
- * Supports optional random access mode for efficient sorting via
- * {@code LongSortedLightRecordCursorFactory} (radix sort). When a sort column
- * index is provided, the cursor uses a two-pass strategy: during the sequential
- * {@code hasNext()} scan it decodes only the sort column per row group (keeping
- * memory usage minimal), then on the first {@code recordAt()} call it fully
- * decodes all cached row groups.
  */
-public class ReadParquetRecordCursor implements RecordCursor {
+public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(ReadParquetRecordCursor.class);
+    private final LongList auxPtrs = new LongList();
     private final DirectIntList columns;
+    private final LongList dataPtrs = new LongList();
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
+    private final DirectLongList filterList;
+    private final MemoryCARWImpl filterValues;
     // doesn't include unsupported columns
     private final RecordMetadata metadata;
-    private final ParquetRecord recordA;
+    private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
+    private final ParquetRecord record;
     private final RowGroupBuffers rowGroupBuffers;
-    // Random access fields
-    private ObjList<LongList> cachedAuxPtrs;
-    private ObjList<LongList> cachedDataPtrs;
-    private ObjList<RowGroupBuffers> cachedRowGroupBuffers;
     private long addr = 0;
     private int currentRowInRowGroup;
     private long fd = -1;
     private long fileSize = 0;
-    private boolean randomAccessEnabled;
-    private ParquetRecord recordB;
+    private long filterBufEnd;
+    private boolean isFilterListPrepared;
     private int rowGroupIndex;
     private long rowGroupRowCount;
 
-    public ReadParquetRecordCursor(FilesFacade ff, RecordMetadata metadata) {
+    public ReadParquetRecordCursor(FilesFacade ff, RecordMetadata metadata, @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         try {
             this.ff = ff;
             this.metadata = metadata;
             this.decoder = new PartitionDecoder();
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
-            this.recordA = new ParquetRecord(metadata.getColumnCount());
+            this.record = new ParquetRecord(metadata.getColumnCount());
+            this.pushdownFilterConditions = pushdownFilterConditions;
+            if (pushdownFilterConditions != null && pushdownFilterConditions.size() > 0) {
+                this.filterList = new DirectLongList(
+                        (long) pushdownFilterConditions.size() * ParquetRowGroupFilter.LONGS_PER_FILTER,
+                        MemoryTag.NATIVE_PARQUET_PARTITION_DECODER,
+                        true
+                );
+                this.filterValues = new MemoryCARWImpl(
+                        ParquetRowGroupFilter.FILTER_BUFFER_PAGE_SIZE,
+                        ParquetRowGroupFilter.FILTER_BUFFER_MAX_PAGES,
+                        MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
+                );
+            } else {
+                this.filterList = null;
+                this.filterValues = null;
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -114,14 +130,14 @@ public class ReadParquetRecordCursor implements RecordCursor {
      * Validates that metadata columns can be projected from parquet and optionally populates column mappings.
      *
      * @param columns       if not null, will be populated with (parquetIndex, parquetType) pairs
-     * @param columnIndexes if not null, will be populated with metadata column indexes
+     * @param columnMapping if not null, will be populated with (parquetIndex, writerIndex) pairs
      * @return true if projection is possible, false otherwise
      */
     public static boolean canProjectMetadata(
             RecordMetadata metadata,
             PartitionDecoder decoder,
             @Nullable DirectIntList columns,
-            @Nullable IntList columnIndexes
+            @Nullable ColumnMapping columnMapping
     ) {
         final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
 
@@ -151,10 +167,21 @@ public class ReadParquetRecordCursor implements RecordCursor {
 
             if (columns != null) {
                 columns.add(parquetIndex);
-                columns.add(actualType);
+                if (isSymbolToVarcharConversion) {
+                    // Decode SYMBOL as VARCHAR_SLICE so that the aux format
+                    // matches what ParquetRecord.getVarcharA() expects.
+                    columns.add(ColumnType.VARCHAR_SLICE);
+                } else {
+                    int decodedType = actualType;
+                    if (ColumnType.tagOf(decodedType) == ColumnType.VARCHAR) {
+                        decodedType = ColumnType.VARCHAR_SLICE;
+                    }
+                    columns.add(decodedType);
+                }
             }
-            if (columnIndexes != null) {
-                columnIndexes.add(parquetIndex);
+            if (columnMapping != null) {
+                final int columnId = parquetMetadata.getColumnId(parquetIndex);
+                columnMapping.addColumn(parquetIndex, columnId < 0 ? parquetIndex : columnId);
             }
         }
 
@@ -186,8 +213,9 @@ public class ReadParquetRecordCursor implements RecordCursor {
         Misc.free(decoder);
         Misc.free(rowGroupBuffers);
         Misc.free(columns);
-        Misc.free(recordA);
-        Misc.free(recordB);
+        Misc.free(record);
+        Misc.free(filterList);
+        Misc.free(filterValues);
         if (fd != -1) {
             ff.close(fd);
             fd = -1;
@@ -196,38 +224,16 @@ public class ReadParquetRecordCursor implements RecordCursor {
             ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             addr = 0;
         }
-        freeCachedRowGroups();
-    }
-
-    public void enableRandomAccess() {
-        this.randomAccessEnabled = true;
-        if (recordB == null) {
-            recordB = new ParquetRecord(metadata.getColumnCount());
-        }
-        if (cachedDataPtrs == null) {
-            cachedDataPtrs = new ObjList<>();
-            cachedAuxPtrs = new ObjList<>();
-            cachedRowGroupBuffers = new ObjList<>();
-        }
     }
 
     @Override
     public Record getRecord() {
-        return recordA;
-    }
-
-    @Override
-    public Record getRecordB() {
-        if (randomAccessEnabled) {
-            return recordB;
-        }
-        throw new UnsupportedOperationException();
+        return record;
     }
 
     @Override
     public boolean hasNext() {
         if (++currentRowInRowGroup < rowGroupRowCount) {
-            recordA.activeRowInGroup = currentRowInRowGroup;
             return true;
         }
 
@@ -238,11 +244,7 @@ public class ReadParquetRecordCursor implements RecordCursor {
         }
     }
 
-    public boolean isRandomAccessEnabled() {
-        return randomAccessEnabled;
-    }
-
-    public void of(LPSZ path) {
+    public void of(LPSZ path, SqlExecutionContext executionContext) throws SqlException {
         // Reopen the file, it could have changed
         this.fd = TableUtils.openRO(ff, path, LOG);
         this.fileSize = ff.length(fd);
@@ -259,25 +261,27 @@ public class ReadParquetRecordCursor implements RecordCursor {
                 throw TableReferenceOutOfDateException.of(path);
             }
         }
+        isFilterListPrepared = false;
+        if (pushdownFilterConditions != null) {
+            for (int i = 0, sz = pushdownFilterConditions.size(); i < sz; ++i) {
+                pushdownFilterConditions.getQuick(i).init(executionContext);
+            }
+            isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
+                    decoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList, filterValues
+            );
+            if (isFilterListPrepared) {
+                filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
+            }
+        }
 
-        freeCachedRowGroups();
         toTop();
     }
 
     @Override
     public long preComputedStateSize() {
         return 0;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        if (randomAccessEnabled) {
-            int rowGroup = (int) (atRowId >>> 32);
-            int rowInGroup = (int) atRowId;
-            ((ParquetRecord) record).positionAt(rowGroup, rowInGroup);
-        } else {
-            throw new UnsupportedOperationException();
-        }
     }
 
     @Override
@@ -308,7 +312,6 @@ public class ReadParquetRecordCursor implements RecordCursor {
             long availableToSkip = rowGroupRowCount - currentRowInRowGroup - 1;
             long skipNow = Math.min(toSkip, availableToSkip);
             currentRowInRowGroup += (int) skipNow;
-            recordA.activeRowInGroup = currentRowInRowGroup;
             toSkip -= skipNow;
             rowCount.dec(skipNow);
         }
@@ -321,53 +324,34 @@ public class ReadParquetRecordCursor implements RecordCursor {
         currentRowInRowGroup = -1;
     }
 
-    private void freeCachedRowGroups() {
-        if (cachedRowGroupBuffers != null) {
-            for (int i = 0, n = cachedRowGroupBuffers.size(); i < n; i++) {
-                Misc.free(cachedRowGroupBuffers.getQuick(i));
-            }
-            cachedRowGroupBuffers.clear();
-            cachedDataPtrs.clear();
-            cachedAuxPtrs.clear();
-        }
+    private long getStrAddr(int col) {
+        long auxPtr = auxPtrs.get(col);
+        long dataPtr = dataPtrs.get(col);
+        long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+        return dataPtr + dataOffset;
     }
 
     private boolean switchToNextRowGroup() {
-        if (++rowGroupIndex < decoder.metadata().getRowGroupCount()) {
-            final int rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
-            final int columnCount = metadata.getColumnCount();
-
-            if (randomAccessEnabled) {
-                RowGroupBuffers rgBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                rowGroupRowCount = decoder.decodeRowGroup(rgBuffers, columns, rowGroupIndex, 0, rowGroupSize);
-
-                LongList groupDataPtrs = new LongList(columnCount);
-                LongList groupAuxPtrs = new LongList(columnCount);
-                for (int i = 0; i < columnCount; i++) {
-                    groupDataPtrs.add(rgBuffers.getChunkDataPtr(i));
-                    groupAuxPtrs.add(rgBuffers.getChunkAuxPtr(i));
-                }
-
-                cachedRowGroupBuffers.add(rgBuffers);
-                cachedDataPtrs.add(groupDataPtrs);
-                cachedAuxPtrs.add(groupAuxPtrs);
-
-                recordA.activeDataPtrs = groupDataPtrs;
-                recordA.activeAuxPtrs = groupAuxPtrs;
-            } else {
-                rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
-
-                // In non-random-access mode, reuse the single RowGroupBuffers (original behavior).
-                recordA.activeDataPtrs.clear();
-                recordA.activeAuxPtrs.clear();
-                for (int i = 0; i < columnCount; i++) {
-                    recordA.activeDataPtrs.add(rowGroupBuffers.getChunkDataPtr(i));
-                    recordA.activeAuxPtrs.add(rowGroupBuffers.getChunkAuxPtr(i));
-                }
+        dataPtrs.clear();
+        auxPtrs.clear();
+        while (++rowGroupIndex < decoder.metadata().getRowGroupCount()) {
+            if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
+                    rowGroupIndex,
+                    decoder,
+                    filterList,
+                    filterBufEnd
+            )) {
+                continue;
             }
 
+            final int rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
+            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
+
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                dataPtrs.add(rowGroupBuffers.getChunkDataPtr(i));
+                auxPtrs.add(rowGroupBuffers.getChunkAuxPtr(i));
+            }
             currentRowInRowGroup = 0;
-            recordA.activeRowInGroup = 0;
             return true;
         }
         return false;
@@ -382,10 +366,6 @@ public class ReadParquetRecordCursor implements RecordCursor {
         private final ObjList<Long256Impl> longs256B;
         private final ObjList<Utf8SplitString> utf8ViewsA;
         private final ObjList<Utf8SplitString> utf8ViewsB;
-        // Each record has its own pointer state for random access
-        private LongList activeAuxPtrs;
-        private LongList activeDataPtrs;
-        private int activeRowInGroup;
 
         public ParquetRecord(int columnCount) {
             this.bsViews = new ObjList<>(columnCount);
@@ -396,8 +376,6 @@ public class ReadParquetRecordCursor implements RecordCursor {
             this.utf8ViewsA = new ObjList<>(columnCount);
             this.utf8ViewsB = new ObjList<>(columnCount);
             this.arrayBuffers = new ObjList<>(columnCount);
-            this.activeDataPtrs = new LongList();
-            this.activeAuxPtrs = new LongList();
         }
 
         @Override
@@ -408,16 +386,16 @@ public class ReadParquetRecordCursor implements RecordCursor {
         @Override
         public ArrayView getArray(int col, int colType) {
             final BorrowedArray array = borrowedArray(col);
-            final long auxPageAddress = activeAuxPtrs.getQuick(col);
+            final long auxPageAddress = auxPtrs.getQuick(col);
             if (auxPageAddress != 0) {
-                final long dataPageAddress = activeDataPtrs.getQuick(col);
+                final long dataPageAddress = dataPtrs.getQuick(col);
                 array.of(
                         colType,
                         auxPageAddress,
                         Long.MAX_VALUE,
                         dataPageAddress,
                         Long.MAX_VALUE,
-                        activeRowInGroup
+                        currentRowInRowGroup
                 );
             } else {
                 array.ofNull();
@@ -427,9 +405,9 @@ public class ReadParquetRecordCursor implements RecordCursor {
 
         @Override
         public BinarySequence getBin(int col) {
-            long auxPtr = activeAuxPtrs.get(col);
-            long dataPtr = activeDataPtrs.get(col);
-            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + activeRowInGroup * 8L);
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
+            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
             long len = Unsafe.getUnsafe().getLong(dataPtr + dataOffset);
             if (len != TableUtils.NULL_LEN) {
                 return bsView(col).of(dataPtr + dataOffset + 8L, len);
@@ -439,9 +417,9 @@ public class ReadParquetRecordCursor implements RecordCursor {
 
         @Override
         public long getBinLen(int col) {
-            long auxPtr = activeAuxPtrs.get(col);
-            long dataPtr = activeDataPtrs.get(col);
-            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + activeRowInGroup * 8L);
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
+            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
             return Unsafe.getUnsafe().getLong(dataPtr + dataOffset);
         }
 
@@ -452,19 +430,19 @@ public class ReadParquetRecordCursor implements RecordCursor {
 
         @Override
         public byte getByte(int col) {
-            long dataPtr = activeDataPtrs.get(col);
-            return Unsafe.getUnsafe().getByte(dataPtr + activeRowInGroup);
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getByte(dataPtr + currentRowInRowGroup);
         }
 
         @Override
         public char getChar(int col) {
-            long dataPtr = activeDataPtrs.get(col);
-            return Unsafe.getUnsafe().getChar(dataPtr + activeRowInGroup * 2L);
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getChar(dataPtr + currentRowInRowGroup * 2L);
         }
 
         @Override
         public void getDecimal128(int col, Decimal128 sink) {
-            long dataPtr = activeDataPtrs.get(col) + activeRowInGroup * 16L;
+            long dataPtr = dataPtrs.get(col) + currentRowInRowGroup * 16L;
             sink.ofRaw(
                     Unsafe.getUnsafe().getLong(dataPtr),
                     Unsafe.getUnsafe().getLong(dataPtr + 8L)
@@ -478,7 +456,7 @@ public class ReadParquetRecordCursor implements RecordCursor {
 
         @Override
         public void getDecimal256(int col, Decimal256 sink) {
-            long dataPtr = activeDataPtrs.get(col) + activeRowInGroup * 32L;
+            long dataPtr = dataPtrs.get(col) + currentRowInRowGroup * 32L;
             sink.ofRaw(
                     Unsafe.getUnsafe().getLong(dataPtr),
                     Unsafe.getUnsafe().getLong(dataPtr + 8L),
@@ -504,14 +482,14 @@ public class ReadParquetRecordCursor implements RecordCursor {
 
         @Override
         public double getDouble(int col) {
-            long dataPtr = activeDataPtrs.get(col);
-            return Unsafe.getUnsafe().getDouble(dataPtr + activeRowInGroup * 8L);
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getDouble(dataPtr + currentRowInRowGroup * 8L);
         }
 
         @Override
         public float getFloat(int col) {
-            long dataPtr = activeDataPtrs.get(col);
-            return Unsafe.getUnsafe().getFloat(dataPtr + activeRowInGroup * 4L);
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getFloat(dataPtr + currentRowInRowGroup * 4L);
         }
 
         @Override
@@ -541,26 +519,26 @@ public class ReadParquetRecordCursor implements RecordCursor {
 
         @Override
         public int getInt(int col) {
-            long dataPtr = activeDataPtrs.get(col);
-            return Unsafe.getUnsafe().getInt(dataPtr + activeRowInGroup * 4L);
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getInt(dataPtr + currentRowInRowGroup * 4L);
         }
 
         @Override
         public long getLong(int col) {
-            long dataPtr = activeDataPtrs.get(col);
-            return Unsafe.getUnsafe().getLong(dataPtr + activeRowInGroup * 8L);
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 8L);
         }
 
         @Override
         public long getLong128Hi(int col) {
-            long dataPtr = activeDataPtrs.get(col);
-            return Unsafe.getUnsafe().getLong(dataPtr + activeRowInGroup * 16L + 8);
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 16L + 8);
         }
 
         @Override
         public long getLong128Lo(int col) {
-            long dataPtr = activeDataPtrs.get(col);
-            return Unsafe.getUnsafe().getLong(dataPtr + activeRowInGroup * 16L);
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 16L);
         }
 
         @Override
@@ -583,17 +561,9 @@ public class ReadParquetRecordCursor implements RecordCursor {
         }
 
         @Override
-        public long getRowId() {
-            if (randomAccessEnabled) {
-                return ((long) rowGroupIndex << 32) | activeRowInGroup;
-            }
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public short getShort(int col) {
-            long dataPtr = activeDataPtrs.get(col);
-            return Unsafe.getUnsafe().getShort(dataPtr + activeRowInGroup * 2L);
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getShort(dataPtr + currentRowInRowGroup * 2L);
         }
 
         @Override
@@ -614,29 +584,21 @@ public class ReadParquetRecordCursor implements RecordCursor {
         @Nullable
         @Override
         public Utf8Sequence getVarcharA(int col) {
-            long auxPtr = activeAuxPtrs.get(col);
-            long dataPtr = activeDataPtrs.get(col);
-            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, activeRowInGroup, utf8ViewA(col));
+            long auxPtr = auxPtrs.get(col);
+            return VarcharTypeDriver.getSliceValue(auxPtr, currentRowInRowGroup, utf8ViewA(col));
         }
 
         @Nullable
         @Override
         public Utf8Sequence getVarcharB(int col) {
-            long auxPtr = activeAuxPtrs.get(col);
-            long dataPtr = activeDataPtrs.get(col);
-            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, activeRowInGroup, utf8ViewB(col));
+            long auxPtr = auxPtrs.get(col);
+            return VarcharTypeDriver.getSliceValue(auxPtr, currentRowInRowGroup, utf8ViewB(col));
         }
 
         @Override
         public int getVarcharSize(int col) {
-            long auxPtr = activeAuxPtrs.get(col);
-            return VarcharTypeDriver.getValueSize(auxPtr, activeRowInGroup);
-        }
-
-        private void positionAt(int rowGroup, int rowInGroup) {
-            activeDataPtrs = cachedDataPtrs.getQuick(rowGroup);
-            activeAuxPtrs = cachedAuxPtrs.getQuick(rowGroup);
-            activeRowInGroup = rowInGroup;
+            long auxPtr = auxPtrs.get(col);
+            return VarcharTypeDriver.getSliceValueSize(auxPtr, currentRowInRowGroup);
         }
 
         private @NotNull BorrowedArray borrowedArray(int col) {
@@ -670,14 +632,7 @@ public class ReadParquetRecordCursor implements RecordCursor {
         }
 
         private long getLong256Addr(int col) {
-            return activeDataPtrs.get(col) + (long) activeRowInGroup * Long256.BYTES;
-        }
-
-        private long getStrAddr(int col) {
-            long auxPtr = activeAuxPtrs.get(col);
-            long dataPtr = activeDataPtrs.get(col);
-            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + activeRowInGroup * 8L);
-            return dataPtr + dataOffset;
+            return dataPtrs.get(col) + (long) currentRowInRowGroup * Long256.BYTES;
         }
 
         private DirectString getStr(long addr, DirectString view) {

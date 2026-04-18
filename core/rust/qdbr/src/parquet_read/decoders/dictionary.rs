@@ -44,7 +44,7 @@ impl VarDictDecoder for BaseVarDictDecoder<'_> {
 }
 
 impl<'a> BaseVarDictDecoder<'a> {
-    pub fn try_new(dict_page: &'a DictPage<'a>, is_utf8: bool) -> ParquetResult<Self> {
+    pub fn try_new(dict_page: &'a DictPage<'a>) -> ParquetResult<Self> {
         let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
         let mut offset = 0usize;
         let dict_data = &dict_page.buffer;
@@ -71,22 +71,18 @@ impl<'a> BaseVarDictDecoder<'a> {
             }
 
             let str_slice = &dict_data[offset..offset + str_len];
-            if is_utf8 && std::str::from_utf8(str_slice).is_err() {
-                return Err(fmt_err!(
-                    Layout,
-                    "dictionary value {i} ({str_slice:?}) is not valid utf8"
-                ));
-            }
-
             dict_values.push(str_slice);
             offset += str_len;
             total_key_len += str_len;
         }
 
-        Ok(Self {
-            dict_values,
-            avg_key_len: total_key_len as f32 / dict_page.num_values as f32,
-        })
+        let avg_key_len = if dict_page.num_values == 0 {
+            0.0
+        } else {
+            total_key_len as f32 / dict_page.num_values as f32
+        };
+
+        Ok(Self { dict_values, avg_key_len })
     }
 }
 
@@ -150,6 +146,12 @@ impl<U, T> PrimitiveDictDecoder<T> for BasePrimitiveDictDecoder<'_, U, T> {
     #[inline]
     #[cfg(target_endian = "little")]
     fn get_dict_value(&self, index: u32) -> T {
+        const {
+            assert!(
+                size_of::<T>() <= size_of::<U>(),
+                "destination type T must not be larger than physical type U"
+            )
+        };
         // SAFETY: Caller guarantees index is in bounds and dict_page is properly sized.
         // We also require little-endian platforms, so no byte swapping is necessary.
         unsafe {
@@ -217,8 +219,7 @@ impl PrimitiveDictDecoder<i32> for RleLocalIsGlobalSymbolDictDecoder {
 pub struct ConvertablePrimitiveDictDecoder<'a, U, T, V> {
     dict_page: &'a [u8],
     converter: V,
-    _u: std::marker::PhantomData<U>,
-    _t: std::marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<(U, T)>,
 }
 
 impl<U, T, V> PrimitiveDictDecoder<T> for ConvertablePrimitiveDictDecoder<'_, U, T, V>
@@ -254,8 +255,7 @@ impl<'a, U, T, V> ConvertablePrimitiveDictDecoder<'a, U, T, V> {
         Ok(Self {
             dict_page: dict_page.buffer,
             converter,
-            _u: std::marker::PhantomData,
-            _t: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         })
     }
 }

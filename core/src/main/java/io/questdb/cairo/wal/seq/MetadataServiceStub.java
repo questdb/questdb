@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -56,7 +56,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+    default boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
         throw CairoException.critical(0).put("convert native partition to parquet does not update sequencer metadata");
     }
 
@@ -99,6 +99,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default int getTtlHoursOrMonths() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default UpdateOperator getUpdateOperator() {
         throw new UnsupportedOperationException();
     }
@@ -106,6 +111,11 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default boolean removePartition(long partitionTimestamp) {
         throw CairoException.critical(0).put("remove partition does not update sequencer metadata");
+    }
+
+    @Override
+    default void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig) {
+        throw CairoException.critical(0).put("set parquet encoding does not update sequencer metadata");
     }
 
     @Override

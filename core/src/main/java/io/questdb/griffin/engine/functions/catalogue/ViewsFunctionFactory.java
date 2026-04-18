@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -122,6 +122,9 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 final int n = viewTokens.size();
                 for (; viewIndex < n; viewIndex++) {
                     final TableToken viewToken = viewTokens.get(viewIndex);
+                    if (viewToken.isSystem()) {
+                        continue;
+                    }
                     if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
                         final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
                         if (viewDefinition == null) {

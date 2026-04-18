@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -42,6 +42,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
         add("/write");
         add("/api/v2/write");
     }};
+    ObjHashSet<String> CONTEXT_PATH_QWP = new ObjHashSet<>() {{
+        add("/write/v4");
+        add("/api/v4/write");
+    }};
     ObjHashSet<String> CONTEXT_PATH_IMPORT = new ObjHashSet<>() {{
         add("/imp");
     }};
@@ -77,6 +81,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     default ObjHashSet<String> getContextPathILP() {
         return CONTEXT_PATH_ILP;
+    }
+
+    default ObjHashSet<String> getContextPathQWP() {
+        return CONTEXT_PATH_QWP;
     }
 
     default ObjHashSet<String> getContextPathILPPing() {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -41,7 +41,7 @@ public interface ExecutionModel {
 
     int getModelType();
 
-    default QueryModel getQueryModel() {
+    default IQueryModel getQueryModel() {
         return null;
     }
 

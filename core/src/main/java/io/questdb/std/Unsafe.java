@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-// @formatter:off
 import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.Nullable;
 
@@ -45,32 +44,22 @@ public final class Unsafe {
     public static final long BYTE_SCALE;
     public static final long INT_OFFSET;
     public static final long INT_SCALE;
-    public static final Module JAVA_BASE_MODULE = System.class.getModule();
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
-    private static long FREE_COUNT_ADDR;
-    private static long MALLOC_COUNT_ADDR;
+    private static final long FREE_COUNT_ADDR;
+    private static final long MALLOC_COUNT_ADDR;
     private static final long[] NATIVE_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
     private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
-    private static long NON_RSS_MEM_USED_ADDR;
+    private static final long NON_RSS_MEM_USED_ADDR;
     private static final long OVERRIDE;
-    private static long REALLOC_COUNT_ADDR;
-    private static long RSS_MEM_LIMIT_ADDR;
-    private static long RSS_MEM_USED_ADDR;
+    private static final long REALLOC_COUNT_ADDR;
+    private static final long RSS_MEM_LIMIT_ADDR;
+    private static final long RSS_MEM_USED_ADDR;
     private static final sun.misc.Unsafe UNSAFE;
-    private static AnonymousClassDefiner anonymousClassDefiner;
-    private static final Method implAddExports;
+    private static final AnonymousClassDefiner anonymousClassDefiner;
 
     private Unsafe() {
-    }
-
-    public static void addExports(Module from, Module to, String packageName) {
-        try {
-            implAddExports.invoke(from, packageName, to);
-        } catch (ReflectiveOperationException e) {
-            e.printStackTrace(System.out);
-        }
     }
 
     public static long arrayGetVolatile(long[] array, int index) {
@@ -199,7 +188,9 @@ public final class Unsafe {
         return COUNTERS[memoryTag].sum() + UNSAFE.getLongVolatile(null, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
     }
 
-    /** Returns a `*const QdbAllocator` for use in Rust. */
+    /**
+     * Returns a `*const QdbAllocator` for use in Rust.
+     */
     public static long getNativeAllocator(int memoryTag) {
         return NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
     }
@@ -218,52 +209,6 @@ public final class Unsafe {
 
     public static sun.misc.Unsafe getUnsafe() {
         return UNSAFE;
-    }
-
-    /**
-     * Re-initialize the anonymous class definer. Required for GraalVM native-image
-     * where build-time field offsets and method handles are stale at runtime.
-     */
-    public static void reinitClassDefiner() {
-        // Reset stale build-time state in both definers
-        UnsafeClassDefiner.defineMethod = null;
-        MethodHandlesClassDefiner.defineMethod = null;
-        AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();
-        if (classDefiner == null) {
-            classDefiner = MethodHandlesClassDefiner.newInstance();
-        }
-        if (classDefiner != null) {
-            anonymousClassDefiner = classDefiner;
-        }
-    }
-
-    /**
-     * Re-allocate native memory counters. Required for GraalVM native-image
-     * where build-time native addresses are stale at runtime.
-     */
-    public static void reinitNativeCounters() {
-        final long nativeMemCountersArraySize = (6 + COUNTERS.length) * 8;
-        final long nativeMemCountersArray = UNSAFE.allocateMemory(nativeMemCountersArraySize);
-        UNSAFE.setMemory(nativeMemCountersArray, nativeMemCountersArraySize, (byte) 0);
-
-        long ptr = nativeMemCountersArray;
-        RSS_MEM_USED_ADDR = ptr;
-        ptr += 8;
-        RSS_MEM_LIMIT_ADDR = ptr;
-        ptr += 8;
-        MALLOC_COUNT_ADDR = ptr;
-        ptr += 8;
-        REALLOC_COUNT_ADDR = ptr;
-        ptr += 8;
-        FREE_COUNT_ADDR = ptr;
-        ptr += 8;
-        NON_RSS_MEM_USED_ADDR = ptr;
-        ptr += 8;
-        for (int i = 0; i < COUNTERS.length; i++) {
-            COUNTERS[i] = new LongAdder();
-            NATIVE_MEM_COUNTER_ADDRS[i] = ptr;
-            ptr += 8;
-        }
     }
 
     public static void incrFreeCount() {
@@ -385,7 +330,9 @@ public final class Unsafe {
         }
     }
 
-    /** Allocate a new native allocator object and return its pointer */
+    /**
+     * Allocate a new native allocator object and return its pointer
+     */
     private static long constructNativeAllocator(long nativeMemCountersArray, int memoryTag) {
         // See `allocator.rs` for the definition of `QdbAllocator`.
         // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
@@ -538,7 +485,6 @@ public final class Unsafe {
             LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
 
             OVERRIDE = AccessibleObject_override_fieldOffset();
-            implAddExports = Module.class.getDeclaredMethod("implAddExports", String.class, Module.class);
 
             AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();
             if (classDefiner == null) {
@@ -551,7 +497,6 @@ public final class Unsafe {
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
-        makeAccessible(implAddExports);
 
         // A single allocation for all the off-heap native memory counters.
         // Might help with locality, given they're often incremented together.
