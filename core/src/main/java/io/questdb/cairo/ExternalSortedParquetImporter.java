@@ -44,18 +44,21 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 
 /**
- * External merge sort for parquet files that are too large to sort in one pass.
+ * External merge sort for parquet files that are too large or too unfavourably
+ * ordered to sort in one pass. The importer runs in two phases:
+ * <ul>
+ *   <li>{@link #phaseA} streams the source one row group at a time, sorts each
+ *       RG internally by the timestamp column, and persists the sorted RG as a
+ *       standalone parquet file (a "run") via the provided {@link FilesFacade}.
+ *       When the facade is a {@link io.questdb.std.MemFdFilesFacade}, runs
+ *       live entirely in anonymous RAM.</li>
+ *   <li>{@link #phaseB} k-way merges the runs and delivers a globally-sorted
+ *       row stream to a {@link SortedRowSink} of the caller's choice.</li>
+ * </ul>
+ * Phase A is single-threaded; parallelism is deferred until the single-thread
+ * memory bounds are validated end-to-end on real workloads.
  * <p>
- * Phase A (this class): stream the source one row group at a time, sort each RG
- * internally by the timestamp column, and persist the sorted RG as a standalone
- * parquet file (a "run") via the provided {@link FilesFacade}. When the facade
- * is a {@link io.questdb.std.MemFdFilesFacade}, runs live entirely in anonymous
- * RAM.
- * <p>
- * Phase B (to follow in a later milestone) will k-way merge the runs into a
- * single sorted output stream, dispatched to a pluggable sink.
- * <p>
- * Memory profile per RG worker (single-threaded in Phase A by default):
+ * Memory profile for one source row group in Phase A:
  * <ul>
  *   <li>One {@link RowGroupBuffers} for the decoded RG (decompressed size)</li>
  *   <li>One 16 B/row sort index (ts, localRow) pairs</li>
@@ -63,8 +66,12 @@ import io.questdb.std.str.Path;
  *       (scatter destination; var-columns grow on demand)</li>
  *   <li>The streaming parquet encoder's internal buffer (~tens of MB)</li>
  * </ul>
- * All native allocations use {@link MemoryTag#NATIVE_IMPORT} so leaks surface
- * in tag-based assertions.
+ * Most native allocations that the importer itself performs use
+ * {@link MemoryTag#NATIVE_IMPORT}; the {@link RowGroupBuffers} and
+ * {@link PartitionDecoder} components own their own allocations under
+ * {@link MemoryTag#NATIVE_PARQUET_PARTITION_DECODER} and mmaps under
+ * {@link MemoryTag#MMAP_PARQUET_PARTITION_DECODER}. All three tags return to
+ * baseline after a successful round-trip.
  */
 public class ExternalSortedParquetImporter {
 
@@ -72,9 +79,10 @@ public class ExternalSortedParquetImporter {
     // Each run holds exactly one source row group worth of data in a single
     // output row group, so the streaming writer flushes everything in one shot.
     private static final long RUN_DATA_PAGE_SIZE = 0L; // default
-    // TODO (M2): make the run-path namespace a caller-supplied prefix so that
-    // concurrent imports on the same MemFdFilesFacade don't collide on
-    // "run_<i>.parquet". For M1 there is a single caller per facade.
+    // The run-path namespace is a compile-time constant. Concurrent imports
+    // against the same FilesFacade would collide on "run_<i>.parquet"; a
+    // follow-up should plumb a caller-supplied prefix through phaseA. Not
+    // hit today since there is one caller per import.
     private static final String RUN_PATH_PREFIX = "run_";
     private static final String RUN_PATH_SUFFIX = ".parquet";
 
@@ -138,8 +146,9 @@ public class ExternalSortedParquetImporter {
 
             final int srcTsColType = meta.getColumnType(tsColumnIndex);
             if (!ColumnType.isTimestamp(srcTsColType)) {
-                // Phase A M1 milestone: TIMESTAMP source only. LONG and DATE handling
-                // will follow once the base path is validated.
+                // TIMESTAMP source only for now. LONG and DATE handling is a
+                // planned follow-up; the stats-decoding path for those types
+                // already exists in BulkSortedParquetWriter.
                 throw CairoException.nonCritical()
                         .put("phaseA currently requires TIMESTAMP source type [column=")
                         .put(tsColumnName)
@@ -214,10 +223,11 @@ public class ExternalSortedParquetImporter {
      * phaseB never calls {@link SortedRowSink#close}, so the caller must
      * close it whether the stream completed or was torn by an exception.
      * <p>
-     * Memory: this milestone decodes every run's row group simultaneously.
-     * That is safe for test fixtures and small inputs but is NOT bounded by
-     * available RAM on adversarial workloads like hits.parquet; page-level
-     * streaming / wave merging is planned for a later milestone.
+     * Memory: the current implementation decodes every run's row group up
+     * front and holds all decoded buffers simultaneously. That is safe for
+     * test fixtures and small inputs but is NOT bounded by available RAM on
+     * adversarial workloads like hits.parquet; page-level streaming / wave
+     * merging is a planned follow-up.
      *
      * @param runFf          facade hosting the run files (must match the
      *                       facade passed to {@link #phaseA})
