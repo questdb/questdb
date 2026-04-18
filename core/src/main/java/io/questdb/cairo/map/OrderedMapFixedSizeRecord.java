@@ -58,7 +58,6 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     private final long[] valueOffsets;
     private final long valueSize;
     private long keyAddress;
-    private long limit;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
     private long valueAddress;
@@ -380,11 +379,6 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     public void of(long address) {
         this.keyAddress = address;
         this.valueAddress = address + keySize;
-    }
-
-    @Override
-    public void setLimit(long limit) {
-        this.limit = limit;
     }
 
     @Override

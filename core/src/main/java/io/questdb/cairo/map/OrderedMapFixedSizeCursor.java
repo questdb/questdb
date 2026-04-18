@@ -84,8 +84,6 @@ class OrderedMapFixedSizeCursor implements OrderedMapCursor {
     public OrderedMapFixedSizeCursor init(long heapStart, long heapLimit, int size) {
         this.heapAddr = this.heapStart = heapStart;
         this.remaining = this.size = size;
-        recordA.setLimit(heapLimit);
-        recordB.setLimit(heapLimit);
         return this;
     }
 

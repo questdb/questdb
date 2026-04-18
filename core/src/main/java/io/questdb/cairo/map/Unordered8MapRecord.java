@@ -54,7 +54,6 @@ final class Unordered8MapRecord implements MapRecord {
     private final FlyweightPackedMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
-    private long limit;
     private long startAddress;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
@@ -315,10 +314,6 @@ final class Unordered8MapRecord implements MapRecord {
     @Override
     public void of(long address) {
         this.startAddress = address;
-    }
-
-    public void setLimit(long limit) {
-        this.limit = limit;
     }
 
     @Override
