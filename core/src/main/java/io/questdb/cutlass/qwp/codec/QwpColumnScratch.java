@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.qwp.codec;
 
-import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -33,8 +32,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
-
-import java.nio.charset.StandardCharsets;
 
 /**
  * Per-column native scratch used by {@link QwpResultBatchBuffer} during one

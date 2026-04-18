@@ -535,6 +535,69 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testFromConfigConnectString() throws Exception {
+        // The fromConfig(String) factory mirrors Sender.fromConfig: schema::key=value;...
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE cs(x LONG)");
+                serverMain.execute("INSERT INTO cs VALUES (42), (43)");
+
+                List<Long> rows = new ArrayList<>();
+                String conf = "ws::addr=127.0.0.1:" + HTTP_PORT + ";path=/read/v1;client_id=conf-test/1.0;buffer_pool_size=2;";
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(conf)) {
+                    client.connect();
+                    client.execute("SELECT x FROM cs ORDER BY x", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                rows.add(batch.getLong(0, r));
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress query error: " + message);
+                        }
+                    });
+                }
+                Assert.assertEquals(List.of(42L, 43L), rows);
+            }
+        });
+    }
+
+    @Test
+    public void testFromConfigRejectsBadSchema() {
+        try {
+            QwpQueryClient.fromConfig("http::addr=localhost:9000;");
+            Assert.fail("expected unsupported-schema error");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains("unsupported schema"));
+        }
+        try {
+            QwpQueryClient.fromConfig("ws::");
+            Assert.fail("expected missing-addr error");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains("addr"));
+        }
+        try {
+            QwpQueryClient.fromConfig("ws::addr=h:9000;buffer_pool_size=0;");
+            Assert.fail("expected bad pool-size error");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains("buffer_pool_size"));
+        }
+        try {
+            QwpQueryClient.fromConfig("wss::addr=h:9000;");
+            Assert.fail("expected wss-not-supported error");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains("wss"));
+        }
+    }
+
+    @Test
     public void testIpv4NullSentinel() throws Exception {
         // Regression: IPv4 maps to wire TYPE_INT but uses 0 (Numbers.IPv4_NULL) as the
         // null sentinel, not Integer.MIN_VALUE. The egress server must check 0, not
