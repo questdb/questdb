@@ -29,6 +29,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
@@ -60,6 +61,9 @@ public class BulkSortedParquetWriter {
     private static final Log LOG = LogFactory.getLog(BulkSortedParquetWriter.class);
     private static final int BUFFER_HEADER_SIZE = 2 * Long.BYTES;
     private static final int CHUNK_COL_ENTRY_SIZE = 7; // entries per column for writeStreamingParquetChunk
+    // Output row group size. Must match the streaming writer's row_group_size
+    // so that each full chunk is completely flushed and its buffers can be freed.
+    private static final int OUTPUT_RG_SIZE = 100_000;
 
     /**
      * Execute a bulk sorted parquet write using the same FilesFacade for source and destination.
@@ -70,18 +74,21 @@ public class BulkSortedParquetWriter {
             CharSequence dstPath,
             CharSequence tsColumnName
     ) {
-        execute(ff, ff, srcPath, dstPath, tsColumnName, -1);
+        execute(ff, ff, srcPath, dstPath, tsColumnName, -1, 0);
     }
 
     /**
      * Execute a bulk sorted parquet write.
      *
-     * @param srcFf         files facade for reading the source parquet
-     * @param dstFf         files facade for writing the output parquet
-     * @param srcPath       path to source parquet file
-     * @param dstPath       path to destination parquet file
-     * @param tsColumnName  name of the timestamp column to sort by
-     * @param tsColumnIndex index of the timestamp column in the parquet metadata, or -1 to look up by name
+     * @param srcFf          files facade for reading the source parquet
+     * @param dstFf          files facade for writing the output parquet
+     * @param srcPath        path to source parquet file
+     * @param dstPath        path to destination parquet file
+     * @param tsColumnName   name of the timestamp column to sort by
+     * @param tsColumnIndex  index of the timestamp column, or -1 to look up by name
+     * @param tsColumnType   QuestDB column type to use for the timestamp column in the
+     *                       output (e.g. ColumnType.TIMESTAMP). 0 = use the source type.
+     *                       This allows treating a LONG column as TIMESTAMP.
      */
     public static void execute(
             FilesFacade srcFf,
@@ -89,7 +96,8 @@ public class BulkSortedParquetWriter {
             CharSequence srcPath,
             CharSequence dstPath,
             CharSequence tsColumnName,
-            int tsColumnIndex
+            int tsColumnIndex,
+            int tsColumnType
     ) {
         final int memoryTag = MemoryTag.NATIVE_IMPORT;
 
@@ -127,15 +135,18 @@ public class BulkSortedParquetWriter {
                 }
             }
 
-            // Verify timestamp column type
-            final int tsColType = meta.getColumnType(tsColumnIndex);
-            if (!ColumnType.isTimestamp(tsColType) && tsColType != ColumnType.LONG && tsColType != ColumnType.DATE) {
+            // Verify and resolve timestamp column type
+            final int srcTsColType = meta.getColumnType(tsColumnIndex);
+            if (!ColumnType.isTimestamp(srcTsColType) && srcTsColType != ColumnType.LONG && srcTsColType != ColumnType.DATE) {
                 throw CairoException.nonCritical()
                         .put("timestamp column must be TIMESTAMP, LONG, or DATE [column=")
                         .put(tsColumnName)
-                        .put(", type=").put(ColumnType.nameOf(tsColType))
+                        .put(", type=").put(ColumnType.nameOf(srcTsColType))
                         .put(']');
             }
+            // Effective type for the timestamp column in the output parquet.
+            // Allows treating a LONG column as TIMESTAMP.
+            final int effectiveTsType = tsColumnType > 0 ? tsColumnType : srcTsColType;
 
             // Build column projection: [parquet_index, column_type] pairs
             columns = new DirectIntList(2L * columnCount, memoryTag);
@@ -164,11 +175,29 @@ public class BulkSortedParquetWriter {
             final long[] rgMaxTs = new long[rowGroupCount];
             final int[] rgSize = new int[rowGroupCount];
 
-            for (int i = 0; i < rowGroupCount; i++) {
-                rgOrigIndex[i] = i;
-                rgMinTs[i] = decoder.rowGroupMinTimestamp(i, tsColumnIndex);
-                rgMaxTs[i] = decoder.rowGroupMaxTimestamp(i, tsColumnIndex);
-                rgSize[i] = meta.getRowGroupSize(i);
+            if (ColumnType.isTimestamp(srcTsColType)) {
+                for (int i = 0; i < rowGroupCount; i++) {
+                    rgOrigIndex[i] = i;
+                    rgMinTs[i] = decoder.rowGroupMinTimestamp(i, tsColumnIndex);
+                    rgMaxTs[i] = decoder.rowGroupMaxTimestamp(i, tsColumnIndex);
+                    rgSize[i] = meta.getRowGroupSize(i);
+                }
+            } else {
+                // LONG or DATE — read stats via RowGroupStatBuffers
+                try (
+                        RowGroupStatBuffers statBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        DirectIntList statColumns = new DirectIntList(2, memoryTag)
+                ) {
+                    statColumns.add(tsColumnIndex);
+                    statColumns.add(srcTsColType);
+                    for (int i = 0; i < rowGroupCount; i++) {
+                        rgOrigIndex[i] = i;
+                        decoder.readRowGroupStats(statBuffers, statColumns, i);
+                        rgMinTs[i] = statBuffers.getMinValueLong(0);
+                        rgMaxTs[i] = statBuffers.getMaxValueLong(0);
+                        rgSize[i] = meta.getRowGroupSize(i);
+                    }
+                }
             }
 
             // Sort row groups by min timestamp (insertion sort — typically <1000 RGs)
@@ -237,7 +266,7 @@ public class BulkSortedParquetWriter {
             // Phase 3: Create streaming parquet writer and process row groups
             writeOutput(
                     dstFf, decoder, columns, meta,
-                    dstPath, tsColumnIndex,
+                    dstPath, tsColumnIndex, effectiveTsType,
                     rgOrigIndex, rgMinTs, rgMaxTs, rgSize,
                     isOverlapStart, rowGroupCount, columnCount, totalRows,
                     memoryTag
@@ -266,6 +295,7 @@ public class BulkSortedParquetWriter {
             PartitionDecoder.Metadata meta,
             CharSequence dstPath,
             int tsColumnIndex,
+            int effectiveTsType,
             long[] rgOrigIndex,
             long[] rgMinTs,
             long[] rgMaxTs,
@@ -286,15 +316,12 @@ public class BulkSortedParquetWriter {
                 DirectLongList columnMetadata = new DirectLongList(2L * columnCount, memoryTag);
                 Path dstP = new Path()
         ) {
-            // Build column names and metadata for the streaming writer.
-            // Use sequential column IDs (0, 1, 2, ...) to match QuestDB's
-            // writer index convention for the destination table.
             for (int c = 0; c < columnCount; c++) {
                 int startSize = columnNames.size();
                 columnNames.put(meta.getColumnName(c));
                 int nameSize = columnNames.size() - startSize;
                 columnMetadata.add(nameSize);
-                int colType = meta.getColumnType(c);
+                int colType = (c == tsColumnIndex) ? effectiveTsType : meta.getColumnType(c);
                 columnMetadata.add((long) c << 32 | (colType & 0xFFFFFFFFL));
             }
 
@@ -306,10 +333,10 @@ public class BulkSortedParquetWriter {
                     columnMetadata.getAddress(),
                     tsColumnIndex,
                     false, // ascending
-                    ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                    ParquetCompression.WRITER_COMPRESSION_SNAPPY,
                     true,  // statistics enabled
                     false, // raw array encoding
-                    0L,    // default row group size
+                    (long) OUTPUT_RG_SIZE,
                     0L,    // default data page size
                     ParquetVersion.PARQUET_VERSION_V1,
                     0L,    // bloom filter column indexes ptr (no bloom filters)
@@ -318,7 +345,6 @@ public class BulkSortedParquetWriter {
                     0.0    // min compression ratio (disabled)
             );
 
-            // Open output file
             dstP.put(dstPath);
             outputFd = ff.openRW(dstP.$(), CairoConfiguration.O_NONE);
             if (outputFd < 0) {
@@ -328,36 +354,39 @@ public class BulkSortedParquetWriter {
                         .put(']');
             }
 
-            // Global sort: treat all row groups as one overlapping cluster.
-            // The cluster's column data buffers must stay alive until
-            // finishStreamingParquetWrite, which is when the Rust encoder
-            // actually reads them.
-            //
-            // deferredFrees collects (addr, size) pairs for buffers whose
-            // lifetime must extend past the cluster method.
+            // Process row groups in clusters: overlapping clusters are k-way merged,
+            // non-overlapping singletons are merged as 1-RG clusters (sort + write).
+            int i = 0;
             DirectLongList deferredFrees = new DirectLongList(32, memoryTag);
             try {
-                fileOffset = writeOverlappingCluster(
-                        ff, outputFd, fileOffset,
-                        decoder, columns, meta,
-                        writerPtr,
-                        tsColumnIndex,
-                        rgOrigIndex, rgSize,
-                        0, rowGroupCount,
-                        columnCount, memoryTag,
-                        deferredFrees
-                );
-
-                // Finish: writes final partial row group + file footer.
-                // This is when the Rust encoder reads the column data buffers.
+                while (i < rowGroupCount) {
+                    int clusterEnd;
+                    if (i < rowGroupCount - 1 && isOverlapStart[i]) {
+                        clusterEnd = i + 1;
+                        while (clusterEnd < rowGroupCount - 1 && isOverlapStart[clusterEnd]) {
+                            clusterEnd++;
+                        }
+                        clusterEnd++;
+                    } else {
+                        clusterEnd = i + 1;
+                    }
+                    fileOffset = kWayMergeCluster(
+                            ff, outputFd, fileOffset,
+                            decoder, columns, meta,
+                            writerPtr, tsColumnIndex,
+                            rgOrigIndex, rgSize,
+                            i, clusterEnd, columnCount,
+                            memoryTag, deferredFrees
+                    );
+                    i = clusterEnd;
+                }
                 fileOffset = drainBuffer(ff, outputFd, fileOffset,
                         PartitionEncoder.finishStreamingParquetWrite(writerPtr));
                 ff.truncate(outputFd, fileOffset);
             } finally {
-                // Free deferred column data buffers now that finish is done.
-                for (long i = 0, n = deferredFrees.size(); i < n; i += 2) {
-                    long addr = deferredFrees.get(i);
-                    long size = deferredFrees.get(i + 1);
+                for (long j = 0, n = deferredFrees.size(); j < n; j += 2) {
+                    long addr = deferredFrees.get(j);
+                    long size = deferredFrees.get(j + 1);
                     if (addr != 0) {
                         Unsafe.free(addr, size, memoryTag);
                     }
@@ -395,11 +424,14 @@ public class BulkSortedParquetWriter {
     }
 
     /**
-     * Decode + sort + write an overlapping cluster via the streaming parquet writer.
-     * Uses source-order scatter: iterates source row groups in order, writing each
-     * decoded row to its final sorted position in pre-allocated output buffers.
+     * K-way merge for an overlapping cluster. Decodes all RGs once, sorts each
+     * by timestamp, then merges using a min-heap. Output is written sequentially
+     * in chunks matching the streaming writer's row group size.
+     * <p>
+     * Memory: all cluster RGs decoded simultaneously (~350 MB per RG) plus
+     * per-RG sort arrays (16 bytes/row) plus one output chunk (~100 MB).
      */
-    private static long writeOverlappingCluster(
+    private static long kWayMergeCluster(
             FilesFacade ff,
             long outputFd,
             long fileOffset,
@@ -417,134 +449,19 @@ public class BulkSortedParquetWriter {
             DirectLongList deferredFrees
     ) {
         final int clusterRgCount = clusterEnd - clusterStart;
-
-        // Compute total rows in cluster and row group start offsets
         long clusterTotalRows = 0;
-        int[] rgStartRow = new int[clusterRgCount];
         for (int k = 0; k < clusterRgCount; k++) {
-            rgStartRow[k] = (int) clusterTotalRows;
             clusterTotalRows += rgSize[clusterStart + k];
         }
 
         LOG.info()
-                .$("processing overlapping cluster [rgCount=").$(clusterRgCount)
+                .$("k-way merge cluster [rgCount=").$(clusterRgCount)
                 .$(", totalRows=").$(clusterTotalRows)
                 .I$();
 
-        if (clusterTotalRows > Integer.MAX_VALUE) {
-            throw CairoException.nonCritical()
-                    .put("overlapping cluster too large [rows=")
-                    .put(clusterTotalRows)
-                    .put(']');
-        }
-        final int totalRows = (int) clusterTotalRows;
-
-        // Step 1: Decode only the timestamp column from all RGs in the cluster,
-        // build a (value, globalRowId) array, and radix sort it.
-        DirectIntList tsOnlyColumns = null;
-        long sortArray = 0;
-
-        try {
-            tsOnlyColumns = new DirectIntList(2, memoryTag);
-            tsOnlyColumns.add(columns.get(tsColumnIndex * 2));
-            tsOnlyColumns.add(columns.get(tsColumnIndex * 2 + 1));
-
-            // Allocate sort array: (value, rowId) pairs = 16 bytes each
-            final long sortArraySize = 16L * totalRows;
-            sortArray = Unsafe.malloc(sortArraySize, memoryTag);
-
-            long sortPos = sortArray;
-            for (int k = 0; k < clusterRgCount; k++) {
-                int origRg = (int) rgOrigIndex[clusterStart + k];
-                int rgRows = rgSize[clusterStart + k];
-
-                try (RowGroupBuffers tsBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)) {
-                    decoder.decodeRowGroup(tsBuffers, tsOnlyColumns, origRg, 0, rgRows);
-                    long tsDataPtr = tsBuffers.getChunkDataPtr(0);
-
-                    int globalStart = rgStartRow[k];
-                    for (int r = 0; r < rgRows; r++) {
-                        long tsValue = Unsafe.getUnsafe().getLong(tsDataPtr + r * 8L);
-                        Unsafe.getUnsafe().putLong(sortPos, tsValue);
-                        Unsafe.getUnsafe().putLong(sortPos + 8, globalStart + r);
-                        sortPos += 16;
-                    }
-                }
-            }
-
-            // Sort (value, rowId) pairs by value (ascending).
-            // Uses quicksort for <600 entries, radix sort for >=600.
-            // QuestDB timestamps are positive longs — unsigned sort is correct.
-            Vect.sortLongIndexAscInPlace(sortArray, totalRows);
-
-            // Build reverse map: for each source global row, what is its output position?
-            // destPos[globalRow] = outputPos
-            long destPosArray = 0;
-            try {
-                destPosArray = Unsafe.malloc(4L * totalRows, memoryTag);
-
-                for (int r = 0; r < totalRows; r++) {
-                    int globalRow = (int) Unsafe.getUnsafe().getLong(sortArray + r * 16L + 8);
-                    Unsafe.getUnsafe().putInt(destPosArray + globalRow * 4L, r);
-                }
-
-                // Step 2: For each column, allocate output buffer, then iterate source RGs
-                // in order and scatter-write to sorted positions.
-                fileOffset = scatterWriteCluster(
-                        ff, outputFd, fileOffset,
-                        decoder, columns, meta,
-                        writerPtr, tsColumnIndex,
-                        rgOrigIndex, rgSize,
-                        clusterStart, clusterEnd,
-                        rgStartRow, destPosArray,
-                        columnCount, totalRows,
-                        memoryTag, deferredFrees
-                );
-            } finally {
-                if (destPosArray != 0) {
-                    Unsafe.free(destPosArray, 4L * totalRows, memoryTag);
-                }
-            }
-        } finally {
-            Misc.free(tsOnlyColumns);
-            if (sortArray != 0) {
-                Unsafe.free(sortArray, 16L * totalRows, memoryTag);
-            }
-        }
-        return fileOffset;
-    }
-
-    /**
-     * Scatter-write all columns for an overlapping cluster. Decodes each source
-     * row group once (in source order) and writes each value to its final sorted
-     * position in pre-allocated output buffers. Then writes the output buffers
-     * to the streaming parquet writer.
-     */
-    private static long scatterWriteCluster(
-            FilesFacade ff,
-            long outputFd,
-            long fileOffset,
-            PartitionDecoder decoder,
-            DirectIntList columns,
-            PartitionDecoder.Metadata meta,
-            long writerPtr,
-            int tsColumnIndex,
-            long[] rgOrigIndex,
-            int[] rgSize,
-            int clusterStart,
-            int clusterEnd,
-            int[] rgStartRow,
-            long destPosArray,
-            int columnCount,
-            int totalRows,
-            int memoryTag,
-            DirectLongList deferredFrees
-    ) {
-        final int clusterRgCount = clusterEnd - clusterStart;
-
         // Classify columns
         int[] colTypes = new int[columnCount];
-        int[] colSizes = new int[columnCount]; // byte size for fixed columns, -1 for var
+        int[] colSizes = new int[columnCount];
         boolean[] isVarCol = new boolean[columnCount];
         for (int c = 0; c < columnCount; c++) {
             colTypes[c] = meta.getColumnType(c);
@@ -552,481 +469,432 @@ public class BulkSortedParquetWriter {
                 isVarCol[c] = true;
                 colSizes[c] = -1;
             } else if (ColumnType.isSymbol(colTypes[c])) {
-                // Parquet decodes symbols as INT (symbol key) — 4 bytes
                 colSizes[c] = Integer.BYTES;
             } else {
                 colSizes[c] = ColumnType.sizeOf(colTypes[c]);
             }
         }
 
-        // Phase A: Pre-scan variable-width columns to compute output sizes.
-        // For each var-width column, we need to know the data size for each output
-        // position so we can compute offsets.
-        //
-        // valueSizes[outputPos] = size of the value's data payload (for VARCHAR: inline or data)
-        // We process all var columns together to avoid multiple RG decode passes.
-
-        // Count var columns
-        int varColCount = 0;
-        int[] varColIndices = new int[columnCount];
-        for (int c = 0; c < columnCount; c++) {
-            if (isVarCol[c]) {
-                varColIndices[varColCount++] = c;
-            }
-        }
-
-        // For var columns, build two things:
-        // 1. Per-column data offsets array: dataOffset[outputPos] for scatter writing
-        // 2. Per-column total data size for allocation
-
-        // Output buffers
-        long[] outputDataAddrs = new long[columnCount];
-        long[] outputDataSizes = new long[columnCount];
-        long[] outputAuxAddrs = new long[columnCount];
-        long[] outputAuxSizes = new long[columnCount];
-
-        // For var columns: offset arrays (computed from pre-scan)
-        long[] varDataOffsetAddrs = new long[columnCount]; // only for var cols
+        // Phase 1: Sort each RG by timestamp.
+        // sortArrays[k] holds (timestamp, localRow) pairs in sorted order.
+        long[] sortArrays = new long[clusterRgCount];
+        RowGroupBuffers[] rgBuffers = new RowGroupBuffers[clusterRgCount];
 
         try {
-            // Allocate fixed-column output buffers
-            for (int c = 0; c < columnCount; c++) {
-                if (!isVarCol[c]) {
-                    int elemSize = colSizes[c];
-                    if (elemSize > 0) {
-                        long bufSize = (long) elemSize * totalRows;
-                        outputDataAddrs[c] = Unsafe.malloc(bufSize, memoryTag);
-                        outputDataSizes[c] = bufSize;
+            DirectIntList tsOnlyColumns = new DirectIntList(2, memoryTag);
+            try {
+                tsOnlyColumns.add(columns.get(tsColumnIndex * 2));
+                tsOnlyColumns.add(columns.get(tsColumnIndex * 2 + 1));
+
+                for (int k = 0; k < clusterRgCount; k++) {
+                    int origRg = (int) rgOrigIndex[clusterStart + k];
+                    int rgRows = rgSize[clusterStart + k];
+
+                    try (RowGroupBuffers tsBuf = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)) {
+                        decoder.decodeRowGroup(tsBuf, tsOnlyColumns, origRg, 0, rgRows);
+                        long tsPtr = tsBuf.getChunkDataPtr(0);
+
+                        long sortArray = Unsafe.malloc(16L * rgRows, memoryTag);
+                        sortArrays[k] = sortArray;
+                        for (int r = 0; r < rgRows; r++) {
+                            Unsafe.getUnsafe().putLong(sortArray + r * 16L, Unsafe.getUnsafe().getLong(tsPtr + r * 8L));
+                            Unsafe.getUnsafe().putLong(sortArray + r * 16L + 8, r);
+                        }
+                        Vect.sortLongIndexAscInPlace(sortArray, rgRows);
                     }
                 }
+            } finally {
+                Misc.free(tsOnlyColumns);
             }
 
-            // Pre-scan var columns: decode each RG, read aux headers to get value sizes
-            if (varColCount > 0) {
-                precomputeVarColumnOffsets(
-                        decoder, columns, meta,
-                        rgOrigIndex, rgSize,
-                        clusterStart, clusterEnd,
-                        rgStartRow, destPosArray,
-                        varColIndices, varColCount,
-                        columnCount, totalRows,
-                        outputDataAddrs, outputDataSizes,
-                        outputAuxAddrs, outputAuxSizes,
-                        varDataOffsetAddrs,
-                        memoryTag
-                );
-            }
+            LOG.info().$("per-RG timestamp sort complete, decoding all columns...").$();
 
-            // Phase B: Decode all columns from each source RG and scatter-write
+            // Phase 2: Decode all RGs fully (all columns).
             for (int k = 0; k < clusterRgCount; k++) {
                 int origRg = (int) rgOrigIndex[clusterStart + k];
                 int rgRows = rgSize[clusterStart + k];
-                int globalStart = rgStartRow[k];
-
-                try (RowGroupBuffers rgBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)) {
-                    decoder.decodeRowGroup(rgBuffers, columns, origRg, 0, rgRows);
-
-                    // Scatter fixed-width columns
-                    for (int c = 0; c < columnCount; c++) {
-                        if (isVarCol[c]) {
-                            continue;
-                        }
-                        int elemSize = colSizes[c];
-                        if (elemSize <= 0) {
-                            continue;
-                        }
-
-                        long srcPtr = rgBuffers.getChunkDataPtr(c);
-                        long dstPtr = outputDataAddrs[c];
-
-                        for (int r = 0; r < rgRows; r++) {
-                            int outPos = Unsafe.getUnsafe().getInt(destPosArray + (globalStart + r) * 4L);
-                            long srcOff = (long) r * elemSize;
-                            long dstOff = (long) outPos * elemSize;
-
-                            switch (elemSize) {
-                                case 1 -> Unsafe.getUnsafe().putByte(
-                                        dstPtr + dstOff,
-                                        Unsafe.getUnsafe().getByte(srcPtr + srcOff)
-                                );
-                                case 2 -> Unsafe.getUnsafe().putShort(
-                                        dstPtr + dstOff,
-                                        Unsafe.getUnsafe().getShort(srcPtr + srcOff)
-                                );
-                                case 4 -> Unsafe.getUnsafe().putInt(
-                                        dstPtr + dstOff,
-                                        Unsafe.getUnsafe().getInt(srcPtr + srcOff)
-                                );
-                                case 8 -> Unsafe.getUnsafe().putLong(
-                                        dstPtr + dstOff,
-                                        Unsafe.getUnsafe().getLong(srcPtr + srcOff)
-                                );
-                                case 16 -> {
-                                    Unsafe.getUnsafe().putLong(dstPtr + dstOff, Unsafe.getUnsafe().getLong(srcPtr + srcOff));
-                                    Unsafe.getUnsafe().putLong(dstPtr + dstOff + 8, Unsafe.getUnsafe().getLong(srcPtr + srcOff + 8));
-                                }
-                                case 32 -> {
-                                    Unsafe.getUnsafe().putLong(dstPtr + dstOff, Unsafe.getUnsafe().getLong(srcPtr + srcOff));
-                                    Unsafe.getUnsafe().putLong(dstPtr + dstOff + 8, Unsafe.getUnsafe().getLong(srcPtr + srcOff + 8));
-                                    Unsafe.getUnsafe().putLong(dstPtr + dstOff + 16, Unsafe.getUnsafe().getLong(srcPtr + srcOff + 16));
-                                    Unsafe.getUnsafe().putLong(dstPtr + dstOff + 24, Unsafe.getUnsafe().getLong(srcPtr + srcOff + 24));
-                                }
-                                default -> Vect.memcpy(dstPtr + dstOff, srcPtr + srcOff, elemSize);
-                            }
-                        }
-                    }
-
-                    // Scatter variable-width columns
-                    scatterVarColumns(
-                            rgBuffers, meta,
-                            varColIndices, varColCount,
-                            globalStart, rgRows,
-                            destPosArray,
-                            outputDataAddrs, outputAuxAddrs,
-                            varDataOffsetAddrs,
-                            columnCount
-                    );
-                }
+                rgBuffers[k] = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                decoder.decodeRowGroup(rgBuffers[k], columns, origRg, 0, rgRows);
             }
 
-            // Phase C: Submit the sorted output buffers to the streaming writer.
-            // IMPORTANT: the streaming writer holds references to the column data
-            // buffers (outputDataAddrs, outputAuxAddrs) until finishStreamingParquetWrite.
-            // Do NOT free them until after finish. We register the drain call here but
-            // defer buffer cleanup to the caller (writeOutput's finally block via the
-            // returned arrays).
-            try (DirectLongList chunkData = new DirectLongList(CHUNK_COL_ENTRY_SIZE * (long) columnCount, memoryTag)) {
-                for (int c = 0; c < columnCount; c++) {
-                    chunkData.add(0); // col_top
-                    if (isVarCol[c]) {
-                        chunkData.add(outputDataAddrs[c]);
-                        chunkData.add(outputDataSizes[c]);
-                        chunkData.add(outputAuxAddrs[c]);
-                        chunkData.add(outputAuxSizes[c]);
-                    } else {
-                        chunkData.add(outputDataAddrs[c]);
-                        chunkData.add(outputDataSizes[c]);
-                        chunkData.add(0);
-                        chunkData.add(0);
-                    }
-                    chunkData.add(0); // symbol_offset_addr
-                    chunkData.add(0); // symbol_offset_size
-                }
+            LOG.info().$("all RGs decoded, starting merge...").$();
 
-                fileOffset = drainBuffer(ff, outputFd, fileOffset,
-                        PartitionEncoder.writeStreamingParquetChunk(writerPtr, chunkData.getAddress(), totalRows));
-            }
-
-            // Register column data/aux buffers for deferred cleanup.
-            // The streaming writer holds references to these until finishStreamingParquetWrite.
-            for (int c = 0; c < columnCount; c++) {
-                if (outputDataAddrs[c] != 0) {
-                    deferredFrees.add(outputDataAddrs[c]);
-                    deferredFrees.add(outputDataSizes[c]);
-                    outputDataAddrs[c] = 0; // prevent double-free
+            // Phase 3: K-way merge using min-heap.
+            fileOffset = mergeAndWrite(
+                    ff, outputFd, fileOffset, writerPtr,
+                    rgBuffers, sortArrays, rgSize,
+                    clusterStart, clusterRgCount,
+                    columnCount, colTypes, colSizes, isVarCol,
+                    memoryTag, deferredFrees
+            );
+        } finally {
+            for (int k = 0; k < clusterRgCount; k++) {
+                if (rgBuffers[k] != null) {
+                    Misc.free(rgBuffers[k]);
                 }
-                if (outputAuxAddrs[c] != 0) {
-                    deferredFrees.add(outputAuxAddrs[c]);
-                    deferredFrees.add(outputAuxSizes[c]);
-                    outputAuxAddrs[c] = 0;
-                }
-                // Offset arrays are not referenced by the writer — free immediately.
-                if (varDataOffsetAddrs[c] != 0) {
-                    Unsafe.free(varDataOffsetAddrs[c], 8L * totalRows, memoryTag);
-                    varDataOffsetAddrs[c] = 0;
+                if (sortArrays[k] != 0) {
+                    Unsafe.free(sortArrays[k], 16L * rgSize[clusterStart + k], memoryTag);
                 }
             }
-        } catch (Throwable t) {
-            // On error, free everything that wasn't deferred
-            for (int c = 0; c < columnCount; c++) {
-                if (outputDataAddrs[c] != 0) {
-                    Unsafe.free(outputDataAddrs[c], outputDataSizes[c], memoryTag);
-                }
-                if (outputAuxAddrs[c] != 0) {
-                    Unsafe.free(outputAuxAddrs[c], outputAuxSizes[c], memoryTag);
-                }
-                if (varDataOffsetAddrs[c] != 0) {
-                    Unsafe.free(varDataOffsetAddrs[c], 8L * totalRows, memoryTag);
-                }
-            }
-            throw t;
         }
         return fileOffset;
     }
 
     /**
-     * Pre-scan variable-width columns to compute output data offsets.
-     * <p>
-     * For STRING columns: aux is 8-byte offsets into data; data is
-     * [int32 len][UTF-16 chars]. We read the length from data to get value size.
-     * <p>
-     * For VARCHAR columns: aux is 16-byte entries per row; data is UTF-8 bytes.
-     * The aux entry encodes whether the value is inline or in the data area.
-     * We use VarcharTypeDriver.getValueSize() to determine the data footprint.
+     * Merge sorted RGs via min-heap and write output chunks to the streaming writer.
      */
-    private static void precomputeVarColumnOffsets(
-            PartitionDecoder decoder,
-            DirectIntList columns,
-            PartitionDecoder.Metadata meta,
-            long[] rgOrigIndex,
+    private static long mergeAndWrite(
+            FilesFacade ff,
+            long outputFd,
+            long fileOffset,
+            long writerPtr,
+            RowGroupBuffers[] rgBuffers,
+            long[] sortArrays,
             int[] rgSize,
             int clusterStart,
-            int clusterEnd,
-            int[] rgStartRow,
-            long destPosArray,
-            int[] varColIndices,
-            int varColCount,
+            int clusterRgCount,
             int columnCount,
-            int totalRows,
-            long[] outputDataAddrs,
-            long[] outputDataSizes,
-            long[] outputAuxAddrs,
-            long[] outputAuxSizes,
-            long[] varDataOffsetAddrs,
-            int memoryTag
+            int[] colTypes,
+            int[] colSizes,
+            boolean[] isVarCol,
+            int memoryTag,
+            DirectLongList deferredFrees
     ) {
-        final int clusterRgCount = clusterEnd - clusterStart;
+        // Min-heap (1-indexed). Stores (timestamp, rgLocalIndex).
+        long[] heapTs = new long[clusterRgCount + 1];
+        int[] heapIdx = new int[clusterRgCount + 1];
+        int heapSize = 0;
+        int[] cursors = new int[clusterRgCount];
 
-        // Allocate per-output-position value size arrays for each var column.
-        // valueSizes[c][outputPos] = number of data bytes for this value
-        long[] valueSizeAddrs = new long[varColCount];
+        for (int k = 0; k < clusterRgCount; k++) {
+            int rgRows = rgSize[clusterStart + k];
+            if (rgRows > 0) {
+                long ts = Unsafe.getUnsafe().getLong(sortArrays[k]);
+                heapSize = heapPush(heapTs, heapIdx, heapSize, ts, k);
+            }
+        }
+
+        // Allocate output chunk buffers (one output row group = OUTPUT_RG_SIZE rows).
+        long[] outDataAddrs = new long[columnCount];
+        long[] outDataSizes = new long[columnCount];
+        long[] outAuxAddrs = new long[columnCount];
+        long[] outAuxSizes = new long[columnCount];
+        // Var column: running data offsets and growable data buffers.
+        long[] varDataOffsets = new long[columnCount]; // running offset per var col
+        long[] varDataCapacities = new long[columnCount]; // current capacity
+
         try {
-            for (int v = 0; v < varColCount; v++) {
-                valueSizeAddrs[v] = Unsafe.calloc(4L * totalRows, memoryTag);
+            for (int c = 0; c < columnCount; c++) {
+                if (isVarCol[c]) {
+                    long auxEntrySize = getAuxEntrySize(colTypes[c]);
+                    long auxSize = auxEntrySize * OUTPUT_RG_SIZE;
+                    outAuxAddrs[c] = Unsafe.calloc(auxSize, memoryTag);
+                    outAuxSizes[c] = auxSize;
+                    // Initial var data estimate: 64 bytes per row per var column
+                    long initDataSize = 64L * OUTPUT_RG_SIZE;
+                    outDataAddrs[c] = Unsafe.malloc(initDataSize, memoryTag);
+                    outDataSizes[c] = initDataSize;
+                    varDataCapacities[c] = initDataSize;
+                } else if (colSizes[c] > 0) {
+                    long bufSize = (long) colSizes[c] * OUTPUT_RG_SIZE;
+                    outDataAddrs[c] = Unsafe.malloc(bufSize, memoryTag);
+                    outDataSizes[c] = bufSize;
+                }
             }
 
-            // Decode each RG (full columns — we need aux data), read sizes
-            for (int k = 0; k < clusterRgCount; k++) {
-                int origRg = (int) rgOrigIndex[clusterStart + k];
-                int rgRows = rgSize[clusterStart + k];
-                int globalStart = rgStartRow[k];
+            int outPos = 0;
+            long rowsMerged = 0;
 
-                try (RowGroupBuffers rgBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)) {
-                    decoder.decodeRowGroup(rgBuffers, columns, origRg, 0, rgRows);
+            while (heapSize > 0) {
+                int k = heapIdx[1];
+                heapSize = heapPop(heapTs, heapIdx, heapSize);
 
-                    for (int v = 0; v < varColCount; v++) {
-                        int c = varColIndices[v];
-                        int colType = meta.getColumnType(c);
-                        long auxPtr = rgBuffers.getChunkAuxPtr(c);
-                        long dataPtr = rgBuffers.getChunkDataPtr(c);
+                int sortedIdx = cursors[k];
+                int origRow = (int) Unsafe.getUnsafe().getLong(sortArrays[k] + sortedIdx * 16L + 8);
 
-                        for (int r = 0; r < rgRows; r++) {
-                            int outPos = Unsafe.getUnsafe().getInt(destPosArray + (globalStart + r) * 4L);
-                            int valueSize = getVarValueDataSize(colType, auxPtr, dataPtr, r);
-                            Unsafe.getUnsafe().putInt(valueSizeAddrs[v] + outPos * 4L, valueSize);
+                // Copy one row from source RG to output buffer.
+                for (int c = 0; c < columnCount; c++) {
+                    if (isVarCol[c]) {
+                        copyVarValue(
+                                rgBuffers[k], c, origRow,
+                                outDataAddrs, outAuxAddrs, varDataOffsets, varDataCapacities,
+                                outPos, colTypes[c], memoryTag
+                        );
+                    } else if (colSizes[c] > 0) {
+                        int elemSize = colSizes[c];
+                        long srcPtr = rgBuffers[k].getChunkDataPtr(c) + (long) origRow * elemSize;
+                        long dstPtr = outDataAddrs[c] + (long) outPos * elemSize;
+                        switch (elemSize) {
+                            case 1 -> Unsafe.getUnsafe().putByte(dstPtr, Unsafe.getUnsafe().getByte(srcPtr));
+                            case 2 -> Unsafe.getUnsafe().putShort(dstPtr, Unsafe.getUnsafe().getShort(srcPtr));
+                            case 4 -> Unsafe.getUnsafe().putInt(dstPtr, Unsafe.getUnsafe().getInt(srcPtr));
+                            case 8 -> Unsafe.getUnsafe().putLong(dstPtr, Unsafe.getUnsafe().getLong(srcPtr));
+                            case 16 -> {
+                                Unsafe.getUnsafe().putLong(dstPtr, Unsafe.getUnsafe().getLong(srcPtr));
+                                Unsafe.getUnsafe().putLong(dstPtr + 8, Unsafe.getUnsafe().getLong(srcPtr + 8));
+                            }
+                            case 32 -> {
+                                Unsafe.getUnsafe().putLong(dstPtr, Unsafe.getUnsafe().getLong(srcPtr));
+                                Unsafe.getUnsafe().putLong(dstPtr + 8, Unsafe.getUnsafe().getLong(srcPtr + 8));
+                                Unsafe.getUnsafe().putLong(dstPtr + 16, Unsafe.getUnsafe().getLong(srcPtr + 16));
+                                Unsafe.getUnsafe().putLong(dstPtr + 24, Unsafe.getUnsafe().getLong(srcPtr + 24));
+                            }
+                            default -> Vect.memcpy(dstPtr, srcPtr, elemSize);
                         }
+                    }
+                }
+                outPos++;
+
+                // Advance cursor; re-insert into heap if RG has more rows.
+                cursors[k]++;
+                if (cursors[k] < rgSize[clusterStart + k]) {
+                    long nextTs = Unsafe.getUnsafe().getLong(sortArrays[k] + cursors[k] * 16L);
+                    heapSize = heapPush(heapTs, heapIdx, heapSize, nextTs, k);
+                }
+
+                // Flush output chunk when full.
+                if (outPos >= OUTPUT_RG_SIZE) {
+                    rowsMerged += outPos;
+                    fileOffset = flushOutputChunk(
+                            ff, outputFd, fileOffset, writerPtr,
+                            outDataAddrs, outDataSizes, outAuxAddrs, outAuxSizes,
+                            varDataOffsets, isVarCol, columnCount, outPos, memoryTag,
+                            null // not last — free immediately after drain
+                    );
+                    outPos = 0;
+                    // Reset var data offsets for next chunk (reuse buffers)
+                    for (int c = 0; c < columnCount; c++) {
+                        varDataOffsets[c] = 0;
+                        // Zero aux buffers for next chunk
+                        if (isVarCol[c] && outAuxAddrs[c] != 0) {
+                            Vect.memset(outAuxAddrs[c], outAuxSizes[c], 0);
+                        }
+                    }
+                    if (rowsMerged % 10_000_000 == 0) {
+                        LOG.info().$("merge progress [rows=").$(rowsMerged).I$();
                     }
                 }
             }
 
-            // Compute prefix-sum offsets and allocate output buffers
-            for (int v = 0; v < varColCount; v++) {
-                int c = varColIndices[v];
-                int colType = meta.getColumnType(c);
-
-                // Compute data offsets via prefix sum
-                long offsetAddr = Unsafe.malloc(8L * totalRows, memoryTag);
-                varDataOffsetAddrs[c] = offsetAddr;
-
-                long runningOffset = 0;
-                for (int r = 0; r < totalRows; r++) {
-                    Unsafe.getUnsafe().putLong(offsetAddr + r * 8L, runningOffset);
-                    int valueSize = Unsafe.getUnsafe().getInt(valueSizeAddrs[v] + r * 4L);
-                    runningOffset += valueSize;
+            // Flush remaining rows (last partial chunk).
+            if (outPos > 0) {
+                rowsMerged += outPos;
+                fileOffset = flushOutputChunk(
+                        ff, outputFd, fileOffset, writerPtr,
+                        outDataAddrs, outDataSizes, outAuxAddrs, outAuxSizes,
+                        varDataOffsets, isVarCol, columnCount, outPos, memoryTag,
+                        deferredFrees // last chunk — defer buffers for finishStreamingParquetWrite
+                );
+                // Buffers are now owned by deferredFrees; zero our references.
+                for (int c = 0; c < columnCount; c++) {
+                    outDataAddrs[c] = 0;
+                    outAuxAddrs[c] = 0;
                 }
-
-                // Allocate data buffer
-                long totalDataSize = runningOffset;
-                if (totalDataSize > 0) {
-                    outputDataAddrs[c] = Unsafe.malloc(totalDataSize, memoryTag);
-                    outputDataSizes[c] = totalDataSize;
-                }
-
-                // Allocate aux buffer
-                long auxEntrySize = getAuxEntrySize(colType);
-                long auxSize = auxEntrySize * totalRows;
-                outputAuxAddrs[c] = Unsafe.calloc(auxSize, memoryTag);
-                outputAuxSizes[c] = auxSize;
             }
+
+            LOG.info().$("merge complete [totalRows=").$(rowsMerged).I$();
         } finally {
-            for (int v = 0; v < varColCount; v++) {
-                if (valueSizeAddrs[v] != 0) {
-                    Unsafe.free(valueSizeAddrs[v], 4L * totalRows, memoryTag);
+            // Free any buffers that weren't deferred.
+            for (int c = 0; c < columnCount; c++) {
+                if (outDataAddrs[c] != 0) {
+                    Unsafe.free(outDataAddrs[c], varDataCapacities[c] > 0 ? varDataCapacities[c] : outDataSizes[c], memoryTag);
+                }
+                if (outAuxAddrs[c] != 0) {
+                    Unsafe.free(outAuxAddrs[c], outAuxSizes[c], memoryTag);
                 }
             }
         }
+        return fileOffset;
     }
 
     /**
-     * Scatter variable-width column data from a decoded row group to the output buffers.
+     * Copy a variable-width value from a source RG buffer to the output chunk,
+     * growing the output data buffer if needed.
      */
-    private static void scatterVarColumns(
-            RowGroupBuffers rgBuffers,
-            PartitionDecoder.Metadata meta,
-            int[] varColIndices,
-            int varColCount,
-            int globalStart,
-            int rgRows,
-            long destPosArray,
-            long[] outputDataAddrs,
-            long[] outputAuxAddrs,
-            long[] varDataOffsetAddrs,
-            int columnCount
+    private static void copyVarValue(
+            RowGroupBuffers srcBuf,
+            int col,
+            int srcRow,
+            long[] outDataAddrs,
+            long[] outAuxAddrs,
+            long[] varDataOffsets,
+            long[] varDataCapacities,
+            int outPos,
+            int colType,
+            int memoryTag
     ) {
-        for (int v = 0; v < varColCount; v++) {
-            int c = varColIndices[v];
-            int colType = meta.getColumnType(c);
-            long srcAuxPtr = rgBuffers.getChunkAuxPtr(c);
-            long srcDataPtr = rgBuffers.getChunkDataPtr(c);
-            long dstDataPtr = outputDataAddrs[c];
-            long dstAuxPtr = outputAuxAddrs[c];
-            long offsetsPtr = varDataOffsetAddrs[c];
+        long srcAuxPtr = srcBuf.getChunkAuxPtr(col);
+        long srcDataPtr = srcBuf.getChunkDataPtr(col);
 
-            if (colType == ColumnType.STRING) {
-                scatterStringColumn(
-                        srcAuxPtr, srcDataPtr,
-                        dstAuxPtr, dstDataPtr, offsetsPtr,
-                        globalStart, rgRows, destPosArray
-                );
-            } else if (colType == ColumnType.VARCHAR) {
-                scatterVarcharColumn(
-                        srcAuxPtr, srcDataPtr,
-                        dstAuxPtr, dstDataPtr, offsetsPtr,
-                        globalStart, rgRows, destPosArray
-                );
-            } else {
-                // BINARY or ARRAY — use generic var-size scatter
-                scatterGenericVarColumn(
-                        colType, srcAuxPtr, srcDataPtr,
-                        dstAuxPtr, dstDataPtr, offsetsPtr,
-                        globalStart, rgRows, destPosArray
-                );
-            }
-        }
-    }
-
-    /**
-     * Scatter STRING column data.
-     * STRING aux format: 8-byte offset per row into the data area.
-     * STRING data format: [int32 length][UTF-16 char data] at each offset.
-     * NULL: length == -1 (TableUtils.NULL_LEN).
-     */
-    private static void scatterStringColumn(
-            long srcAuxPtr,
-            long srcDataPtr,
-            long dstAuxPtr,
-            long dstDataPtr,
-            long offsetsPtr,
-            int globalStart,
-            int rgRows,
-            long destPosArray
-    ) {
-        for (int r = 0; r < rgRows; r++) {
-            int outPos = Unsafe.getUnsafe().getInt(destPosArray + (globalStart + r) * 4L);
-            long dstDataOffset = Unsafe.getUnsafe().getLong(offsetsPtr + outPos * 8L);
-
-            // Write aux: output offset
-            Unsafe.getUnsafe().putLong(dstAuxPtr + outPos * 8L, dstDataOffset);
-
-            // Read source data
-            long srcOffset = Unsafe.getUnsafe().getLong(srcAuxPtr + r * 8L);
+        if (colType == ColumnType.STRING) {
+            long srcOffset = Unsafe.getUnsafe().getLong(srcAuxPtr + srcRow * 8L);
             long srcAddr = srcDataPtr + srcOffset;
-            int len = Unsafe.getUnsafe().getInt(srcAddr); // char count or NULL_LEN
+            int charLen = Unsafe.getUnsafe().getInt(srcAddr);
+            int valueBytes = (charLen == TableUtils.NULL_LEN) ? Integer.BYTES : (Integer.BYTES + charLen * 2);
 
-            if (len == TableUtils.NULL_LEN) {
-                // Write NULL marker
-                Unsafe.getUnsafe().putInt(dstDataPtr + dstDataOffset, TableUtils.NULL_LEN);
-            } else {
-                // Copy: [int32 len][len*2 bytes of UTF-16 data]
-                int totalBytes = Integer.BYTES + len * 2;
-                Vect.memcpy(dstDataPtr + dstDataOffset, srcAddr, totalBytes);
-            }
-        }
-    }
-
-    /**
-     * Scatter VARCHAR column data.
-     * VARCHAR aux format: 16-byte entries per row.
-     * VARCHAR can store values inline in aux (small strings) or in the data area.
-     */
-    private static void scatterVarcharColumn(
-            long srcAuxPtr,
-            long srcDataPtr,
-            long dstAuxPtr,
-            long dstDataPtr,
-            long offsetsPtr,
-            int globalStart,
-            int rgRows,
-            long destPosArray
-    ) {
-        for (int r = 0; r < rgRows; r++) {
-            int outPos = Unsafe.getUnsafe().getInt(destPosArray + (globalStart + r) * 4L);
-            long dstDataOffset = Unsafe.getUnsafe().getLong(offsetsPtr + outPos * 8L);
-
-            long srcAuxEntry = srcAuxPtr + r * 16L;
-            long dstAuxEntry = dstAuxPtr + outPos * 16L;
-
-            int valueSize = VarcharTypeDriver.getValueSize(srcAuxPtr, r);
+            long dstDataOffset = varDataOffsets[col];
+            ensureVarCapacity(outDataAddrs, varDataCapacities, col, dstDataOffset + valueBytes, memoryTag);
+            Vect.memcpy(outDataAddrs[col] + dstDataOffset, srcAddr, valueBytes);
+            Unsafe.getUnsafe().putLong(outAuxAddrs[col] + outPos * 8L, dstDataOffset);
+            varDataOffsets[col] = dstDataOffset + valueBytes;
+        } else if (colType == ColumnType.VARCHAR) {
+            long srcAuxEntry = srcAuxPtr + srcRow * 16L;
+            long dstAuxEntry = outAuxAddrs[col] + outPos * 16L;
             int raw = Unsafe.getUnsafe().getInt(srcAuxEntry);
-            boolean isInlined = (raw & 1) == 1; // HEADER_FLAG_INLINED
+            boolean isInlined = (raw & 1) == 1;
+            int valueSize = VarcharTypeDriver.getValueSize(srcAuxPtr, srcRow);
 
             if (valueSize == TableUtils.NULL_LEN || isInlined) {
-                // NULL or inlined: entire value is in the 16-byte aux entry, no data to copy
+                // NULL or inlined: copy aux entry as-is
                 Unsafe.getUnsafe().putLong(dstAuxEntry, Unsafe.getUnsafe().getLong(srcAuxEntry));
                 Unsafe.getUnsafe().putLong(dstAuxEntry + 8, Unsafe.getUnsafe().getLong(srcAuxEntry + 8));
             } else {
-                // Not inlined: aux points to data area
-                int size = valueSize;
-                // Read source data offset from aux (bytes 8-15)
-                long srcDataOffset = Unsafe.getUnsafe().getLong(srcAuxEntry + 8);
+                long srcAuxWord1 = Unsafe.getUnsafe().getLong(srcAuxEntry + 8);
+                long srcDataOffset = srcAuxWord1 >>> 16;
+                long dstDataOffset = varDataOffsets[col];
 
-                // Write updated aux with new data offset
-                // Copy first 8 bytes (header + size + prefix), update the offset
-                Unsafe.getUnsafe().putLong(dstAuxEntry, Unsafe.getUnsafe().getLong(srcAuxEntry));
-                Unsafe.getUnsafe().putLong(dstAuxEntry + 8, dstDataOffset);
-
-                // Copy data
-                if (size > 0) {
-                    Vect.memcpy(dstDataPtr + dstDataOffset, srcDataPtr + srcDataOffset, size);
+                ensureVarCapacity(outDataAddrs, varDataCapacities, col, dstDataOffset + valueSize, memoryTag);
+                if (valueSize > 0) {
+                    Vect.memcpy(outDataAddrs[col] + dstDataOffset, srcDataPtr + srcDataOffset, valueSize);
                 }
+                // Copy first 8 bytes (header + prefix), fix data offset in second 8 bytes
+                Unsafe.getUnsafe().putLong(dstAuxEntry, Unsafe.getUnsafe().getLong(srcAuxEntry));
+                long dstAuxWord1 = (srcAuxWord1 & 0xFFFFL) | (dstDataOffset << 16);
+                Unsafe.getUnsafe().putLong(dstAuxEntry + 8, dstAuxWord1);
+                varDataOffsets[col] = dstDataOffset + valueSize;
             }
+        } else {
+            // BINARY or ARRAY
+            long srcOffset = Unsafe.getUnsafe().getLong(srcAuxPtr + srcRow * 8L);
+            long srcAddr = srcDataPtr + srcOffset;
+            long len = Unsafe.getUnsafe().getLong(srcAddr);
+            int valueBytes = (len == TableUtils.NULL_LEN) ? Long.BYTES : (int) (Long.BYTES + len);
+
+            long dstDataOffset = varDataOffsets[col];
+            ensureVarCapacity(outDataAddrs, varDataCapacities, col, dstDataOffset + valueBytes, memoryTag);
+            Vect.memcpy(outDataAddrs[col] + dstDataOffset, srcAddr, valueBytes);
+            Unsafe.getUnsafe().putLong(outAuxAddrs[col] + outPos * 8L, dstDataOffset);
+            varDataOffsets[col] = dstDataOffset + valueBytes;
         }
     }
 
     /**
-     * Generic scatter for BINARY or ARRAY var-size columns.
-     * BINARY aux format: 8-byte offsets. Data: [int64 length][bytes].
+     * Grow a var-column data buffer if needed.
      */
-    private static void scatterGenericVarColumn(
-            int colType,
-            long srcAuxPtr,
-            long srcDataPtr,
-            long dstAuxPtr,
-            long dstDataPtr,
-            long offsetsPtr,
-            int globalStart,
-            int rgRows,
-            long destPosArray
+    private static void ensureVarCapacity(long[] addrs, long[] capacities, int col, long needed, int memoryTag) {
+        if (needed > capacities[col]) {
+            long newCap = Math.max(capacities[col] * 2, needed);
+            addrs[col] = Unsafe.realloc(addrs[col], capacities[col], newCap, memoryTag);
+            capacities[col] = newCap;
+        }
+    }
+
+    /**
+     * Flush an output chunk to the streaming writer with drain loop,
+     * then free or defer the buffers.
+     */
+    private static long flushOutputChunk(
+            FilesFacade ff,
+            long outputFd,
+            long fileOffset,
+            long writerPtr,
+            long[] outDataAddrs,
+            long[] outDataSizes,
+            long[] outAuxAddrs,
+            long[] outAuxSizes,
+            long[] varDataOffsets,
+            boolean[] isVarCol,
+            int columnCount,
+            int rowCount,
+            int memoryTag,
+            DirectLongList deferredFrees
     ) {
-        for (int r = 0; r < rgRows; r++) {
-            int outPos = Unsafe.getUnsafe().getInt(destPosArray + (globalStart + r) * 4L);
-            long dstDataOffset = Unsafe.getUnsafe().getLong(offsetsPtr + outPos * 8L);
+        try (DirectLongList chunkData = new DirectLongList(CHUNK_COL_ENTRY_SIZE * (long) columnCount, memoryTag)) {
+            for (int c = 0; c < columnCount; c++) {
+                chunkData.add(0); // col_top
+                if (isVarCol[c]) {
+                    chunkData.add(outDataAddrs[c]);
+                    chunkData.add(varDataOffsets[c]); // actual data size, not capacity
+                    chunkData.add(outAuxAddrs[c]);
+                    chunkData.add(outAuxSizes[c]);
+                } else {
+                    chunkData.add(outDataAddrs[c]);
+                    chunkData.add(outDataSizes[c]);
+                    chunkData.add(0);
+                    chunkData.add(0);
+                }
+                chunkData.add(0); // symbol_offset_addr
+                chunkData.add(0); // symbol_offset_size
+            }
 
-            // Write aux offset
-            Unsafe.getUnsafe().putLong(dstAuxPtr + outPos * 8L, dstDataOffset);
-
-            // Read source
-            long srcOffset = Unsafe.getUnsafe().getLong(srcAuxPtr + r * 8L);
-            long srcAddr = srcDataPtr + srcOffset;
-            long len = Unsafe.getUnsafe().getLong(srcAddr);
-
-            if (len == TableUtils.NULL_LEN) {
-                Unsafe.getUnsafe().putLong(dstDataPtr + dstDataOffset, TableUtils.NULL_LEN);
-            } else {
-                long totalBytes = Long.BYTES + len;
-                Vect.memcpy(dstDataPtr + dstDataOffset, srcAddr, totalBytes);
+            long buffer = PartitionEncoder.writeStreamingParquetChunk(writerPtr, chunkData.getAddress(), rowCount);
+            fileOffset = drainBuffer(ff, outputFd, fileOffset, buffer);
+            buffer = PartitionEncoder.writeStreamingParquetChunk(writerPtr, 0, 0);
+            while (buffer != 0) {
+                fileOffset = drainBuffer(ff, outputFd, fileOffset, buffer);
+                buffer = PartitionEncoder.writeStreamingParquetChunk(writerPtr, 0, 0);
             }
         }
+
+        // The streaming writer's row_group_size == OUTPUT_RG_SIZE, so a full
+        // chunk is fully flushed (no pending references). A partial last chunk
+        // may leave rows pending until finishStreamingParquetWrite.
+        if (deferredFrees != null) {
+            for (int c = 0; c < columnCount; c++) {
+                if (outDataAddrs[c] != 0) {
+                    deferredFrees.add(outDataAddrs[c]);
+                    deferredFrees.add(outDataSizes[c]);
+                }
+                if (outAuxAddrs[c] != 0) {
+                    deferredFrees.add(outAuxAddrs[c]);
+                    deferredFrees.add(outAuxSizes[c]);
+                }
+            }
+        }
+        return fileOffset;
+    }
+
+    // ---- Min-heap helpers (1-indexed) ----
+
+    private static int heapPush(long[] ts, int[] idx, int size, long newTs, int newIdx) {
+        size++;
+        ts[size] = newTs;
+        idx[size] = newIdx;
+        int i = size;
+        while (i > 1 && ts[i] < ts[i >> 1]) {
+            heapSwap(ts, idx, i, i >> 1);
+            i >>= 1;
+        }
+        return size;
+    }
+
+    private static int heapPop(long[] ts, int[] idx, int size) {
+        ts[1] = ts[size];
+        idx[1] = idx[size];
+        size--;
+        int i = 1;
+        while (true) {
+            int smallest = i;
+            int left = i << 1;
+            int right = left + 1;
+            if (left <= size && ts[left] < ts[smallest]) {
+                smallest = left;
+            }
+            if (right <= size && ts[right] < ts[smallest]) {
+                smallest = right;
+            }
+            if (smallest == i) {
+                break;
+            }
+            heapSwap(ts, idx, i, smallest);
+            i = smallest;
+        }
+        return size;
+    }
+
+    private static void heapSwap(long[] ts, int[] idx, int a, int b) {
+        long tmpTs = ts[a]; ts[a] = ts[b]; ts[b] = tmpTs;
+        int tmpIdx = idx[a]; idx[a] = idx[b]; idx[b] = tmpIdx;
     }
 
     /**
