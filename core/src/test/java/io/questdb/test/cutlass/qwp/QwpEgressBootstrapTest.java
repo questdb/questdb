@@ -535,6 +535,52 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testIpv4NullSentinel() throws Exception {
+        // Regression: IPv4 maps to wire TYPE_INT but uses 0 (Numbers.IPv4_NULL) as the
+        // null sentinel, not Integer.MIN_VALUE. The egress server must check 0, not
+        // INT_NULL, otherwise a NULL row would ship as the valid bit pattern 0 and
+        // appear non-null on the wire. (QuestDB itself treats 0.0.0.0 as NULL — there
+        // is no way to store a "real" 0.0.0.0 — so both '0.0.0.0' and NULL inserts
+        // must come back as null.)
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE ipx(addr IPv4)");
+                serverMain.execute("INSERT INTO ipx VALUES " +
+                        "('0.0.0.0'), " +
+                        "(NULL), " +
+                        "('192.168.1.1')");
+
+                final boolean[] nullSeen = new boolean[3];
+                final int[] count = {0};
+                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                    client.connect();
+                    client.execute("SELECT addr FROM ipx", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++, count[0]++) {
+                                nullSeen[count[0]] = batch.isNull(0, r);
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress query error: " + message);
+                        }
+                    });
+                }
+                Assert.assertEquals(3, count[0]);
+                Assert.assertTrue("'0.0.0.0' is the IPv4 NULL sentinel — must surface as null", nullSeen[0]);
+                Assert.assertTrue("explicit NULL must surface as null", nullSeen[1]);
+                Assert.assertFalse("real address must surface as non-null", nullSeen[2]);
+            }
+        });
+    }
+
+    @Test
     public void testSelectWithNulls() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {

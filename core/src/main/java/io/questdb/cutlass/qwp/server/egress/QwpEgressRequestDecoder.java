@@ -50,6 +50,13 @@ public class QwpEgressRequestDecoder {
     public final StringSink sql = new StringSink();
     public long initialCredit;
     public long requestId;
+    /**
+     * Reusable scratch for {@link QwpVarint#decode(long, long, QwpVarint.DecodeResult)}.
+     * Holding it as a field avoids a per-varint allocation and lets the canonical-byte-count
+     * trap from {@code QwpVarint.encodedLength} be replaced with the actual bytes-consumed
+     * count returned by the decoder.
+     */
+    private final QwpVarint.DecodeResult varintScratch = new QwpVarint.DecodeResult();
 
     /**
      * Decodes a CANCEL frame body. Caller has already verified msg_kind == 0x14
@@ -93,8 +100,9 @@ public class QwpEgressRequestDecoder {
         requestId = Unsafe.getUnsafe().getLong(p);
         p += 8;
 
-        long sqlLen = QwpVarint.decode(p, limit);
-        p = advanceVarint(p, sqlLen);
+        QwpVarint.decode(p, limit, varintScratch);
+        long sqlLen = varintScratch.value;
+        p += varintScratch.bytesRead;
         if (p + sqlLen > limit) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: SQL truncated");
         }
@@ -102,11 +110,13 @@ public class QwpEgressRequestDecoder {
         Utf8s.utf8ToUtf16(p, p + sqlLen, sql);
         p += sqlLen;
 
-        initialCredit = QwpVarint.decode(p, limit);
-        p = advanceVarint(p, initialCredit);
+        QwpVarint.decode(p, limit, varintScratch);
+        initialCredit = varintScratch.value;
+        p += varintScratch.bytesRead;
 
-        long bindCount = QwpVarint.decode(p, limit);
-        p = advanceVarint(p, bindCount);
+        QwpVarint.decode(p, limit, varintScratch);
+        long bindCount = varintScratch.value;
+        p += varintScratch.bytesRead;
         if (bindCount < 0 || bindCount > QwpConstants.MAX_COLUMNS_PER_TABLE) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: bind_count out of range: ").put(bindCount);
         }
@@ -131,10 +141,6 @@ public class QwpEgressRequestDecoder {
         sql.clear();
         requestId = 0;
         initialCredit = 0;
-    }
-
-    private static long advanceVarint(long p, long decodedValue) {
-        return p + QwpVarint.encodedLength(decodedValue);
     }
 
     /**
@@ -309,8 +315,9 @@ public class QwpEgressRequestDecoder {
                 }
             }
             case QwpConstants.TYPE_GEOHASH -> {
-                long precisionBits = QwpVarint.decode(p, limit);
-                p = advanceVarint(p, precisionBits);
+                QwpVarint.decode(p, limit, varintScratch);
+                long precisionBits = varintScratch.value;
+                p += varintScratch.bytesRead;
                 int bytesPerValue = (int) ((precisionBits + 7) >>> 3);
                 int geoType = io.questdb.cairo.ColumnType.getGeoHashTypeWithBits((int) precisionBits);
                 if (isNull) {

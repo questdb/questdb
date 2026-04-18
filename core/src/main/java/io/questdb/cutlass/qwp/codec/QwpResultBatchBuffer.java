@@ -81,7 +81,13 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 case QwpConstants.TYPE_INT: {
                     int v = record.getInt(ci);
-                    if (v == Numbers.INT_NULL) scratch.appendNull();
+                    // IPv4 and INT share the wire type but use different NULL sentinels:
+                    // INT NULL is Integer.MIN_VALUE, IPv4 NULL is 0 (Numbers.IPv4_NULL,
+                    // i.e. the address 0.0.0.0). The right sentinel is selected by the
+                    // *QuestDB* column type, not the wire type.
+                    int nullSentinel = ColumnType.tagOf(qdbType) == ColumnType.IPv4
+                            ? Numbers.IPv4_NULL : Numbers.INT_NULL;
+                    if (v == nullSentinel) scratch.appendNull();
                     else scratch.appendInt(v);
                     break;
                 }
@@ -272,14 +278,32 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
+     * Largest array (in elements) we'll serialise in one row. Caps the per-row payload at
+     * roughly 256 MB (8 bytes × this) so the byte-size math fits in {@code int} and the
+     * scratch grow-and-write path can never see a negative or wrap-around length.
+     */
+    private static final long MAX_ARRAY_ELEMENTS = (Integer.MAX_VALUE - 1024) / 8L;
+
+    /**
      * Serialises an array into {@code scratch.arrayHeapAddr} without allocating a {@code byte[]}.
      * Format: {@code [nDims u8] [dim lengths: nDims × i32 LE] [values: product(dims) × 8 bytes LE]}.
+     * Throws if the element-count product overflows; the buffer state is unchanged in that case.
      */
     private static void appendArrayBytesDirect(QwpColumnScratch scratch, ArrayView av, byte wireType) {
         int nDims = av.getDimCount();
-        int elements = 1;
-        for (int d = 0; d < nDims; d++) elements *= av.getDimLen(d);
-        int totalBytes = 1 + 4 * nDims + 8 * elements;
+        long elements = 1;
+        for (int d = 0; d < nDims; d++) {
+            int dim = av.getDimLen(d);
+            if (dim < 0) {
+                throw new ArithmeticException("QWP egress: ARRAY dim " + d + " is negative: " + dim);
+            }
+            elements *= dim;
+            if (elements > MAX_ARRAY_ELEMENTS) {
+                throw new ArithmeticException("QWP egress: ARRAY element count exceeds limit ("
+                        + elements + " > " + MAX_ARRAY_ELEMENTS + ")");
+            }
+        }
+        int totalBytes = 1 + 4 * nDims + 8 * (int) elements;
         scratch.ensureArrayHeapCapacity(scratch.arrayHeapPos + totalBytes);
         long p = scratch.arrayHeapAddr + scratch.arrayHeapPos;
         Unsafe.getUnsafe().putByte(p++, (byte) nDims);
@@ -289,12 +313,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         }
         if (wireType == QwpConstants.TYPE_DOUBLE_ARRAY) {
             for (int i = 0; i < elements; i++) {
-                Unsafe.getUnsafe().putLong(p, Double.doubleToRawLongBits(av.getDouble(i)));
+                Unsafe.getUnsafe().putLong(p, Double.doubleToRawLongBits(av.getDouble((int) i)));
                 p += 8;
             }
         } else {
             for (int i = 0; i < elements; i++) {
-                Unsafe.getUnsafe().putLong(p, av.getLong(i));
+                Unsafe.getUnsafe().putLong(p, av.getLong((int) i));
                 p += 8;
             }
         }

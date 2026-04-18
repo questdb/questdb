@@ -378,9 +378,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    // =============================================================================
     // Egress message dispatch and query execution
-    // =============================================================================
 
     /**
      * Phase 1 batch caps. Size-based cap is indirectly enforced by the rawSocket
@@ -420,7 +418,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             QwpEgressProcessorState state,
             long payload,
             int length
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         QwpEgressRequestDecoder decoder = state.getDecoder();
         long requestId = 0;
         try {
@@ -443,6 +441,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile(decoder.sql, sqlCtx);
                 if (cq.getType() != CompiledQuery.SELECT && cq.getType() != CompiledQuery.PSEUDO_SELECT) {
+                    // CompiledQueryImpl carries an Operation (insert / update / alter / drop / etc.) that
+                    // owns native resources. closeAllButSelect() releases everything that isn't the
+                    // RecordCursorFactory we'd otherwise pull out. Same handling as JsonQueryProcessor
+                    // and ExportQueryProcessor on the non-SELECT path.
+                    cq.closeAllButSelect();
                     sendQueryError(context, requestId, QwpConstants.STATUS_PARSE_ERROR,
                             "Phase 1 egress only supports SELECT queries");
                     return;
@@ -454,8 +457,23 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                     Misc.free(factory);
                 }
             }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+        } catch (PeerDisconnectedException e) {
+            // Client already gone — just propagate; the framework will drop the connection.
             throw e;
+        } catch (PeerIsSlowToReadException e) {
+            // Slow consumer mid-stream. The OS send buffer is full and we have no resume-state
+            // machinery to continue a half-emitted result (Phase 2 work). Best effort: try once
+            // to push QUERY_ERROR (likely fails too because the buffer is the same one), then
+            // force disconnect so the client at least sees a TCP close instead of a hang.
+            LOG.error().$("Egress backpressure mid-stream [fd=").$(context.getFd())
+                    .$(", requestId=").$(requestId).I$();
+            try {
+                sendQueryError(context, requestId, QwpConstants.STATUS_INTERNAL_ERROR,
+                        "backpressure: client too slow to consume result stream");
+            } catch (PeerDisconnectedException | PeerIsSlowToReadException ignored) {
+                // Expected — same buffer that gave us PeerIsSlowToRead won't fit our error frame either.
+            }
+            throw ServerDisconnectException.INSTANCE;
         } catch (Throwable e) {
             LOG.error().$("Egress query failed [fd=").$(context.getFd())
                     .$(", requestId=").$(requestId)
@@ -529,9 +547,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         sendResultEnd(context, requestId, batchSeq == 0 ? 0 : batchSeq - 1);
     }
 
-    // -----------------------------------------------------------------------------
     // Outbound frame serialisation
-    // -----------------------------------------------------------------------------
 
     /**
      * Writes one RESULT_BATCH frame into the rawSocket buffer and sends it.

@@ -61,39 +61,32 @@ final class QwpColumnScratch implements QuietCloseable {
     private static final int INITIAL_BYTES = 4096;
     QwpEgressColumnDef def;
 
-    // ---- per-batch counters (reset by beginBatch) ----
     int nonNullCount;
     int nullCount;
     int rowCount;
 
-    // ---- null bitmap, grown on first NULL ----
     int nullBitmapCapacity;
     long nullBitmapAddr;
 
-    // ---- packed dense values (used by fixed-width + BOOLEAN + GEOHASH) ----
     int valuesCapacity;          // bytes
     long valuesAddr;
     int valuesPos;               // bytes written
 
-    // ---- STRING / VARCHAR specific ----
     int stringHeapCapacity;
     long stringHeapAddr;
     int stringHeapPos;
     int stringOffsetsCapacity;   // bytes
     long stringOffsetsAddr;      // (nonNullCount + 1) × i32
 
-    // ---- SYMBOL specific ----
     int symbolIdsCapacity;       // bytes
     long symbolIdsAddr;
     final ObjList<String> symbolDictOrder = new ObjList<>();
     final CharSequenceIntHashMap symbolDict = new CharSequenceIntHashMap();
 
-    // ---- ARRAY specific ----
     int arrayHeapCapacity;
     long arrayHeapAddr;
     int arrayHeapPos;
 
-    // ---- Decimal sinks (reused, never re-allocated per row) ----
     final Decimal128 decimal128Sink = new Decimal128();
     final Decimal256 decimal256Sink = new Decimal256();
 
