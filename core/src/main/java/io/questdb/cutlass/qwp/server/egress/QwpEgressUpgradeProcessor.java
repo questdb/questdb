@@ -47,6 +47,7 @@ import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
@@ -190,10 +191,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             try {
                 final boolean versionError = QwpWebSocketHttpProcessor.isVersionValidationError(validationError);
                 final int written = versionError
-                        ? io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor
-                          .writeUpgradeRequiredResponse(bufferAddr, bufferSize)
-                        : io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor
-                          .writeBadRequestResponse(bufferAddr, bufferSize, validationError);
+                        ? QwpWebSocketUpgradeProcessor.writeUpgradeRequiredResponse(bufferAddr, bufferSize)
+                        : QwpWebSocketUpgradeProcessor.writeBadRequestResponse(bufferAddr, bufferSize, validationError);
                 if (written <= 0) {
                     throw HttpException.instance("egress handshake error response does not fit send buffer");
                 }
