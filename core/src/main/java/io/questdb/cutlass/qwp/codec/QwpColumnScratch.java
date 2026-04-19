@@ -34,6 +34,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -520,7 +521,7 @@ final class QwpColumnScratch implements QuietCloseable {
         long dst = stringHeapAddr + stringHeapPos;
         long src = us.ptr();
         if (src >= 0) {
-            Unsafe.getUnsafe().copyMemory(src, dst, n);
+            Vect.memcpy(dst, src, n);
         } else {
             us.writeTo(dst, 0, n);
         }
