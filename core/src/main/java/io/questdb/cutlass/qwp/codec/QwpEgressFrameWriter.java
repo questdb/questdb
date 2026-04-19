@@ -26,7 +26,6 @@ package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
-import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
 import io.questdb.std.Unsafe;
 
 /**
@@ -165,22 +164,4 @@ public final class QwpEgressFrameWriter {
         return bytesStart + written;
     }
 
-    /**
-     * Writes a WebSocket BINARY frame header into the reserved space in front of
-     * the QWP message. Returns the address of the actual frame start (may be
-     * higher than the original buffer start if fewer than 10 header bytes were
-     * needed).
-     *
-     * @param wsHeaderReservationAddr address of the reserved region start (= caller's buffer start)
-     * @param qwpMessageAddr          address where the QWP message header starts
-     *                                (= wsHeaderReservationAddr + WS_HEADER_RESERVATION)
-     * @param qwpPayloadLen           total QWP bytes including the 12-byte message header
-     * @return address of the WS frame start (offset into the caller's buffer)
-     */
-    public static long wrapInBinaryFrame(long wsHeaderReservationAddr, long qwpMessageAddr, int qwpPayloadLen) {
-        int wsHeaderSize = WebSocketFrameWriter.headerSize(qwpPayloadLen, false);
-        long frameStart = qwpMessageAddr - wsHeaderSize;
-        WebSocketFrameWriter.writeBinaryFrameHeader(frameStart, qwpPayloadLen);
-        return frameStart;
-    }
 }

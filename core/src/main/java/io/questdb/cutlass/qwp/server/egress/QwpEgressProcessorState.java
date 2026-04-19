@@ -59,10 +59,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
     private final ObjList<QwpEgressColumnDef> columnDefsPool = new ObjList<>();
-    // Reused consumer sequence handed to CompiledQuery.execute for async ALTER /
-    // DDL operations. Subscribed to the engine's message bus on first use;
-    // cleared between queries (the sequence object itself is reused).
-    private final SCSequence eventSubSequence = new SCSequence();
     // Connection-scoped SYMBOL dictionary shared across all queries on this connection.
     // Holds the concatenated UTF-8 bytes of every unique symbol value and a parallel
     // end-offsets array; the entry index doubles as the wire-level conn-id. Per-column
@@ -71,6 +67,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // shrinks; freed on connection close.
     private final QwpEgressConnSymbolDict connSymbolDict = new QwpEgressConnSymbolDict();
     private final QwpEgressRequestDecoder decoder = new QwpEgressRequestDecoder();
+    // Reused consumer sequence handed to CompiledQuery.execute for async ALTER /
+    // DDL operations. Subscribed to the engine's message bus on first use;
+    // cleared between queries (the sequence object itself is reused).
+    private final SCSequence eventSubSequence = new SCSequence();
     private long fd = -1;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
     private int nextSchemaId;
@@ -83,8 +83,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private PageFrameMemoryRecord pageFrameMemoryRecord;
     private int recvBufferLen;
     private SecurityContext securityContext;
-    private boolean wsHandshakeSent;
-
     /**
      * Streaming-state for an in-flight query. Populated when the query starts; cleared
      * (and resources freed) on completion, error, or disconnect. Lets the upgrade
@@ -93,6 +91,13 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     private boolean streamingActive;
     private long streamingBatchSeq;
+    // Set by {@link #onStreamingBatchSent} and consumed by
+    // {@link #consumeBatchSeqCommit} at the top of {@link QwpEgressUpgradeProcessor#sendResultBatch}.
+    // Encodes the invariant "seq was incremented before the send committed bytes
+    // to the response sink". Violating it (e.g. by calling sendResultBatch without
+    // first calling onStreamingBatchSent) produces duplicate seq=N batches if the
+    // first send parks mid-flight -- silent data corruption from the client's view.
+    private boolean streamingBatchSeqCommitted;
     private int streamingColumnCount;
     private RecordCursor streamingCursor;
     private RecordCursorFactory streamingFactory;
@@ -120,9 +125,43 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     private long streamingRowsEmitted;
     private int streamingSchemaId;
+    private boolean wsHandshakeSent;
 
     public QwpEgressProcessorState(io.questdb.cairo.CairoConfiguration cairoConfiguration) {
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
+    }
+
+    /**
+     * Advances the page-frame iteration by one row. When the current frame is
+     * exhausted, pulls the next {@link PageFrame} from the cursor and rebinds
+     * the memory record to it. Returns the {@link Record} pointing at the next
+     * row, or {@code null} when no more rows are available.
+     * <p>
+     * Row indices passed to {@link PageFrameMemoryRecord#setRowIndex} are
+     * frame-local (0..frameRowCount). {@link FwdTableReaderPageFrameCursor}
+     * already offsets the page addresses by the frame's partition-lo so the
+     * record's getLong/getVarchar read from position 0 inside the frame.
+     * <p>
+     * Only valid when streaming was started via {@link #beginStreamingPageFrame}.
+     */
+    public Record advancePageFrameRow() {
+        if (streamingPageFrameRow >= streamingPageFrameRowHi) {
+            PageFrame frame = streamingPageFrameCursor.next();
+            if (frame == null) {
+                return null;
+            }
+            pageFrameAddressCache.add(streamingPageFrameIndex, frame);
+            pageFrameMemoryPool.navigateTo(streamingPageFrameIndex, pageFrameMemoryRecord);
+            streamingPageFrameRow = 0;
+            streamingPageFrameRowHi = frame.getPartitionHi() - frame.getPartitionLo();
+            streamingPageFrameIndex++;
+            if (streamingPageFrameRow >= streamingPageFrameRowHi) {
+                // Empty frame - try again.
+                return advancePageFrameRow();
+            }
+        }
+        pageFrameMemoryRecord.setRowIndex(streamingPageFrameRow++);
+        return pageFrameMemoryRecord;
     }
 
     /**
@@ -130,25 +169,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public int allocateSchemaId() {
         return nextSchemaId++;
-    }
-
-    /**
-     * Returns (or extends+returns) a column-definition slot. The pool grows to at
-     * least {@code requiredSize}; caller re-populates each slot via {@link QwpEgressColumnDef#of}.
-     */
-    public ObjList<QwpEgressColumnDef> borrowColumnDefs(int requiredSize) {
-        int currentPos = columnDefsPool.size();
-        if (requiredSize > currentPos) {
-            columnDefsPool.setPos(requiredSize);
-            for (int i = currentPos; i < requiredSize; i++) {
-                if (columnDefsPool.getQuick(i) == null) {
-                    columnDefsPool.setQuick(i, new QwpEgressColumnDef());
-                }
-            }
-        } else {
-            columnDefsPool.setPos(requiredSize);
-        }
-        return columnDefsPool;
     }
 
     public void beginStreaming(
@@ -171,6 +191,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingColumnCount = columnCount;
         this.streamingSchemaId = schemaId;
         this.streamingBatchSeq = 0;
+        this.streamingBatchSeqCommitted = false;
         this.streamingFullSchemaSent = false;
         this.streamingRowsEmitted = 0;
         this.streamingActive = true;
@@ -216,6 +237,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingColumnCount = columnCount;
         this.streamingSchemaId = schemaId;
         this.streamingBatchSeq = 0;
+        this.streamingBatchSeqCommitted = false;
         this.streamingFullSchemaSent = false;
         this.streamingRowsEmitted = 0;
         this.streamingPageFrameIndex = 0;
@@ -223,6 +245,25 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingPageFrameRowHi = 0;
         this.streamingActive = true;
         batchBuffer.resetForNewQuery();
+    }
+
+    /**
+     * Returns (or extends+returns) a column-definition slot. The pool grows to at
+     * least {@code requiredSize}; caller re-populates each slot via {@link QwpEgressColumnDef#of}.
+     */
+    public ObjList<QwpEgressColumnDef> borrowColumnDefs(int requiredSize) {
+        int currentPos = columnDefsPool.size();
+        if (requiredSize > currentPos) {
+            columnDefsPool.setPos(requiredSize);
+            for (int i = currentPos; i < requiredSize; i++) {
+                if (columnDefsPool.getQuick(i) == null) {
+                    columnDefsPool.setQuick(i, new QwpEgressColumnDef());
+                }
+            }
+        } else {
+            columnDefsPool.setPos(requiredSize);
+        }
+        return columnDefsPool;
     }
 
     public void clear() {
@@ -240,6 +281,31 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         connSymbolDict.clear();
     }
 
+    @Override
+    public void close() {
+        clear();
+        Misc.free(batchBuffer);
+        Misc.free(connSymbolDict);
+        pageFrameMemoryRecord = Misc.free(pageFrameMemoryRecord);
+        pageFrameMemoryPool = Misc.free(pageFrameMemoryPool);
+        pageFrameAddressCache = Misc.free(pageFrameAddressCache);
+    }
+
+    /**
+     * Consumes the seq-commit flag set by {@link #onStreamingBatchSent}, asserting
+     * the ordering invariant: a batch send never reaches the response sink without
+     * having first bumped the seq + row counters. Call at the top of
+     * {@code sendResultBatch}.
+     */
+    public void consumeBatchSeqCommit() {
+        if (!streamingBatchSeqCommitted) {
+            throw new IllegalStateException(
+                    "sendResultBatch reached without a preceding onStreamingBatchSent "
+                            + "[seq=" + streamingBatchSeq + ']');
+        }
+        streamingBatchSeqCommitted = false;
+    }
+
     /**
      * Releases the in-flight cursor + factory and marks streaming inactive.
      * Idempotent -- safe to call from completion, error, or disconnect paths.
@@ -252,125 +318,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingColumnCount = 0;
         streamingSchemaId = 0;
         streamingBatchSeq = 0;
+        streamingBatchSeqCommitted = false;
         streamingFullSchemaSent = false;
         streamingResultEndInitiated = false;
         streamingPageFrameIndex = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
-    }
-
-    /**
-     * Advances the page-frame iteration by one row. When the current frame is
-     * exhausted, pulls the next {@link PageFrame} from the cursor and rebinds
-     * the memory record to it. Returns the {@link Record} pointing at the next
-     * row, or {@code null} when no more rows are available.
-     * <p>
-     * Row indices passed to {@link PageFrameMemoryRecord#setRowIndex} are
-     * frame-local (0..frameRowCount). {@link FwdTableReaderPageFrameCursor}
-     * already offsets the page addresses by the frame's partition-lo so the
-     * record's getLong/getVarchar read from position 0 inside the frame.
-     * <p>
-     * Only valid when streaming was started via {@link #beginStreamingPageFrame}.
-     */
-    public Record advancePageFrameRow() {
-        if (streamingPageFrameRow >= streamingPageFrameRowHi) {
-            PageFrame frame = streamingPageFrameCursor.next();
-            if (frame == null) {
-                return null;
-            }
-            pageFrameAddressCache.add(streamingPageFrameIndex, frame);
-            pageFrameMemoryPool.navigateTo(streamingPageFrameIndex, pageFrameMemoryRecord);
-            streamingPageFrameRow = 0;
-            streamingPageFrameRowHi = frame.getPartitionHi() - frame.getPartitionLo();
-            streamingPageFrameIndex++;
-            if (streamingPageFrameRow >= streamingPageFrameRowHi) {
-                // Empty frame - try again.
-                return advancePageFrameRow();
-            }
-        }
-        pageFrameMemoryRecord.setRowIndex(streamingPageFrameRow++);
-        return pageFrameMemoryRecord;
-    }
-
-    public byte getNegotiatedVersion() {
-        return negotiatedVersion;
-    }
-
-    public boolean isStreamingResultEndInitiated() {
-        return streamingResultEndInitiated;
-    }
-
-    public void markStreamingResultEndInitiated() {
-        streamingResultEndInitiated = true;
-    }
-
-    public long getStreamingBatchSeq() {
-        return streamingBatchSeq;
-    }
-
-    public int getStreamingColumnCount() {
-        return streamingColumnCount;
-    }
-
-    public RecordCursor getStreamingCursor() {
-        return streamingCursor;
-    }
-
-    public PageFrameCursor getStreamingPageFrameCursor() {
-        return streamingPageFrameCursor;
-    }
-
-    public long getStreamingRequestId() {
-        return streamingRequestId;
-    }
-
-    /**
-     * Returns the symbol-table source matching the active streaming mode so
-     * {@link QwpResultBatchBuffer#beginBatch} can hook up the SYMBOL fast path
-     * without the processor having to know which path is in use.
-     */
-    public SymbolTableSource getStreamingSymbolTableSource() {
-        return streamingPageFrameCursor != null ? streamingPageFrameCursor : streamingCursor;
-    }
-
-    public long getStreamingRowsEmitted() {
-        return streamingRowsEmitted;
-    }
-
-    public int getStreamingSchemaId() {
-        return streamingSchemaId;
-    }
-
-    public boolean isStreamingActive() {
-        return streamingActive;
-    }
-
-    public boolean isStreamingFullSchemaSent() {
-        return streamingFullSchemaSent;
-    }
-
-    /**
-     * True if the active streaming query is iterating via a {@link PageFrameCursor};
-     * false if it's using a {@link RecordCursor}. Undefined when streaming is inactive.
-     */
-    public boolean isStreamingPageFrame() {
-        return streamingPageFrameCursor != null;
-    }
-
-    public void onStreamingBatchSent(int rowsEmittedInBatch) {
-        streamingBatchSeq++;
-        streamingFullSchemaSent = true;
-        streamingRowsEmitted += rowsEmittedInBatch;
-    }
-
-    @Override
-    public void close() {
-        clear();
-        Misc.free(batchBuffer);
-        Misc.free(connSymbolDict);
-        pageFrameMemoryRecord = Misc.free(pageFrameMemoryRecord);
-        pageFrameMemoryPool = Misc.free(pageFrameMemoryPool);
-        pageFrameAddressCache = Misc.free(pageFrameAddressCache);
     }
 
     public QwpResultBatchBuffer getBatchBuffer() {
@@ -407,6 +360,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return fd;
     }
 
+    public byte getNegotiatedVersion() {
+        return negotiatedVersion;
+    }
+
     public int getRecvBufferLen() {
         return recvBufferLen;
     }
@@ -415,8 +372,65 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return securityContext;
     }
 
+    public long getStreamingBatchSeq() {
+        return streamingBatchSeq;
+    }
+
+    public int getStreamingColumnCount() {
+        return streamingColumnCount;
+    }
+
+    public RecordCursor getStreamingCursor() {
+        return streamingCursor;
+    }
+
+    public long getStreamingRequestId() {
+        return streamingRequestId;
+    }
+
+    public long getStreamingRowsEmitted() {
+        return streamingRowsEmitted;
+    }
+
+    public int getStreamingSchemaId() {
+        return streamingSchemaId;
+    }
+
+    /**
+     * Returns the symbol-table source matching the active streaming mode so
+     * {@link QwpResultBatchBuffer#beginBatch} can hook up the SYMBOL fast path
+     * without the processor having to know which path is in use.
+     */
+    public SymbolTableSource getStreamingSymbolTableSource() {
+        return streamingPageFrameCursor != null ? streamingPageFrameCursor : streamingCursor;
+    }
+
+    public boolean isStreamingActive() {
+        return streamingActive;
+    }
+
+    public boolean isStreamingFullSchemaSent() {
+        return streamingFullSchemaSent;
+    }
+
+    /**
+     * True if the active streaming query is iterating via a {@link PageFrameCursor};
+     * false if it's using a {@link RecordCursor}. Undefined when streaming is inactive.
+     */
+    public boolean isStreamingPageFrame() {
+        return streamingPageFrameCursor != null;
+    }
+
+    public boolean isStreamingResultEndInitiated() {
+        return streamingResultEndInitiated;
+    }
+
     public boolean isWsHandshakeSent() {
         return wsHandshakeSent;
+    }
+
+    public void markStreamingResultEndInitiated() {
+        streamingResultEndInitiated = true;
     }
 
     public void of(long fd, SecurityContext securityContext) {
@@ -426,6 +440,25 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public void onDisconnected() {
         clear();
+    }
+
+    /**
+     * Marks the current batch's seq as incremented and its rows as counted.
+     * Must be called exactly once per batch, BEFORE the network send commits
+     * bytes to the response sink -- so that if the send parks mid-flight, the
+     * resumed stream starts the NEXT batch with {@code streamingBatchSeq + 1}
+     * rather than re-emitting seq = N with different rows.
+     */
+    public void onStreamingBatchSent(int rowsEmittedInBatch) {
+        if (streamingBatchSeqCommitted) {
+            throw new IllegalStateException(
+                    "onStreamingBatchSent called twice without an intervening sendResultBatch "
+                            + "[seq=" + streamingBatchSeq + ']');
+        }
+        streamingBatchSeq++;
+        streamingFullSchemaSent = true;
+        streamingRowsEmitted += rowsEmittedInBatch;
+        streamingBatchSeqCommitted = true;
     }
 
     public void setNegotiatedVersion(byte negotiatedVersion) {

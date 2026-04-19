@@ -36,20 +36,6 @@ public final class QwpColumnTypeMapper {
     }
 
     /**
-     * Returns true if the QuestDB type produces a QWP array wire type.
-     */
-    public static boolean isArrayType(int questdbColumnType) {
-        return ColumnType.tagOf(questdbColumnType) == ColumnType.ARRAY;
-    }
-
-    /**
-     * Returns true if the QuestDB type produces a QWP geohash wire type.
-     */
-    public static boolean isGeoHash(int questdbColumnType) {
-        return ColumnType.isGeoHash(questdbColumnType);
-    }
-
-    /**
      * Maps a QuestDB column type to the corresponding QWP wire type code.
      *
      * @throws UnsupportedOperationException if the type is not exportable over QWP.

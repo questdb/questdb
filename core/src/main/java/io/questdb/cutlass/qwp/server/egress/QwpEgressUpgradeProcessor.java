@@ -232,26 +232,46 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Continues a query stream that was parked on {@code PeerIsSlowToReadException}.
-     * Flushes any deferred bytes via {@link HttpConnectionContext#resumeResponseSend}
-     * -- that may itself throw {@code PeerIsSlowToReadException} and re-park us -- then
-     * either finishes the streaming (if the parked send was the {@code RESULT_END}) or
-     * continues with the next batch.
+     * Continues a send that was parked on {@code PeerIsSlowToReadException}.
+     * <p>
+     * Always flushes any deferred bytes first -- even when {@code isStreamingActive()}
+     * is false. The PARKED bytes may belong to a {@code QUERY_ERROR} frame that
+     * {@code handleQueryRequest} or a previous {@code resumeSend} emitted AFTER
+     * calling {@code state.endStreaming()}; if we skipped the flush in that case,
+     * the client would see a stalled socket and never receive the error payload.
+     * <p>
+     * After the flush succeeds, four follow-on states are possible:
+     * <ul>
+     *   <li>streaming inactive -- nothing to do, return (error/end already flushed).</li>
+     *   <li>streaming active and {@code streamingResultEndInitiated} -- the parked
+     *       bytes were the {@code RESULT_END}; tear down the streaming state.</li>
+     *   <li>streaming active and still producing -- re-enter the loop.</li>
+     * </ul>
      */
     @Override
     public void resumeSend(HttpConnectionContext context)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         QwpEgressProcessorState state = LV.get(context);
+
+        // 1. Flush any deferred bytes from the previous send, regardless of
+        //    streaming state. Throws PeerIsSlowToReadException if still blocked
+        //    -- we'll be parked again and re-entered via another resumeSend.
+        LOG.debug().$("Egress resumeSend flushing deferred bytes [fd=").$(context.getFd())
+                .$(", streaming=").$(state != null && state.isStreamingActive())
+                .I$();
+        context.resumeResponseSend();
+
         if (state == null || !state.isStreamingActive()) {
+            // Nothing to drive -- the deferred flush above was the last thing
+            // this connection had queued (e.g. a QUERY_ERROR after endStreaming).
             return;
         }
-        // 1. Flush any deferred bytes from the previous send. Throws
-        //    PeerIsSlowToReadException if still blocked -- we'll be parked again.
-        context.resumeResponseSend();
 
         // 2. If the parked send was the RESULT_END frame, we're done -- the bytes
         //    have now been flushed by resumeResponseSend above.
         if (state.isStreamingResultEndInitiated()) {
+            LOG.debug().$("Egress resumeSend completed RESULT_END [fd=").$(context.getFd())
+                    .$(", requestId=").$(state.getStreamingRequestId()).I$();
             state.endStreaming();
             return;
         }
@@ -259,7 +279,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         // 3. Otherwise, continue the streaming loop from the cursor's current position.
         try {
             streamResults(context, state);
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+        } catch (PeerDisconnectedException e) {
+            throw e;
+        } catch (PeerIsSlowToReadException e) {
+            LOG.debug().$("Egress resumeSend re-parked [fd=").$(context.getFd())
+                    .$(", requestId=").$(state.getStreamingRequestId())
+                    .$(", batchSeq=").$(state.getStreamingBatchSeq())
+                    .$(", rowsEmitted=").$(state.getStreamingRowsEmitted())
+                    .I$();
             throw e;
         } catch (Throwable t) {
             LOG.error().$("Egress resume-send failed [fd=").$(context.getFd())
@@ -268,7 +295,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             long failedRequestId = state.getStreamingRequestId();
             state.endStreaming();
             try {
-                sendQueryError(context, failedRequestId, mapErrorStatus(t),
+                sendQueryError(context, state, failedRequestId, mapErrorStatus(t),
                         t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
             } catch (PeerDisconnectedException | PeerIsSlowToReadException sendFail) {
                 throw sendFail;
@@ -410,7 +437,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             case CompiledQuery.COPY_REMOTE: {
                 // Ingress `/write/v4` is the supported channel for bulk load.
                 cq.closeAllButSelect();
-                sendQueryError(context, requestId, QwpConstants.STATUS_PARSE_ERROR,
+                sendQueryError(context, state, requestId, QwpConstants.STATUS_PARSE_ERROR,
                         "COPY ... FROM is not supported on egress");
                 return;
             }
@@ -423,7 +450,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                 break;
             }
         }
-        sendExecDone(context, requestId, type, rowsAffected);
+        sendExecDone(context, state, requestId, type, rowsAffected);
     }
 
     // Egress message dispatch and query execution
@@ -486,7 +513,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             if (length >= 9) {
                 requestId = Unsafe.getUnsafe().getLong(payload + 1);
             }
-            sendQueryError(context, requestId, QwpConstants.STATUS_PARSE_ERROR,
+            sendQueryError(context, state, requestId, QwpConstants.STATUS_PARSE_ERROR,
                     "Phase 1 egress supports a single in-flight query per connection");
             return;
         }
@@ -552,16 +579,21 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             // (we'll be re-entered via resumeSend) or another exception (handled below).
             streamResults(context, state);
         } catch (PeerDisconnectedException e) {
+            // PDX can only arrive from streamResults (the one network call in this
+            // try block). By then streamingHandedOff is true, so state owns the
+            // cursor/factory and the only cleanup we owe is endStreaming.
             if (state.isStreamingActive()) {
                 state.endStreaming();
-            } else if (!streamingHandedOff) {
-                Misc.free(cursor);
-                Misc.free(pageFrameCursor);
-                Misc.free(factory);
             }
             throw e;
         } catch (PeerIsSlowToReadException e) {
             // Streaming parked. State retains the cursor for resumeSend to continue.
+            LOG.debug().$("Egress streaming parked (slow peer) [fd=").$(context.getFd())
+                    .$(", requestId=").$(requestId)
+                    .$(", batchSeq=").$(state.getStreamingBatchSeq())
+                    .$(", rowsEmitted=").$(state.getStreamingRowsEmitted())
+                    .$(", phase=").$(state.isStreamingResultEndInitiated() ? "RESULT_END" : "RESULT_BATCH")
+                    .I$();
             throw e;
         } catch (Throwable e) {
             LOG.error().$("Egress query failed [fd=").$(context.getFd())
@@ -579,7 +611,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             }
             byte status = mapErrorStatus(e);
             try {
-                sendQueryError(context, requestId, status,
+                sendQueryError(context, state, requestId, status,
                         e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
             } catch (PeerDisconnectedException | PeerIsSlowToReadException sendFail) {
                 throw sendFail;
@@ -693,13 +725,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
      * always fits in the send buffer's header reservation plus a handful of bytes,
      * so this is a one-shot send -- no chunking.
      */
-    private void sendExecDone(HttpConnectionContext context, long requestId, short opType, long rowsAffected)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void sendExecDone(
+            HttpConnectionContext context,
+            QwpEgressProcessorState state,
+            long requestId,
+            short opType,
+            long rowsAffected
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpRawSocket rawSocket = context.getRawResponseSocket();
         long bufAddr = rawSocket.getBufferAddress();
         long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
         long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                qwpStart, QwpConstants.VERSION_1, (byte) 0, 0, 0 /* payload len patched */);
+                qwpStart, state.getNegotiatedVersion(), (byte) 0, 0, 0 /* payload len patched */);
         long bodyEnd = QwpEgressFrameWriter.writeExecDone(bodyStart, requestId, opType, rowsAffected);
         int qwpSize = (int) (bodyEnd - qwpStart);
         int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
@@ -707,14 +744,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
     }
 
-    private void sendQueryError(HttpConnectionContext context, long requestId, byte status, CharSequence msg)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void sendQueryError(
+            HttpConnectionContext context,
+            QwpEgressProcessorState state,
+            long requestId,
+            byte status,
+            CharSequence msg
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpRawSocket rawSocket = context.getRawResponseSocket();
         long bufAddr = rawSocket.getBufferAddress();
         int bufSize = rawSocket.getBufferSize();
         long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
         long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                qwpStart, QwpConstants.VERSION_1, (byte) 0, 0, 0);
+                qwpStart, state.getNegotiatedVersion(), (byte) 0, 0, 0);
         // Cap UTF-8 encoding so it can't overflow either the wire u16 length OR the send buffer.
         // Reserve a few bytes for the header + WS framing already accounted for.
         int msgCap = Math.min(0xFFFF, bufSize - QwpEgressFrameWriter.WS_HEADER_RESERVATION
@@ -747,6 +789,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             long schemaId,
             boolean writeFullSchema
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // Asserts the caller bumped streamingBatchSeq (via state.onStreamingBatchSent)
+        // BEFORE reaching the socket. See QwpEgressProcessorState.consumeBatchSeqCommit.
+        state.consumeBatchSeqCommit();
         HttpRawSocket rawSocket = context.getRawResponseSocket();
         long bufAddr = rawSocket.getBufferAddress();
         int bufSize = rawSocket.getBufferSize();
@@ -762,7 +807,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         // connection dict. TIMESTAMP / TIMESTAMP_NANOS / DATE columns carry a
         // 1-byte encoding discriminator that the decoder consumes.
         long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                qwpStart, QwpConstants.VERSION_1,
+                qwpStart, state.getNegotiatedVersion(),
                 (byte) (QwpConstants.FLAG_DELTA_SYMBOL_DICT | QwpConstants.FLAG_GORILLA),
                 1, 0 /* payload len patched */);
         long preludeEnd = QwpEgressFrameWriter.writeResultBatchPrelude(bodyStart, requestId, batchSeq);
@@ -783,13 +828,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
     }
 
-    private void sendResultEnd(HttpConnectionContext context, long requestId, long finalSeq, long totalRows)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void sendResultEnd(
+            HttpConnectionContext context,
+            QwpEgressProcessorState state,
+            long requestId,
+            long finalSeq,
+            long totalRows
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpRawSocket rawSocket = context.getRawResponseSocket();
         long bufAddr = rawSocket.getBufferAddress();
         long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
         long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                qwpStart, QwpConstants.VERSION_1, (byte) 0, 0, 0 /* payload len patched */);
+                qwpStart, state.getNegotiatedVersion(), (byte) 0, 0, 0 /* payload len patched */);
         long bodyEnd = QwpEgressFrameWriter.writeResultEnd(bodyStart, requestId, finalSeq, totalRows);
         int qwpSize = (int) (bodyEnd - qwpStart);
         int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
@@ -840,7 +890,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                 long finalSeq = state.getStreamingBatchSeq() == 0 ? 0 : state.getStreamingBatchSeq() - 1;
                 long totalRows = state.getStreamingRowsEmitted();
                 state.markStreamingResultEndInitiated();
-                sendResultEnd(context, requestId, finalSeq, totalRows);
+                sendResultEnd(context, state, requestId, finalSeq, totalRows);
                 state.endStreaming();
                 return;
             }
@@ -856,7 +906,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             if (cursorExhausted) {
                 long totalRows = state.getStreamingRowsEmitted();
                 state.markStreamingResultEndInitiated();
-                sendResultEnd(context, requestId, currentSeq, totalRows);
+                sendResultEnd(context, state, requestId, currentSeq, totalRows);
                 state.endStreaming();
                 return;
             }
