@@ -36,17 +36,6 @@ public final class QwpColumnTypeMapper {
     }
 
     /**
-     * Returns the geohash precision in bits for a QuestDB GEOHASH/GEOBYTE/GEOSHORT/GEOINT/GEOLONG type,
-     * or -1 if the column type is not a geohash.
-     */
-    public static int geohashPrecisionBits(int questdbColumnType) {
-        if (!ColumnType.isGeoHash(questdbColumnType)) {
-            return -1;
-        }
-        return ColumnType.getGeoHashBits(questdbColumnType);
-    }
-
-    /**
      * Returns true if the QuestDB type produces a QWP array wire type.
      */
     public static boolean isArrayType(int questdbColumnType) {
@@ -89,7 +78,8 @@ public final class QwpColumnTypeMapper {
             case ColumnType.BYTE -> QwpConstants.TYPE_BYTE;
             case ColumnType.SHORT -> QwpConstants.TYPE_SHORT;
             case ColumnType.CHAR -> QwpConstants.TYPE_CHAR;
-            case ColumnType.INT, ColumnType.IPv4 -> QwpConstants.TYPE_INT;
+            case ColumnType.INT -> QwpConstants.TYPE_INT;
+            case ColumnType.IPv4 -> QwpConstants.TYPE_IPv4;
             case ColumnType.LONG -> QwpConstants.TYPE_LONG;
             case ColumnType.DATE -> QwpConstants.TYPE_DATE;
             case ColumnType.FLOAT -> QwpConstants.TYPE_FLOAT;
@@ -99,6 +89,7 @@ public final class QwpColumnTypeMapper {
             case ColumnType.LONG256 -> QwpConstants.TYPE_LONG256;
             case ColumnType.UUID -> QwpConstants.TYPE_UUID;
             case ColumnType.VARCHAR -> QwpConstants.TYPE_VARCHAR;
+            case ColumnType.BINARY -> QwpConstants.TYPE_BINARY;
             case ColumnType.DECIMAL64 -> QwpConstants.TYPE_DECIMAL64;
             case ColumnType.DECIMAL128 -> QwpConstants.TYPE_DECIMAL128;
             case ColumnType.DECIMAL256 -> QwpConstants.TYPE_DECIMAL256;

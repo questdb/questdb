@@ -32,7 +32,7 @@ import io.questdb.std.Unsafe;
 /**
  * Emits QWP schema sections for egress result batches.
  * <p>
- * See {@code docs/QWP_SPECIFICATION.md} §9 for the schema format.
+ * See {@code docs/QWP_SPECIFICATION.md} sec 9 for the schema format.
  */
 public final class QwpEgressSchemaWriter {
 

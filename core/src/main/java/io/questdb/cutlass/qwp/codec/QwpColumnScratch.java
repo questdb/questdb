@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.codec;
 
+import io.questdb.std.BinarySequence;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -56,36 +57,129 @@ import io.questdb.std.str.Utf8Sequence;
 final class QwpColumnScratch implements QuietCloseable {
 
     private static final int INITIAL_BYTES = 4096;
-    QwpEgressColumnDef def;
-
-    int nonNullCount;
-    int nullCount;
-    int rowCount;
-
-    int nullBitmapCapacity;
-    long nullBitmapAddr;
-
-    int valuesCapacity;          // bytes
-    long valuesAddr;
-    int valuesPos;               // bytes written
-
-    int stringHeapCapacity;
-    long stringHeapAddr;
-    int stringHeapPos;
-    int stringOffsetsCapacity;   // bytes
-    long stringOffsetsAddr;      // (nonNullCount + 1) × i32
-
-    int symbolIdsCapacity;       // bytes
-    long symbolIdsAddr;
-    final ObjList<String> symbolDictOrder = new ObjList<>();
-    final CharSequenceIntHashMap symbolDict = new CharSequenceIntHashMap();
-
-    int arrayHeapCapacity;
-    long arrayHeapAddr;
-    int arrayHeapPos;
-
     final Decimal128 decimal128Sink = new Decimal128();
     final Decimal256 decimal256Sink = new Decimal256();
+    final CharSequenceIntHashMap symbolDict = new CharSequenceIntHashMap();
+    final ObjList<String> symbolDictOrder = new ObjList<>();
+    long arrayHeapAddr;
+    int arrayHeapCapacity;
+    int arrayHeapPos;
+    QwpEgressColumnDef def;
+    int nonNullCount;
+    long nullBitmapAddr;
+    int nullBitmapCapacity;
+    int nullCount;
+    int rowCount;
+    long stringHeapAddr;
+    int stringHeapCapacity;
+    int stringHeapPos;
+    long stringOffsetsAddr;      // (nonNullCount + 1) x i32
+    int stringOffsetsCapacity;   // bytes
+    long symbolIdsAddr;
+    int symbolIdsCapacity;       // bytes
+    long valuesAddr;
+    int valuesCapacity;          // bytes
+    int valuesPos;               // bytes written
+
+    @Override
+    public void close() {
+        if (valuesAddr != 0) {
+            Unsafe.free(valuesAddr, valuesCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            valuesAddr = 0;
+            valuesCapacity = 0;
+        }
+        if (nullBitmapAddr != 0) {
+            Unsafe.free(nullBitmapAddr, nullBitmapCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            nullBitmapAddr = 0;
+            nullBitmapCapacity = 0;
+        }
+        if (stringHeapAddr != 0) {
+            Unsafe.free(stringHeapAddr, stringHeapCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            stringHeapAddr = 0;
+            stringHeapCapacity = 0;
+        }
+        if (stringOffsetsAddr != 0) {
+            Unsafe.free(stringOffsetsAddr, stringOffsetsCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            stringOffsetsAddr = 0;
+            stringOffsetsCapacity = 0;
+        }
+        if (symbolIdsAddr != 0) {
+            Unsafe.free(symbolIdsAddr, symbolIdsCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            symbolIdsAddr = 0;
+            symbolIdsCapacity = 0;
+        }
+        if (arrayHeapAddr != 0) {
+            Unsafe.free(arrayHeapAddr, arrayHeapCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            arrayHeapAddr = 0;
+            arrayHeapCapacity = 0;
+        }
+    }
+
+    private void ensureNullBitmapCapacity(int rowIdx) {
+        int needed = (rowIdx >>> 3) + 1;
+        if (nullBitmapCapacity >= needed) return;
+        int oldCap = nullBitmapCapacity;
+        int newCap = Math.max(oldCap * 2, Math.max(INITIAL_BYTES, needed));
+        nullBitmapAddr = Unsafe.realloc(nullBitmapAddr, oldCap, newCap, MemoryTag.NATIVE_HTTP_CONN);
+        nullBitmapCapacity = newCap;
+        // Zero the newly added bytes so appendNull() can OR in bits without per-byte init.
+        Unsafe.getUnsafe().setMemory(nullBitmapAddr + oldCap, newCap - oldCap, (byte) 0);
+    }
+
+    private void ensureStringHeapCapacity(int required) {
+        if (stringHeapCapacity >= required) return;
+        int newCap = Math.max(stringHeapCapacity * 2, Math.max(INITIAL_BYTES, required));
+        stringHeapAddr = Unsafe.realloc(stringHeapAddr, stringHeapCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+        stringHeapCapacity = newCap;
+    }
+
+    private void ensureSymbolIdsCapacity(int required) {
+        if (symbolIdsCapacity >= required) return;
+        int newCap = Math.max(symbolIdsCapacity * 2, Math.max(INITIAL_BYTES, required));
+        symbolIdsAddr = Unsafe.realloc(symbolIdsAddr, symbolIdsCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+        symbolIdsCapacity = newCap;
+    }
+
+    private void ensureValuesCapacity(int required) {
+        if (valuesCapacity >= required) return;
+        int newCap = Math.max(valuesCapacity * 2, Math.max(INITIAL_BYTES, required));
+        valuesAddr = Unsafe.realloc(valuesAddr, valuesCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+        valuesCapacity = newCap;
+    }
+
+    /**
+     * STRING/VARCHAR: record the end-offset of the value just written. Offsets are stored
+     * at {@code 4 * (nonNullCount + 1)} in {@link #stringOffsetsAddr}; offset[0] is the
+     * implicit zero (written at emit time to keep parsing simple).
+     */
+    private void recordStringOffset() {
+        int slotIdx = nonNullCount + 1;             // we'll occupy this slot
+        int needed = 4 * (slotIdx + 1);              // +1 for the implicit offset[0]
+        if (stringOffsetsCapacity < needed) {
+            int newCap = Math.max(stringOffsetsCapacity * 2, Math.max(INITIAL_BYTES, needed));
+            stringOffsetsAddr = Unsafe.realloc(stringOffsetsAddr, stringOffsetsCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+            stringOffsetsCapacity = newCap;
+        }
+        Unsafe.getUnsafe().putInt(stringOffsetsAddr + 4L * slotIdx, stringHeapPos);
+    }
+
+    /**
+     * BINARY: copy opaque bytes from {@code BinarySequence} into the string heap via the
+     * sequence's bulk {@link BinarySequence#copyTo(long, long, long)} method, which native
+     * implementations override with a single memcpy/JNI bulk path. Caller has confirmed
+     * {@code b.length()} fits in {@code int} (per-row BINARY is bounded by the wire u32
+     * offset; values exceeding {@link Integer#MAX_VALUE} are rejected by the caller).
+     */
+    void appendBinary(BinarySequence b) {
+        long len = b.length();
+        // Treat as int below; the caller (QwpResultBatchBuffer) validates the bound.
+        int n = (int) len;
+        ensureStringHeapCapacity(stringHeapPos + n);
+        b.copyTo(stringHeapAddr + stringHeapPos, 0, len);
+        stringHeapPos += n;
+        recordStringOffset();
+        markNonNullAndAdvanceRow();
+    }
 
     /**
      * BOOLEAN: bit-pack into {@link #valuesAddr}. Bit index = {@link #nonNullCount}
@@ -118,16 +212,6 @@ final class QwpColumnScratch implements QuietCloseable {
         ensureValuesCapacity(valuesPos + 2);
         Unsafe.getUnsafe().putShort(valuesAddr + valuesPos, (short) v);
         valuesPos += 2;
-        markNonNullAndAdvanceRow();
-    }
-
-    /**
-     * Writes the per-row bytes (header + flat values) of a serialised array.
-     */
-    void appendArrayBytes(long srcAddr, int len) {
-        ensureArrayHeapCapacity(arrayHeapPos + len);
-        Unsafe.getUnsafe().copyMemory(srcAddr, arrayHeapAddr + arrayHeapPos, len);
-        arrayHeapPos += len;
         markNonNullAndAdvanceRow();
     }
 
@@ -311,40 +395,6 @@ final class QwpColumnScratch implements QuietCloseable {
         }
     }
 
-    @Override
-    public void close() {
-        if (valuesAddr != 0) {
-            Unsafe.free(valuesAddr, valuesCapacity, MemoryTag.NATIVE_HTTP_CONN);
-            valuesAddr = 0;
-            valuesCapacity = 0;
-        }
-        if (nullBitmapAddr != 0) {
-            Unsafe.free(nullBitmapAddr, nullBitmapCapacity, MemoryTag.NATIVE_HTTP_CONN);
-            nullBitmapAddr = 0;
-            nullBitmapCapacity = 0;
-        }
-        if (stringHeapAddr != 0) {
-            Unsafe.free(stringHeapAddr, stringHeapCapacity, MemoryTag.NATIVE_HTTP_CONN);
-            stringHeapAddr = 0;
-            stringHeapCapacity = 0;
-        }
-        if (stringOffsetsAddr != 0) {
-            Unsafe.free(stringOffsetsAddr, stringOffsetsCapacity, MemoryTag.NATIVE_HTTP_CONN);
-            stringOffsetsAddr = 0;
-            stringOffsetsCapacity = 0;
-        }
-        if (symbolIdsAddr != 0) {
-            Unsafe.free(symbolIdsAddr, symbolIdsCapacity, MemoryTag.NATIVE_HTTP_CONN);
-            symbolIdsAddr = 0;
-            symbolIdsCapacity = 0;
-        }
-        if (arrayHeapAddr != 0) {
-            Unsafe.free(arrayHeapAddr, arrayHeapCapacity, MemoryTag.NATIVE_HTTP_CONN);
-            arrayHeapAddr = 0;
-            arrayHeapCapacity = 0;
-        }
-    }
-
     void ensureArrayHeapCapacity(int required) {
         if (arrayHeapCapacity >= required) return;
         int newCap = Math.max(arrayHeapCapacity * 2, Math.max(INITIAL_BYTES, required));
@@ -352,56 +402,8 @@ final class QwpColumnScratch implements QuietCloseable {
         arrayHeapCapacity = newCap;
     }
 
-    private void ensureNullBitmapCapacity(int rowIdx) {
-        int needed = (rowIdx >>> 3) + 1;
-        if (nullBitmapCapacity >= needed) return;
-        int oldCap = nullBitmapCapacity;
-        int newCap = Math.max(oldCap * 2, Math.max(INITIAL_BYTES, needed));
-        nullBitmapAddr = Unsafe.realloc(nullBitmapAddr, oldCap, newCap, MemoryTag.NATIVE_HTTP_CONN);
-        nullBitmapCapacity = newCap;
-        // Zero the newly added bytes so appendNull() can OR in bits without per-byte init.
-        Unsafe.getUnsafe().setMemory(nullBitmapAddr + oldCap, newCap - oldCap, (byte) 0);
-    }
-
-    private void ensureStringHeapCapacity(int required) {
-        if (stringHeapCapacity >= required) return;
-        int newCap = Math.max(stringHeapCapacity * 2, Math.max(INITIAL_BYTES, required));
-        stringHeapAddr = Unsafe.realloc(stringHeapAddr, stringHeapCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
-        stringHeapCapacity = newCap;
-    }
-
-    private void ensureSymbolIdsCapacity(int required) {
-        if (symbolIdsCapacity >= required) return;
-        int newCap = Math.max(symbolIdsCapacity * 2, Math.max(INITIAL_BYTES, required));
-        symbolIdsAddr = Unsafe.realloc(symbolIdsAddr, symbolIdsCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
-        symbolIdsCapacity = newCap;
-    }
-
-    private void ensureValuesCapacity(int required) {
-        if (valuesCapacity >= required) return;
-        int newCap = Math.max(valuesCapacity * 2, Math.max(INITIAL_BYTES, required));
-        valuesAddr = Unsafe.realloc(valuesAddr, valuesCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
-        valuesCapacity = newCap;
-    }
-
     void markNonNullAndAdvanceRow() {
         nonNullCount++;
         rowCount++;
-    }
-
-    /**
-     * STRING/VARCHAR: record the end-offset of the value just written. Offsets are stored
-     * at {@code 4 * (nonNullCount + 1)} in {@link #stringOffsetsAddr}; offset[0] is the
-     * implicit zero (written at emit time to keep parsing simple).
-     */
-    private void recordStringOffset() {
-        int slotIdx = nonNullCount + 1;             // we'll occupy this slot
-        int needed = 4 * (slotIdx + 1);              // +1 for the implicit offset[0]
-        if (stringOffsetsCapacity < needed) {
-            int newCap = Math.max(stringOffsetsCapacity * 2, Math.max(INITIAL_BYTES, needed));
-            stringOffsetsAddr = Unsafe.realloc(stringOffsetsAddr, stringOffsetsCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
-            stringOffsetsCapacity = newCap;
-        }
-        Unsafe.getUnsafe().putInt(stringOffsetsAddr + 4L * slotIdx, stringHeapPos);
     }
 }

@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.codec;
 /**
  * QWP egress message-kind discriminator. The first byte of every egress payload
  * identifies which of the egress message types it carries. See
- * {@code docs/QWP_EGRESS_EXTENSION.md} §5 for the authoritative list.
+ * {@code docs/QWP_EGRESS_EXTENSION.md} sec 5 for the authoritative list.
  */
 public final class QwpEgressMsgKind {
     public static final byte CANCEL = 0x14;

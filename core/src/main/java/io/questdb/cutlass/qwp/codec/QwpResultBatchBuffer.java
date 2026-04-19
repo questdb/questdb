@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.qwp.codec;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
@@ -81,13 +80,18 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 case QwpConstants.TYPE_INT: {
                     int v = record.getInt(ci);
-                    // IPv4 and INT share the wire type but use different NULL sentinels:
-                    // INT NULL is Integer.MIN_VALUE, IPv4 NULL is 0 (Numbers.IPv4_NULL,
-                    // i.e. the address 0.0.0.0). The right sentinel is selected by the
-                    // *QuestDB* column type, not the wire type.
-                    int nullSentinel = ColumnType.tagOf(qdbType) == ColumnType.IPv4
-                            ? Numbers.IPv4_NULL : Numbers.INT_NULL;
-                    if (v == nullSentinel) scratch.appendNull();
+                    if (v == Numbers.INT_NULL) scratch.appendNull();
+                    else scratch.appendInt(v);
+                    break;
+                }
+                case QwpConstants.TYPE_IPv4: {
+                    // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
+                    // We mark such rows NULL in the wire bitmap; non-null rows write the
+                    // 4 bytes of the address. The wire reader still cannot represent
+                    // the literal address 0.0.0.0 as non-null -- that's a QuestDB-level
+                    // limitation inherited by the wire format.
+                    int v = record.getInt(ci);
+                    if (v == Numbers.IPv4_NULL) scratch.appendNull();
                     else scratch.appendInt(v);
                     break;
                 }
@@ -111,7 +115,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_FLOAT: {
-                    // QuestDB FLOAT NULL == NaN. Spec §11.5 documents that NaN values
+                    // QuestDB FLOAT NULL == NaN. Spec sec 11.5 documents that NaN values
                     // (including a "legitimate" NaN such as 0/0) round-trip as NULL.
                     float v = record.getFloat(ci);
                     if (Float.isNaN(v)) scratch.appendNull();
@@ -119,7 +123,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_DOUBLE: {
-                    // Same NaN-as-NULL convention as FLOAT (spec §11.5).
+                    // Same NaN-as-NULL convention as FLOAT (spec sec 11.5).
                     double v = record.getDouble(ci);
                     if (Double.isNaN(v)) scratch.appendNull();
                     else scratch.appendDouble(v);
@@ -135,6 +139,23 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     Utf8Sequence us = record.getVarcharA(ci);
                     if (us == null) scratch.appendNull();
                     else scratch.appendVarchar(us);
+                    break;
+                }
+                case QwpConstants.TYPE_BINARY: {
+                    io.questdb.std.BinarySequence bin = record.getBin(ci);
+                    if (bin == null) {
+                        scratch.appendNull();
+                    } else {
+                        long len = bin.length();
+                        // Per-row BINARY length is encoded as the offset delta in a uint32 array,
+                        // so individual values cannot exceed Integer.MAX_VALUE bytes. The total
+                        // batch is also bounded by the 16 MiB QwpConstants.DEFAULT_MAX_BATCH_SIZE.
+                        if (len < 0 || len > Integer.MAX_VALUE) {
+                            throw new UnsupportedOperationException(
+                                    "QWP egress: BINARY value too large (" + len + " bytes)");
+                        }
+                        scratch.appendBinary(bin);
+                    }
                     break;
                 }
                 case QwpConstants.TYPE_SYMBOL: {
@@ -282,14 +303,14 @@ public class QwpResultBatchBuffer implements QuietCloseable {
 
     /**
      * Largest array (in elements) we'll serialise in one row. Caps the per-row payload at
-     * roughly 256 MB (8 bytes × this) so the byte-size math fits in {@code int} and the
+     * roughly 256 MB (8 bytes x this) so the byte-size math fits in {@code int} and the
      * scratch grow-and-write path can never see a negative or wrap-around length.
      */
     private static final long MAX_ARRAY_ELEMENTS = (Integer.MAX_VALUE - 1024) / 8L;
 
     /**
      * Serialises an array into {@code scratch.arrayHeapAddr} without allocating a {@code byte[]}.
-     * Format: {@code [nDims u8] [dim lengths: nDims × i32 LE] [values: product(dims) × 8 bytes LE]}.
+     * Format: {@code [nDims u8] [dim lengths: nDims x i32 LE] [values: product(dims) x 8 bytes LE]}.
      * Throws if the element-count product overflows; the buffer state is unchanged in that case.
      */
     private static void appendArrayBytesDirect(QwpColumnScratch scratch, ArrayView av, byte wireType) {
@@ -316,12 +337,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         }
         if (wireType == QwpConstants.TYPE_DOUBLE_ARRAY) {
             for (int i = 0; i < elements; i++) {
-                Unsafe.getUnsafe().putLong(p, Double.doubleToRawLongBits(av.getDouble((int) i)));
+                Unsafe.getUnsafe().putLong(p, Double.doubleToRawLongBits(av.getDouble(i)));
                 p += 8;
             }
         } else {
             for (int i = 0; i < elements; i++) {
-                Unsafe.getUnsafe().putLong(p, av.getLong((int) i));
+                Unsafe.getUnsafe().putLong(p, av.getLong(i));
                 p += 8;
             }
         }
@@ -355,7 +376,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             Unsafe.getUnsafe().copyMemory(scratch.valuesAddr, p, bytes);
             return p + bytes;
         }
-        if (wire == QwpConstants.TYPE_STRING || wire == QwpConstants.TYPE_VARCHAR) {
+        if (wire == QwpConstants.TYPE_STRING || wire == QwpConstants.TYPE_VARCHAR
+                || wire == QwpConstants.TYPE_BINARY) {
+            // All three share the same wire layout: (N+1) x uint32 offsets + concatenated bytes.
+            // BINARY differs from STRING only in that the bytes are opaque (no UTF-8 contract).
             return emitStringColumn(scratch, p, wireLimit);
         }
         if (wire == QwpConstants.TYPE_SYMBOL) {

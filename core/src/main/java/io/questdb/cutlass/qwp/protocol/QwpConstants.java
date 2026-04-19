@@ -144,6 +144,19 @@ public final class QwpConstants {
      */
     public static final byte TYPE_CHAR = 0x16;
     /**
+     * Column type: BINARY (length-prefixed opaque bytes).
+     * Wire format: identical to VARCHAR — (N+1) x uint32 offsets + concatenated bytes.
+     */
+    public static final byte TYPE_BINARY = 0x17;
+    /**
+     * Column type: IPv4 (32-bit address). Wire format: 4 bytes LE, identical to INT.
+     * NULL is signalled via the standard null bitmap; the int payload for non-null rows
+     * is the address bits (network byte order on the wire? No — little-endian like INT).
+     * Note: QuestDB stores IPv4 NULL as the bit pattern 0 (i.e. 0.0.0.0), so the address
+     * 0.0.0.0 cannot be represented as non-null in QuestDB regardless of the wire type.
+     */
+    public static final byte TYPE_IPv4 = 0x18;
+    /**
      * Column type: DATE (int64 milliseconds since epoch).
      */
     public static final byte TYPE_DATE = 0x0B;
@@ -277,6 +290,8 @@ public final class QwpConstants {
             case TYPE_BYTE -> "BYTE";
             case TYPE_SHORT -> "SHORT";
             case TYPE_CHAR -> "CHAR";
+            case TYPE_BINARY -> "BINARY";
+            case TYPE_IPv4 -> "IPv4";
             case TYPE_INT -> "INT";
             case TYPE_LONG -> "LONG";
             case TYPE_FLOAT -> "FLOAT";

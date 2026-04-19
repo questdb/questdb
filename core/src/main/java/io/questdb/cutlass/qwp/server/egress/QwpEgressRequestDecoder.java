@@ -24,14 +24,17 @@
 
 package io.questdb.cutlass.qwp.server.egress;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 
@@ -68,7 +71,7 @@ public class QwpEgressRequestDecoder {
      * scratch StringSink passed to {@link BindVariableService#setStr}. Both
      * implementations copy the value out, so we can safely reuse these flyweights.
      */
-    private final io.questdb.std.str.DirectUtf8String varcharBindView = new io.questdb.std.str.DirectUtf8String();
+    private final DirectUtf8String varcharBindView = new DirectUtf8String();
     private final StringSink stringBindScratch = new StringSink();
 
     /**
@@ -116,8 +119,12 @@ public class QwpEgressRequestDecoder {
         QwpVarint.decode(p, limit, varintScratch);
         long sqlLen = varintScratch.value;
         p += varintScratch.bytesRead;
-        if (p + sqlLen > limit) {
-            throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: SQL truncated");
+        // Reject negative or oversized sql_len explicitly: a hostile varint can encode a 64-bit
+        // signed value with the sign bit set. Without this guard, "p + sqlLen > limit" wraps for
+        // negative sqlLen, the bounds check passes silently, and Utf8s.utf8ToUtf16 runs with
+        // end < start. Cap by remaining frame bytes (limit - p) which is a small positive long.
+        if (sqlLen < 0 || sqlLen > (limit - p)) {
+            throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: sql_len out of range: ").put(sqlLen);
         }
         sql.clear();
         Utf8s.utf8ToUtf16(p, p + sqlLen, sql);
@@ -126,6 +133,9 @@ public class QwpEgressRequestDecoder {
         QwpVarint.decode(p, limit, varintScratch);
         initialCredit = varintScratch.value;
         p += varintScratch.bytesRead;
+        if (initialCredit < 0) {
+            throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: initial_credit must be non-negative: ").put(initialCredit);
+        }
 
         QwpVarint.decode(p, limit, varintScratch);
         long bindCount = varintScratch.value;
@@ -251,12 +261,25 @@ public class QwpEgressRequestDecoder {
                     p += 8;
                 }
             }
-            case QwpConstants.TYPE_TIMESTAMP, QwpConstants.TYPE_TIMESTAMP_NANOS -> {
+            case QwpConstants.TYPE_TIMESTAMP -> {
                 if (isNull) {
                     bindVars.setTimestamp(index);
                 } else {
                     if (p + 8 > limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated TIMESTAMP");
                     bindVars.setTimestamp(index, Unsafe.getUnsafe().getLong(p));
+                    p += 8;
+                }
+            }
+            case QwpConstants.TYPE_TIMESTAMP_NANOS -> {
+                // TIMESTAMP (micros) and TIMESTAMP_NANOS are distinct QuestDB types with different
+                // unit-of-time semantics. Routing both through setTimestamp() would tag the bind as
+                // TIMESTAMP_MICRO and downstream coercion (NanosTimestampDriver.from) would
+                // multiply the nanos value by 1000 when the placeholder column is TIMESTAMP_NANO.
+                if (isNull) {
+                    bindVars.setTimestampNano(index);
+                } else {
+                    if (p + 8 > limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated TIMESTAMP_NANOS");
+                    bindVars.setTimestampNano(index, Unsafe.getUnsafe().getLong(p));
                     p += 8;
                 }
             }
@@ -278,19 +301,19 @@ public class QwpEgressRequestDecoder {
                     p += 8;
                 }
             }
-            // SYMBOL bind: spec §6 says clients should send STRING wire type for symbol-typed
+            // SYMBOL bind: spec sec 6 says clients should send STRING wire type for symbol-typed
             // placeholders (no per-value dict). The server is lenient and accepts SYMBOL wire
             // type by routing it through the same single-UTF-8-value path. See M1 in code-review.
             case QwpConstants.TYPE_STRING, QwpConstants.TYPE_SYMBOL -> {
                 if (isNull) {
                     bindVars.setStr(index);
                 } else {
-                    // (N+1) x uint32 offsets where N=1 → 2 offsets = 8 bytes
+                    // (N+1) x uint32 offsets where N=1 -> 2 offsets = 8 bytes
                     if (p + 8 > limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated STRING offsets");
                     int strLen = Unsafe.getUnsafe().getInt(p + 4); // offset[1] - offset[0] (offset[0] = 0)
                     p += 8;
                     if (p + strLen > limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated STRING bytes");
-                    // Reuse stringBindScratch — StrBindVariable.setValue copies the CharSequence
+                    // Reuse stringBindScratch -- StrBindVariable.setValue copies the CharSequence
                     // into its own utf16Sink, so the scratch can be freely reused for the next bind.
                     stringBindScratch.clear();
                     Utf8s.utf8ToUtf16(p, p + strLen, stringBindScratch);
@@ -306,7 +329,7 @@ public class QwpEgressRequestDecoder {
                     int strLen = Unsafe.getUnsafe().getInt(p + 4);
                     p += 8;
                     if (p + strLen > limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated VARCHAR bytes");
-                    // Reuse varcharBindView — StrBindVariable.setValue(Utf8Sequence) copies into
+                    // Reuse varcharBindView -- StrBindVariable.setValue(Utf8Sequence) copies into
                     // its own utf8Sink, so the view can be re-pointed for the next bind.
                     bindVars.setVarchar(index, varcharBindView.of(p, p + strLen));
                     p += strLen;
@@ -340,8 +363,17 @@ public class QwpEgressRequestDecoder {
                 QwpVarint.decode(p, limit, varintScratch);
                 long precisionBits = varintScratch.value;
                 p += varintScratch.bytesRead;
+                // ColumnType.getGeoHashTypeWithBits guards bits with `assert` only, and
+                // pow2SizeOfBits indexes a 61-entry array without a runtime bound. With -ea off
+                // an out-of-range precisionBits produces a malformed GeoHash column type or
+                // AIOOBE. Validate explicitly against the documented 1..60 range.
+                if (precisionBits < 1 || precisionBits > ColumnType.GEOLONG_MAX_BITS) {
+                    throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
+                            .put("bind ").put(index).put(": GEOHASH precision_bits out of range (1..")
+                            .put(ColumnType.GEOLONG_MAX_BITS).put("): ").put(precisionBits);
+                }
                 int bytesPerValue = (int) ((precisionBits + 7) >>> 3);
-                int geoType = io.questdb.cairo.ColumnType.getGeoHashTypeWithBits((int) precisionBits);
+                int geoType = ColumnType.getGeoHashTypeWithBits((int) precisionBits);
                 if (isNull) {
                     bindVars.setGeoHash(index, geoType);
                 } else {
@@ -358,22 +390,24 @@ public class QwpEgressRequestDecoder {
                 if (p >= limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL64 scale");
                 int scale = Unsafe.getUnsafe().getByte(p++) & 0xFF;
                 if (isNull) {
-                    bindVars.setDecimal(index, 0, 0, 0, Numbers.LONG_NULL,
-                            io.questdb.cairo.ColumnType.getDecimalType(18, scale));
+                    bindVars.setDecimal(index, 0, 0, 0, Decimals.DECIMAL64_NULL,
+                            ColumnType.getDecimalType(18, scale));
                 } else {
                     if (p + 8 > limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL64 value");
                     long ll = Unsafe.getUnsafe().getLong(p);
                     bindVars.setDecimal(index, 0, 0, 0, ll,
-                            io.questdb.cairo.ColumnType.getDecimalType(18, scale));
+                            ColumnType.getDecimalType(18, scale));
                     p += 8;
                 }
             }
             case QwpConstants.TYPE_DECIMAL128 -> {
                 if (p >= limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL128 scale");
                 int scale = Unsafe.getUnsafe().getByte(p++) & 0xFF;
-                int decimalType = io.questdb.cairo.ColumnType.getDecimalType(38, scale);
+                int decimalType = ColumnType.getDecimalType(38, scale);
                 if (isNull) {
-                    bindVars.setDecimal(index, 0, 0, Numbers.LONG_NULL, Numbers.LONG_NULL, decimalType);
+                    // Canonical DECIMAL128 NULL is (HI=Long.MIN_VALUE, LO=0). The setDecimal
+                    // parameter order is (hh, hl, lh, ll) where lh holds the HI half and ll the LO.
+                    bindVars.setDecimal(index, 0, 0, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, decimalType);
                 } else {
                     if (p + 16 > limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL128 value");
                     long lo = Unsafe.getUnsafe().getLong(p);
@@ -385,11 +419,16 @@ public class QwpEgressRequestDecoder {
             case QwpConstants.TYPE_DECIMAL256 -> {
                 if (p >= limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL256 scale");
                 int scale = Unsafe.getUnsafe().getByte(p++) & 0xFF;
-                int decimalType = io.questdb.cairo.ColumnType.getDecimalType(77, scale);
+                // DECIMAL256 stores values that fit in 76 digits of precision
+                // (see Decimals.MAX_PRECISION). getDecimalType asserts on > MAX_PRECISION.
+                int decimalType = ColumnType.getDecimalType(Decimals.MAX_PRECISION, scale);
                 if (isNull) {
+                    // Canonical DECIMAL256 NULL is (HH=Long.MIN_VALUE, HL=0, LH=0, LL=0).
+                    // Writing LONG_NULL in all four slots produces a different 256-bit value
+                    // that Decimals.isNull*() will NOT recognise as NULL.
                     bindVars.setDecimal(index,
-                            Numbers.LONG_NULL, Numbers.LONG_NULL,
-                            Numbers.LONG_NULL, Numbers.LONG_NULL, decimalType);
+                            Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                            Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, decimalType);
                 } else {
                     if (p + 32 > limit) throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL256 value");
                     long ll = Unsafe.getUnsafe().getLong(p);

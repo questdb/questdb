@@ -76,6 +76,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * re-issue the {@code RESULT_END} after flushing the deferred bytes.
      */
     private boolean streamingResultEndInitiated;
+    /**
+     * Total rows emitted for the in-flight query across all batches. Reported to the
+     * client in {@code RESULT_END.total_rows} so application code can verify the
+     * server's view of the full result matches the row count it observed.
+     */
+    private long streamingRowsEmitted;
     private int streamingSchemaId;
 
     public QwpEgressProcessorState(io.questdb.cairo.CairoConfiguration cairoConfiguration) {
@@ -115,8 +121,13 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             int columnCount,
             int schemaId
     ) {
-        // Caller has confirmed nothing is currently streaming; otherwise we'd leak
-        // the previous factory/cursor. The state should already be clear at this point.
+        // Defence in depth: if a caller forgets to check isStreamingActive(), free the
+        // previous factory/cursor before overwriting. The primary gate lives in
+        // QwpEgressUpgradeProcessor.handleQueryRequest, but this second line prevents
+        // a native-resource leak if the gate is ever bypassed.
+        if (streamingActive) {
+            endStreaming();
+        }
         this.streamingRequestId = requestId;
         this.streamingFactory = factory;
         this.streamingCursor = cursor;
@@ -124,6 +135,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingSchemaId = schemaId;
         this.streamingBatchSeq = 0;
         this.streamingFullSchemaSent = false;
+        this.streamingRowsEmitted = 0;
         this.streamingActive = true;
     }
 
@@ -141,7 +153,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     /**
      * Releases the in-flight cursor + factory and marks streaming inactive.
-     * Idempotent — safe to call from completion, error, or disconnect paths.
+     * Idempotent -- safe to call from completion, error, or disconnect paths.
      */
     public void endStreaming() {
         streamingActive = false;
@@ -152,6 +164,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingBatchSeq = 0;
         streamingFullSchemaSent = false;
         streamingResultEndInitiated = false;
+    }
+
+    public byte getNegotiatedVersion() {
+        return negotiatedVersion;
     }
 
     public boolean isStreamingResultEndInitiated() {
@@ -178,6 +194,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingRequestId;
     }
 
+    public long getStreamingRowsEmitted() {
+        return streamingRowsEmitted;
+    }
+
     public int getStreamingSchemaId() {
         return streamingSchemaId;
     }
@@ -190,9 +210,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingFullSchemaSent;
     }
 
-    public void onStreamingBatchSent() {
+    public void onStreamingBatchSent(int rowsEmittedInBatch) {
         streamingBatchSeq++;
         streamingFullSchemaSent = true;
+        streamingRowsEmitted += rowsEmittedInBatch;
     }
 
     @Override
@@ -215,10 +236,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public long getFd() {
         return fd;
-    }
-
-    public byte getNegotiatedVersion() {
-        return negotiatedVersion;
     }
 
     public int getRecvBufferLen() {
