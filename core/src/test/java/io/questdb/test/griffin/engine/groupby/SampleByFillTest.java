@@ -141,6 +141,25 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillInsufficientFillValues() throws Exception {
+        assertMemoryLeak(() -> {
+            // SEED-001 Defect 3: with 7 aggregate columns and only 5 fill specs,
+            // generateFill must reject the query rather than silently padding
+            // the missing slots with null. The single-element broadcast form
+            // (bare FILL(PREV) or FILL(NULL)) is exempt and covered elsewhere.
+            // Error position points at the first fill expression as that is the
+            // stable anchor for the entire fill clause.
+            execute("CREATE TABLE t (ts TIMESTAMP, a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e DOUBLE, f DOUBLE, g DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 2, 3, 4, 5, 6, 7)");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, sum(a), sum(b), sum(c), sum(d), sum(e), sum(f), sum(g) FROM t SAMPLE BY 1h FILL(PREV, PREV, PREV, PREV, 0) ALIGN TO CALENDAR",
+                    91,
+                    "not enough fill values"
+            );
+        });
+    }
+
+    @Test
     public void testFillKeyedDecimal128() throws Exception {
         assertMemoryLeak(() -> {
             // Keyed SAMPLE BY with a DECIMAL128 key column (DECIMAL(25,2) encodes

@@ -3460,6 +3460,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     userFillIdx++;
                 }
 
+                // aggNonKeyCount counts every non-key, non-timestamp column in
+                // the user's SELECT list, which is the number of fill values
+                // the user must provide in per-column mode. Computed from
+                // bottomUpCols (user order) rather than from factory metadata
+                // because outer projection may drop aggregate columns while
+                // the user-facing fill-value grammar still requires one spec
+                // per user aggregate.
+                final int aggNonKeyCount = userFillIdx;
+
+                // WR-04: track the ExpressionNode that established each column's
+                // fill mode so the chain-rejection error can point at the specific
+                // offending PREV(...) expression rather than always at the first
+                // fill expression. Pre-populate with nulls so every factory-index
+                // slot is readable; the cross-column PREV branch below overwrites
+                // the slot it cares about.
+                final ObjList<ExpressionNode> perColFillNodes = new ObjList<>(columnCount);
+                for (int i = 0; i < columnCount; i++) {
+                    perColFillNodes.add(null);
+                }
+
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
@@ -3519,6 +3539,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         .put(ColumnType.nameOf(groupByMetadata.getColumnType(col)));
                             }
                             fillModes.add(srcColIdx);
+                            perColFillNodes.setQuick(col, fillExpr);
                         } else {
                             // bare PREV — self-prev
                             fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
@@ -3537,13 +3558,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 }
+                // Defect 3: in per-column mode, the user must provide one fill
+                // value per non-key aggregate column. The single-element form
+                // (bare FILL(PREV) or FILL(NULL)) broadcasts across all
+                // aggregates and is intentionally allowed; the size() > 1 guard
+                // preserves that semantics. Rejecting an under-specified list
+                // here matches master's grammar and points at the first fill
+                // expression for context.
+                if (fillValuesExprs.size() > 1 && fillValuesExprs.size() < aggNonKeyCount) {
+                    throw SqlException.$(fillValuesExprs.getQuick(0).position, "not enough fill values");
+                }
                 // Reject chains: a cross-column PREV whose source column is itself a
                 // cross-column PREV. Runtime-safe but semantically ambiguous; keep the
-                // grammar narrow until a clear use case emerges.
+                // grammar narrow until a clear use case emerges. WR-04: position
+                // points at the specific offending PREV(...) rather than always at
+                // the first fill expression.
                 for (int col = 0; col < columnCount; col++) {
                     int mode = fillModes.getQuick(col);
                     if (mode >= 0 && fillModes.getQuick(mode) >= 0) {
-                        throw SqlException.$(fillValuesExprs.getQuick(0).position,
+                        ExpressionNode offendingExpr = perColFillNodes.getQuick(col);
+                        int pos = offendingExpr != null
+                                ? offendingExpr.position
+                                : fillValuesExprs.getQuick(0).position;
+                        throw SqlException.$(pos,
                                 "FILL(PREV) chains are not supported: source column is itself a cross-column PREV");
                     }
                 }

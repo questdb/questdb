@@ -6046,21 +6046,11 @@ public class SampleByTest extends AbstractCairoTest {
                     true
             );
 
-            // The unified fill cursor no longer rejects queries with fewer fill values
-            // than aggregate columns: extra aggregates default to null fill. Verify that
-            // the query runs without error and produces reasonable output. With the
-            // Plan 13 alias-mapping fix in generateFill, the 5 fill values now land
-            // on open/close/low/high/candle_volume in user SELECT order; candle_usd_volume
-            // and cnt default to NULL. Plan 06 restores master's assertException form
-            // (reject the query outright when fill values count < aggregate count).
-            assertSql(
-                    """
-                            candle_start_time\tcandle_symbol\topen\tclose\tlow\thigh\tcandle_volume\tcandle_usd_volume\tcnt
-                            2025-07-30T22:00:00.000000Z\tLSKBTC\t0.00131\t0.00134\t0.0013\t0.00136\t7050.0\t937.75\t210
-                            2025-07-30T21:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.0013\t0.0\tnull\tnull
-                            2025-07-30T20:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.0013\t7350.0\t928.35\t216
-                            """,
-                    """
+            // Phase 13 Plan 06 (SEED-001 Defect 3): when per-column fill values
+            // cover fewer slots than the user's aggregate count, generateFill
+            // rejects the query at the first fill expression. Restores master's
+            // assertException form, closing Phase 12 Success Criterion #1.
+            assertException("""
                             with sq as (
                               select
                                 candle_start_time,
@@ -6094,7 +6084,9 @@ public class SampleByTest extends AbstractCairoTest {
                               candle_volume,
                               candle_usd_volume,
                               cnt
-                            from sq;""");
+                            from sq;""",
+                    530,
+                    "not enough fill values");
         });
     }
 
@@ -16350,24 +16342,29 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueNotEnough() throws Exception {
-        // The fast path broadcasts last fill value when fewer values than columns.
-        assertMemoryLeak(() -> {
-            execute("create table x as " +
-                    "(" +
-                    "select" +
-                    " rnd_double(0)*100 a," +
-                    " rnd_symbol(5,4,4,1) b," +
-                    " rnd_float(0)*100 c," +
-                    " abs(rnd_int()) d," +
-                    " rnd_short() e," +
-                    " rnd_byte(3,10) f," +
-                    " rnd_long() g," +
-                    " timestamp_sequence(172800000000, 3600000000) k" +
-                    " from" +
-                    " long_sequence(20)" +
-                    ") timestamp(k) partition by NONE");
-            printSql("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0)");
-        });
+        // Phase 13 Plan 06 (SEED-001 Defect 3): per-column fill values must
+        // cover every non-key aggregate; 5 fill values for 6 aggregates (b is
+        // a symbol key, not an aggregate) raises "not enough fill values" at
+        // the first fill expression. Restores master's assertException form.
+        assertException(
+                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_float(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_short() e," +
+                        " rnd_byte(3,10) f," +
+                        " rnd_long() g," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                85,
+                "not enough fill values"
+        );
     }
 
     @Test

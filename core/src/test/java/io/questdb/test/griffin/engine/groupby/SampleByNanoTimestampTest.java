@@ -13118,23 +13118,29 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueNotEnough() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as " +
-                    "(" +
-                    "select" +
-                    " rnd_double(0)*100 a," +
-                    " rnd_symbol(5,4,4,1) b," +
-                    " rnd_float(0)*100 c," +
-                    " abs(rnd_int()) d," +
-                    " rnd_short() e," +
-                    " rnd_byte(3,10) f," +
-                    " rnd_long() g," +
-                    " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
-                    " from" +
-                    " long_sequence(20)" +
-                    ") timestamp(k) partition by NONE");
-            printSql("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0)");
-        });
+        // Phase 13 Plan 06 (SEED-001 Defect 3): per-column fill values must
+        // cover every non-key aggregate; 5 fill values for 6 aggregates (b is
+        // a symbol key, not an aggregate) raises "not enough fill values" at
+        // the first fill expression. Restores master's assertException form.
+        assertException(
+                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_float(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_short() e," +
+                        " rnd_byte(3,10) f," +
+                        " rnd_long() g," +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                85,
+                "not enough fill values"
+        );
     }
 
     @Test
