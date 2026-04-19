@@ -22,13 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.std.histogram.org.HdrHistogram;
+package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
+import io.questdb.griffin.engine.groupby.GroupByHistogram;
 import io.questdb.std.Rnd;
-import io.questdb.std.histogram.org.HdrHistogram.GroupByHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -426,10 +426,9 @@ public class GroupByHistogramTest extends AbstractCairoTest {
             try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
                 GroupByHistogram dest = new GroupByHistogram(1, 10000, 2);
                 GroupByHistogram src = new GroupByHistogram(1, 10000, 2);
-                GroupByHistogram combined = new GroupByHistogram(1, 10000, 2);
+                Histogram combined = new Histogram(1, 10000, 2);
                 dest.setAllocator(allocator);
                 src.setAllocator(allocator);
-                combined.setAllocator(allocator);
 
                 Rnd rnd = TestUtils.generateRandom(LOG);
                 for (int i = 0; i < 1000; i++) {
@@ -485,9 +484,12 @@ public class GroupByHistogramTest extends AbstractCairoTest {
 
                 GroupByHistogram src = new GroupByHistogram(3);
                 src.setAllocator(allocator);
-                src.recordValue(1000000);
-                src.recordValue(2000000);
-                src.recordValue(3000000);
+                Histogram oracle = new Histogram(3);
+                long[] values = {1000000, 2000000, 3000000};
+                for (long v : values) {
+                    src.recordValue(v);
+                    oracle.recordValue(v);
+                }
 
                 Assert.assertEquals(0, dest.getTotalCount());
                 Assert.assertEquals(3, src.getTotalCount());
@@ -495,9 +497,9 @@ public class GroupByHistogramTest extends AbstractCairoTest {
 
                 dest.merge(src);
 
-                Assert.assertEquals(3, dest.getTotalCount());
-                Assert.assertEquals(src.getMinValue(), dest.getMinValue());
-                Assert.assertEquals(src.getMaxValue(), dest.getMaxValue());
+                Assert.assertEquals(oracle.getTotalCount(), dest.getTotalCount());
+                Assert.assertEquals(oracle.getMinValue(), dest.getMinValue());
+                Assert.assertEquals(oracle.getMaxValue(), dest.getMaxValue());
                 Assert.assertNotEquals(0, dest.ptr());
             }
         });
@@ -590,18 +592,27 @@ public class GroupByHistogramTest extends AbstractCairoTest {
                 GroupByHistogram src = new GroupByHistogram(3);
                 dest.setAllocator(allocator);
                 src.setAllocator(allocator);
+                Histogram oracle = new Histogram(3);
 
-                dest.recordValue(1);
-                dest.recordValue(10);
-
-                src.recordValue(1000000000L);
-                src.recordValue(9000000000L);
+                long[] destValues = {1, 10};
+                long[] srcValues = {1000000000L, 9000000000L};
+                for (long v : destValues) {
+                    dest.recordValue(v);
+                    oracle.recordValue(v);
+                }
+                for (long v : srcValues) {
+                    src.recordValue(v);
+                    oracle.recordValue(v);
+                }
 
                 dest.merge(src);
 
-                Assert.assertEquals(4, dest.getTotalCount());
-                Assert.assertEquals(1, dest.getMinValue());
-                Assert.assertTrue(dest.getMaxValue() >= 9000000000L);
+                Assert.assertEquals(oracle.getTotalCount(), dest.getTotalCount());
+                Assert.assertEquals(oracle.getMinValue(), dest.getMinValue());
+                Assert.assertEquals(oracle.getMaxValue(), dest.getMaxValue());
+                for (double p : new double[]{50.0, 75.0, 90.0, 99.0}) {
+                    Assert.assertEquals(oracle.getValueAtPercentile(p), dest.getValueAtPercentile(p));
+                }
             }
         });
     }

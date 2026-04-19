@@ -22,10 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.histogram.org.HdrHistogram;
+package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -138,6 +137,7 @@ public class GroupByHistogram implements Mutable {
         this.add(other);
     }
 
+    @Override
     public void clear() {
         ptr = 0;
         allocatedSize = 0;
