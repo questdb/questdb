@@ -43,6 +43,7 @@ import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Utf8SequenceIntHashMap;
 
 /**
  * Per-connection state for QWP egress (query results) processing.
@@ -57,6 +58,13 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
     private final ObjList<QwpEgressColumnDef> columnDefsPool = new ObjList<>();
+    // Connection-scoped SYMBOL dictionary shared across all queries on this connection.
+    // Maps UTF-8 symbol bytes to a stable integer id; the map's insertion-ordered
+    // {@code keys()} list is the source of truth for the delta section emitted per
+    // RESULT_BATCH (FLAG_DELTA_SYMBOL_DICT). Survives across queries but is cleared
+    // when the connection drops. The internal Utf8String per entry is a one-time
+    // allocation per unique symbol per connection.
+    private final Utf8SequenceIntHashMap connSymDict = new Utf8SequenceIntHashMap();
     private final QwpEgressRequestDecoder decoder = new QwpEgressRequestDecoder();
     private long fd = -1;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
@@ -217,6 +225,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         nextSchemaId = 0;
         batchBuffer.reset();
         bindVariableService.clear();
+        // Connection dropped/reset -- client cannot reuse the delta dict on a
+        // new connection so we discard it too. On a clean close() this is idempotent.
+        connSymDict.clear();
     }
 
     /**
@@ -357,6 +368,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public BindVariableServiceImpl getBindVariableService() {
         return bindVariableService;
+    }
+
+    /**
+     * Returns the connection-scoped SYMBOL dictionary used by the delta-dict emit
+     * path. The batch buffer probes / extends this map during {@code emitTableBlock}.
+     */
+    public Utf8SequenceIntHashMap getConnSymDict() {
+        return connSymDict;
     }
 
     public QwpEgressRequestDecoder getDecoder() {

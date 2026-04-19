@@ -635,6 +635,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
      */
     private void sendResultBatch(
             HttpConnectionContext context,
+            QwpEgressProcessorState state,
             long requestId,
             long batchSeq,
             QwpResultBatchBuffer batchBuffer,
@@ -648,15 +649,24 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             throw HttpException.instance("egress send buffer too small");
         }
         long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
+        // FLAG_DELTA_SYMBOL_DICT is always set on RESULT_BATCH frames. The delta
+        // section sits AFTER the prelude (msg_kind + request_id + batch_seq) so
+        // that the I/O thread's dispatch (which peeks msg_kind at HEADER_SIZE)
+        // keeps working unchanged. SYMBOL columns inside the table block are
+        // stripped of their per-column dict; indices reference the connection dict.
         long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                qwpStart, QwpConstants.VERSION_1, (byte) 0, 1, 0 /* payload len patched */);
+                qwpStart, QwpConstants.VERSION_1, QwpConstants.FLAG_DELTA_SYMBOL_DICT, 1, 0 /* payload len patched */);
         long preludeEnd = QwpEgressFrameWriter.writeResultBatchPrelude(bodyStart, requestId, batchSeq);
         long bufLimit = bufAddr + bufSize;
-        int tableBlockSize = batchBuffer.emitTableBlock(preludeEnd, bufLimit, schemaId, writeFullSchema);
+        int deltaSize = batchBuffer.emitDeltaSection(preludeEnd, bufLimit, state.getConnSymDict());
+        if (deltaSize < 0) {
+            throw HttpException.instance("egress: batch too large for send buffer");
+        }
+        int tableBlockSize = batchBuffer.emitTableBlock(preludeEnd + deltaSize, bufLimit, schemaId, writeFullSchema);
         if (tableBlockSize < 0) {
             throw HttpException.instance("egress: batch too large for send buffer");
         }
-        long qwpEnd = preludeEnd + tableBlockSize;
+        long qwpEnd = preludeEnd + deltaSize + tableBlockSize;
         int qwpSize = (int) (qwpEnd - qwpStart);
         int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
         QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
@@ -733,7 +743,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             // the same seq number, producing two batches labelled seq=N with different rows.
             long currentSeq = state.getStreamingBatchSeq();
             state.onStreamingBatchSent(rowsThisBatch);
-            sendResultBatch(context, requestId, currentSeq, batchBuffer, schemaId, writeFullSchema);
+            sendResultBatch(context, state, requestId, currentSeq, batchBuffer, schemaId, writeFullSchema);
             if (cursorExhausted) {
                 long totalRows = state.getStreamingRowsEmitted();
                 state.markStreamingResultEndInitiated();

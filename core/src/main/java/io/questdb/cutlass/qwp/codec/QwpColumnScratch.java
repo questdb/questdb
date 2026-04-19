@@ -58,6 +58,7 @@ import io.questdb.std.str.Utf8Sequence;
  */
 final class QwpColumnScratch implements QuietCloseable {
 
+    private static final int[] EMPTY_INT_ARRAY = new int[0];
     private static final int INITIAL_BYTES = 4096;
     final Decimal128 decimal128Sink = new Decimal128();
     final Decimal256 decimal256Sink = new Decimal256();
@@ -97,6 +98,11 @@ final class QwpColumnScratch implements QuietCloseable {
     int symbolDictSize;
     long symbolIdsAddr;
     int symbolIdsCapacity;       // bytes
+    // Translation table populated by the delta-dict pre-emit pass: maps per-batch
+    // local dict id to connection-scoped id. Sized to {@link #symbolDictSize} at
+    // emit time; reused across batches, grown as needed. When a batch has no
+    // SYMBOL column or the pre-emit pass hasn't run yet this array is untouched.
+    int[] symbolLocalToConn = EMPTY_INT_ARRAY;
     long valuesAddr;
     int valuesCapacity;          // bytes
     int valuesPos;               // bytes written
