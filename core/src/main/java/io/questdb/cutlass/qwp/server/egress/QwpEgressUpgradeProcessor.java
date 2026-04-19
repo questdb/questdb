@@ -277,6 +277,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
+    /**
+     * Returns {@code true} when a compiled query should stream result rows back
+     * to the client. {@code SELECT} and {@code EXPLAIN} always do; {@code
+     * PSEUDO_SELECT} only when the compiler produced a cursor (it returns null
+     * for synchronous variants like certain {@code COPY} forms).
+     */
+    private static boolean isStreamingType(short type, CompiledQuery cq) {
+        if (type == CompiledQuery.SELECT || type == CompiledQuery.EXPLAIN) {
+            return true;
+        }
+        return type == CompiledQuery.PSEUDO_SELECT && cq.getRecordCursorFactory() != null;
+    }
+
     private static byte mapErrorStatus(Throwable e) {
         // SqlException covers both syntax errors and semantic errors (e.g., table not found).
         // Its getMessage() already embeds the "[position] text" form.
@@ -413,6 +426,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         sendExecDone(context, requestId, type, rowsAffected);
     }
 
+    // Egress message dispatch and query execution
+
     private void handleClose(HttpConnectionContext context, long payload, int length) {
         int closeCode = -1;
         if (length >= 2) {
@@ -435,8 +450,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             // Best effort
         }
     }
-
-    // Egress message dispatch and query execution
 
     private void handlePing(HttpConnectionContext context, long payload, int length) {
         try {
@@ -610,19 +623,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    /**
-     * Returns {@code true} when a compiled query should stream result rows back
-     * to the client. {@code SELECT} and {@code EXPLAIN} always do; {@code
-     * PSEUDO_SELECT} only when the compiler produced a cursor (it returns null
-     * for synchronous variants like certain {@code COPY} forms).
-     */
-    private static boolean isStreamingType(short type, CompiledQuery cq) {
-        if (type == CompiledQuery.SELECT || type == CompiledQuery.EXPLAIN) {
-            return true;
-        }
-        return type == CompiledQuery.PSEUDO_SELECT && cq.getRecordCursorFactory() != null;
-    }
-
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
         int clientMaxVersion = parseClientMaxVersion(requestHeader);
         int negotiated = Math.min(clientMaxVersion, QwpConstants.MAX_SUPPORTED_VERSION);
@@ -754,13 +754,17 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             throw HttpException.instance("egress send buffer too small");
         }
         long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
-        // FLAG_DELTA_SYMBOL_DICT is always set on RESULT_BATCH frames. The delta
-        // section sits AFTER the prelude (msg_kind + request_id + batch_seq) so
-        // that the I/O thread's dispatch (which peeks msg_kind at HEADER_SIZE)
-        // keeps working unchanged. SYMBOL columns inside the table block are
-        // stripped of their per-column dict; indices reference the connection dict.
+        // FLAG_DELTA_SYMBOL_DICT and FLAG_GORILLA are always set on RESULT_BATCH
+        // frames. The delta section sits AFTER the prelude (msg_kind + request_id
+        // + batch_seq) so the I/O thread's dispatch (which peeks msg_kind at
+        // HEADER_SIZE) keeps working unchanged. SYMBOL columns inside the table
+        // block are stripped of their per-column dict; indices reference the
+        // connection dict. TIMESTAMP / TIMESTAMP_NANOS / DATE columns carry a
+        // 1-byte encoding discriminator that the decoder consumes.
         long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                qwpStart, QwpConstants.VERSION_1, QwpConstants.FLAG_DELTA_SYMBOL_DICT, 1, 0 /* payload len patched */);
+                qwpStart, QwpConstants.VERSION_1,
+                (byte) (QwpConstants.FLAG_DELTA_SYMBOL_DICT | QwpConstants.FLAG_GORILLA),
+                1, 0 /* payload len patched */);
         long preludeEnd = QwpEgressFrameWriter.writeResultBatchPrelude(bodyStart, requestId, batchSeq);
         long bufLimit = bufAddr + bufSize;
         int deltaSize = batchBuffer.emitDeltaSection(preludeEnd, bufLimit);

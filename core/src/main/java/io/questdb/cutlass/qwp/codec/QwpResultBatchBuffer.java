@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
@@ -36,6 +37,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -56,6 +58,21 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     private static final QwpColumnScratch[] EMPTY_SCRATCHES = new QwpColumnScratch[0];
     private static final SymbolTable[] EMPTY_SYMBOL_TABLES = new SymbolTable[0];
     private static final byte[] EMPTY_WIRE_TYPES = new byte[0];
+    // Per-column encoding discriminator for TIMESTAMP / TIMESTAMP_NANOS / DATE
+    // columns when {@code FLAG_GORILLA} is set on the message. 0x00 = raw int64s
+    // (mixed-encoding escape for unordered or jumpy columns); 0x01 = Gorilla
+    // delta-of-delta bitstream. The byte sits immediately before the column's
+    // value bytes so a single batch can mix encoded / unencoded timestamp columns.
+    private static final byte ENCODING_GORILLA = 0x01;
+    private static final byte ENCODING_UNCOMPRESSED = 0x00;
+    /**
+     * Largest array (in elements) we'll serialise in one row. Caps the per-row payload at
+     * roughly 256 MB (8 bytes x this) so the byte-size math fits in {@code int} and the
+     * scratch grow-and-write path can never see a negative or wrap-around length.
+     */
+    private static final long MAX_ARRAY_ELEMENTS = (Integer.MAX_VALUE - 1024) / 8L;
+    // Reused Gorilla encoder. One instance per batch buffer (i.e. per connection).
+    private final QwpGorillaEncoder gorillaEncoder = new QwpGorillaEncoder();
     private final ObjList<QwpColumnScratch> scratches = new ObjList<>();
     // Snapshot of connection-scoped dict size taken at {@link #beginBatch}. Any conn
     // ids allocated by this batch's SYMBOL rows sit in [batchDeltaStart..connDict.size()),
@@ -361,22 +378,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             int entryLen = endOff - prevEnd;
             if (p + QwpVarint.MAX_VARINT_BYTES + entryLen > wireLimit) return -1;
             p = QwpVarint.encode(p, entryLen);
-            Unsafe.getUnsafe().copyMemory(heapAddr + prevEnd, p, entryLen);
+            Vect.memcpy(p, heapAddr + prevEnd, entryLen);
             p += entryLen;
             prevEnd = endOff;
         }
         return (int) (p - wireBuf);
-    }
-
-    /**
-     * Clears the per-column native-key -> connId caches. Called once per query
-     * start; within a single query these caches amortise across all batches so
-     * the same symbol values aren't re-emitted into the delta section.
-     */
-    public void resetForNewQuery() {
-        for (int i = 0, n = scratches.size(); i < n; i++) {
-            scratches.getQuick(i).resetForNewQuery();
-        }
     }
 
     /**
@@ -425,11 +431,15 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Largest array (in elements) we'll serialise in one row. Caps the per-row payload at
-     * roughly 256 MB (8 bytes x this) so the byte-size math fits in {@code int} and the
-     * scratch grow-and-write path can never see a negative or wrap-around length.
+     * Clears the per-column native-key -> connId caches. Called once per query
+     * start; within a single query these caches amortise across all batches so
+     * the same symbol values aren't re-emitted into the delta section.
      */
-    private static final long MAX_ARRAY_ELEMENTS = (Integer.MAX_VALUE - 1024) / 8L;
+    public void resetForNewQuery() {
+        for (int i = 0, n = scratches.size(); i < n; i++) {
+            scratches.getQuick(i).resetForNewQuery();
+        }
+    }
 
     /**
      * Serialises an array into {@code scratch.arrayHeapAddr} without allocating a {@code byte[]}.
@@ -473,71 +483,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         scratch.markNonNullAndAdvanceRow();
     }
 
-    /**
-     * Copies the null flag + bitmap (if any) for this column to the wire. Also
-     * memcpys the dense value bytes for the simple cases (BOOLEAN, fixed-width).
-     */
-    private long emitColumn(QwpColumnScratch scratch, long p, long wireLimit) {
-        // 1. Null flag + optional bitmap
-        if (scratch.nullCount == 0) {
-            if (p >= wireLimit) return -1;
-            Unsafe.getUnsafe().putByte(p++, (byte) 0);
-        } else {
-            int bitmapBytes = (rowCount + 7) >>> 3;
-            if (p + 1 + bitmapBytes > wireLimit) return -1;
-            Unsafe.getUnsafe().putByte(p++, (byte) 1);
-            Unsafe.getUnsafe().copyMemory(scratch.nullBitmapAddr, p, bitmapBytes);
-            p += bitmapBytes;
-        }
-
-        byte wire = scratch.def.getWireType();
-        int nonNull = scratch.nonNullCount;
-
-        if (wire == QwpConstants.TYPE_BOOLEAN) {
-            int bytes = (nonNull + 7) >>> 3;
-            if (p + bytes > wireLimit) return -1;
-            Unsafe.getUnsafe().copyMemory(scratch.valuesAddr, p, bytes);
-            return p + bytes;
-        }
-        if (wire == QwpConstants.TYPE_STRING || wire == QwpConstants.TYPE_VARCHAR
-                || wire == QwpConstants.TYPE_BINARY) {
-            // All three share the same wire layout: (N+1) x uint32 offsets + concatenated bytes.
-            // BINARY differs from STRING only in that the bytes are opaque (no UTF-8 contract).
-            return emitStringColumn(scratch, p, wireLimit);
-        }
-        if (wire == QwpConstants.TYPE_SYMBOL) {
-            return emitSymbolColumn(scratch, p, wireLimit);
-        }
-        if (wire == QwpConstants.TYPE_GEOHASH) {
-            if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-            p = QwpVarint.encode(p, scratch.def.getPrecisionBits());
-            if (p + scratch.valuesPos > wireLimit) return -1;
-            Unsafe.getUnsafe().copyMemory(scratch.valuesAddr, p, scratch.valuesPos);
-            return p + scratch.valuesPos;
-        }
-        if (wire == QwpConstants.TYPE_DOUBLE_ARRAY || wire == QwpConstants.TYPE_LONG_ARRAY) {
-            if (p + scratch.arrayHeapPos > wireLimit) return -1;
-            Unsafe.getUnsafe().copyMemory(scratch.arrayHeapAddr, p, scratch.arrayHeapPos);
-            return p + scratch.arrayHeapPos;
-        }
-
-        // Decimal: scale byte prefix, then dense values
-        if (wire == QwpConstants.TYPE_DECIMAL64
-                || wire == QwpConstants.TYPE_DECIMAL128
-                || wire == QwpConstants.TYPE_DECIMAL256) {
-            if (p + 1 > wireLimit) return -1;
-            Unsafe.getUnsafe().putByte(p++, (byte) scratch.def.getScale());
-            if (p + scratch.valuesPos > wireLimit) return -1;
-            Unsafe.getUnsafe().copyMemory(scratch.valuesAddr, p, scratch.valuesPos);
-            return p + scratch.valuesPos;
-        }
-
-        // Generic fixed-width (BYTE/SHORT/INT/CHAR/LONG/FLOAT/DOUBLE/DATE/TIMESTAMP/TIMESTAMP_NANOS/UUID/LONG256)
-        if (p + scratch.valuesPos > wireLimit) return -1;
-        Unsafe.getUnsafe().copyMemory(scratch.valuesAddr, p, scratch.valuesPos);
-        return p + scratch.valuesPos;
-    }
-
     private static long emitStringColumn(QwpColumnScratch scratch, long p, long wireLimit) {
         int nonNull = scratch.nonNullCount;
         long offsetsBytes = 4L * (nonNull + 1);
@@ -547,9 +492,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         Unsafe.getUnsafe().putInt(p, 0);
         // Copy offsets[1..nonNull] from scratch.stringOffsetsAddr (which stores them at indices 1..nonNull)
         // to p + 4 .. p + 4 * nonNull + 4.
-        Unsafe.getUnsafe().copyMemory(
-                scratch.stringOffsetsAddr + 4L, p + 4L, 4L * nonNull);
-        Unsafe.getUnsafe().copyMemory(scratch.stringHeapAddr, p + offsetsBytes, bytesBytes);
+        Vect.memcpy(p + 4L, scratch.stringOffsetsAddr + 4L, 4L * nonNull);
+        Vect.memcpy(p + offsetsBytes, scratch.stringHeapAddr, bytesBytes);
         return p + offsetsBytes + bytesBytes;
     }
 
@@ -573,6 +517,109 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         if (precisionBits <= 15) return record.getGeoShort(col);
         if (precisionBits <= 31) return record.getGeoInt(col);
         return record.getGeoLong(col);
+    }
+
+    /**
+     * Copies the null flag + bitmap (if any) for this column to the wire. Also
+     * memcpys the dense value bytes for the simple cases (BOOLEAN, fixed-width).
+     */
+    private long emitColumn(QwpColumnScratch scratch, long p, long wireLimit) {
+        // 1. Null flag + optional bitmap
+        if (scratch.nullCount == 0) {
+            if (p >= wireLimit) return -1;
+            Unsafe.getUnsafe().putByte(p++, (byte) 0);
+        } else {
+            int bitmapBytes = (rowCount + 7) >>> 3;
+            if (p + 1 + bitmapBytes > wireLimit) return -1;
+            Unsafe.getUnsafe().putByte(p++, (byte) 1);
+            Vect.memcpy(p, scratch.nullBitmapAddr, bitmapBytes);
+            p += bitmapBytes;
+        }
+
+        byte wire = scratch.def.getWireType();
+        int nonNull = scratch.nonNullCount;
+
+        if (wire == QwpConstants.TYPE_BOOLEAN) {
+            int bytes = (nonNull + 7) >>> 3;
+            if (p + bytes > wireLimit) return -1;
+            Vect.memcpy(p, scratch.valuesAddr, bytes);
+            return p + bytes;
+        }
+        if (wire == QwpConstants.TYPE_STRING || wire == QwpConstants.TYPE_VARCHAR
+                || wire == QwpConstants.TYPE_BINARY) {
+            // All three share the same wire layout: (N+1) x uint32 offsets + concatenated bytes.
+            // BINARY differs from STRING only in that the bytes are opaque (no UTF-8 contract).
+            return emitStringColumn(scratch, p, wireLimit);
+        }
+        if (wire == QwpConstants.TYPE_SYMBOL) {
+            return emitSymbolColumn(scratch, p, wireLimit);
+        }
+        if (wire == QwpConstants.TYPE_GEOHASH) {
+            if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
+            p = QwpVarint.encode(p, scratch.def.getPrecisionBits());
+            if (p + scratch.valuesPos > wireLimit) return -1;
+            Vect.memcpy(p, scratch.valuesAddr, scratch.valuesPos);
+            return p + scratch.valuesPos;
+        }
+        if (wire == QwpConstants.TYPE_DOUBLE_ARRAY || wire == QwpConstants.TYPE_LONG_ARRAY) {
+            if (p + scratch.arrayHeapPos > wireLimit) return -1;
+            Vect.memcpy(p, scratch.arrayHeapAddr, scratch.arrayHeapPos);
+            return p + scratch.arrayHeapPos;
+        }
+
+        // Decimal: scale byte prefix, then dense values
+        if (wire == QwpConstants.TYPE_DECIMAL64
+                || wire == QwpConstants.TYPE_DECIMAL128
+                || wire == QwpConstants.TYPE_DECIMAL256) {
+            if (p + 1 > wireLimit) return -1;
+            Unsafe.getUnsafe().putByte(p++, (byte) scratch.def.getScale());
+            if (p + scratch.valuesPos > wireLimit) return -1;
+            Vect.memcpy(p, scratch.valuesAddr, scratch.valuesPos);
+            return p + scratch.valuesPos;
+        }
+
+        // Timestamp-ish types: prefix a per-column encoding byte and try Gorilla.
+        // Fall back to raw int64s when delta-of-delta overflows int32 (unordered
+        // or jumpy timestamps) or when the bitstream wouldn't save space.
+        if (wire == QwpConstants.TYPE_TIMESTAMP
+                || wire == QwpConstants.TYPE_TIMESTAMP_NANOS
+                || wire == QwpConstants.TYPE_DATE) {
+            return emitTimestampColumn(scratch, p, wireLimit, nonNull);
+        }
+
+        // Generic fixed-width (BYTE/SHORT/INT/CHAR/LONG/FLOAT/DOUBLE/UUID/LONG256)
+        if (p + scratch.valuesPos > wireLimit) return -1;
+        Vect.memcpy(p, scratch.valuesAddr, scratch.valuesPos);
+        return p + scratch.valuesPos;
+    }
+
+    private long emitTimestampColumn(QwpColumnScratch scratch, long p, long wireLimit, int nonNull) {
+        if (p >= wireLimit) return -1;
+        // 0, 1, 2 values have no delta-of-delta to emit; ship raw int64s under the
+        // uncompressed discriminator so the decoder sees a consistent layout.
+        if (nonNull < 3) {
+            Unsafe.getUnsafe().putByte(p++, ENCODING_UNCOMPRESSED);
+            int rawBytes = nonNull * 8;
+            if (p + rawBytes > wireLimit) return -1;
+            if (rawBytes > 0) {
+                Vect.memcpy(p, scratch.valuesAddr, rawBytes);
+            }
+            return p + rawBytes;
+        }
+        // Probe first: -1 = delta-of-delta doesn't fit int32 anywhere; fall back
+        // to raw rather than silently truncate.
+        int gorillaBytes = QwpGorillaEncoder.calculateEncodedSizeIfSupported(scratch.valuesAddr, nonNull);
+        if (gorillaBytes >= 0 && gorillaBytes < nonNull * 8) {
+            if (p + 1 + gorillaBytes > wireLimit) return -1;
+            Unsafe.getUnsafe().putByte(p++, ENCODING_GORILLA);
+            int written = gorillaEncoder.encodeTimestamps(p, wireLimit - p, scratch.valuesAddr, nonNull);
+            return p + written;
+        }
+        int rawBytes = nonNull * 8;
+        if (p + 1 + rawBytes > wireLimit) return -1;
+        Unsafe.getUnsafe().putByte(p++, ENCODING_UNCOMPRESSED);
+        Vect.memcpy(p, scratch.valuesAddr, rawBytes);
+        return p + rawBytes;
     }
 
 }
