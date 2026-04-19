@@ -763,7 +763,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                 qwpStart, QwpConstants.VERSION_1, QwpConstants.FLAG_DELTA_SYMBOL_DICT, 1, 0 /* payload len patched */);
         long preludeEnd = QwpEgressFrameWriter.writeResultBatchPrelude(bodyStart, requestId, batchSeq);
         long bufLimit = bufAddr + bufSize;
-        int deltaSize = batchBuffer.emitDeltaSection(preludeEnd, bufLimit, state.getConnSymDict());
+        int deltaSize = batchBuffer.emitDeltaSection(preludeEnd, bufLimit);
         if (deltaSize < 0) {
             throw HttpException.instance("egress: batch too large for send buffer");
         }
@@ -813,7 +813,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         while (true) {
             // Passing the symbol-table source lets the batch buffer pick up native
             // SymbolTables for SYMBOL columns, taking the getInt-based fast path.
-            batchBuffer.beginBatch(columnDefs, state.getStreamingSymbolTableSource());
+            batchBuffer.beginBatch(columnDefs, state.getStreamingSymbolTableSource(), state.getConnSymbolDict());
             int rowsThisBatch = 0;
             if (pageFrame) {
                 Record record;

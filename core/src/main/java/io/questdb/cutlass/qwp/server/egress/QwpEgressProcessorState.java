@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
+import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -44,7 +45,6 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.Utf8SequenceIntHashMap;
 
 /**
  * Per-connection state for QWP egress (query results) processing.
@@ -64,12 +64,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // cleared between queries (the sequence object itself is reused).
     private final SCSequence eventSubSequence = new SCSequence();
     // Connection-scoped SYMBOL dictionary shared across all queries on this connection.
-    // Maps UTF-8 symbol bytes to a stable integer id; the map's insertion-ordered
-    // {@code keys()} list is the source of truth for the delta section emitted per
-    // RESULT_BATCH (FLAG_DELTA_SYMBOL_DICT). Survives across queries but is cleared
-    // when the connection drops. The internal Utf8String per entry is a one-time
-    // allocation per unique symbol per connection.
-    private final Utf8SequenceIntHashMap connSymDict = new Utf8SequenceIntHashMap();
+    // Holds the concatenated UTF-8 bytes of every unique symbol value and a parallel
+    // end-offsets array; the entry index doubles as the wire-level conn-id. Per-column
+    // native-key -> conn-id maps live on each {@code QwpColumnScratch} so the per-row
+    // hot path does a single int probe (no Utf8 hashing / equality). Grows but never
+    // shrinks; freed on connection close.
+    private final QwpEgressConnSymbolDict connSymbolDict = new QwpEgressConnSymbolDict();
     private final QwpEgressRequestDecoder decoder = new QwpEgressRequestDecoder();
     private long fd = -1;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
@@ -174,6 +174,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingFullSchemaSent = false;
         this.streamingRowsEmitted = 0;
         this.streamingActive = true;
+        // Native symbol keys are per-cursor: clear the per-column native-key -> conn-id
+        // caches so a stale mapping from the previous query can't resurface as a
+        // wrong conn-id being emitted on the wire.
+        batchBuffer.resetForNewQuery();
     }
 
     /**
@@ -218,6 +222,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingPageFrameRow = 0;
         this.streamingPageFrameRowHi = 0;
         this.streamingActive = true;
+        batchBuffer.resetForNewQuery();
     }
 
     public void clear() {
@@ -232,7 +237,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         bindVariableService.clear();
         // Connection dropped/reset -- client cannot reuse the delta dict on a
         // new connection so we discard it too. On a clean close() this is idempotent.
-        connSymDict.clear();
+        connSymbolDict.clear();
     }
 
     /**
@@ -362,6 +367,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public void close() {
         clear();
         Misc.free(batchBuffer);
+        Misc.free(connSymbolDict);
         pageFrameMemoryRecord = Misc.free(pageFrameMemoryRecord);
         pageFrameMemoryPool = Misc.free(pageFrameMemoryPool);
         pageFrameAddressCache = Misc.free(pageFrameAddressCache);
@@ -376,11 +382,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
-     * Returns the connection-scoped SYMBOL dictionary used by the delta-dict emit
-     * path. The batch buffer probes / extends this map during {@code emitTableBlock}.
+     * Returns the connection-scoped SYMBOL dictionary. {@link QwpResultBatchBuffer}
+     * appends new entries to it directly from its SYMBOL appendRow branch and
+     * emits the per-batch slice from {@code emitDeltaSection}.
      */
-    public Utf8SequenceIntHashMap getConnSymDict() {
-        return connSymDict;
+    public QwpEgressConnSymbolDict getConnSymbolDict() {
+        return connSymbolDict;
     }
 
     public QwpEgressRequestDecoder getDecoder() {

@@ -30,15 +30,13 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Utf8SequenceIntHashMap;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8String;
 
 /**
  * Column-major accumulator for one QWP egress {@code RESULT_BATCH} table block.
@@ -58,12 +56,16 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     private static final QwpColumnScratch[] EMPTY_SCRATCHES = new QwpColumnScratch[0];
     private static final SymbolTable[] EMPTY_SYMBOL_TABLES = new SymbolTable[0];
     private static final byte[] EMPTY_WIRE_TYPES = new byte[0];
-    // Reusable flyweight for probing the connection dict keyed on per-batch dict
-    // bytes sitting in QwpColumnScratch.symbolDictHeapAddr. Not allocated per call.
-    private final DirectUtf8String deltaProbe = new DirectUtf8String();
     private final ObjList<QwpColumnScratch> scratches = new ObjList<>();
+    // Snapshot of connection-scoped dict size taken at {@link #beginBatch}. Any conn
+    // ids allocated by this batch's SYMBOL rows sit in [batchDeltaStart..connDict.size()),
+    // which is exactly what {@link #emitDeltaSection} needs to ship.
+    private int batchDeltaStart;
     private int columnCount;
     private ObjList<QwpEgressColumnDef> columns;
+    // Connection-scoped SYMBOL dictionary. Populated directly from appendRow's SYMBOL
+    // branch when a native key has never been seen on this connection (per column).
+    private QwpEgressConnSymbolDict connDict;
     // Per-batch caches, sized to max column count observed so far. Hoisted out of
     // the appendRow hot loop so the inner iteration reads from plain arrays instead
     // of ObjList.getQuick + def getter chains per cell.
@@ -167,12 +169,35 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     SymbolTable st = sts[ci];
                     if (st != null) {
                         int key = record.getInt(ci);
-                        if (key == SymbolTable.VALUE_IS_NULL) scratch.appendNull();
-                        else scratch.appendSymbolKey(key, st);
+                        if (key == SymbolTable.VALUE_IS_NULL) {
+                            scratch.appendNull();
+                        } else {
+                            IntIntHashMap k2c = scratch.connKeyToConnId;
+                            int mapIdx = k2c.keyIndex(key);
+                            int connId;
+                            if (mapIdx < 0) {
+                                connId = k2c.valueAt(mapIdx);
+                            } else {
+                                // First sight of this native key on this connection. Encode the
+                                // UTF-8 bytes once into the shared connection dict and remember
+                                // the assigned conn-id. Subsequent rows hit the cached branch.
+                                connId = connDict.addEntry(st.valueOf(key));
+                                k2c.putAt(mapIdx, key, connId);
+                            }
+                            scratch.appendSymbolConnId(connId);
+                        }
                     } else {
+                        // No SymbolTable exposed by the cursor -- rare path (synthetic records).
+                        // Fall back to getSymA + bytes-keyed dedup via the connection dict. This
+                        // ships each value once per occurrence (no dedup) to keep the common path
+                        // above branch-free.
                         CharSequence cs = record.getSymA(ci);
-                        if (cs == null) scratch.appendNull();
-                        else scratch.appendSymbol(cs);
+                        if (cs == null) {
+                            scratch.appendNull();
+                        } else {
+                            int connId = connDict.addEntry(cs);
+                            scratch.appendSymbolConnId(connId);
+                        }
                     }
                     break;
                 }
@@ -242,14 +267,22 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     /**
      * Starts a new batch with the given schema. Re-sizes the scratch pool, resets each
      * scratch, and populates the per-column hot-path caches read by {@link #appendRow}.
-     * When {@code symbolTables} is non-null, {@code SYMBOL} columns use the native
-     * key fast path via {@link QwpColumnScratch#appendSymbolKey}; otherwise they fall
-     * back to {@link QwpColumnScratch#appendSymbol} via {@code record.getSymA}.
+     * {@code connDict} is the connection-scoped SYMBOL dictionary: SYMBOL columns
+     * append new UTF-8 bytes to it on first sight per native key and emit the
+     * returned conn-id straight into the wire. When {@code symbolTables} is null or
+     * doesn't expose a table for a given column, {@code appendRow} falls back to
+     * {@code record.getSymA} without per-column dedup.
      */
-    public void beginBatch(ObjList<QwpEgressColumnDef> columns, SymbolTableSource symbolTables) {
+    public void beginBatch(
+            ObjList<QwpEgressColumnDef> columns,
+            SymbolTableSource symbolTables,
+            QwpEgressConnSymbolDict connDict
+    ) {
         this.columns = columns;
         this.columnCount = columns.size();
         this.rowCount = 0;
+        this.connDict = connDict;
+        this.batchDeltaStart = connDict.size();
         while (scratches.size() < columnCount) {
             scratches.add(new QwpColumnScratch());
         }
@@ -298,54 +331,21 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Pre-emit pass for {@code FLAG_DELTA_SYMBOL_DICT}: scan every SYMBOL column's
-     * per-batch dict, map each local id to a connection-scoped id (adding new
-     * entries to {@code connSymDict}), then write the message-level delta section
-     * at {@code wireBuf}:
+     * Writes the message-level delta section for {@code FLAG_DELTA_SYMBOL_DICT}:
      * <pre>
      *   [deltaStartId: varint]
      *   [deltaCount:   varint]
      *   for each new entry: [length: varint][UTF-8 bytes]
      * </pre>
-     * Must be called before {@link #emitTableBlock} so the table block can read
-     * the populated {@code symbolLocalToConn} arrays off each SYMBOL scratch.
+     * New entries are whatever {@code appendRow} appended to the connection dict
+     * during this batch, i.e. {@code [batchDeltaStart..connDict.size())}. No
+     * probing, no hashing, no equality checks -- the dict is already populated.
      *
      * @return bytes written, or -1 if the delta section would overflow wireLimit
      */
-    public int emitDeltaSection(long wireBuf, long wireLimit, Utf8SequenceIntHashMap connSymDict) {
-        final int deltaStart = connSymDict.size();
-        final DirectUtf8String probe = deltaProbe;
-        // Pre-emit pass: populate each SYMBOL column's symbolLocalToConn and extend
-        // connSymDict with any never-before-seen entries.
-        for (int ci = 0; ci < columnCount; ci++) {
-            if (wireTypesArr[ci] != QwpConstants.TYPE_SYMBOL) continue;
-            QwpColumnScratch sc = scratchesArr[ci];
-            int dictSize = sc.symbolDictSize;
-            if (sc.symbolLocalToConn.length < dictSize) {
-                sc.symbolLocalToConn = new int[Math.max(dictSize, sc.symbolLocalToConn.length * 2)];
-            }
-            long heapAddr = sc.symbolDictHeapAddr;
-            long offsetsAddr = sc.symbolDictOffsetsAddr;
-            int prevEnd = 0;
-            for (int e = 0; e < dictSize; e++) {
-                int endOffset = Unsafe.getUnsafe().getInt(offsetsAddr + 4L * e);
-                probe.of(heapAddr + prevEnd, heapAddr + endOffset);
-                int mapIdx = connSymDict.keyIndex(probe);
-                int connId;
-                if (mapIdx < 0) {
-                    connId = connSymDict.valueAtQuick(mapIdx);
-                } else {
-                    connId = connSymDict.size();
-                    // putAt copies probe's bytes into an on-heap Utf8String -- one
-                    // allocation per unique symbol per connection, amortised.
-                    connSymDict.putAt(mapIdx, probe, connId);
-                }
-                sc.symbolLocalToConn[e] = connId;
-                prevEnd = endOffset;
-            }
-        }
-
-        final int deltaCount = connSymDict.size() - deltaStart;
+    public int emitDeltaSection(long wireBuf, long wireLimit) {
+        final int deltaStart = batchDeltaStart;
+        final int deltaCount = connDict.size() - deltaStart;
         long p = wireBuf;
         if (p + 2 * QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
         p = QwpVarint.encode(p, deltaStart);
@@ -353,19 +353,30 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         if (deltaCount == 0) {
             return (int) (p - wireBuf);
         }
-        ObjList<Utf8String> entries = connSymDict.keys();
+        long heapAddr = connDict.getHeapAddr();
+        int prevEnd = connDict.entryStart(deltaStart);
         for (int i = 0; i < deltaCount; i++) {
-            Utf8String entry = entries.getQuick(deltaStart + i);
-            int entryLen = entry.size();
+            int entryId = deltaStart + i;
+            int endOff = connDict.entryEnd(entryId);
+            int entryLen = endOff - prevEnd;
             if (p + QwpVarint.MAX_VARINT_BYTES + entryLen > wireLimit) return -1;
             p = QwpVarint.encode(p, entryLen);
-            // Utf8String is heap-backed; writeTo will chunk the bytes into native
-            // memory 8 at a time when possible, falling back to per-byte for the
-            // tail. Delta counts are tiny (new symbols only) so this stays cold.
-            entry.writeTo(p, 0, entryLen);
+            Unsafe.getUnsafe().copyMemory(heapAddr + prevEnd, p, entryLen);
             p += entryLen;
+            prevEnd = endOff;
         }
         return (int) (p - wireBuf);
+    }
+
+    /**
+     * Clears the per-column native-key -> connId caches. Called once per query
+     * start; within a single query these caches amortise across all batches so
+     * the same symbol values aren't re-emitted into the delta section.
+     */
+    public void resetForNewQuery() {
+        for (int i = 0, n = scratches.size(); i < n; i++) {
+            scratches.getQuick(i).resetForNewQuery();
+        }
     }
 
     /**
@@ -543,17 +554,16 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     private static long emitSymbolColumn(QwpColumnScratch scratch, long p, long wireLimit) {
-        // Delta mode: per-column dict is omitted -- bytes for new entries went out
-        // already in the message-level delta section. Per-row payload is just the
-        // connection dict ids, resolved via the scratch's localToConn table
-        // populated by {@link #emitDeltaSection}.
-        final int[] localToConn = scratch.symbolLocalToConn;
+        // Per-column dict is omitted -- bytes for new entries went out already in
+        // the message-level delta section. Per-row payload is just the connection
+        // dict ids, which appendRow already stored into symbolIdsAddr (no
+        // translation required).
         final int nonNull = scratch.nonNullCount;
         final long idsAddr = scratch.symbolIdsAddr;
         for (int i = 0; i < nonNull; i++) {
             if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-            int localId = Unsafe.getUnsafe().getInt(idsAddr + 4L * i);
-            p = QwpVarint.encode(p, localToConn[localId]);
+            int connId = Unsafe.getUnsafe().getInt(idsAddr + 4L * i);
+            p = QwpVarint.encode(p, connId);
         }
         return p;
     }

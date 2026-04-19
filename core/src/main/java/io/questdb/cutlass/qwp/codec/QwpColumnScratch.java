@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.qwp.codec;
 
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntIntHashMap;
@@ -59,18 +57,14 @@ import io.questdb.std.str.Utf8Sequence;
  */
 final class QwpColumnScratch implements QuietCloseable {
 
-    private static final int[] EMPTY_INT_ARRAY = new int[0];
     private static final int INITIAL_BYTES = 4096;
     final Decimal128 decimal128Sink = new Decimal128();
     final Decimal256 decimal256Sink = new Decimal256();
-    // Fallback dedup path keyed by CharSequence, used when the cursor doesn't expose a
-    // SymbolTable for the column (e.g. synthetic records). The int-keyed path below is
-    // preferred whenever it's available because it skips the getSymA() + charseq-hash.
-    final CharSequenceIntHashMap symbolDict = new CharSequenceIntHashMap();
-    // Dedup by native symbol-table key for the SYMBOL fast path (see appendSymbolKey).
-    // Cleared together with symbolDict at beginBatch, so only one of the two is
-    // populated for any given column-batch.
-    final IntIntHashMap symbolKeyToDictId = new IntIntHashMap();
+    // Dedup by native symbol-table key -> connection-scoped dict id. Persists across
+    // batches on this connection for the lifetime of a single query. Reset via
+    // {@link #resetConnSymbolMap} when a new query begins so that native keys from
+    // a different cursor/table don't reuse stale mappings.
+    final IntIntHashMap connKeyToConnId = new IntIntHashMap();
     long arrayHeapAddr;
     int arrayHeapCapacity;
     int arrayHeapPos;
@@ -85,25 +79,11 @@ final class QwpColumnScratch implements QuietCloseable {
     int stringHeapPos;
     long stringOffsetsAddr;      // (nonNullCount + 1) x i32
     int stringOffsetsCapacity;   // bytes
-    // Symbol dict storage: UTF-8 bytes concatenated in a native heap, end-offsets
-    // (one per entry) in a parallel native i32 array. Entry e occupies
-    // [offsets[e-1] .. offsets[e]) with offsets[-1] implicitly 0. Replaces the
-    // old ObjList<String>, so unique symbols no longer cost a String allocation
-    // per batch on the fast path. Cleared together with the dedup maps at
-    // beginBatch; freed at close.
-    long symbolDictHeapAddr;
-    int symbolDictHeapCapacity;
-    int symbolDictHeapPos;
-    long symbolDictOffsetsAddr;
-    int symbolDictOffsetsCapacity;
-    int symbolDictSize;
+    // SYMBOL: per-non-null-row connection dict id. With the per-batch dict gone
+    // these are already the ids the wire will carry, so emit is a straight varint
+    // pass over this array (no localToConn translation).
     long symbolIdsAddr;
     int symbolIdsCapacity;       // bytes
-    // Translation table populated by the delta-dict pre-emit pass: maps per-batch
-    // local dict id to connection-scoped id. Sized to {@link #symbolDictSize} at
-    // emit time; reused across batches, grown as needed. When a batch has no
-    // SYMBOL column or the pre-emit pass hasn't run yet this array is untouched.
-    int[] symbolLocalToConn = EMPTY_INT_ARRAY;
     long valuesAddr;
     int valuesCapacity;          // bytes
     int valuesPos;               // bytes written
@@ -130,16 +110,6 @@ final class QwpColumnScratch implements QuietCloseable {
             stringOffsetsAddr = 0;
             stringOffsetsCapacity = 0;
         }
-        if (symbolDictHeapAddr != 0) {
-            Unsafe.free(symbolDictHeapAddr, symbolDictHeapCapacity, MemoryTag.NATIVE_HTTP_CONN);
-            symbolDictHeapAddr = 0;
-            symbolDictHeapCapacity = 0;
-        }
-        if (symbolDictOffsetsAddr != 0) {
-            Unsafe.free(symbolDictOffsetsAddr, symbolDictOffsetsCapacity, MemoryTag.NATIVE_HTTP_CONN);
-            symbolDictOffsetsAddr = 0;
-            symbolDictOffsetsCapacity = 0;
-        }
         if (symbolIdsAddr != 0) {
             Unsafe.free(symbolIdsAddr, symbolIdsCapacity, MemoryTag.NATIVE_HTTP_CONN);
             symbolIdsAddr = 0;
@@ -156,7 +126,7 @@ final class QwpColumnScratch implements QuietCloseable {
      * UTF-8 encode {@code cs} into {@code heapAddr} starting at {@code pos}; returns
      * the position one past the last written byte. Caller must pre-size the heap for
      * the worst case ({@code 4 * cs.length()} bytes). Shared between {@code appendString}
-     * and {@link #addSymbolDictEntry} so the two hot paths don't duplicate the codec.
+     * so {@code appendString} doesn't duplicate the codec.
      */
     private static int encodeUtf8(CharSequence cs, long heapAddr, int pos) {
         final int charLen = cs.length();
@@ -202,20 +172,6 @@ final class QwpColumnScratch implements QuietCloseable {
         stringHeapCapacity = newCap;
     }
 
-    private void ensureSymbolDictHeapCapacity(int required) {
-        if (symbolDictHeapCapacity >= required) return;
-        int newCap = Math.max(symbolDictHeapCapacity * 2, Math.max(INITIAL_BYTES, required));
-        symbolDictHeapAddr = Unsafe.realloc(symbolDictHeapAddr, symbolDictHeapCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
-        symbolDictHeapCapacity = newCap;
-    }
-
-    private void ensureSymbolDictOffsetsCapacity(int required) {
-        if (symbolDictOffsetsCapacity >= required) return;
-        int newCap = Math.max(symbolDictOffsetsCapacity * 2, Math.max(INITIAL_BYTES, required));
-        symbolDictOffsetsAddr = Unsafe.realloc(symbolDictOffsetsAddr, symbolDictOffsetsCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
-        symbolDictOffsetsCapacity = newCap;
-    }
-
     private void ensureSymbolIdsCapacity(int required) {
         if (symbolIdsCapacity >= required) return;
         int newCap = Math.max(symbolIdsCapacity * 2, Math.max(INITIAL_BYTES, required));
@@ -244,26 +200,6 @@ final class QwpColumnScratch implements QuietCloseable {
             stringOffsetsCapacity = newCap;
         }
         Unsafe.getUnsafe().putInt(stringOffsetsAddr + 4L * slotIdx, stringHeapPos);
-    }
-
-    /**
-     * Encodes {@code cs} as UTF-8 into the symbol dict heap, records the end offset
-     * in the parallel offsets array, and returns the new dict id. No {@code String}
-     * allocation -- the bytes land directly in native memory so the emitter can
-     * memcpy them straight into the wire buffer later.
-     */
-    int addSymbolDictEntry(CharSequence cs) {
-        int id = symbolDictSize;
-        int charLen = cs.length();
-        // Worst case UTF-8 expansion: 4 bytes per BMP pair / surrogate pair; upper bound 4 * charLen.
-        ensureSymbolDictHeapCapacity(symbolDictHeapPos + 4 * charLen);
-        symbolDictHeapPos = encodeUtf8(cs, symbolDictHeapAddr, symbolDictHeapPos);
-        // Offsets array stores end-offset per entry (entry e spans prevEnd..offsets[e]),
-        // with prevEnd implicitly 0 for entry 0. So we need (symbolDictSize + 1) * 4 bytes.
-        ensureSymbolDictOffsetsCapacity(4 * (symbolDictSize + 1));
-        Unsafe.getUnsafe().putInt(symbolDictOffsetsAddr + 4L * symbolDictSize, symbolDictHeapPos);
-        symbolDictSize++;
-        return id;
     }
 
     /**
@@ -462,42 +398,13 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
-     * SYMBOL: dedup against the per-batch dict; store dict id (i32) in {@link #symbolIdsAddr}.
-     * This fallback path runs when the cursor doesn't expose a native SymbolTable for
-     * the column -- prefer {@link #appendSymbolKey} otherwise. The dedup map still
-     * allocates a {@code String} internally for its key slot, but the dict bytes
-     * themselves land in native memory via {@link #addSymbolDictEntry}, replacing the
-     * {@code ObjList<String>} that used to hold a second copy of every dict value.
+     * SYMBOL: writes a connection-scoped dict id for this non-null row. Caller (the
+     * batch buffer) has already resolved the id via the per-column native-key-to-
+     * connId map and the shared connection dict; this method just stores it.
      */
-    void appendSymbol(CharSequence cs) {
-        int id = symbolDict.get(cs);
-        if (id == -1) {
-            id = addSymbolDictEntry(cs);
-            symbolDict.put(cs, id);
-        }
+    void appendSymbolConnId(int connId) {
         ensureSymbolIdsCapacity(symbolIdsCapacity == 0 ? INITIAL_BYTES : 4 * (nonNullCount + 1));
-        Unsafe.getUnsafe().putInt(symbolIdsAddr + 4L * nonNullCount, id);
-        markNonNullAndAdvanceRow();
-    }
-
-    /**
-     * SYMBOL fast path: dedup by native symbol-table key (a plain {@code int}) instead
-     * of by CharSequence. Caller has already handled {@link SymbolTable#VALUE_IS_NULL}
-     * and passed a non-null table. Writes the UTF-8 bytes of the symbol value into the
-     * dict heap on first occurrence per batch -- no {@code String} allocation.
-     */
-    void appendSymbolKey(int key, SymbolTable table) {
-        int mapIdx = symbolKeyToDictId.keyIndex(key);
-        int id;
-        if (mapIdx < 0) {
-            id = symbolKeyToDictId.valueAt(mapIdx);
-        } else {
-            CharSequence cs = table.valueOf(key);
-            id = addSymbolDictEntry(cs);
-            symbolKeyToDictId.putAt(mapIdx, key, id);
-        }
-        ensureSymbolIdsCapacity(symbolIdsCapacity == 0 ? INITIAL_BYTES : 4 * (nonNullCount + 1));
-        Unsafe.getUnsafe().putInt(symbolIdsAddr + 4L * nonNullCount, id);
+        Unsafe.getUnsafe().putInt(symbolIdsAddr + 4L * nonNullCount, connId);
         markNonNullAndAdvanceRow();
     }
 
@@ -538,15 +445,23 @@ final class QwpColumnScratch implements QuietCloseable {
         this.valuesPos = 0;
         this.stringHeapPos = 0;
         this.arrayHeapPos = 0;
-        this.symbolDict.clear();
-        this.symbolKeyToDictId.clear();
-        this.symbolDictHeapPos = 0;
-        this.symbolDictSize = 0;
+        // Note: connKeyToConnId persists across batches within a single query --
+        // resetting it here would force every batch to re-ship every symbol value
+        // through the delta section. Only {@link #resetForNewQuery} clears it.
         // Zero the null bitmap so appendNull() can OR in bits without per-byte init.
         // This costs nullBitmapCapacity bytes per batch (e.g. 512 B for 4096 rows). Cheap.
         if (nullBitmapAddr != 0 && nullBitmapCapacity > 0) {
             Unsafe.getUnsafe().setMemory(nullBitmapAddr, nullBitmapCapacity, (byte) 0);
         }
+    }
+
+    /**
+     * Clears the native-key -> connId map so native keys from a new query (which
+     * may live in a different symbol-table space) don't reuse stale mappings.
+     * Called once per query start by {@link QwpResultBatchBuffer#resetForNewQuery}.
+     */
+    void resetForNewQuery() {
+        connKeyToConnId.clear();
     }
 
     void ensureArrayHeapCapacity(int required) {
