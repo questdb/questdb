@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed Phase 13 Plan 04 (retro-fallback machinery + fast-path gates removed; 13 per-type tests assert Sample By Fill; 7 obsolete guard tests deleted; combined suite 1192 green)
-last_updated: "2026-04-19T12:04:41.125Z"
+stopped_at: Completed 13-05-PLAN.md (Branch C, Option D applied; SEED-002 Defects 1+2 resolved)
+last_updated: "2026-04-19T21:43:22.655Z"
 last_activity: 2026-04-19
 progress:
   total_phases: 13
   completed_phases: 11
   total_plans: 20
-  completed_plans: 18
-  percent: 90
+  completed_plans: 19
+  percent: 95
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 13 (migrate-fill-prev-snapshots-from-materialized-values-to-rowi) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-04-19
 
@@ -63,6 +63,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P02 | ~100 min | 2 tasks | 2 files |
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P03 | 30m | 1 tasks | 1 files |
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P04 | 45m | 1 tasks | 9 files |
+| Phase 13 P05 | ~65 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -115,6 +116,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 13]: Plan 04: retro-fallback machinery (FallbackToLegacyException, stashedSampleByNode, codegen detection, three try/catch sites, optimizer+codegen gates) deleted end-to-end; Chars.contains plan-text style added to 13 Plan-03 per-type tests
 - [Phase 13]: Plan 04: testFillPrevSymbolLegacyFallbackNano (SampleByNanoTimestampTest) deleted as a parallel of testFillPrevSymbolLegacyFallback; testFillPrevLong128Fallback retained because it pins compile-time rejection of first(LONG128) independent of fill routing
 - [Phase 13]: Plan 04: testSampleByFillNeedFix now passes as a positive side effect of the SYMBOL/STRING unlock — unexpected, Plan 05 scope may shrink; Plan 05 planner to verify absorption or close SEED-002 Defects 1 and 2 against the Plan 02+04 branch state
+- [Phase 13]: Branch C fired in Plan 05: Defect 1 (CTE+outer-projection fill corruption) NOT absorbed by Plan 02 rowId rewrite; applied user-approved Option D targeted alias-mapping fix in SqlCodeGenerator.generateFill per CONTEXT.md D-06 full-solution commitment
+- [Phase 13]: Assertion #3 snapshot updated in lockstep with Option D fix (Rule 2 deviation): pre-fix buggy positional assignment produced a different observed output than post-fix correct semantic output; updated assertSql snapshot to reflect the corrected output; Plan 06 will convert to master's assertException form
 
 ### Roadmap Evolution
 
@@ -138,6 +141,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-19T12:04:41.122Z
-Stopped at: Completed Phase 13 Plan 04 (retro-fallback machinery + fast-path gates removed; 13 per-type tests assert Sample By Fill; 7 obsolete guard tests deleted; combined suite 1192 green)
+Last session: 2026-04-19T21:43:22.653Z
+Stopped at: Completed 13-05-PLAN.md (Branch C, Option D applied; SEED-002 Defects 1+2 resolved)
 Resume file: None
