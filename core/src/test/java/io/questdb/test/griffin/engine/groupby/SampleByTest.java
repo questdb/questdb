@@ -5973,7 +5973,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             candle_start_time\tcandle_symbol\topen\tclose\tlow\thigh\tcandle_volume\tcandle_usd_volume\tcnt
                             2025-07-30T22:00:00.000000Z\tLSKBTC\t0.00131\t0.00134\t0.0013\t0.00136\t7050.0\t937.75\t210
-                            2025-07-30T21:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.0\t0.0\t0.0\t216
+                            2025-07-30T21:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.00128\t0.0\t0.0\t0
                             2025-07-30T20:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.0013\t7350.0\t928.35\t216
                             """,
                     """
@@ -6015,19 +6015,12 @@ public class SampleByTest extends AbstractCairoTest {
                     true
             );
 
-            // The fill cursor emits fill rows per unique key combination. Since
-            // "open" (first()) has distinct prev values per bucket, the fill produces
-            // two rows per bucket for the gap hour. Using assertSql to verify data
-            // without checking factory properties.
-            assertSql(
+            assertQuery(
                     """
                             candle_start_time\tcnt
                             2025-07-30T22:00:00.000000Z\t210
-                            2025-07-30T22:00:00.000000Z\t216
-                            2025-07-30T21:00:00.000000Z\t216
-                            2025-07-30T21:00:00.000000Z\t210
+                            2025-07-30T21:00:00.000000Z\t0
                             2025-07-30T20:00:00.000000Z\t216
-                            2025-07-30T20:00:00.000000Z\t210
                             """,
                     """
                             with sq as (
@@ -6048,17 +6041,23 @@ public class SampleByTest extends AbstractCairoTest {
                             select
                               candle_start_time,
                               cnt
-                            from sq;"""
+                            from sq;""",
+                    "candle_start_time###DESC",
+                    true
             );
 
             // The unified fill cursor no longer rejects queries with fewer fill values
             // than aggregate columns: extra aggregates default to null fill. Verify that
-            // the query runs without error and produces reasonable output.
+            // the query runs without error and produces reasonable output. With the
+            // Plan 13 alias-mapping fix in generateFill, the 5 fill values now land
+            // on open/close/low/high/candle_volume in user SELECT order; candle_usd_volume
+            // and cnt default to NULL. Plan 06 restores master's assertException form
+            // (reject the query outright when fill values count < aggregate count).
             assertSql(
                     """
                             candle_start_time\tcandle_symbol\topen\tclose\tlow\thigh\tcandle_volume\tcandle_usd_volume\tcnt
                             2025-07-30T22:00:00.000000Z\tLSKBTC\t0.00131\t0.00134\t0.0013\t0.00136\t7050.0\t937.75\t210
-                            2025-07-30T21:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.0\tnull\tnull\t216
+                            2025-07-30T21:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.0013\t0.0\tnull\tnull
                             2025-07-30T20:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.0013\t7350.0\t928.35\t216
                             """,
                     """

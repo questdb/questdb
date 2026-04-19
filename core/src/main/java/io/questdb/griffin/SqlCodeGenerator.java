@@ -3411,20 +3411,73 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             } else {
-                // Per-column fill spec — key columns get FILL_KEY and skip fillIdx
-                int fillIdx = 0;
+                // Per-column fill spec — key columns get FILL_KEY and skip fillIdx.
+                //
+                // The user's fill-value list is keyed by user SELECT order (the order
+                // in which non-key aggregate columns appear in bottomUpCols), but
+                // SqlOptimiser.propagateTopDownColumns0 may reorder the inner
+                // sample-by model's columns based on outer-query DFS, so factory
+                // metadata order is NOT guaranteed to match user SELECT order.
+                // GROUP BY consumes the reorder correctly, but positional
+                // assignment of fill values here would land a fill spec on the
+                // wrong aggregate. Precompute a lookup from factory-metadata
+                // column index to user-fill-list index by walking bottomUpCols
+                // in user order and matching via alias.
+                final IntList factoryColToUserFillIdx = new IntList(columnCount);
+                for (int i = 0; i < columnCount; i++) {
+                    factoryColToUserFillIdx.add(-1);
+                }
+                int userFillIdx = 0;
+                for (int i = 0, n = bottomUpCols.size(); i < n; i++) {
+                    final QueryColumn qc = bottomUpCols.getQuick(i);
+                    // Key columns and the timestamp column do NOT consume a user
+                    // fill-value index. Detect them directly from the QueryColumn
+                    // AST (LITERAL = column reference = key, or timestamp_floor
+                    // function = timestamp column) rather than via isKeyColumn on
+                    // a factory index — bottomUpCols is indexed in user order
+                    // and factory order may diverge after propagateTopDownColumns0.
+                    final ExpressionNode ast = qc.getAst();
+                    if (ast.type == ExpressionNode.LITERAL) {
+                        continue;
+                    }
+                    if (SqlUtil.isTimestampFloorFunction(ast)) {
+                        continue;
+                    }
+                    // This bottomUp column is an aggregate and therefore consumes
+                    // one slot in the user's fill-value list, regardless of whether
+                    // the outer projection keeps the column in the factory metadata.
+                    // When the column IS present in factory metadata, record the
+                    // mapping from factory index to user fill idx; when it is not,
+                    // skip the mapping but still advance userFillIdx so subsequent
+                    // aggregates land on the correct fill value.
+                    final CharSequence qcAlias = qc.getAlias();
+                    if (qcAlias != null) {
+                        final int factoryIdx = groupByMetadata.getColumnIndexQuiet(qcAlias);
+                        if (factoryIdx >= 0 && factoryIdx != timestampIndex) {
+                            factoryColToUserFillIdx.setQuick(factoryIdx, userFillIdx);
+                        }
+                    }
+                    userFillIdx++;
+                }
+
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                         constantFillFuncs.add(NullConstant.NULL);
                         continue;
                     }
-                    if (isKeyColumn(col, bottomUpCols, timestampIndex)) {
+                    final int fillIdx = factoryColToUserFillIdx.getQuick(col);
+                    if (fillIdx < 0) {
+                        // factoryColToUserFillIdx left this slot as -1 because the
+                        // matching bottomUpCols entry was a LITERAL (key column);
+                        // a missing alias or absent column also lands here and
+                        // correctly defaults to FILL_KEY for backwards compatibility
+                        // with the original isKeyColumn(col, bottomUpCols, ...) path.
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
                         constantFillFuncs.add(NullConstant.NULL);
-                        continue; // do NOT increment fillIdx
+                        continue;
                     }
-                    ExpressionNode fillExpr = fillIdx < fillValuesExprs.size()
+                    ExpressionNode fillExpr = fillIdx >= 0 && fillIdx < fillValuesExprs.size()
                             ? fillValuesExprs.getQuick(fillIdx)
                             : (fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null);
                     if (fillExpr != null && isPrevKeyword(fillExpr.token)) {
@@ -3454,7 +3507,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // a dead snapshot slot.
                                 fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
                                 constantFillFuncs.add(NullConstant.NULL);
-                                fillIdx++;
                                 continue;
                             }
                             short targetTag = ColumnType.tagOf(groupByMetadata.getColumnType(col));
@@ -3477,14 +3529,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         constantFillFuncs.add(NullConstant.NULL);
                     } else {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        if (fillIdx < fillValues.size()) {
+                        if (fillIdx >= 0 && fillIdx < fillValues.size()) {
                             constantFillFuncs.add(fillValues.getQuick(fillIdx));
                             fillValues.setQuick(fillIdx, null); // transfer ownership
                         } else {
                             constantFillFuncs.add(NullConstant.NULL);
                         }
                     }
-                    fillIdx++;
                 }
                 // Reject chains: a cross-column PREV whose source column is itself a
                 // cross-column PREV. Runtime-safe but semantically ambiguous; keep the
