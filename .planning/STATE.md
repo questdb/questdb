@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 13-05-PLAN.md (Branch C, Option D applied; SEED-002 Defects 1+2 resolved)
-last_updated: "2026-04-19T21:43:22.655Z"
+status: verifying
+stopped_at: "Completed 13-06-PLAN.md (Phase 13 closes: SEED-001 WR-04 + Defect 3 landed; testSampleByFillNeedFix #3 and testSampleFillValueNotEnough restored to master's assertException form)"
+last_updated: "2026-04-19T23:26:04.596Z"
 last_activity: 2026-04-19
 progress:
   total_phases: 13
-  completed_phases: 11
+  completed_phases: 12
   total_plans: 20
-  completed_plans: 19
-  percent: 95
+  completed_plans: 20
+  percent: 100
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 
 Phase: 13 (migrate-fill-prev-snapshots-from-materialized-values-to-rowi) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-19
 
 Progress: [##########] 100%
@@ -64,6 +64,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P03 | 30m | 1 tasks | 1 files |
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P04 | 45m | 1 tasks | 9 files |
 | Phase 13 P05 | ~65 min | 2 tasks | 2 files |
+| Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P06 | ~75 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -118,6 +119,10 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 13]: Plan 04: testSampleByFillNeedFix now passes as a positive side effect of the SYMBOL/STRING unlock — unexpected, Plan 05 scope may shrink; Plan 05 planner to verify absorption or close SEED-002 Defects 1 and 2 against the Plan 02+04 branch state
 - [Phase 13]: Branch C fired in Plan 05: Defect 1 (CTE+outer-projection fill corruption) NOT absorbed by Plan 02 rowId rewrite; applied user-approved Option D targeted alias-mapping fix in SqlCodeGenerator.generateFill per CONTEXT.md D-06 full-solution commitment
 - [Phase 13]: Assertion #3 snapshot updated in lockstep with Option D fix (Rule 2 deviation): pre-fix buggy positional assignment produced a different observed output than post-fix correct semantic output; updated assertSql snapshot to reflect the corrected output; Plan 06 will convert to master's assertException form
+- [Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi]: Plan 06: WR-04 precise chain-rejection position via parallel ObjList<ExpressionNode> with fallback; Defect 3 insufficient-fill grammar check (size > 1 AND size < aggNonKeyCount) placed between per-column loop and chain check; aggNonKeyCount reuses Plan 05's userFillIdx counter
+- [Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi]: Plan 06: existing chain-rejection tests testFillPrevRejectMutualChain (pos 55) and testFillPrevRejectThreeHopChain (pos 65) pass unchanged after WR-04 - positions coincide with fillValuesExprs[0].position because chain starts at first aggregate with first fill expr; WR-04 path is exercised via perColFillNodes, not fallback
+- [Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi]: Plan 06 deviation (Rule 2): testSampleFillValueNotEnough in SampleByTest and SampleByNanoTimestampTest restored from printSql(silent buggy behavior) to assertException, aligning with master's form and required by Defect 3 grammar landing
+- [Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi]: Phase 13 CLOSED: all 6 commits of D-07 landed. SEED-001 WR-01/02/03 obsoleted (Plan 04), WR-04 + Defect 3 shipped (Plan 06). SEED-002 Defect 1 fixed (Plan 05), Defect 2 absorbed (Plan 02). Phase 12 Success Criterion #1 closed with all 3 testSampleByFillNeedFix assertions matching master's form
 
 ### Roadmap Evolution
 
@@ -141,6 +146,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-19T21:43:22.653Z
-Stopped at: Completed 13-05-PLAN.md (Branch C, Option D applied; SEED-002 Defects 1+2 resolved)
+Last session: 2026-04-19T23:25:49.767Z
+Stopped at: Completed 13-06-PLAN.md (Phase 13 closes: SEED-001 WR-04 + Defect 3 landed; testSampleByFillNeedFix #3 and testSampleFillValueNotEnough restored to master's assertException form)
 Resume file: None
