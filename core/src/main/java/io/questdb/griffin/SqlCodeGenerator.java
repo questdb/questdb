@@ -3576,23 +3576,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Count aggregate columns (non-timestamp, non-key) for prev slots
-            int aggColumnCount = 0;
-            for (int col = 0; col < columnCount; col++) {
-                int mode = fillModes.getQuick(col);
-                if (mode != SampleByFillRecordCursorFactory.FILL_KEY
-                        && col != timestampIndex) {
-                    aggColumnCount++;
-                }
-            }
-
-            // Build mapValueTypes: [keyIndex: LONG, hasPrev: LONG, prevCol0..N: LONG]
+            // Build mapValueTypes: fixed 3-LONG header. Per-agg prev value slots
+            // are gone; the fill cursor stores a single chain rowId per key and
+            // reads all typed prev values via baseCursor.recordAt(prevRecord, rowId).
             final ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
             mapValueTypes.add(ColumnType.LONG); // slot 0: keyIndex
             mapValueTypes.add(ColumnType.LONG); // slot 1: hasPrev
-            for (int i = 0; i < aggColumnCount; i++) {
-                mapValueTypes.add(ColumnType.LONG); // per-agg prev slot
-            }
+            mapValueTypes.add(ColumnType.LONG); // slot 2: prevRowId
 
             // Build keySink: RecordSink for key columns only
             RecordSink keySink = null;

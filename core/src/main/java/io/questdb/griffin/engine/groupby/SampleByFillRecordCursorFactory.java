@@ -239,33 +239,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
         private static final int HAS_PREV_SLOT = 1;
         private static final int KEY_INDEX_SLOT = 0;
-        private static final int PREV_START_SLOT = 2;
-
-        private static long readColumnAsLongBits(Record record, int col, short type) {
-            return switch (type) {
-                case ColumnType.DOUBLE -> Double.doubleToRawLongBits(record.getDouble(col));
-                case ColumnType.FLOAT -> Float.floatToRawIntBits(record.getFloat(col));
-                case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> record.getInt(col);
-                case ColumnType.SHORT, ColumnType.GEOSHORT -> record.getShort(col);
-                case ColumnType.BYTE, ColumnType.GEOBYTE -> record.getByte(col);
-                case ColumnType.BOOLEAN -> record.getBool(col) ? 1 : 0;
-                case ColumnType.CHAR -> record.getChar(col);
-                case ColumnType.DATE, ColumnType.LONG, ColumnType.TIMESTAMP -> record.getLong(col);
-                case ColumnType.GEOLONG -> record.getGeoLong(col);
-                case ColumnType.DECIMAL8 -> record.getDecimal8(col);
-                case ColumnType.DECIMAL16 -> record.getDecimal16(col);
-                case ColumnType.DECIMAL32 -> record.getDecimal32(col);
-                case ColumnType.DECIMAL64 -> record.getDecimal64(col);
-                // Defensive: the optimizer gate rejects unsupported PREV source types
-                // before reaching here and routes those queries to the legacy path.
-                default ->
-                        throw new UnsupportedOperationException("unsupported column type for PREV fill: " + ColumnType.nameOf(type));
-            };
-        }
+        private static final int PREV_ROWID_SLOT = 2;
 
         private final long calendarOffset;
         private final int columnCount;
-        private final short[] columnTypes;
         private final ObjList<Function> constantFills;
         private final IntList fillModes;
         private final FillRecord fillRecord = new FillRecord();
@@ -276,9 +253,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final int keyPosOffset;
         private final RecordSink keySink;
         private final Map keysMap;
-        private final int[] outputColToAggSlot;
         private final int[] outputColToKeyPos;
-        private final IntList prevSourceCols;
         private final IntList symbolTableColIndices;
         private final TimestampDriver timestampDriver;
         private final int timestampIndex;
@@ -300,7 +275,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private long maxTimestamp;
         private long nextBucketTimestamp;
         private long pendingTs;
-        private long[] simplePrev;
+        private Record prevRecord;
+        private long simplePrevRowId = -1L;
 
         private SampleByFillCursor(
                 CairoConfiguration configuration,
@@ -329,34 +305,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.columnCount = metadata.getColumnCount();
             this.fillTimestampFunc = new FillTimestampConstant(timestampType);
-            this.prevSourceCols = prevSourceCols;
             this.hasPrevFill = prevSourceCols != null && prevSourceCols.size() > 0;
-            this.columnTypes = new short[columnCount];
-            for (int i = 0; i < columnCount; i++) {
-                columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(i));
-            }
             this.keySink = keySink;
             this.keysMap = keysMap;
             this.keyColIndices = keyColIndices;
             this.symbolTableColIndices = symbolTableColIndices;
-            this.simplePrev = hasPrevFill ? new long[columnCount] : null;
 
-            // Build outputColToKeyPos and outputColToAggSlot mappings.
-            // keyPosOffset compensates for value columns preceding key columns
-            // in the MapRecord column index space: value cols are at indices
-            // 0..valueColCount-1, key cols at valueColCount..valueColCount+keyCount-1.
+            // keyPosOffset accounts for the fixed 3-LONG value header in the MapRecord:
+            // slot 0 = KEY_INDEX, slot 1 = HAS_PREV, slot 2 = PREV_ROWID. Key columns
+            // follow at index 3 in the MapRecord column space.
+            this.keyPosOffset = 3;
             this.outputColToKeyPos = new int[columnCount];
-            this.outputColToAggSlot = new int[columnCount];
             Arrays.fill(outputColToKeyPos, -1);
-            Arrays.fill(outputColToAggSlot, -1);
-            int aggSlot = 0;
-            for (int col = 0; col < columnCount; col++) {
-                if (fillModes.getQuick(col) != FILL_KEY && col != timestampIndex) {
-                    outputColToAggSlot[col] = aggSlot++;
-                }
-            }
-            // keyPosOffset = 2 (keyIndex + hasPrev) + aggColumnCount
-            this.keyPosOffset = 2 + aggSlot;
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
                 outputColToKeyPos[keyColIndices.getQuick(i)] = keyPosOffset + i;
             }
@@ -431,12 +391,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         int keyIdx = (int) value.getLong(KEY_INDEX_SLOT);
                         keyPresent[keyIdx] = true;
                         if (hasPrevFill) {
-                            updatePerKeyPrev(value, baseRecord);
+                            updateKeyPrevRowId(value, baseRecord);
                         }
                     } else {
                         // Non-keyed: only one row per bucket, advance immediately
                         if (hasPrevFill) {
-                            savePrevValues(baseRecord);
+                            saveSimplePrevRowId(baseRecord);
                         }
                         nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                     }
@@ -469,6 +429,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // Non-keyed gap
                     fillRecord.isGapFilling = true;
                     fillTimestampFunc.value = nextBucketTimestamp;
+                    if (hasSimplePrev) {
+                        // Position prevRecord once per fill emit row (PI-02);
+                        // FillRecord getters below read typed values from
+                        // prevRecord without re-calling recordAt().
+                        baseCursor.recordAt(prevRecord, simplePrevRowId);
+                    }
                     nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                     hasDataForCurrentBucket = false;
                     return true;
@@ -486,10 +452,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                             keySink.copy(baseRecord, mapKey);
                             MapValue value = mapKey.findValue();
                             if (value != null) {
-                                updatePerKeyPrev(value, baseRecord);
+                                updateKeyPrevRowId(value, baseRecord);
                             }
                         } else {
-                            savePrevValues(baseRecord);
+                            saveSimplePrevRowId(baseRecord);
                         }
                     }
                     return true;
@@ -523,6 +489,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
             isInitialized = false;
             hasSimplePrev = false;
+            simplePrevRowId = -1L;
             hasPendingRow = false;
             isBaseCursorExhausted = false;
             hasExplicitTo = false;
@@ -539,6 +506,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (!keyPresent[keyIdx]) {
                         fillRecord.isGapFilling = true;
                         fillTimestampFunc.value = nextBucketTimestamp;
+                        // Position prevRecord once per fill emit row (PI-02);
+                        // FillRecord getters below read typed values from
+                        // prevRecord without re-calling recordAt().
+                        if (value.getLong(HAS_PREV_SLOT) != 0) {
+                            baseCursor.recordAt(prevRecord, value.getLong(PREV_ROWID_SLOT));
+                        }
                         return true;
                     }
                 }
@@ -632,8 +605,15 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
             }
 
-            // Peek first row to determine range
+            // Peek first row to determine range. The previous step either ran
+            // pass 1 (keyed path) or will run buildChain() on this first
+            // baseCursor.hasNext() call (non-keyed path). Either way, by the time
+            // this branch body executes, SortedRecordCursor has completed
+            // buildChain() and recordB is stable for the remainder of the cursor
+            // lifetime. prevRecord MUST be initialized here, not in of(), because
+            // buildChain would otherwise reposition recordB underneath us.
             if (baseCursor.hasNext()) {
+                prevRecord = baseCursor.getRecordB();
                 long firstTs = baseRecord.getTimestamp(timestampIndex);
                 if (fromTs == Numbers.LONG_NULL || firstTs < fromTs) {
                     nextBucketTimestamp = firstTs;
@@ -678,52 +658,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             toTop();
         }
 
-        private long prevValue(int col) {
-            if (keysMap != null) {
-                MapValue value = keysMapRecord.getValue();
-                boolean hasPrev = value.getLong(HAS_PREV_SLOT) != 0;
-                if (!hasPrev) {
-                    return Numbers.LONG_NULL;
-                }
-                int mode = fillMode(col);
-                int sourceCol = mode >= 0 ? mode : col;
-                int aggSlot = outputColToAggSlot[sourceCol];
-                if (aggSlot >= 0) {
-                    return value.getLong(PREV_START_SLOT + aggSlot);
-                }
-                return Numbers.LONG_NULL;
-            }
-            // Non-keyed fallback
-            if (hasSimplePrev) {
-                int mode = fillMode(col);
-                if (mode == FILL_PREV_SELF) {
-                    return simplePrev[col];
-                }
-                if (mode >= 0) {
-                    return simplePrev[mode];
-                }
-            }
-            return Numbers.LONG_NULL;
-        }
-
-        private void savePrevValues(Record record) {
+        private void saveSimplePrevRowId(Record record) {
+            simplePrevRowId = record.getRowId();
             hasSimplePrev = true;
-            for (int i = 0, n = prevSourceCols.size(); i < n; i++) {
-                int col = prevSourceCols.getQuick(i);
-                simplePrev[col] = readColumnAsLongBits(record, col, columnTypes[col]);
-            }
         }
 
-        private void updatePerKeyPrev(MapValue value, Record record) {
+        private void updateKeyPrevRowId(MapValue value, Record record) {
             value.putLong(HAS_PREV_SLOT, 1L);
-            for (int i = 0, n = prevSourceCols.size(); i < n; i++) {
-                int col = prevSourceCols.getQuick(i);
-                int aggSlot = outputColToAggSlot[col];
-                if (aggSlot >= 0) {
-                    value.putLong(PREV_START_SLOT + aggSlot,
-                            readColumnAsLongBits(record, col, columnTypes[col]));
-                }
-            }
+            value.putLong(PREV_ROWID_SLOT, record.getRowId());
         }
 
         /**
@@ -731,6 +673,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
          * the GROUP BY pipeline always supplies a fill mode (FILL_KEY, FILL_PREV_SELF,
          * cross-column, or FILL_CONSTANT) for every output column, so those branches
          * are unreachable in practice.
+         * <p>
+         * PREV fill uses a single rowId per key (keyed) or one simplePrevRowId
+         * (non-keyed); the fill emit path calls baseCursor.recordAt(prevRecord,
+         * rowId) once per row, and the getters below read typed values uniformly
+         * from prevRecord for every supported type.
          */
         private class FillRecord implements Record {
             boolean isGapFilling;
@@ -738,21 +685,34 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             @Override
             public ArrayView getArray(int col, int columnType) {
                 if (!isGapFilling) return baseRecord.getArray(col, columnType);
-                if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getArray(null);
+                int mode = fillMode(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getArray(mode >= 0 ? mode : col, columnType);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getArray(null);
+                // Plan 02 scope: FILL_KEY handling for Array/Bin/Varchar/String/Long256/Decimal128/Decimal256
+                // is outside Plan 02's contract (pre-existing behavior returned null for these
+                // types when mode == FILL_KEY). Phase 13 Plan 04 or a later hardening pass can
+                // extend the FILL_KEY delegation across all types uniformly.
                 return null;
             }
 
             @Override
             public BinarySequence getBin(int col) {
                 if (!isGapFilling) return baseRecord.getBin(col);
-                if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getBin(null);
+                int mode = fillMode(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getBin(mode >= 0 ? mode : col);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBin(null);
                 return null;
             }
 
             @Override
             public long getBinLen(int col) {
                 if (!isGapFilling) return baseRecord.getBinLen(col);
-                if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getBinLen(null);
+                int mode = fillMode(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getBinLen(mode >= 0 ? mode : col);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBinLen(null);
                 return -1;
             }
 
@@ -763,7 +723,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getBool(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getBool(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col) != 0;
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getBool(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBool(null);
                 return false;
             }
@@ -775,7 +736,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getByte(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getByte(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (byte) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getByte(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return (byte) constantFills.getQuick(col).getInt(null);
                 return 0;
             }
@@ -787,7 +749,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getChar(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getChar(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (char) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getChar(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getChar(null);
                 return 0;
             }
@@ -807,6 +770,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     keysMapRecord.getDecimal128(outputColToKeyPos[mode], sink);
                     return;
                 }
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) {
+                    prevRecord.getDecimal128(mode >= 0 ? mode : col, sink);
+                    return;
+                }
                 if (mode == FILL_CONSTANT) {
                     constantFills.getQuick(col).getDecimal128(null, sink);
                 }
@@ -819,7 +786,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal16(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getDecimal16(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (short) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getDecimal16(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal16(null);
                 return Decimals.DECIMAL16_NULL;
             }
@@ -839,6 +807,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     keysMapRecord.getDecimal256(outputColToKeyPos[mode], sink);
                     return;
                 }
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) {
+                    prevRecord.getDecimal256(mode >= 0 ? mode : col, sink);
+                    return;
+                }
                 if (mode == FILL_CONSTANT) {
                     constantFills.getQuick(col).getDecimal256(null, sink);
                 }
@@ -851,7 +823,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal32(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getDecimal32(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (int) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getDecimal32(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal32(null);
                 return Decimals.DECIMAL32_NULL;
             }
@@ -863,7 +836,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal64(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getDecimal64(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getDecimal64(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal64(null);
                 return Decimals.DECIMAL64_NULL;
             }
@@ -875,7 +849,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal8(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getDecimal8(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (byte) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getDecimal8(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal8(null);
                 return Decimals.DECIMAL8_NULL;
             }
@@ -888,7 +863,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getDouble(outputColToKeyPos[mode]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return Double.longBitsToDouble(prevValue(col));
+                    return prevRecord.getDouble(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDouble(null);
                 return Double.NaN;
             }
@@ -901,7 +876,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getFloat(outputColToKeyPos[mode]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return Float.intBitsToFloat((int) prevValue(col));
+                    return prevRecord.getFloat(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getFloat(null);
                 return Float.NaN;
             }
@@ -913,7 +888,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoByte(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getGeoByte(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (byte) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getGeoByte(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoByte(null);
                 return GeoHashes.BYTE_NULL;
             }
@@ -925,7 +901,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoInt(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getGeoInt(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (int) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getGeoInt(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoInt(null);
                 return GeoHashes.INT_NULL;
             }
@@ -937,7 +914,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoLong(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getGeoLong(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getGeoLong(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoLong(null);
                 return GeoHashes.NULL;
             }
@@ -949,7 +927,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoShort(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getGeoShort(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (short) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getGeoShort(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoShort(null);
                 return GeoHashes.SHORT_NULL;
             }
@@ -961,7 +940,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getIPv4(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getIPv4(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (int) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getIPv4(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getIPv4(null);
                 return Numbers.IPv4_NULL;
             }
@@ -973,7 +953,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getInt(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getInt(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (int) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getInt(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getInt(null);
                 return Numbers.INT_NULL;
             }
@@ -985,7 +966,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getLong(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getLong(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getLong(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong(null);
                 return Numbers.LONG_NULL;
             }
@@ -997,6 +979,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getLong128Hi(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getLong128Hi(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getLong128Hi(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong128Hi(null);
                 return Numbers.LONG_NULL;
             }
@@ -1008,6 +992,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getLong128Lo(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getLong128Lo(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getLong128Lo(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong128Lo(null);
                 return Numbers.LONG_NULL;
             }
@@ -1027,6 +1013,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     keysMapRecord.getLong256(outputColToKeyPos[mode], sink);
                     return;
                 }
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) {
+                    prevRecord.getLong256(mode >= 0 ? mode : col, sink);
+                    return;
+                }
                 if (mode == FILL_CONSTANT) {
                     constantFills.getQuick(col).getLong256(null, sink);
                 }
@@ -1039,6 +1029,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getLong256A(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getLong256A(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getLong256A(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong256A(null);
                 return Long256Impl.NULL_LONG256;
             }
@@ -1050,6 +1042,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getLong256B(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getLong256B(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getLong256B(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong256B(null);
                 return Long256Impl.NULL_LONG256;
             }
@@ -1061,7 +1055,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getShort(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getShort(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (short) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getShort(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return (short) constantFills.getQuick(col).getInt(null);
                 return 0;
             }
@@ -1073,6 +1068,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getStrA(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getStrA(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getStrA(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getStrA(null);
                 return null;
             }
@@ -1084,6 +1081,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getStrB(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getStrB(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getStrB(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getStrB(null);
                 return null;
             }
@@ -1095,6 +1094,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getStrLen(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getStrLen(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getStrLen(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getStrLen(null);
                 return -1;
             }
@@ -1106,6 +1107,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getSymA(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getSymA(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getSymA(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getSymbol(null);
                 return null;
             }
@@ -1117,6 +1120,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getSymB(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getSymB(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getSymB(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getSymbolB(null);
                 return null;
             }
@@ -1129,7 +1134,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getTimestamp(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getTimestamp(outputColToKeyPos[mode]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getTimestamp(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getTimestamp(null);
                 return Numbers.LONG_NULL;
             }
@@ -1141,6 +1147,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getVarcharA(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getVarcharA(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getVarcharA(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getVarcharA(null);
                 return null;
             }
@@ -1152,6 +1160,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getVarcharB(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getVarcharB(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getVarcharB(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getVarcharB(null);
                 return null;
             }
@@ -1163,6 +1173,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getVarcharSize(outputColToKeyPos[col]);
                 if (mode >= 0 && outputColToKeyPos[mode] >= 0)
                     return keysMapRecord.getVarcharSize(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getVarcharSize(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getVarcharSize(null);
                 return -1;
             }
