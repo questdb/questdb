@@ -32,6 +32,13 @@ package io.questdb.cutlass.qwp.codec;
 public final class QwpEgressMsgKind {
     public static final byte CANCEL = 0x14;
     public static final byte CREDIT = 0x15;
+    /**
+     * Server-to-client ack for successful non-SELECT queries (DDL, INSERT,
+     * UPDATE, etc.). Body: {@code request_id:u64, op_type:u8, rows_affected:varint}.
+     * The op_type byte is the corresponding {@code CompiledQuery.TYPE_*} constant so
+     * the client can surface it to the user alongside the affected-row count.
+     */
+    public static final byte EXEC_DONE = 0x16;
     public static final byte QUERY_ERROR = 0x13;
     public static final byte QUERY_REQUEST = 0x10;
     public static final byte RESULT_BATCH = 0x11;

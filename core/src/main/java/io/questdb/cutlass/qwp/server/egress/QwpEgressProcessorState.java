@@ -40,6 +40,7 @@ import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -58,6 +59,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
     private final ObjList<QwpEgressColumnDef> columnDefsPool = new ObjList<>();
+    // Reused consumer sequence handed to CompiledQuery.execute for async ALTER /
+    // DDL operations. Subscribed to the engine's message bus on first use;
+    // cleared between queries (the sequence object itself is reused).
+    private final SCSequence eventSubSequence = new SCSequence();
     // Connection-scoped SYMBOL dictionary shared across all queries on this connection.
     // Maps UTF-8 symbol bytes to a stable integer id; the map's insertion-ordered
     // {@code keys()} list is the source of truth for the delta section emitted per
@@ -380,6 +385,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public QwpEgressRequestDecoder getDecoder() {
         return decoder;
+    }
+
+    /**
+     * Returns the reusable consumer sequence fed to {@code CompiledQuery.execute}
+     * for async ALTER / DDL waits. One instance per connection is fine -- calls
+     * to {@code fut.await()} subscribe it, release it on completion.
+     */
+    public SCSequence getEventSubSequence() {
+        return eventSubSequence;
     }
 
     public long getFd() {

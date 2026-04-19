@@ -72,6 +72,19 @@ public final class QwpEgressFrameWriter {
     }
 
     /**
+     * Writes the body of an {@code EXEC_DONE} frame: msg_kind + request_id +
+     * op_type (CompiledQuery.TYPE_*) + rows_affected (varint).
+     *
+     * @return address just past the body
+     */
+    public static long writeExecDone(long bufAddr, long requestId, short opType, long rowsAffected) {
+        Unsafe.getUnsafe().putByte(bufAddr, QwpEgressMsgKind.EXEC_DONE);
+        Unsafe.getUnsafe().putLong(bufAddr + 1, requestId);
+        Unsafe.getUnsafe().putByte(bufAddr + 9, (byte) opType);
+        return QwpVarint.encode(bufAddr + 10, rowsAffected);
+    }
+
+    /**
      * Patches the payload_length field of an already-written message header.
      */
     public static void patchPayloadLength(long msgHeaderAddr, int payloadLength) {

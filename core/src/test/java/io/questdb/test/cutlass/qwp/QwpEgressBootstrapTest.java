@@ -530,6 +530,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                     client.connect();
                     final int[] errorCount = {0};
                     final int[] successCount = {0};
+                    final int[] execDoneCount = {0};
                     QwpColumnBatchHandler handler = new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
@@ -544,19 +545,25 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         public void onError(byte status, String message) {
                             errorCount[0]++;
                         }
+
+                        @Override
+                        public void onExecDone(short opType, long rowsAffected) {
+                            execDoneCount[0]++;
+                        }
                     };
                     // Mix of success and failure paths -- each failure exercises a different
                     // catch arm in handleQueryRequest. With C1 unfixed, the
                     // factory.getCursor() / metadata path leaks RecordCursorFactory
                     // instances on any failure between getCursor and beginStreaming.
                     for (int i = 0; i < 25; i++) {
-                        client.execute("SELECT x FROM leakcheck ORDER BY x", handler);    // ok
+                        client.execute("SELECT x FROM leakcheck ORDER BY x", handler);    // ok (batch)
                         client.execute("SELECT FROM leakcheck", handler);                  // syntax error
                         client.execute("SELECT * FROM does_not_exist", handler);           // table not found
-                        client.execute("INSERT INTO leakcheck VALUES (4)", handler);       // non-SELECT
+                        client.execute("INSERT INTO leakcheck VALUES (4)", handler);       // DDL succeeds -> execDone
                     }
                     Assert.assertEquals(25, successCount[0]);
-                    Assert.assertEquals(75, errorCount[0]);
+                    Assert.assertEquals(50, errorCount[0]);
+                    Assert.assertEquals(25, execDoneCount[0]);
                 }
             }
         });
@@ -993,15 +1000,18 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testNonSelectRejected() throws Exception {
+    public void testNonSelectSucceedsViaExecDone() throws Exception {
+        // DDL over egress lands via EXEC_DONE (msg_kind 0x16). Historically this
+        // test asserted a PARSE_ERROR rejection; since the DDL / INSERT / UPDATE
+        // execution landed, the same DROP now round-trips with a success ack
+        // carrying the op type and zero rows affected.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE dummy(x LONG)");
-                final byte[] status = {0};
-                final String[] msg = {null};
+                final short[] opType = {-1};
+                final long[] rowsAffected = {-1L};
                 try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                     client.connect();
-                    // DROP is a DDL, not a SELECT -- Phase 1 rejects with PARSE_ERROR.
                     client.execute("DROP TABLE dummy", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
@@ -1015,17 +1025,19 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
 
                         @Override
                         public void onError(byte s, String m) {
-                            status[0] = s;
-                            msg[0] = m;
+                            Assert.fail("unexpected error: " + m);
+                        }
+
+                        @Override
+                        public void onExecDone(short ot, long ra) {
+                            opType[0] = ot;
+                            rowsAffected[0] = ra;
                         }
                     });
                 }
-                Assert.assertEquals(0x05, status[0]);
-                Assert.assertNotNull(msg[0]);
-                Assert.assertTrue(
-                        "message should indicate SELECT-only restriction, got: " + msg[0],
-                        msg[0].toLowerCase().contains("select")
-                );
+                // CompiledQuery.DROP == 7 (see io.questdb.griffin.CompiledQuery).
+                Assert.assertEquals(7, opType[0]);
+                Assert.assertEquals(0L, rowsAffected[0]);
             }
         });
     }

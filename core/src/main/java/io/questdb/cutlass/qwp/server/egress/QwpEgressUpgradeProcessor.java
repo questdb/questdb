@@ -25,6 +25,8 @@
 package io.questdb.cutlass.qwp.server.egress;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
@@ -51,6 +53,7 @@ import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
@@ -339,6 +342,77 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
+    /**
+     * Runs a non-SELECT {@link CompiledQuery} synchronously and replies with an
+     * {@code EXEC_DONE}. The HTTP worker blocks until the operation future
+     * completes -- same shape that {@code JsonQueryProcessor} uses, minus its
+     * async-retry dance (egress doesn't have an HTTP-level retry hook so a
+     * bounded await is pointless). Throws so the caller's catch maps it to a
+     * {@code QUERY_ERROR}.
+     */
+    private void executeNonSelect(
+            HttpConnectionContext context,
+            QwpEgressProcessorState state,
+            SqlExecutionContextImpl sqlCtx,
+            CompiledQuery cq,
+            long requestId
+    ) throws Exception {
+        final short type = cq.getType();
+        long rowsAffected = 0;
+        switch (type) {
+            case CompiledQuery.INSERT:
+            case CompiledQuery.INSERT_AS_SELECT: {
+                try (InsertOperation op = cq.popInsertOperation()) {
+                    try (OperationFuture fut = op.execute(sqlCtx)) {
+                        fut.await();
+                        rowsAffected = fut.getAffectedRowsCount();
+                    }
+                }
+                break;
+            }
+            case CompiledQuery.UPDATE: {
+                try (OperationFuture fut = cq.execute(sqlCtx, state.getEventSubSequence(), true)) {
+                    fut.await();
+                    rowsAffected = fut.getAffectedRowsCount();
+                }
+                break;
+            }
+            case CompiledQuery.ALTER: {
+                try (OperationFuture fut = cq.execute(state.getEventSubSequence())) {
+                    fut.await();
+                }
+                break;
+            }
+            case CompiledQuery.DROP:
+            case CompiledQuery.CREATE_TABLE:
+            case CompiledQuery.CREATE_TABLE_AS_SELECT:
+            case CompiledQuery.CREATE_MAT_VIEW:
+            case CompiledQuery.CREATE_VIEW: {
+                Operation op = cq.getOperation();
+                try (OperationFuture fut = op.execute(sqlCtx, state.getEventSubSequence())) {
+                    fut.await();
+                }
+                break;
+            }
+            case CompiledQuery.COPY_REMOTE: {
+                // Ingress `/write/v4` is the supported channel for bulk load.
+                cq.closeAllButSelect();
+                sendQueryError(context, requestId, QwpConstants.STATUS_PARSE_ERROR,
+                        "COPY ... FROM is not supported on egress");
+                return;
+            }
+            default: {
+                // Parse-time-executed statements (TRUNCATE, RENAME TABLE, SET,
+                // VACUUM, CHECKPOINT, BEGIN / COMMIT / ROLLBACK, DEALLOCATE,
+                // TABLE_RESUME / SUSPEND / SET_TYPE, CREATE/ALTER USER, etc.)
+                // need no further execute -- the compiler already did the work.
+                rowsAffected = cq.getAffectedRowsCount();
+                break;
+            }
+        }
+        sendExecDone(context, requestId, type, rowsAffected);
+    }
+
     private void handleClose(HttpConnectionContext context, long payload, int length) {
         int closeCode = -1;
         if (length >= 2) {
@@ -422,13 +496,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile(decoder.sql, sqlCtx);
-                if (cq.getType() != CompiledQuery.SELECT && cq.getType() != CompiledQuery.PSEUDO_SELECT) {
-                    // CompiledQueryImpl carries an Operation (insert / update / alter / drop / etc.) that
-                    // owns native resources. closeAllButSelect() releases everything that isn't the
-                    // RecordCursorFactory we'd otherwise pull out.
-                    cq.closeAllButSelect();
-                    sendQueryError(context, requestId, QwpConstants.STATUS_PARSE_ERROR,
-                            "Phase 1 egress only supports SELECT queries");
+                short type = cq.getType();
+                // Non-SELECT (DDL / INSERT / UPDATE / parse-time-executed) -- route to the
+                // synchronous exec path which awaits the operation and replies with an
+                // EXEC_DONE carrying the op type + rows affected.
+                if (!isStreamingType(type, cq)) {
+                    executeNonSelect(context, state, sqlCtx, cq, requestId);
                     return;
                 }
                 factory = cq.getRecordCursorFactory();
@@ -537,6 +610,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
+    /**
+     * Returns {@code true} when a compiled query should stream result rows back
+     * to the client. {@code SELECT} and {@code EXPLAIN} always do; {@code
+     * PSEUDO_SELECT} only when the compiler produced a cursor (it returns null
+     * for synchronous variants like certain {@code COPY} forms).
+     */
+    private static boolean isStreamingType(short type, CompiledQuery cq) {
+        if (type == CompiledQuery.SELECT || type == CompiledQuery.EXPLAIN) {
+            return true;
+        }
+        return type == CompiledQuery.PSEUDO_SELECT && cq.getRecordCursorFactory() != null;
+    }
+
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
         int clientMaxVersion = parseClientMaxVersion(requestHeader);
         int negotiated = Math.min(clientMaxVersion, QwpConstants.MAX_SUPPORTED_VERSION);
@@ -601,6 +687,25 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     // Outbound frame serialisation
+
+    /**
+     * Ack for a non-SELECT query that completed successfully. Body is small and
+     * always fits in the send buffer's header reservation plus a handful of bytes,
+     * so this is a one-shot send -- no chunking.
+     */
+    private void sendExecDone(HttpConnectionContext context, long requestId, short opType, long rowsAffected)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufAddr = rawSocket.getBufferAddress();
+        long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
+        long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
+                qwpStart, QwpConstants.VERSION_1, (byte) 0, 0, 0 /* payload len patched */);
+        long bodyEnd = QwpEgressFrameWriter.writeExecDone(bodyStart, requestId, opType, rowsAffected);
+        int qwpSize = (int) (bodyEnd - qwpStart);
+        int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
+        QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
+        sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
+    }
 
     private void sendQueryError(HttpConnectionContext context, long requestId, byte status, CharSequence msg)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
