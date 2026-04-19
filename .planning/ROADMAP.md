@@ -217,13 +217,13 @@ Plans:
   7. Seeds SEED-001 and SEED-002 are revisited and closed: bucket 1 follow-ups routed into this phase's scope; cursor defects 1 and 2 absorbed by the rewrite or filed as independent phases.
   8. All 13 per-type FILL(PREV) tests listed in `13-VALIDATION-INPUTS.md` (borrowed from `sm_fill_prev_fast_all_types` commit `f43a3d7057`) land on this branch and pass on the fast path (plan output shows `Sample By Fill`, not `Sample By`).
 
-**Plans:** 3/6 plans executed
+**Plans:** 4/6 plans executed
 
 Plans:
 - [x] 13-01-PLAN.md — chain.clear() fix in SortedRecordCursor.of() on reuse + D-02 investigation report (Commit 1)
 - [x] 13-02-PLAN.md — rowId rewrite in SampleByFillRecordCursorFactory + mapValueTypes resize in SqlCodeGenerator.generateFill (Commit 2)
 - [x] 13-03-PLAN.md — cherry-pick 13 per-type FILL(PREV) tests from f43a3d7057 (Commit 3)
-- [ ] 13-04-PLAN.md — delete retro-fallback machinery across 6 production files + 7 retro-fallback tests (Commit 4)
+- [x] 13-04-PLAN.md — delete retro-fallback machinery across 6 production files + 7 retro-fallback tests (Commit 4)
 - [ ] 13-05-PLAN.md — restore testSampleByFillNeedFix assertion #1 and #2 to master's 3-row form; SEED-002 Defects 1 and 2 (Commit 5)
 - [ ] 13-06-PLAN.md — WR-04 precise chain-rejection position + Defect 3 insufficient-fill grammar + testFillInsufficientFillValues + testSampleByFillNeedFix assertion #3 (Commit 6)
 
@@ -245,4 +245,4 @@ Plans:
 | 10. Fix Offset-Aware Bucket Alignment | 1/1 | Complete | 2026-04-13 |
 | 11. Hardening — Review Findings & Missing Test Coverage | 1/1 | Complete (retroactive) | 2026-04-13 |
 | 12. Replace safety-net reclassification with legacy fallback | 4/4 | Complete    | 2026-04-17 |
-| 13. Migrate FILL(PREV) snapshots to rowId-based replay | 3/6 | In Progress|  |
+| 13. Migrate FILL(PREV) snapshots to rowId-based replay | 4/6 | In Progress|  |

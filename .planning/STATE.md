@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed Phase 13 Plan 03 (cherry-pick 13 per-type FILL(PREV) data-correctness tests; plan-text deferred to Plan 04)
-last_updated: "2026-04-19T11:28:07.608Z"
+stopped_at: Completed Phase 13 Plan 04 (retro-fallback machinery + fast-path gates removed; 13 per-type tests assert Sample By Fill; 7 obsolete guard tests deleted; combined suite 1192 green)
+last_updated: "2026-04-19T12:04:41.125Z"
 last_activity: 2026-04-19
 progress:
   total_phases: 13
   completed_phases: 11
   total_plans: 20
-  completed_plans: 17
-  percent: 85
+  completed_plans: 18
+  percent: 90
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 13 (migrate-fill-prev-snapshots-from-materialized-values-to-rowi) — EXECUTING
-Plan: 4 of 6
+Plan: 5 of 6
 Status: Ready to execute
 Last activity: 2026-04-19
 
@@ -62,6 +62,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P01 | ~100 min | 2 tasks | 1 files |
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P02 | ~100 min | 2 tasks | 2 files |
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P03 | 30m | 1 tasks | 1 files |
+| Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P04 | 45m | 1 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -111,6 +112,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 13]: Plan 02: FILL_KEY for Array/Bin/BinLen kept as pre-existing null/-1 fallthrough (scope-trimmed during verification after two regression tests pinned the old behavior); rowId rewrite preserves var-width FILL_KEY semantics unchanged
 - [Phase 13]: Plan 02: Retro-fallback machinery (FallbackToLegacyException, prevSourceCols, isFastPathPrevSupportedType, three try/catch sites) retained; Plan 04 deletes it after Plan 03 validates the fast path across every currently-unsupported type
 - [Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi]: Plan 03: 13 per-type FILL(PREV) tests land with assertSql data-correctness only; plan-text assertion deferred to Plan 04 per Option B (preserves D-07 commit sequencing)
+- [Phase 13]: Plan 04: retro-fallback machinery (FallbackToLegacyException, stashedSampleByNode, codegen detection, three try/catch sites, optimizer+codegen gates) deleted end-to-end; Chars.contains plan-text style added to 13 Plan-03 per-type tests
+- [Phase 13]: Plan 04: testFillPrevSymbolLegacyFallbackNano (SampleByNanoTimestampTest) deleted as a parallel of testFillPrevSymbolLegacyFallback; testFillPrevLong128Fallback retained because it pins compile-time rejection of first(LONG128) independent of fill routing
+- [Phase 13]: Plan 04: testSampleByFillNeedFix now passes as a positive side effect of the SYMBOL/STRING unlock — unexpected, Plan 05 scope may shrink; Plan 05 planner to verify absorption or close SEED-002 Defects 1 and 2 against the Plan 02+04 branch state
 
 ### Roadmap Evolution
 
@@ -134,6 +138,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-19T11:28:07.606Z
-Stopped at: Completed Phase 13 Plan 03 (cherry-pick 13 per-type FILL(PREV) data-correctness tests; plan-text deferred to Plan 04)
+Last session: 2026-04-19T12:04:41.122Z
+Stopped at: Completed Phase 13 Plan 04 (retro-fallback machinery + fast-path gates removed; 13 per-type tests assert Sample By Fill; 7 obsolete guard tests deleted; combined suite 1192 green)
 Resume file: None
