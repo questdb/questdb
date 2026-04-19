@@ -200,22 +200,26 @@ public class QwpEgressReadBenchmark {
         try (QwpQueryClient client = QwpQueryClient.fromConfig(
                 "ws::addr=" + HOST + ":" + HTTP_PORT + ";client_id=qwp-egress-bench/1.0;")) {
             client.connect();
-            client.execute("SELECT id, price, sym, note FROM " + TABLE_NAME, new QwpColumnBatchHandler() {
+            client.execute("SELECT ts, id, price, sym, note FROM " + TABLE_NAME, new QwpColumnBatchHandler() {
                 @Override
                 public void onBatch(QwpColumnBatch batch) {
                     int n = batch.getRowCount();
-                    // Use the hot raw-address accessors. id (LONG) and price (DOUBLE) are fixed-width;
-                    // sym (SYMBOL) and note (VARCHAR) use DirectUtf8 views.
-                    long idBase = batch.valuesAddr(0);
-                    long priceBase = batch.valuesAddr(1);
-                    int[] idIdx = batch.nonNullIndex(0);
-                    int[] priceIdx = batch.nonNullIndex(1);
+                    // Use the hot raw-address accessors. ts (TIMESTAMP), id (LONG), price (DOUBLE)
+                    // are fixed-width 8-byte columns; sym (SYMBOL) and note (VARCHAR) use
+                    // DirectUtf8 views.
+                    long tsBase = batch.valuesAddr(0);
+                    long idBase = batch.valuesAddr(1);
+                    long priceBase = batch.valuesAddr(2);
+                    int[] tsIdx = batch.nonNullIndex(0);
+                    int[] idIdx = batch.nonNullIndex(1);
+                    int[] priceIdx = batch.nonNullIndex(2);
                     for (int r = 0; r < n; r++) {
+                        long ts = io.questdb.client.std.Unsafe.getUnsafe().getLong(tsBase + 8L * tsIdx[r]);
                         long id = io.questdb.client.std.Unsafe.getUnsafe().getLong(idBase + 8L * idIdx[r]);
                         long priceBits = io.questdb.client.std.Unsafe.getUnsafe().getLong(priceBase + 8L * priceIdx[r]);
-                        DirectUtf8Sequence sym = batch.getStrA(2, r);
-                        DirectUtf8Sequence note = batch.getVarcharB(3, r);
-                        checksum[0] ^= id ^ priceBits ^ (sym != null ? sym.size() : 0) ^ (note != null ? note.size() : 0);
+                        DirectUtf8Sequence sym = batch.getStrA(3, r);
+                        DirectUtf8Sequence note = batch.getVarcharB(4, r);
+                        checksum[0] ^= ts ^ id ^ priceBits ^ (sym != null ? sym.size() : 0) ^ (note != null ? note.size() : 0);
                     }
                     rowsSeen[0] += n;
                     // Sum the actual QWP message bytes delivered in this frame. The batch
@@ -253,21 +257,23 @@ public class QwpEgressReadBenchmark {
         long start = System.nanoTime();
         try (Connection c = createPgConnection(); Statement st = c.createStatement()) {
             st.setFetchSize(10_000);
-            try (ResultSet rs = st.executeQuery("SELECT id, price, sym, note FROM " + TABLE_NAME)) {
+            try (ResultSet rs = st.executeQuery("SELECT ts, id, price, sym, note FROM " + TABLE_NAME)) {
                 while (rs.next()) {
-                    long id = rs.getLong(1);
-                    double price = rs.getDouble(2);
-                    String sym = rs.getString(3);
-                    String note = rs.getString(4);
-                    checksum ^= id ^ Double.doubleToLongBits(price)
+                    // Normalise to epoch microseconds so the checksum matches the QWP path.
+                    long ts = rs.getTimestamp(1).getTime() * 1000L;
+                    long id = rs.getLong(2);
+                    double price = rs.getDouble(3);
+                    String sym = rs.getString(4);
+                    String note = rs.getString(5);
+                    checksum ^= ts ^ id ^ Double.doubleToLongBits(price)
                             ^ (sym != null ? sym.length() : 0) ^ (note != null ? note.length() : 0);
                     // PG DataRow wire size per row in binary mode: 1 byte 'D' msg tag,
                     // 4 bytes msg length, 2 bytes col count, then 4-byte length prefix +
-                    // value for each of the 4 columns. id/price are 8 bytes each, sym +
+                    // value for each of the 5 columns. ts/id/price are 8 bytes each, sym +
                     // note vary - measure directly rather than estimating.
                     int symBytes = sym != null ? sym.getBytes(StandardCharsets.UTF_8).length : 0;
                     int noteBytes = note != null ? note.getBytes(StandardCharsets.UTF_8).length : 0;
-                    bytes += 7 + 4 + 8 + 4 + 8 + 4 + symBytes + 4 + noteBytes;
+                    bytes += 7 + 4 + 8 + 4 + 8 + 4 + 8 + 4 + symBytes + 4 + noteBytes;
                     rows++;
                 }
             }
@@ -284,7 +290,7 @@ public class QwpEgressReadBenchmark {
     private static Result runHttpExec(boolean warmup) throws Exception {
         long bytes = 0;
         long start = System.nanoTime();
-        String sql = "SELECT+id,price,sym,note+FROM+" + TABLE_NAME;
+        String sql = "SELECT+ts,id,price,sym,note+FROM+" + TABLE_NAME;
         URL url = new URL("http://" + HOST + ":" + HTTP_PORT + "/exec?query=" + sql + "&count=true");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestProperty("Accept-Encoding", "identity");
