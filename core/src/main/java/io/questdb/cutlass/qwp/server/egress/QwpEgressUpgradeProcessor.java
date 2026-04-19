@@ -25,6 +25,9 @@
 package io.questdb.cutlass.qwp.server.egress;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -385,6 +388,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         boolean streamingHandedOff = false;
         RecordCursorFactory factory = null;
         RecordCursor cursor = null;
+        PageFrameCursor pageFrameCursor = null;
         // Phase 1 supports a single in-flight query per connection. A second QUERY_REQUEST
         // arriving while the first is still streaming (e.g., the send side is parked on
         // PeerIsSlowToReadException) would overwrite streamingFactory/streamingCursor in
@@ -428,7 +432,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                     return;
                 }
                 factory = cq.getRecordCursorFactory();
-                cursor = factory.getCursor(sqlCtx);
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
                 ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
@@ -436,7 +439,27 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                     columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
                 }
                 int schemaId = state.allocateSchemaId();
-                state.beginStreaming(requestId, factory, cursor, columnCount, schemaId);
+                // Prefer the PageFrameCursor fast path when the factory supports it: it
+                // hands us flat column addresses per frame and lets the SYMBOL fast path
+                // resolve dict keys via PageFrameMemoryRecord.getInt. Factories that don't
+                // support it (filtered/joined/grouped queries) keep the existing
+                // RecordCursor path without change.
+                if (factory.supportsPageFrameCursor()) {
+                    int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
+                            ? PartitionFrameCursorFactory.ORDER_DESC
+                            : PartitionFrameCursorFactory.ORDER_ASC;
+                    pageFrameCursor = factory.getPageFrameCursor(sqlCtx, order);
+                }
+                if (pageFrameCursor != null) {
+                    // Streaming mode asks the cursor to release page cache pages
+                    // after reading, so a 10M-row scan doesn't evict the server's
+                    // working set. Same hint used by the parquet exporter.
+                    pageFrameCursor.setStreamingMode(true);
+                    state.beginStreamingPageFrame(requestId, factory, pageFrameCursor, columnCount, schemaId);
+                } else {
+                    cursor = factory.getCursor(sqlCtx);
+                    state.beginStreaming(requestId, factory, cursor, columnCount, schemaId);
+                }
                 streamingHandedOff = true;     // ownership of factory + cursor passed to state
             }
             // Streaming may complete here (cursor short and fast), or throw PeerIsSlowToReadException
@@ -447,6 +470,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                 state.endStreaming();
             } else if (!streamingHandedOff) {
                 Misc.free(cursor);
+                Misc.free(pageFrameCursor);
                 Misc.free(factory);
             }
             throw e;
@@ -464,6 +488,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                 // an exception between factory.getCursor() and beginStreaming() (e.g., OOM, table
                 // metadata error, borrowColumnDefs growth failure) leaks the factory and cursor.
                 Misc.free(cursor);
+                Misc.free(pageFrameCursor);
                 Misc.free(factory);
             }
             byte status = mapErrorStatus(e);
@@ -664,16 +689,29 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(state.getStreamingColumnCount());
         long requestId = state.getStreamingRequestId();
         int schemaId = state.getStreamingSchemaId();
-        RecordCursor cursor = state.getStreamingCursor();
+        // Page-frame path is used when the factory supports it (typical full scans);
+        // everything else comes through the RecordCursor path. Both feed the same
+        // batchBuffer; the only difference is how we walk rows.
+        final boolean pageFrame = state.isStreamingPageFrame();
+        final RecordCursor cursor = pageFrame ? null : state.getStreamingCursor();
 
         while (true) {
-            // Passing the cursor lets the batch buffer pick up native SymbolTables for
-            // SYMBOL columns, taking the getInt-based fast path instead of getSymA.
-            batchBuffer.beginBatch(columnDefs, cursor);
+            // Passing the symbol-table source lets the batch buffer pick up native
+            // SymbolTables for SYMBOL columns, taking the getInt-based fast path.
+            batchBuffer.beginBatch(columnDefs, state.getStreamingSymbolTableSource());
             int rowsThisBatch = 0;
-            while (rowsThisBatch < MAX_ROWS_PER_BATCH && cursor.hasNext()) {
-                batchBuffer.appendRow(cursor.getRecord());
-                rowsThisBatch++;
+            if (pageFrame) {
+                Record record;
+                while (rowsThisBatch < MAX_ROWS_PER_BATCH
+                        && (record = state.advancePageFrameRow()) != null) {
+                    batchBuffer.appendRow(record);
+                    rowsThisBatch++;
+                }
+            } else {
+                while (rowsThisBatch < MAX_ROWS_PER_BATCH && cursor.hasNext()) {
+                    batchBuffer.appendRow(cursor.getRecord());
+                    rowsThisBatch++;
+                }
             }
             boolean cursorExhausted = rowsThisBatch < MAX_ROWS_PER_BATCH;
             boolean writeFullSchema = !state.isStreamingFullSchemaSent();

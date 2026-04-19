@@ -25,13 +25,21 @@
 package io.questdb.cutlass.qwp.server.egress;
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -53,6 +61,13 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private long fd = -1;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
     private int nextSchemaId;
+    // Page-frame iteration scaffolding. Allocated lazily on first page-frame query and
+    // reused across queries on the same connection; per-query binding happens in
+    // beginStreamingPageFrame. None of these are freed on endStreaming -- only the
+    // per-query streamingPageFrameCursor is.
+    private PageFrameAddressCache pageFrameAddressCache;
+    private PageFrameMemoryPool pageFrameMemoryPool;
+    private PageFrameMemoryRecord pageFrameMemoryRecord;
     private int recvBufferLen;
     private SecurityContext securityContext;
     private boolean wsHandshakeSent;
@@ -69,6 +84,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private RecordCursor streamingCursor;
     private RecordCursorFactory streamingFactory;
     private boolean streamingFullSchemaSent;
+    // PageFrame streaming state. streamingPageFrameCursor is the per-query cursor
+    // (freed on endStreaming). streamingPageFrameIndex counts frames consumed since
+    // the query started - used to key PageFrameAddressCache entries. row/rowHi track
+    // the iteration position inside the current frame; when row == rowHi we advance
+    // to the next frame or finish.
+    private PageFrameCursor streamingPageFrameCursor;
+    private int streamingPageFrameIndex;
+    private long streamingPageFrameRow;
+    private long streamingPageFrameRowHi;
     private long streamingRequestId;
     /**
      * Set true the moment {@code sendResultEnd} is initiated (whether it succeeds or
@@ -139,6 +163,50 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingActive = true;
     }
 
+    /**
+     * Starts a streaming query whose row iteration will run through a
+     * {@link PageFrameCursor}. Lazily allocates the per-connection page-frame
+     * scaffolding ({@link PageFrameAddressCache}, {@link PageFrameMemoryPool},
+     * {@link PageFrameMemoryRecord}) on first call and rebinds them to the new
+     * query. The cursor is owned by the state from this point on and is freed by
+     * {@link #endStreaming}.
+     */
+    public void beginStreamingPageFrame(
+            long requestId,
+            RecordCursorFactory factory,
+            PageFrameCursor pageFrameCursor,
+            int columnCount,
+            int schemaId
+    ) {
+        if (streamingActive) {
+            endStreaming();
+        }
+        if (pageFrameAddressCache == null) {
+            pageFrameAddressCache = new PageFrameAddressCache();
+            pageFrameMemoryPool = new PageFrameMemoryPool(1);
+            pageFrameMemoryRecord = new PageFrameMemoryRecord();
+        }
+        pageFrameAddressCache.of(
+                factory.getMetadata(),
+                pageFrameCursor.getColumnMapping(),
+                pageFrameCursor.isExternal()
+        );
+        pageFrameMemoryPool.of(pageFrameAddressCache);
+        pageFrameMemoryRecord.of(pageFrameCursor);
+        this.streamingRequestId = requestId;
+        this.streamingFactory = factory;
+        this.streamingPageFrameCursor = pageFrameCursor;
+        this.streamingColumnCount = columnCount;
+        this.streamingSchemaId = schemaId;
+        this.streamingBatchSeq = 0;
+        this.streamingFullSchemaSent = false;
+        this.streamingRowsEmitted = 0;
+        this.streamingPageFrameIndex = 0;
+        this.streamingPageFrameRow = 0;
+        this.streamingPageFrameRowHi = 0;
+        this.streamingActive = true;
+    }
+
     public void clear() {
         endStreaming();
         recvBufferLen = 0;
@@ -158,12 +226,49 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public void endStreaming() {
         streamingActive = false;
         streamingCursor = Misc.free(streamingCursor);
+        streamingPageFrameCursor = Misc.free(streamingPageFrameCursor);
         streamingFactory = Misc.free(streamingFactory);
         streamingColumnCount = 0;
         streamingSchemaId = 0;
         streamingBatchSeq = 0;
         streamingFullSchemaSent = false;
         streamingResultEndInitiated = false;
+        streamingPageFrameIndex = 0;
+        streamingPageFrameRow = 0;
+        streamingPageFrameRowHi = 0;
+    }
+
+    /**
+     * Advances the page-frame iteration by one row. When the current frame is
+     * exhausted, pulls the next {@link PageFrame} from the cursor and rebinds
+     * the memory record to it. Returns the {@link Record} pointing at the next
+     * row, or {@code null} when no more rows are available.
+     * <p>
+     * Row indices passed to {@link PageFrameMemoryRecord#setRowIndex} are
+     * frame-local (0..frameRowCount). {@link FwdTableReaderPageFrameCursor}
+     * already offsets the page addresses by the frame's partition-lo so the
+     * record's getLong/getVarchar read from position 0 inside the frame.
+     * <p>
+     * Only valid when streaming was started via {@link #beginStreamingPageFrame}.
+     */
+    public Record advancePageFrameRow() {
+        if (streamingPageFrameRow >= streamingPageFrameRowHi) {
+            PageFrame frame = streamingPageFrameCursor.next();
+            if (frame == null) {
+                return null;
+            }
+            pageFrameAddressCache.add(streamingPageFrameIndex, frame);
+            pageFrameMemoryPool.navigateTo(streamingPageFrameIndex, pageFrameMemoryRecord);
+            streamingPageFrameRow = 0;
+            streamingPageFrameRowHi = frame.getPartitionHi() - frame.getPartitionLo();
+            streamingPageFrameIndex++;
+            if (streamingPageFrameRow >= streamingPageFrameRowHi) {
+                // Empty frame - try again.
+                return advancePageFrameRow();
+            }
+        }
+        pageFrameMemoryRecord.setRowIndex(streamingPageFrameRow++);
+        return pageFrameMemoryRecord;
     }
 
     public byte getNegotiatedVersion() {
@@ -190,8 +295,21 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingCursor;
     }
 
+    public PageFrameCursor getStreamingPageFrameCursor() {
+        return streamingPageFrameCursor;
+    }
+
     public long getStreamingRequestId() {
         return streamingRequestId;
+    }
+
+    /**
+     * Returns the symbol-table source matching the active streaming mode so
+     * {@link QwpResultBatchBuffer#beginBatch} can hook up the SYMBOL fast path
+     * without the processor having to know which path is in use.
+     */
+    public SymbolTableSource getStreamingSymbolTableSource() {
+        return streamingPageFrameCursor != null ? streamingPageFrameCursor : streamingCursor;
     }
 
     public long getStreamingRowsEmitted() {
@@ -210,6 +328,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingFullSchemaSent;
     }
 
+    /**
+     * True if the active streaming query is iterating via a {@link PageFrameCursor};
+     * false if it's using a {@link RecordCursor}. Undefined when streaming is inactive.
+     */
+    public boolean isStreamingPageFrame() {
+        return streamingPageFrameCursor != null;
+    }
+
     public void onStreamingBatchSent(int rowsEmittedInBatch) {
         streamingBatchSeq++;
         streamingFullSchemaSent = true;
@@ -220,6 +346,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public void close() {
         clear();
         Misc.free(batchBuffer);
+        pageFrameMemoryRecord = Misc.free(pageFrameMemoryRecord);
+        pageFrameMemoryPool = Misc.free(pageFrameMemoryPool);
+        pageFrameAddressCache = Misc.free(pageFrameAddressCache);
     }
 
     public QwpResultBatchBuffer getBatchBuffer() {
