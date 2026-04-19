@@ -466,19 +466,25 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     private static long emitSymbolColumn(QwpColumnScratch scratch, long p, long wireLimit) {
-        int dictSize = scratch.symbolDictOrder.size();
+        final int dictSize = scratch.symbolDictSize;
         if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
         p = QwpVarint.encode(p, dictSize);
+        final long heapAddr = scratch.symbolDictHeapAddr;
+        final long offsetsAddr = scratch.symbolDictOffsetsAddr;
+        int prevEnd = 0;
         for (int e = 0; e < dictSize; e++) {
-            // Entries remain on the heap (Strings in the dict); encode length + UTF-8 bytes.
-            String entry = scratch.symbolDictOrder.getQuick(e);
-            int entryLen = utf8Length(entry);
+            // Dict bytes are already UTF-8 encoded in the native heap; entry e spans
+            // [prevEnd .. offsets[e]). Copy in one memcpy per entry.
+            int endOffset = Unsafe.getUnsafe().getInt(offsetsAddr + 4L * e);
+            int entryLen = endOffset - prevEnd;
             if (p + QwpVarint.MAX_VARINT_BYTES + entryLen > wireLimit) return -1;
             p = QwpVarint.encode(p, entryLen);
-            p = writeUtf8(entry, p);
+            Unsafe.getUnsafe().copyMemory(heapAddr + prevEnd, p, entryLen);
+            p += entryLen;
+            prevEnd = endOffset;
         }
         // Per-row varint IDs: each row's dict id is in scratch.symbolIdsAddr[row] (i32).
-        int nonNull = scratch.nonNullCount;
+        final int nonNull = scratch.nonNullCount;
         for (int i = 0; i < nonNull; i++) {
             if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
             int id = Unsafe.getUnsafe().getInt(scratch.symbolIdsAddr + 4L * i);
@@ -494,41 +500,4 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         return record.getGeoLong(col);
     }
 
-    private static int utf8Length(String s) {
-        int len = 0;
-        for (int i = 0, n = s.length(); i < n; i++) {
-            char c = s.charAt(i);
-            if (c < 0x80) len++;
-            else if (c < 0x800) len += 2;
-            else if (Character.isHighSurrogate(c) && i + 1 < n && Character.isLowSurrogate(s.charAt(i + 1))) {
-                len += 4;
-                i++;
-            } else len += 3;
-        }
-        return len;
-    }
-
-    private static long writeUtf8(String s, long p) {
-        for (int i = 0, n = s.length(); i < n; i++) {
-            char c = s.charAt(i);
-            if (c < 0x80) {
-                Unsafe.getUnsafe().putByte(p++, (byte) c);
-            } else if (c < 0x800) {
-                Unsafe.getUnsafe().putByte(p++, (byte) (0xC0 | (c >> 6)));
-                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | (c & 0x3F)));
-            } else if (Character.isHighSurrogate(c) && i + 1 < n && Character.isLowSurrogate(s.charAt(i + 1))) {
-                int cp = Character.toCodePoint(c, s.charAt(i + 1));
-                i++;
-                Unsafe.getUnsafe().putByte(p++, (byte) (0xF0 | (cp >> 18)));
-                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | ((cp >> 12) & 0x3F)));
-                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | ((cp >> 6) & 0x3F)));
-                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | (cp & 0x3F)));
-            } else {
-                Unsafe.getUnsafe().putByte(p++, (byte) (0xE0 | (c >> 12)));
-                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | ((c >> 6) & 0x3F)));
-                Unsafe.getUnsafe().putByte(p++, (byte) (0x80 | (c & 0x3F)));
-            }
-        }
-        return p;
-    }
 }

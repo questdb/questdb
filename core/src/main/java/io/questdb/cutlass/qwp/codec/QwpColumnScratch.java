@@ -32,7 +32,6 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
@@ -66,7 +65,6 @@ final class QwpColumnScratch implements QuietCloseable {
     // SymbolTable for the column (e.g. synthetic records). The int-keyed path below is
     // preferred whenever it's available because it skips the getSymA() + charseq-hash.
     final CharSequenceIntHashMap symbolDict = new CharSequenceIntHashMap();
-    final ObjList<String> symbolDictOrder = new ObjList<>();
     // Dedup by native symbol-table key for the SYMBOL fast path (see appendSymbolKey).
     // Cleared together with symbolDict at beginBatch, so only one of the two is
     // populated for any given column-batch.
@@ -85,6 +83,18 @@ final class QwpColumnScratch implements QuietCloseable {
     int stringHeapPos;
     long stringOffsetsAddr;      // (nonNullCount + 1) x i32
     int stringOffsetsCapacity;   // bytes
+    // Symbol dict storage: UTF-8 bytes concatenated in a native heap, end-offsets
+    // (one per entry) in a parallel native i32 array. Entry e occupies
+    // [offsets[e-1] .. offsets[e]) with offsets[-1] implicitly 0. Replaces the
+    // old ObjList<String>, so unique symbols no longer cost a String allocation
+    // per batch on the fast path. Cleared together with the dedup maps at
+    // beginBatch; freed at close.
+    long symbolDictHeapAddr;
+    int symbolDictHeapCapacity;
+    int symbolDictHeapPos;
+    long symbolDictOffsetsAddr;
+    int symbolDictOffsetsCapacity;
+    int symbolDictSize;
     long symbolIdsAddr;
     int symbolIdsCapacity;       // bytes
     long valuesAddr;
@@ -113,6 +123,16 @@ final class QwpColumnScratch implements QuietCloseable {
             stringOffsetsAddr = 0;
             stringOffsetsCapacity = 0;
         }
+        if (symbolDictHeapAddr != 0) {
+            Unsafe.free(symbolDictHeapAddr, symbolDictHeapCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            symbolDictHeapAddr = 0;
+            symbolDictHeapCapacity = 0;
+        }
+        if (symbolDictOffsetsAddr != 0) {
+            Unsafe.free(symbolDictOffsetsAddr, symbolDictOffsetsCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            symbolDictOffsetsAddr = 0;
+            symbolDictOffsetsCapacity = 0;
+        }
         if (symbolIdsAddr != 0) {
             Unsafe.free(symbolIdsAddr, symbolIdsCapacity, MemoryTag.NATIVE_HTTP_CONN);
             symbolIdsAddr = 0;
@@ -123,6 +143,38 @@ final class QwpColumnScratch implements QuietCloseable {
             arrayHeapAddr = 0;
             arrayHeapCapacity = 0;
         }
+    }
+
+    /**
+     * UTF-8 encode {@code cs} into {@code heapAddr} starting at {@code pos}; returns
+     * the position one past the last written byte. Caller must pre-size the heap for
+     * the worst case ({@code 4 * cs.length()} bytes). Shared between {@code appendString}
+     * and {@link #addSymbolDictEntry} so the two hot paths don't duplicate the codec.
+     */
+    private static int encodeUtf8(CharSequence cs, long heapAddr, int pos) {
+        final int charLen = cs.length();
+        for (int i = 0; i < charLen; i++) {
+            char c = cs.charAt(i);
+            if (c < 0x80) {
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) c);
+            } else if (c < 0x800) {
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xC0 | (c >> 6)));
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
+            } else if (Character.isHighSurrogate(c) && i + 1 < charLen
+                    && Character.isLowSurrogate(cs.charAt(i + 1))) {
+                int cp = Character.toCodePoint(c, cs.charAt(i + 1));
+                i++;
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xF0 | (cp >> 18)));
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 12) & 0x3F)));
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 6) & 0x3F)));
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (cp & 0x3F)));
+            } else {
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xE0 | (c >> 12)));
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((c >> 6) & 0x3F)));
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
+            }
+        }
+        return pos;
     }
 
     private void ensureNullBitmapCapacity(int rowIdx) {
@@ -141,6 +193,20 @@ final class QwpColumnScratch implements QuietCloseable {
         int newCap = Math.max(stringHeapCapacity * 2, Math.max(INITIAL_BYTES, required));
         stringHeapAddr = Unsafe.realloc(stringHeapAddr, stringHeapCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
         stringHeapCapacity = newCap;
+    }
+
+    private void ensureSymbolDictHeapCapacity(int required) {
+        if (symbolDictHeapCapacity >= required) return;
+        int newCap = Math.max(symbolDictHeapCapacity * 2, Math.max(INITIAL_BYTES, required));
+        symbolDictHeapAddr = Unsafe.realloc(symbolDictHeapAddr, symbolDictHeapCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+        symbolDictHeapCapacity = newCap;
+    }
+
+    private void ensureSymbolDictOffsetsCapacity(int required) {
+        if (symbolDictOffsetsCapacity >= required) return;
+        int newCap = Math.max(symbolDictOffsetsCapacity * 2, Math.max(INITIAL_BYTES, required));
+        symbolDictOffsetsAddr = Unsafe.realloc(symbolDictOffsetsAddr, symbolDictOffsetsCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+        symbolDictOffsetsCapacity = newCap;
     }
 
     private void ensureSymbolIdsCapacity(int required) {
@@ -171,6 +237,26 @@ final class QwpColumnScratch implements QuietCloseable {
             stringOffsetsCapacity = newCap;
         }
         Unsafe.getUnsafe().putInt(stringOffsetsAddr + 4L * slotIdx, stringHeapPos);
+    }
+
+    /**
+     * Encodes {@code cs} as UTF-8 into the symbol dict heap, records the end offset
+     * in the parallel offsets array, and returns the new dict id. No {@code String}
+     * allocation -- the bytes land directly in native memory so the emitter can
+     * memcpy them straight into the wire buffer later.
+     */
+    int addSymbolDictEntry(CharSequence cs) {
+        int id = symbolDictSize;
+        int charLen = cs.length();
+        // Worst case UTF-8 expansion: 4 bytes per BMP pair / surrogate pair; upper bound 4 * charLen.
+        ensureSymbolDictHeapCapacity(symbolDictHeapPos + 4 * charLen);
+        symbolDictHeapPos = encodeUtf8(cs, symbolDictHeapAddr, symbolDictHeapPos);
+        // Offsets array stores end-offset per entry (entry e spans prevEnd..offsets[e]),
+        // with prevEnd implicitly 0 for entry 0. So we need (symbolDictSize + 1) * 4 bytes.
+        ensureSymbolDictOffsetsCapacity(4 * (symbolDictSize + 1));
+        Unsafe.getUnsafe().putInt(symbolDictOffsetsAddr + 4L * symbolDictSize, symbolDictHeapPos);
+        symbolDictSize++;
+        return id;
     }
 
     /**
@@ -363,46 +449,24 @@ final class QwpColumnScratch implements QuietCloseable {
         // Worst-case: 4 bytes per code point pair (one surrogate pair = 2 chars = 4 bytes).
         // For BMP-only it's 3 bytes/char; allocate the conservative bound once.
         ensureStringHeapCapacity(stringHeapPos + 4 * charLen);
-        int pos = stringHeapPos;
-        for (int i = 0; i < charLen; i++) {
-            char c = cs.charAt(i);
-            if (c < 0x80) {
-                Unsafe.getUnsafe().putByte(stringHeapAddr + pos++, (byte) c);
-            } else if (c < 0x800) {
-                Unsafe.getUnsafe().putByte(stringHeapAddr + pos++, (byte) (0xC0 | (c >> 6)));
-                Unsafe.getUnsafe().putByte(stringHeapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
-            } else if (Character.isHighSurrogate(c) && i + 1 < charLen
-                    && Character.isLowSurrogate(cs.charAt(i + 1))) {
-                int cp = Character.toCodePoint(c, cs.charAt(i + 1));
-                i++;
-                Unsafe.getUnsafe().putByte(stringHeapAddr + pos++, (byte) (0xF0 | (cp >> 18)));
-                Unsafe.getUnsafe().putByte(stringHeapAddr + pos++, (byte) (0x80 | ((cp >> 12) & 0x3F)));
-                Unsafe.getUnsafe().putByte(stringHeapAddr + pos++, (byte) (0x80 | ((cp >> 6) & 0x3F)));
-                Unsafe.getUnsafe().putByte(stringHeapAddr + pos++, (byte) (0x80 | (cp & 0x3F)));
-            } else {
-                Unsafe.getUnsafe().putByte(stringHeapAddr + pos++, (byte) (0xE0 | (c >> 12)));
-                Unsafe.getUnsafe().putByte(stringHeapAddr + pos++, (byte) (0x80 | ((c >> 6) & 0x3F)));
-                Unsafe.getUnsafe().putByte(stringHeapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
-            }
-        }
-        stringHeapPos = pos;
+        stringHeapPos = encodeUtf8(cs, stringHeapAddr, stringHeapPos);
         recordStringOffset();
         markNonNullAndAdvanceRow();
     }
 
     /**
      * SYMBOL: dedup against the per-batch dict; store dict id (i32) in {@link #symbolIdsAddr}.
-     * Dict keys remain on the heap (CharSequenceIntHashMap); per unique value we allocate a
-     * String once per batch. This fallback path runs when the cursor doesn't expose a
-     * native SymbolTable for the column - prefer {@link #appendSymbolKey} otherwise.
+     * This fallback path runs when the cursor doesn't expose a native SymbolTable for
+     * the column -- prefer {@link #appendSymbolKey} otherwise. The dedup map still
+     * allocates a {@code String} internally for its key slot, but the dict bytes
+     * themselves land in native memory via {@link #addSymbolDictEntry}, replacing the
+     * {@code ObjList<String>} that used to hold a second copy of every dict value.
      */
     void appendSymbol(CharSequence cs) {
         int id = symbolDict.get(cs);
         if (id == -1) {
-            String s = cs.toString();
-            id = symbolDictOrder.size();
-            symbolDict.put(s, id);
-            symbolDictOrder.add(s);
+            id = addSymbolDictEntry(cs);
+            symbolDict.put(cs, id);
         }
         ensureSymbolIdsCapacity(symbolIdsCapacity == 0 ? INITIAL_BYTES : 4 * (nonNullCount + 1));
         Unsafe.getUnsafe().putInt(symbolIdsAddr + 4L * nonNullCount, id);
@@ -412,8 +476,8 @@ final class QwpColumnScratch implements QuietCloseable {
     /**
      * SYMBOL fast path: dedup by native symbol-table key (a plain {@code int}) instead
      * of by CharSequence. Caller has already handled {@link SymbolTable#VALUE_IS_NULL}
-     * and passed a non-null table. Materialises the string via {@code table.valueOf}
-     * only on first occurrence per batch.
+     * and passed a non-null table. Writes the UTF-8 bytes of the symbol value into the
+     * dict heap on first occurrence per batch -- no {@code String} allocation.
      */
     void appendSymbolKey(int key, SymbolTable table) {
         int mapIdx = symbolKeyToDictId.keyIndex(key);
@@ -422,10 +486,8 @@ final class QwpColumnScratch implements QuietCloseable {
             id = symbolKeyToDictId.valueAt(mapIdx);
         } else {
             CharSequence cs = table.valueOf(key);
-            String s = cs.toString();
-            id = symbolDictOrder.size();
+            id = addSymbolDictEntry(cs);
             symbolKeyToDictId.putAt(mapIdx, key, id);
-            symbolDictOrder.add(s);
         }
         ensureSymbolIdsCapacity(symbolIdsCapacity == 0 ? INITIAL_BYTES : 4 * (nonNullCount + 1));
         Unsafe.getUnsafe().putInt(symbolIdsAddr + 4L * nonNullCount, id);
@@ -471,7 +533,8 @@ final class QwpColumnScratch implements QuietCloseable {
         this.arrayHeapPos = 0;
         this.symbolDict.clear();
         this.symbolKeyToDictId.clear();
-        this.symbolDictOrder.clear();
+        this.symbolDictHeapPos = 0;
+        this.symbolDictSize = 0;
         // Zero the null bitmap so appendNull() can OR in bits without per-byte init.
         // This costs nullBitmapCapacity bytes per batch (e.g. 512 B for 4096 rows). Cheap.
         if (nullBitmapAddr != 0 && nullBitmapCapacity > 0) {
