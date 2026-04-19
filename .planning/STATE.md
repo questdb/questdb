@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 13 context gathered (rowId migration locked, investigation-first)
-last_updated: "2026-04-18T22:03:39.812Z"
-last_activity: 2026-04-18 -- Phase 13 planning complete
+stopped_at: Completed Phase 13 Plan 01 (chain.clear() fix + D-02 investigation)
+last_updated: "2026-04-19T00:02:58.590Z"
+last_activity: 2026-04-19
 progress:
   total_phases: 13
   completed_phases: 11
   total_plans: 20
-  completed_plans: 14
-  percent: 70
+  completed_plans: 15
+  percent: 75
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** SAMPLE BY FILL queries execute on the GROUP BY fast path with identical output to the cursor path, enabling parallel execution.
-**Current focus:** Phase 12 — replace-safety-net-reclassification-with-legacy-fallback-and
+**Current focus:** Phase 13 — migrate-fill-prev-snapshots-from-materialized-values-to-rowi
 
 ## Current Position
 
-Phase: 12
-Plan: Not started
+Phase: 13 (migrate-fill-prev-snapshots-from-materialized-values-to-rowi) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-04-18 -- Phase 13 planning complete
+Last activity: 2026-04-19
 
 Progress: [##########] 100%
 
@@ -59,6 +59,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 12 P02 | 14min | 3 tasks | 1 files |
 | Phase 12-replace-safety-net-reclassification-with-legacy-fallback-and P03 | 22min | 3 tasks | 1 files |
 | Phase 12 P04 | 80min | 3 tasks | 4 files |
+| Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P01 | ~100 min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 12-replace-safety-net-reclassification-with-legacy-fallback-and]: Nested try/catch at each of three generateFill call sites prevents outer catch (Throwable e) from swallowing FallbackToLegacyException - inner catch runs first before outer can close factory
 - [Phase 12]: Plan 12-04 descoped sub-task C (testSampleByFillNeedFix restoration) per user Option A after checkpoint surfaced three pre-existing defects; user takes ownership of defects in a separate phase
 - [Phase 12]: 22 new regression tests pin phase 12 production changes (retro-fallback, grammar D-05..D-09, FILL_KEY 128/256-bit dispatch, geo null sentinels, TO-null guard); 42 assertSql conversions per D-10; plan-text refresh across 4 test files
+- [Phase 13]: D-02 verdict (a): chain.clear() on SortedRecordCursor.of() reuse sufficient; SortedRecordCursor chosen as vehicle for Plan 02 rowId rewrite
+- [Phase 13]: chain.clear() fix shipped as Commit 1 of phase 13 (standalone, backportable, bisectable) per D-03/D-07
+- [Phase 13]: Plan 01 accepted as complete with caveat: pre-existing SampleByTest#testSampleByFillNeedFix assertion #2 failure is Plan 05 scope per D-06 (user decision at checkpoint, Option 1)
 
 ### Roadmap Evolution
 
@@ -123,6 +127,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-18T21:24:59.025Z
-Stopped at: Phase 13 context gathered (rowId migration locked, investigation-first)
-Resume file: .planning/phases/13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi/13-CONTEXT.md
+Last session: 2026-04-19T00:02:58.587Z
+Stopped at: Completed Phase 13 Plan 01 (chain.clear() fix + D-02 investigation)
+Resume file: None

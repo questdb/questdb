@@ -220,7 +220,7 @@ Plans:
 **Plans:** 6 plans
 
 Plans:
-- [ ] 13-01-PLAN.md — chain.clear() fix in SortedRecordCursor.of() on reuse + D-02 investigation report (Commit 1)
+- [x] 13-01-PLAN.md — chain.clear() fix in SortedRecordCursor.of() on reuse + D-02 investigation report (Commit 1)
 - [ ] 13-02-PLAN.md — rowId rewrite in SampleByFillRecordCursorFactory + mapValueTypes resize in SqlCodeGenerator.generateFill (Commit 2)
 - [ ] 13-03-PLAN.md — cherry-pick 13 per-type FILL(PREV) tests from f43a3d7057 (Commit 3)
 - [ ] 13-04-PLAN.md — delete retro-fallback machinery across 6 production files + 7 retro-fallback tests (Commit 4)
@@ -245,4 +245,4 @@ Plans:
 | 10. Fix Offset-Aware Bucket Alignment | 1/1 | Complete | 2026-04-13 |
 | 11. Hardening — Review Findings & Missing Test Coverage | 1/1 | Complete (retroactive) | 2026-04-13 |
 | 12. Replace safety-net reclassification with legacy fallback | 4/4 | Complete    | 2026-04-17 |
-| 13. Migrate FILL(PREV) snapshots to rowId-based replay | 0/6 | Planned     | — |
+| 13. Migrate FILL(PREV) snapshots to rowId-based replay | 1/6 | Executing   | — |
