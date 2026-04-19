@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,4 +39,6 @@ public interface WalListener {
     void tableDropped(TableToken tableToken, long txn, long timestamp);
 
     void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken);
+
+    void walClosed(TableToken tableToken, long txn, int walId);
 }

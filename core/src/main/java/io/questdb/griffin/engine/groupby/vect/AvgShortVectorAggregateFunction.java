@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -47,7 +47,7 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     private int valueOffset;
 
     @SuppressWarnings("unused")
-    public AvgShortVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public AvgShortVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;

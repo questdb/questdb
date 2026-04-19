@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,8 +24,21 @@
 
 package io.questdb.cutlass.http.client;
 
+/**
+ * Represents a fragment of data with low and high memory addresses.
+ */
 public interface Fragment {
+    /**
+     * Returns the high address of this fragment.
+     *
+     * @return the high address
+     */
     long hi();
 
+    /**
+     * Returns the low address of this fragment.
+     *
+     * @return the low address
+     */
     long lo();
 }

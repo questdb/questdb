@@ -12,11 +12,14 @@ use std::sync::Arc;
 
 pub use column::*;
 pub use compression::{decompress, BasicDecompressor, Decompressor};
-pub use metadata::{deserialize_metadata, read_metadata, read_metadata_with_size};
+pub use metadata::{deserialize_metadata, read_metadata, read_metadata_with_footer_bytes, read_metadata_with_size};
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub use page::{get_page_stream, get_page_stream_from_column_start};
-pub use page::{IndexedPageReader, PageFilter, PageIterator, PageMetaData, PageReader};
+pub use page::{
+    IndexedPageReader, PageFilter, PageIterator, PageMetaData, PageReader, SlicePageReader,
+    SlicedDataPage, SlicedDictPage, SlicedPage,
+};
 
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,10 +25,12 @@
 package io.questdb;
 
 public final class TelemetryOrigin {
-    public static final short HTTP_JSON = 2;
-    public static final short HTTP_TEXT = 4;
+    public static final short HTTP = 2;
+    public static final short HTTP_QUERY_VALIDATE = 7;
+    public static final short ILP_HTTP = 8;
     public static final short ILP_TCP = 5;
     public static final short INTERNAL = 1;
+    public static final short NO_MATTERS = 0;
     public static final short POSTGRES = 3;
     public static final short WAL_APPLY = 6;
 }

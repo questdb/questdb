@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -53,22 +53,27 @@ public interface GroupByFunction extends Function, Mutable {
      * {@link io.questdb.griffin.engine.groupby.GroupByColumnSink}, exposing the values in native
      * memory starting at {@code ptr}. Each entry has the fixed size implied by the function's
      * argument type. Implementations can use vectorised routines to consume the {@code count}
-     * consecutive values and must write the resulting aggregate into {@code mapValue}.
+     * consecutive values and must accumulate the result into {@code mapValue}.
+     * <p>
+     * This method may be called multiple times for the same group {@link MapValue} (e.g. once
+     * per page frame). Implementations must accumulate into the existing state set by
+     * {@link #setEmpty(MapValue)}, not overwrite it.
      * <p>
      * This method:
      * <ul>
-     *     <li>runs at most once per group {@link MapValue}, immediately after {@link #setEmpty(MapValue)};</li>
      *     <li>runs without a preceding {@link #computeFirst(MapValue, Record, long)} invocation;</li>
      *     <li>is not followed by {@link #merge(MapValue, MapValue)};</li>
-     *     <li>always receives a non-zero {@code ptr} pointing to readable memory;</li>
      *     <li>is used only when {@link #supportsBatchComputation()} returns {@code true}.</li>
      * </ul>
      *
-     * @param mapValue group state that must be updated with the aggregated result
-     * @param ptr      native memory address of the first buffered value for the group
-     * @param count    number of buffered values that can be read starting from {@code ptr}
+     * @param mapValue   group state that must be updated with the aggregated result
+     * @param ptr        native memory address of the first buffered value for the group, or 0 for
+     *                   no-arg functions (e.g. count(*))
+     * @param count      number of buffered values that can be read starting from {@code ptr}
+     * @param startRowId row id of the first record in the batch; the row id of the i-th
+     *                   record is {@code startRowId + i}
      */
-    default void computeBatch(MapValue mapValue, long ptr, int count) {
+    default void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         throw new UnsupportedOperationException();
     }
 
@@ -106,6 +111,9 @@ public interface GroupByFunction extends Function, Mutable {
      * Returns true if the aggregate function's value is already calculation
      * and further row scan is not necessary. Only makes sense for non-keyed,
      * single-threaded group by.
+     *
+     * @param mapValue the map value to check
+     * @return true if early exit is possible
      */
     default boolean earlyExit(MapValue mapValue) {
         return false;
@@ -115,6 +123,8 @@ public interface GroupByFunction extends Function, Mutable {
      * Returns recorded cardinality for hash set based functions such as count_distinct().
      * <p>
      * A prior {@link #resetStats()} call should be made to reset the counter before computing any values.
+     *
+     * @return the cardinality statistic
      */
     default long getCardinalityStat() {
         return 0;
@@ -122,6 +132,8 @@ public interface GroupByFunction extends Function, Mutable {
 
     /**
      * Returns the compute batch argument function for this group by function.
+     *
+     * @return the compute batch argument function, or null if not applicable
      */
     default Function getComputeBatchArg() {
         if (this instanceof UnaryFunction thisUnary) {
@@ -139,7 +151,9 @@ public interface GroupByFunction extends Function, Mutable {
      * the argument function is LONG, but the aggregate function's argument type is
      * DOUBLE. This means that the input values need to be materialized in
      * an intermediate buffer via getDouble calls before to calling
-     * {@link #computeBatch(MapValue, long, int)}.
+     * {@link #computeBatch(MapValue, long, int, long)}.
+     *
+     * @return the column type of the batch argument
      */
     default int getComputeBatchArgType() {
         if (this instanceof UnaryFunction) {
@@ -149,11 +163,36 @@ public interface GroupByFunction extends Function, Mutable {
         return ColumnType.UNDEFINED;
     }
 
+    /**
+     * Returns the sample by flags supported by this function.
+     *
+     * @return the sample by flags
+     */
     default int getSampleByFlags() {
         return SAMPLE_BY_FILL_VALUE | SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_NULL | SAMPLE_BY_FILL_PREVIOUS;
     }
 
+    /**
+     * Returns the value index for this function in the map.
+     *
+     * @return the value index
+     */
     int getValueIndex();
+
+    /**
+     * Called on a shared cursor's GroupByFunction to initialize it from the primary
+     * (computation) instance. The default implementation copies the value index.
+     * Functions that store auxiliary data internally (e.g., StringAggGroupByFunction
+     * stores sinks) must override this to share the data reference with the primary.
+     * <p>
+     * The shared instance is read-only — it must never be used for computation
+     * (computeFirst/computeNext/merge) and its clear() must not free shared data.
+     *
+     * @param primary the function instance that performed the computation
+     */
+    default void initSharedFrom(GroupByFunction primary) {
+        initValueIndex(primary.getValueIndex());
+    }
 
     /**
      * Called for group by function cloned to be used in different threads of parallel execution.
@@ -194,6 +233,8 @@ public interface GroupByFunction extends Function, Mutable {
     /**
      * Returns true if {@link #earlyExit(MapValue)} method can be used.
      * Only makes sense for non-keyed, single-threaded group by.
+     *
+     * @return true if early exit is supported
      */
     default boolean isEarlyExitSupported() {
         return false;
@@ -210,6 +251,9 @@ public interface GroupByFunction extends Function, Mutable {
     /**
      * Used in parallel GROUP BY to merge partial results. Both values are guaranteed to be not new
      * when this method is called, i.e. {@code !destValue.isNew() && !srcValue.isNew()} is true.
+     *
+     * @param destValue the destination map value to merge into
+     * @param srcValue  the source map value to merge from
      */
     default void merge(MapValue destValue, MapValue srcValue) {
         throw new UnsupportedOperationException();
@@ -222,36 +266,60 @@ public interface GroupByFunction extends Function, Mutable {
     default void resetStats() {
     }
 
+    /**
+     * Sets the allocator for this group by function.
+     *
+     * @param allocator the group by allocator
+     */
     default void setAllocator(GroupByAllocator allocator) {
         // no-op
     }
 
-    // used when doing interpolation
+    /**
+     * Sets a byte value in the map value, used for interpolation.
+     *
+     * @param mapValue the map value to set
+     * @param value    the byte value
+     */
     default void setByte(MapValue mapValue, byte value) {
         throw new UnsupportedOperationException();
     }
 
-    // to be used when doing interpolation
+    // TODO(RaphDal): to be used when doing interpolation
     default void setDecimal128(MapValue mapValue, Decimal128 value) {
         throw new UnsupportedOperationException();
     }
 
-    // to be used when doing interpolation
+    // TODO(RaphDal): to be used when doing interpolation
     default void setDecimal256(MapValue mapValue, Decimal256 value) {
         throw new UnsupportedOperationException();
     }
 
-    // used when doing interpolation
+    /**
+     * Sets a double value in the map value, used for interpolation.
+     *
+     * @param mapValue the map value to set
+     * @param value    the double value
+     */
     default void setDouble(MapValue mapValue, double value) {
         throw new UnsupportedOperationException();
     }
 
-    // used by generated code
+    /**
+     * Sets the map value to empty state, used by generated code.
+     *
+     * @param value the map value to set
+     */
     default void setEmpty(MapValue value) {
         setNull(value);
     }
 
-    // used when doing interpolation
+    /**
+     * Sets a float value in the map value, used for interpolation.
+     *
+     * @param mapValue the map value to set
+     * @param value    the float value
+     */
     default void setFloat(MapValue mapValue, float value) {
         throw new UnsupportedOperationException();
     }
@@ -261,11 +329,21 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
-    // used when doing interpolation
+    /**
+     * Sets a long value in the map value, used for interpolation.
+     *
+     * @param mapValue the map value to set
+     * @param value    the long value
+     */
     default void setLong(MapValue mapValue, long value) {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Sets the map value to null.
+     *
+     * @param mapValue the map value to set
+     */
     void setNull(MapValue mapValue);
 
     // used when doing interpolation
@@ -274,7 +352,7 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
-     * Indicates whether {@link #computeBatch(MapValue, long, int)}, {@link #getComputeBatchArg()},
+     * Indicates whether {@link #computeBatch(MapValue, long, int, long)}, {@link #getComputeBatchArg()},
      * and {@link #getComputeBatchArgType()} are implemented for this function. When {@code true},
      * the engine may materialise the argument column into native memory buffers and invoke
      * {@code computeBatch} instead of per-row aggregation for compatible execution paths.

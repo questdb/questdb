@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,6 +45,22 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public interface Function extends Closeable, StatefulAtom, Plannable {
+
+    int COMPLEXITY_ARITHMETIC = 2;
+    int COMPLEXITY_CAST = 3;
+    int COMPLEXITY_COLUMN = 1;
+    int COMPLEXITY_GEO = 30;
+    int COMPLEXITY_JSON = 80;
+    int COMPLEXITY_MAX = 10_000;
+    int COMPLEXITY_NONE = 0;
+    int COMPLEXITY_REGEX = 50;
+    int COMPLEXITY_STRING_OP = 10;
+    int COMPLEXITY_SUBQUERY = 1000;
+
+    static int addComplexity(int a, int b) {
+        long sum = (long) a + b;
+        return (int) Math.min(sum, COMPLEXITY_MAX);
+    }
 
     /**
      * Initializes each function in the list of clones. It is assumed by this method that "clones" are copies of
@@ -104,13 +120,31 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void close() {
     }
 
+    /**
+     * Called when the cursor is closed.
+     */
     default void cursorClosed() {
     }
 
+    /**
+     * Returns the extended operations for this function, if any.
+     *
+     * @return the function extension, or null if none
+     */
     default FunctionExtension extendedOps() {
         return null;
     }
 
+    default int getComplexity() {
+        return COMPLEXITY_COLUMN;
+    }
+
+    /**
+     * Returns the array value from the record.
+     *
+     * @param rec the record to read from
+     * @return the array view
+     */
     ArrayView getArray(Record rec);
 
     BinarySequence getBin(Record rec);
@@ -126,14 +160,20 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     long getDate(Record rec);
 
     /**
-     * Sets the raw value of sink (the scale is caller saved)
+     * Sets the raw value of sink (the scale is caller saved).
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write the decimal value to
      */
     void getDecimal128(Record rec, Decimal128 sink);
 
     short getDecimal16(Record rec);
 
     /**
-     * Sets the raw value of sink (the scale is caller saved)
+     * Sets the raw value of sink (the scale is caller saved).
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write the decimal value to
      */
     void getDecimal256(Record rec, Decimal256 sink);
 
@@ -147,27 +187,69 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     float getFloat(Record rec);
 
+    /**
+     * Returns the geohash byte value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash byte value
+     */
     byte getGeoByte(Record rec);
 
+    /**
+     * Returns the geohash int value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash int value
+     */
     int getGeoInt(Record rec);
 
+    /**
+     * Returns the geohash long value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash long value
+     */
     long getGeoLong(Record rec);
 
+    /**
+     * Returns the geohash short value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash short value
+     */
     short getGeoShort(Record rec);
 
     int getIPv4(Record rec);
 
     int getInt(Record rec);
 
+    /**
+     * Returns the interval value from the record.
+     *
+     * @param rec the record to read from
+     * @return the interval value
+     */
     @NotNull
     Interval getInterval(Record rec);
 
+    /**
+     * Returns the long value from the record.
+     *
+     * @param rec the record to read from
+     * @return the long value
+     */
     long getLong(Record rec);
 
     long getLong128Hi(Record rec);
 
     long getLong128Lo(Record rec);
 
+    /**
+     * Writes the Long256 value to the given sink.
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write to
+     */
     void getLong256(Record rec, CharSink<?> sink);
 
     Long256 getLong256A(Record rec);
@@ -200,6 +282,12 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     CharSequence getSymbol(Record rec);
 
+    /**
+     * Returns the symbol value from the record (alternate buffer).
+     *
+     * @param rec the record to read from
+     * @return the symbol value
+     */
     CharSequence getSymbolB(Record rec);
 
     long getTimestamp(Record rec);
@@ -213,6 +301,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     Utf8Sequence getVarcharB(Record rec);
 
     /**
+     * Returns the size of the varchar value.
+     *
+     * @param rec the record to read from
      * @return size of the varchar value or {@link TableUtils#NULL_LEN} in case of NULL
      */
     int getVarcharSize(Record rec);
@@ -247,6 +338,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return this == obj;
     }
 
+    /**
+     * Returns true if this function is non-deterministic.
+     *
+     * @return true if non-deterministic
+     */
     default boolean isNonDeterministic() {
         return false;
     }
@@ -302,16 +398,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
-    }
-
-    /**
-     * This method is called exactly once per data row. It provides an opportunity for the function
-     * to perform heavy or volatile computations, cache the results and ensure getXXX() methods use the case instead
-     * of recomputing values.
-     *
-     * @param record the record for data access.
-     */
-    default void memoize(Record record) {
     }
 
     default void offerStateTo(Function that) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -72,7 +72,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             boolean supportsRandomAccess,
             boolean singleRowFactory
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         this.configuration = configuration;
         this.rowCursorFactory = rowCursorFactory;
@@ -98,7 +98,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (framingSupported) {
-            PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, order);
+            PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, order);
             if (order == ORDER_ASC || order == ORDER_ANY) {
                 return initFwdPageFrameCursor(partitionFrameCursor, executionContext);
             }
@@ -138,7 +138,12 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             if (timeFrameCursor == null) {
                 timeFrameCursor = new TimeFrameCursorImpl(configuration, getMetadata());
             }
-            return timeFrameCursor.of(pageFrameCursor);
+            return timeFrameCursor.of(
+                    pageFrameCursor,
+                    executionContext.getPageFrameMinRows(),
+                    executionContext.getPageFrameMaxRows(),
+                    1 // used for single-threaded exec plans
+            );
         }
         return null;
     }
@@ -146,7 +151,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public ConcurrentTimeFrameCursor newTimeFrameCursor() {
         if (framingSupported) {
-            return new ConcurrentTimeFrameCursor(configuration, getMetadata());
+            return new ConcurrentTimeFrameCursorImpl(configuration, getMetadata());
         }
         return null;
     }
@@ -202,33 +207,31 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     protected PageFrameCursor initBwdPageFrameCursor(
             PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (bwdPageFrameCursor == null) {
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
-                    executionContext.getSharedQueryWorkerCount(),
-                    pageFrameMinRows,
-                    pageFrameMaxRows
+                    partitionFrameCursorFactory.getPushdownFilterConditions(),
+                    executionContext.getSharedQueryWorkerCount()
             );
         }
-        return bwdPageFrameCursor.of(partitionFrameCursor);
+        return bwdPageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     protected PageFrameCursor initFwdPageFrameCursor(
             PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (fwdPageFrameCursor == null) {
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
-                    executionContext.getSharedQueryWorkerCount(),
-                    pageFrameMinRows,
-                    pageFrameMaxRows
+                    partitionFrameCursorFactory.getPushdownFilterConditions(),
+                    executionContext.getSharedQueryWorkerCount()
             );
         }
-        return fwdPageFrameCursor.of(partitionFrameCursor);
+        return fwdPageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     @Override

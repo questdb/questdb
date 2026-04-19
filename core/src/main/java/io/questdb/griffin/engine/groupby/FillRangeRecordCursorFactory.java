@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,8 +27,8 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -42,8 +42,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -66,7 +64,6 @@ import org.jetbrains.annotations.Nullable;
  * via the above optimisation).
  */
 public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
-    public static final Log LOG = LogFactory.getLog(FillRangeRecordCursorFactory.class);
     private final RecordCursorFactory base;
     private final FillRangeRecordCursor cursor;
     private final ObjList<Function> fillValues;
@@ -100,7 +97,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.timestampIndex = timestampIndex;
         this.fillValues = fillValues;
         this.timestampType = timestampType;
-        this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex, timestampType);
+        this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex, timestampType, metadata.getColumnCount());
     }
 
     @Override
@@ -175,6 +172,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         base.close();
+        Misc.free(cursor);
         Misc.free(fromFunc);
         Misc.free(toFunc);
         Misc.freeObjList(fillValues);
@@ -202,13 +200,17 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private long presentTimestampsIndex;
         private long presentTimestampsSize;
 
+        private final int columnCount;
+        private boolean isValueFuncsInitialized;
+
         private FillRangeRecordCursor(
                 TimestampSampler timestampSampler,
                 @NotNull Function fromFunc,
                 @NotNull Function toFunc,
                 ObjList<Function> fillValues,
                 int timestampIndex,
-                int timestampType
+                int timestampType,
+                int columnCount
         ) {
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
@@ -217,6 +219,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             this.timestampIndex = timestampIndex;
             this.fillingTimestampFunc = new FillRangeTimestampConstant(timestampType);
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+            this.columnCount = columnCount;
         }
 
         @Override
@@ -341,18 +344,18 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             toFunc.init(baseCursor, executionContext);
             initTimestamps(fromFunc, toFunc);
             if (presentTimestamps == null) {
-                long capacity = 8;
-                try {
-                    capacity = baseCursor.size();
-                    if (capacity < 0) {
-                        capacity = 8;
-                    }
-                } catch (DataUnavailableException ex) {
-                    // That's ok, we'll just use the default capacity
+                long capacity = baseCursor.size();
+                if (capacity < 0) {
+                    // use the default capacity
+                    capacity = 8;
                 }
                 presentTimestamps = new DirectLongList(capacity, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
             }
-            initValueFuncs(fillValues);
+            if (!isValueFuncsInitialized) {
+                initValueFuncs(fillValues);
+                isValueFuncsInitialized = true;
+            }
+            assert fillValues.size() <= columnCount : "fillValues.size()=" + fillValues.size() + " exceeds columnCount=" + columnCount;
             baseRecord = baseCursor.getRecord();
             toTop();
         }
@@ -375,6 +378,15 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private class FillRangeRecord implements Record {
+
+            @Override
+            public ArrayView getArray(int col, int columnType) {
+                if (gapFilling) {
+                    return getFillFunction(col).getArray(null);
+                } else {
+                    return baseRecord.getArray(col, columnType);
+                }
+            }
 
             @Override
             public BinarySequence getBin(int col) {

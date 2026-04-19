@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -94,8 +94,8 @@ public class JsonExtractSupportingState implements QuietCloseable {
     }
 
     public void reopen() {
-        if (this.destUtf8Sink != null) {
-            this.destUtf8Sink.reopen();
+        if (destUtf8Sink != null) {
+            destUtf8Sink.reopen();
         }
     }
 

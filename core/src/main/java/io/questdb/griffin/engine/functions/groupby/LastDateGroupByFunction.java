@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -36,16 +37,22 @@ public class LastDateGroupByFunction extends FirstDateGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            final long addr = ptr + ((long) count - 1) * Long.BYTES;
-            mapValue.putDate(valueIndex + 1, Unsafe.getUnsafe().getLong(addr));
+            long lastRowId = startRowId + count - 1;
+            long existingRowId = mapValue.getLong(valueIndex);
+            if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                mapValue.putLong(valueIndex, lastRowId);
+                mapValue.putDate(valueIndex + 1, Unsafe.getUnsafe().getLong(ptr + ((long) count - 1) * Long.BYTES));
+            }
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        computeFirst(mapValue, record, rowId);
+        if (rowId > mapValue.getLong(valueIndex)) {
+            computeFirst(mapValue, record, rowId);
+        }
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -53,7 +53,7 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private double transientSum;
     private int valueOffset;
 
-    public NSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public NSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         this.sum = new double[workerCount * SUM_PADDING];
         this.count = new long[workerCount * COUNT_PADDING];

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -68,6 +68,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -762,6 +763,39 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsciiVarcharKeyIgnoresFlag() throws Exception {
+        // Two identical ASCII VARCHAR values with different isAscii() flags must
+        // hash and compare as the same key. Before the fix, the ASCII flag was
+        // preserved in the serialized header, causing GROUP BY / DISTINCT to treat
+        // visually identical values as separate groups.
+        TestUtils.assertMemoryLeak(() -> {
+            try (OrderedMap map = new OrderedMap(
+                    Numbers.SIZE_1MB,
+                    new SingleColumnType(ColumnType.VARCHAR),
+                    new SingleColumnType(ColumnType.LONG),
+                    16, 0.5f, 1
+            )) {
+                Utf8String withAscii = new Utf8String(new byte[]{'h', 'e', 'l', 'l', 'o'}, true);
+                Utf8String withoutAscii = new Utf8String(new byte[]{'h', 'e', 'l', 'l', 'o'}, false);
+
+                MapKey key1 = map.withKey();
+                key1.putVarchar(withAscii);
+                MapValue val1 = key1.createValue();
+                Assert.assertTrue(val1.isNew());
+                val1.putLong(0, 42);
+
+                MapKey key2 = map.withKey();
+                key2.putVarchar(withoutAscii);
+                MapValue val2 = key2.createValue();
+                Assert.assertFalse("same content with different ASCII flag must resolve to existing key", val2.isNew());
+                Assert.assertEquals(42, val2.getLong(0));
+
+                Assert.assertEquals(1, map.size());
+            }
+        });
+    }
+
+    @Test
     public void testCollisionPerformance() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -1126,7 +1160,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, configuration);
+                    RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
@@ -1368,6 +1402,26 @@ public class OrderedMapTest extends AbstractCairoTest {
 
                     Assert.assertEquals(i + 2, valueA.getLong(0));
                     Assert.assertEquals(valueA.getLong(0), valueB.getLong(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testKeyCapacityOverflow() throws Exception {
+        // Verify that the map throws CairoException when key capacity would overflow int range.
+        // Before the fix, MAX_SAFE_INT_POW_2 was 1L << 31 (which doesn't fit in a signed int),
+        // so rehash() could set keyCapacity = (int)(1L << 31) = Integer.MIN_VALUE, and the
+        // subsequent clear() would pass a negative size to native memset, causing a SIGSEGV.
+        TestUtils.assertMemoryLeak(() -> {
+            ColumnTypes types = new SingleColumnType(ColumnType.LONG);
+            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, types, null, 16, 0.5, Integer.MAX_VALUE)) {
+                try {
+                    // should fail with 0.75 load factor
+                    map.setKeyCapacity(Integer.MAX_VALUE / 4 * 3 + 1);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "map capacity overflow");
                 }
             }
         });
@@ -1814,7 +1868,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, configuration);
+                    RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
@@ -2021,7 +2075,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, configuration);
+                    RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
@@ -2093,7 +2147,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 N, 0.9f, 1
                         )
                 ) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, configuration);
+                    RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), listColumnFilter);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();

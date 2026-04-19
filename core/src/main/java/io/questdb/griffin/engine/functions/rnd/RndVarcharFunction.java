@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -81,6 +81,11 @@ class RndVarcharFunction extends VarcharFunction implements Function {
 
     @Override
     public boolean isRandom() {
+        return true;
+    }
+
+    @Override
+    public boolean shouldMemoize() {
         return true;
     }
 

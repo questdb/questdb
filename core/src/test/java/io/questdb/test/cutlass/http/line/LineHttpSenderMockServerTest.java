@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,13 +28,9 @@ import io.questdb.BuildInformationHolder;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpConstants;
-import io.questdb.cutlass.http.HttpRequestHandler;
-import io.questdb.cutlass.http.HttpRequestHandlerFactory;
-import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.client.HttpClientException;
-import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.http.client.HttpClientException;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.cutlass.http.*;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -78,6 +74,21 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             return super.recvRaw(fd, buffer, bufferLen);
         }
     };
+
+    private static Consumer<Sender> errorVerifier(String expectedError) {
+        return sender -> {
+            try {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+                sender.flush();
+                Assert.fail("Exception expected");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), expectedError);
+            }
+        };
+    }
 
     @Before
     public void setUp() {
@@ -155,8 +166,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testBadSettings() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
-        String error = "bad thing happened";
-        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor(error);
+        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor();
         try {
             testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
                     .symbol("sym", "bol")
@@ -164,7 +174,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";"));
             Assert.fail("Exception expected");
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), error);
+            TestUtils.assertContains(e.getMessage(), "bad thing happened");
         }
     }
 
@@ -173,8 +183,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         Assume.assumeTrue(Os.type != Os.DARWIN); // MacOs does not treat 127.0.0.2, 127.0.0.3, etc ... as 127.0.0.1
 
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
-        String error = "bad thing happened";
-        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor(error);
+        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor();
         try {
             testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
                     .symbol("sym", "bol")
@@ -190,7 +199,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             });
             Assert.fail("Exception expected");
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), error);
+            TestUtils.assertContains(e.getMessage(), "bad thing happened");
         }
     }
 
@@ -645,21 +654,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .replyWithContent(401, "", "text/plain");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error [http-status=401]"));
-    }
-
-    private static Consumer<Sender> errorVerifier(String expectedError) {
-        return sender -> {
-            try {
-                sender.table("test")
-                        .symbol("sym", "bol")
-                        .doubleColumn("x", 1.0)
-                        .atNow();
-                sender.flush();
-                Assert.fail("Exception expected");
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), expectedError);
-            }
-        };
     }
 
     @NotNull

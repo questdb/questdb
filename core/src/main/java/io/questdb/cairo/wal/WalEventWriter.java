@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -41,12 +41,16 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -67,6 +71,7 @@ class WalEventWriter implements Closeable {
     private boolean legacyMatViewFormat;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
+    private BoolList symbolMapNullFlagsChanged;
     private int txn = 0;
     private ObjList<DirectCharSequenceIntHashMap> txnSymbolMaps;
 
@@ -110,7 +115,7 @@ class WalEventWriter implements Closeable {
         eventMem.putInt(count);
 
         if (count > 0) {
-            final ObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
+            final ReadOnlyObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
             for (int i = 0; i < count; i++) {
                 final CharSequence name = namedVariables.get(i);
                 eventMem.putStr(name);
@@ -237,7 +242,7 @@ class WalEventWriter implements Closeable {
             final var symbolMap = txnSymbolMaps.getQuick(columnIndex);
             if (symbolMap != null) {
                 final int initialCount = initialSymbolCounts.get(columnIndex);
-                if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
+                if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0) || symbolMapNullFlagsChanged.get(columnIndex)) {
                     eventMem.putInt(columnIndex);
                     eventMem.putBool(symbolMapNullFlags.get(columnIndex));
                     eventMem.putInt(initialCount);
@@ -401,10 +406,47 @@ class WalEventWriter implements Closeable {
         return txn++;
     }
 
-    void of(ObjList<DirectCharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
+    int appendViewDefinition(
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.VIEW_DEFINITION);
+
+        // add view sql
+        eventMem.putStr(viewSql);
+
+        //add view dependencies
+        final ObjList<CharSequence> tableNames = dependencies.keys();
+        final int numOfDependencies = tableNames.size();
+        eventMem.putInt(numOfDependencies);
+        for (int i = 0; i < numOfDependencies; i++) {
+            final CharSequence tableName = tableNames.getQuick(i);
+            eventMem.putStr(tableName);
+            final LowerCaseCharSequenceHashSet columns = dependencies.get(tableName);
+            eventMem.putInt(columns.size());
+            for (int j = 0; j < columns.getKeyCount(); j++) {
+                final CharSequence key = columns.getKey(j);
+                if (key != null) {
+                    eventMem.putStr(key);
+                }
+            }
+        }
+
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        return txn++;
+    }
+
+    void of(ObjList<DirectCharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags, BoolList symbolMapNullFlagsChanged) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
         this.symbolMapNullFlags = symbolMapNullFlags;
+        this.symbolMapNullFlagsChanged = symbolMapNullFlagsChanged;
     }
 
     void openEventFile(Path path, int pathLen, boolean truncate, boolean systemTable) {
@@ -449,6 +491,49 @@ class WalEventWriter implements Closeable {
             eventMem.sync(commitMode == CommitMode.ASYNC);
             eventIndexMem.sync(commitMode == CommitMode.ASYNC);
         }
+    }
+
+    /**
+     * Rewrites the last data record in the event file. This is used when a symbol
+     * column is added after the event was already written (e.g., during segment roll
+     * in addColumn). The method jumps back to the start of the last event, resets
+     * the index entry, and rewrites the event so that the updated symbolMapNullFlags
+     * are included in the symbol map diffs.
+     */
+    int rewriteLastDataRecord(
+            byte txnType,
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
+        // Jump back to the start of the last event and write the -1 sentinel
+        // so that appendData finds it at the expected position.
+        // NB: if appendData() throws, the event file is left in a partially
+        // rewritten state. This is acceptable because the exception will
+        // close the WalWriter and the segment will not be used for writing anymore
+        eventMem.jumpTo(startOffset);
+        eventMem.putInt(-1);
+
+        // Remove the last index entry (one long) so appendData can re-add it.
+        eventIndexMem.jumpTo(eventIndexMem.getAppendOffset() - Long.BYTES);
+
+        // Decrement txn because appendData will increment it.
+        txn--;
+
+        return appendData(
+                txnType, startRowID, endRowID,
+                minTimestamp, maxTimestamp, outOfOrder,
+                lastRefreshBaseTxn, lastRefreshTimestamp, lastPeriodHi,
+                replaceRangeLowTs, replaceRangeHiTs, dedupMode
+        );
     }
 
     int truncate() {

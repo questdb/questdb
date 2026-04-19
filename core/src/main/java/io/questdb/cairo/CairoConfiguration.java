@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -131,15 +131,6 @@ public interface CairoConfiguration {
     @NotNull
     String getAttachPartitionSuffix();
 
-    DateFormat getBackupDirTimestampFormat();
-
-    int getBackupMkDirMode();
-
-    // null disables backups
-    CharSequence getBackupRoot();
-
-    CharSequence getBackupTempDirName();
-
     int getBinaryEncodingMaxLength();
 
     int getBindVariablePoolSize();
@@ -154,6 +145,28 @@ public interface CairoConfiguration {
     }
 
     boolean getCairoSqlLegacyOperatorPrecedence();
+
+    @NotNull
+    default CheckpointListener getCheckpointListener() {
+        return DefaultCheckpointListener.INSTANCE;
+    }
+
+    /**
+     * Enable/disable full rebuild of bitmap indexes for symbol columns in partitions
+     */
+    boolean getCheckpointRecoveryRebuildColumnIndexes();
+
+    /**
+     * Maximum thread pool size for checkpoint recovery operations.
+     * The actual size is determined by clamping the available processor count between min and max.
+     */
+    int getCheckpointRecoveryThreadpoolMax();
+
+    /**
+     * Minimum thread pool size for checkpoint recovery operations.
+     * The actual size is determined by clamping the available processor count between min and max.
+     */
+    int getCheckpointRecoveryThreadpoolMin();
 
     @NotNull
     CharSequence getCheckpointRoot(); // same as root/../.checkpoint
@@ -185,8 +198,18 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    int getCompileViewModelPoolCapacity();
+
     @NotNull
     CharSequence getConfRoot(); // same as root/../conf
+
+    /**
+     * Returns the forced copier type for testing, or COPIER_TYPE_DEFAULT for auto-selection.
+     * See RecordToRowCopierUtils.COPIER_TYPE_* constants.
+     */
+    default int getCopierType() {
+        return 0; // COPIER_TYPE_DEFAULT
+    }
 
     @NotNull
     LongSupplier getCopyIDSupplier();
@@ -259,6 +282,8 @@ public interface CairoConfiguration {
 
     int getGroupByMergeShardQueueCapacity();
 
+    long getGroupByParallelTopKThreshold();
+
     int getGroupByPoolCapacity();
 
     long getGroupByPresizeMaxCapacity();
@@ -266,6 +291,8 @@ public interface CairoConfiguration {
     long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
+
+    int getGroupByTopKQueueCapacity();
 
     @NotNull
     default IOURingFacade getIOURingFacade() {
@@ -279,6 +306,8 @@ public interface CairoConfiguration {
     int getInactiveReaderMaxOpenPartitions();
 
     long getInactiveReaderTTL();
+
+    long getInactiveViewWalWriterTTL();
 
     long getInactiveWalWriterTTL();
 
@@ -295,6 +324,8 @@ public interface CairoConfiguration {
      */
     @NotNull
     String getInstallRoot();
+
+    int getJsonUnnestMaxValueSize();
 
     int getLatestByQueueCapacity();
 
@@ -389,6 +420,8 @@ public interface CairoConfiguration {
 
     int getO3MemMaxPages();
 
+    int getO3MidPartitionMaxSplits();
+
     long getO3MinLag();
 
     int getO3OpenColumnQueueCapacity();
@@ -413,6 +446,10 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    long getParquetExportBatchSize();
+
+    double getParquetExportBloomFilterFpp();
+
     int getParquetExportCompressionCodec();
 
     int getParquetExportCompressionLevel();
@@ -427,11 +464,19 @@ public interface CairoConfiguration {
 
     int getParquetExportVersion();
 
+    double getPartitionEncoderParquetBloomFilterFpp();
+
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();
 
     int getPartitionEncoderParquetDataPageSize();
+
+    double getPartitionEncoderParquetMinCompressionRatio();
+
+    long getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+
+    double getPartitionEncoderParquetO3RewriteUnusedRatio();
 
     int getPartitionEncoderParquetRowGroupSize();
 
@@ -440,6 +485,10 @@ public interface CairoConfiguration {
     long getPartitionO3SplitMinSize();
 
     int getPartitionPurgeListCapacity();
+
+    int getPivotColumnPoolCapacity();
+
+    int getPoolSegmentSize();
 
     int getPreferencesStringPoolCapacity();
 
@@ -461,6 +510,8 @@ public interface CairoConfiguration {
     }
 
     int getReaderPoolMaxSegments();
+
+    int getRecentWriteTrackerCapacity();
 
     int getRenameTableModelPoolCapacity();
 
@@ -541,6 +592,31 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    long getSqlHorizonJoinBwdScanAbsoluteThreshold();
+
+    long getSqlHorizonJoinBwdScanMinGap();
+
+    long getSqlHorizonJoinBwdScanSwitchFactor();
+
+    int getSqlHorizonJoinMaxOffsets();
+
+    /**
+     * When the number of intervals exceeds this threshold during bracket expansion,
+     * intervals are merged to prevent unbounded memory growth.
+     */
+    int getSqlIntervalIncrementalMergeThreshold();
+
+    /**
+     * Maximum recursion depth for bracket expansion in interval parsing (one level per bracket group).
+     */
+    int getSqlIntervalMaxBracketDepth();
+
+    /**
+     * Maximum number of intervals allowed after bracket expansion and merging.
+     * This limit prevents memory exhaustion from large non-adjacent interval sets.
+     */
+    int getSqlIntervalMaxIntervalsAfterMerge();
+
     int getSqlJitBindVarsMemoryMaxPages();
 
     int getSqlJitBindVarsMemoryPageSize();
@@ -552,8 +628,6 @@ public interface CairoConfiguration {
     int getSqlJitMaxInListSizeThreshold();
 
     int getSqlJitMode();
-
-    int getSqlJitPageAddressCacheThreshold();
 
     int getSqlJoinContextPoolCapacity();
 
@@ -578,8 +652,6 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
-    int getSqlOrderByRadixSortThreshold();
-
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
@@ -588,9 +660,13 @@ public interface CairoConfiguration {
 
     double getSqlParallelFilterPreTouchThreshold();
 
+    long getSqlParallelWorkStealingSpinTimeout();
+
     int getSqlParallelWorkStealingThreshold();
 
     int getSqlParquetFrameCacheCapacity();
+
+    int getSqlPivotMaxProducedColumns();
 
     int getSqlSmallMapKeyCapacity();
 
@@ -599,6 +675,10 @@ public interface CairoConfiguration {
     int getSqlSmallPageFrameMaxRows();
 
     int getSqlSmallPageFrameMinRows();
+
+    long getSqlSortEncodedParallelThreshold();
+
+    int getSqlSortKeyMaterializationThreshold();
 
     int getSqlSortKeyMaxPages();
 
@@ -661,7 +741,13 @@ public interface CairoConfiguration {
 
     int getTxnScoreboardEntryCount();
 
+    int getUnorderedPageFrameReduceQueueCapacity();
+
     int getVectorAggregateQueueCapacity();
+
+    int getViewLexerPoolCapacity();
+
+    int getViewWalWriterPoolMaxSegments();
 
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
@@ -710,6 +796,8 @@ public interface CairoConfiguration {
 
     int getWalTxnNotificationQueueCapacity();
 
+    int getWalWriterMadviseMode();
+
     int getWalWriterPoolMaxSegments();
 
     int getWindowColumnPoolCapacity();
@@ -732,6 +820,8 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    boolean isCairoMetadataCacheSnapshotOrdered();
+
     /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
      *
@@ -748,14 +838,6 @@ public interface CairoConfiguration {
 
     boolean isCopierChunkedEnabled();
 
-    /**
-     * Returns the forced copier type for testing, or COPIER_TYPE_DEFAULT for auto-selection.
-     * See RecordToRowCopierUtils.COPIER_TYPE_* constants.
-     */
-    default int getCopierType() {
-        return 0; // COPIER_TYPE_DEFAULT
-    }
-
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
@@ -765,6 +847,8 @@ public interface CairoConfiguration {
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();
+
+    boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();
 
@@ -794,11 +878,15 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelGroupByEnabled();
 
+    boolean isSqlParallelHorizonJoinEnabled();
+
     boolean isSqlParallelReadParquetEnabled();
 
     boolean isSqlParallelTopKEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
+
+    boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isTableTypeConversionEnabled();
 

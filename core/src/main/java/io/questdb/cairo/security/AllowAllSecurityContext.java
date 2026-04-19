@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,8 +27,8 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -44,6 +44,14 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     private AllowAllSecurityContext(boolean settingsReadOnly) {
         this.settingsReadOnly = settingsReadOnly;
+    }
+
+    @Override
+    public void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterMatViewSetRefreshType(TableToken tableToken) {
     }
 
     @Override
@@ -63,7 +71,19 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableAlterSymbolCapacity(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
     public void authorizeAlterTableAttachPartition(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableConvertPartitionToNative(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableConvertPartitionToParquet(TableToken tableToken) {
     }
 
     @Override
@@ -95,11 +115,27 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableSetParam(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableSetParquetSettings(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableSetType(TableToken tableToken) {
     }
 
     @Override
+    public void authorizeAlterView(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
+    }
+
+    @Override
+    public void authorizeDatabaseBackup() {
     }
 
     @Override
@@ -139,6 +175,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeSelect(ViewDefinition viewDefinition) {
+    }
+
+    @Override
     public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
@@ -159,10 +199,6 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSystemAdmin() {
-    }
-
-    @Override
-    public void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
     }
 
     @Override
@@ -191,6 +227,18 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeTableVacuum(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeViewCompile(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeViewCreate() {
+    }
+
+    @Override
+    public void authorizeViewDrop(TableToken tableToken) {
     }
 
     @Override

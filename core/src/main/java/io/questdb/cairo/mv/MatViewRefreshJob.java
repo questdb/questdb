@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -59,6 +59,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Path;
@@ -126,7 +127,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public void close() {
-        LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
+        LOG.debug().$("materialized view refresh job closing [workerId=").$(workerId).I$();
         Misc.free(refreshSqlExecutionContext);
         Misc.free(txnRangeLoader);
     }
@@ -458,6 +459,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     timestampSampler,
                     viewDefinition.getTzRules(),
                     viewDefinition.getFixedOffset(),
+                    viewDefinition.getSamplingIntervalUnit(),
                     refreshIntervals,
                     minTs,
                     maxTs,
@@ -471,9 +473,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", fromTxn=").$(lastRefreshTxn)
                     .$(", toTxn=").$(refreshContext.toBaseTxn)
                     .$(", periodHi=").$ts(driver, refreshContext.periodHi)
-                    .$(", iteratorMinTs>=").$ts(driver, iteratorMinTs)
-                    .$(", iteratorMaxTs<").$ts(driver, iteratorMaxTs)
-                    .$(", iteratorStep=").$(step)
+                    .$(", iteratorMinTs=").$ts(driver, iteratorMinTs)
+                    .$(", iteratorMaxTs=").$ts(driver, iteratorMaxTs)
+                    .$("), iteratorStep=").$(step)
                     .I$();
 
             refreshContext.intervalIterator = intervalIterator;
@@ -880,6 +882,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull TimestampSampler sampler,
             @Nullable TimeZoneRules tzRules,
             long fixedOffset,
+            char samplingIntervalUnit,
             @Nullable LongList refreshIntervals,
             long minTs,
             long maxTs,
@@ -890,6 +893,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return fixedOffsetIterator.of(
                     sampler,
                     fixedOffset - fixedTzOffset,
+                    refreshIntervals,
+                    minTs,
+                    maxTs,
+                    step
+            );
+        }
+
+        // For sub-day intervals, timestamp_floor_utc uses the standard (non-DST)
+        // offset for UTC↔local conversion and bakes the user offset into the floor
+        // anchor. Bucket key K covers raw data in [K, K + stride). The iterator
+        // boundaries must include the user offset so they align with bucket keys.
+        if (CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
+            long stdOff = CommonUtils.getFloorUtcTzOffset(tzRules, 0, samplingIntervalUnit);
+            return fixedOffsetIterator.of(
+                    sampler,
+                    fixedOffset - stdOff,
                     refreshIntervals,
                     minTs,
                     maxTs,
@@ -1162,7 +1181,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         stateStore.notifyBaseRefreshed(refreshTask, minRefreshToTxn);
 
         if (refreshed) {
-            LOG.info().$("refreshed materialized views dependent on [baseTable=").$(baseTableToken).I$();
+            LOG.info().$("refreshed materialized views dependent on [baseTable=").$(baseTableToken)
+                    .$(", lastSeqTxn=").$(minRefreshToTxn).I$();
         }
         return refreshed;
     }
@@ -1452,6 +1472,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 return viewState.getRefreshIntervals();
             } catch (CairoException ex) {
+                if (configuration.isMatViewRefreshMissingWalFilesFatal()) {
+                    LOG.critical().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
+                            .$(", ex=").$safe(ex.getFlyweightMessage())
+                            .$(", errno=").$(ex.getErrno())
+                            .I$();
+                    throw ex;
+                }
                 LOG.error().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
                         .$(", ex=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())

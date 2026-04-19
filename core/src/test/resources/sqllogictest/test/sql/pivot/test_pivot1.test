@@ -1,0 +1,171 @@
+statement ok
+CREATE TABLE Product(DaysToManufacture int, StandardCost int);
+
+statement ok
+INSERT INTO Product VALUES (0, 5.0885), (1, 223.88), (2, 359.1082), (4, 949.4105);
+
+# example taken from the snowflake docs
+# https://docs.snowflake.com/en/sql-reference/constructs/pivot
+
+statement ok
+CREATE TABLE monthly_sales(empid INT, amount INT, month string);
+
+statement ok
+INSERT INTO monthly_sales VALUES
+    (1, 10000, 'JAN'),
+    (1, 400, 'JAN'),
+    (2, 4500, 'JAN'),
+    (2, 35000, 'JAN'),
+    (1, 5000, 'FEB'),
+    (1, 3000, 'FEB'),
+    (2, 200, 'FEB'),
+    (2, 90500, 'FEB'),
+    (1, 6000, 'MAR'),
+    (1, 5000, 'MAR'),
+    (2, 2500, 'MAR'),
+    (2, 9500, 'MAR'),
+    (1, 8000, 'APR'),
+    (1, 10000, 'APR'),
+    (2, 800, 'APR'),
+    (2, 4500, 'APR');
+
+query IIIII
+SELECT *
+  FROM monthly_sales
+    PIVOT(SUM(amount) FOR MONTH IN ('JAN', 'FEB', 'MAR', 'APR') group by EMPID)
+  ORDER BY EMPID;
+----
+1	10400	8000	11000	18000
+2	39500	90700	12000	5300
+
+# expressions in pivot
+query IIIII
+SELECT *
+  FROM monthly_sales
+    PIVOT(SUM(amount+1) FOR MONTH IN ('JAN', 'FEB', 'MAR', 'DEC') group by EMPID)
+      AS p
+  ORDER BY EMPID;
+----
+1	10402	8002	11002	NULL
+2	39502	90702	12002	NULL
+
+# count star
+query IIIII
+SELECT *
+  FROM monthly_sales
+    PIVOT(COUNT(*) FOR MONTH IN ('JAN', 'FEB', 'MAR', 'DEC') GROUP BY empid)
+      AS p
+  ORDER BY EMPID;
+----
+1	2	2	2	0
+2	2	2	2	0
+
+# test pivot aliases
+query IIIII
+SELECT empid, January, February, March, April
+  FROM monthly_sales
+    PIVOT(SUM(amount) FOR MONTH IN ('JAN' AS January, 'FEB' AS February, 'MAR' AS March, 'APR' AS April) group by EMPID)
+      AS p
+  ORDER BY EMPID;
+----
+1	10400	8000	11000	18000
+2	39500	90700	12000	5300
+
+# not all columns are mentioned (columns not mentioned are dropped)
+query IIII
+SELECT *
+  FROM monthly_sales
+    PIVOT(SUM(amount) FOR MONTH IN ('JAN', 'FEB', 'MAR') group by EMPID)
+      AS p
+  ORDER BY EMPID;
+----
+1	10400	8000	11000
+2	39500	90700	12000
+
+# extra columns that don't occur in the data -> they stay as NULL
+query IIIII
+SELECT *
+  FROM monthly_sales
+    PIVOT(SUM(amount) FOR MONTH IN ('JAN', 'FEB', 'MAR', 'DEC') group by EMPID)
+      AS p
+  ORDER BY EMPID;
+----
+1	10400	8000	11000	NULL
+2	39500	90700	12000	NULL
+
+# aliases
+query IIIII
+SELECT *
+FROM monthly_sales
+PIVOT(SUM(amount) FOR MONTH IN ('JAN', 'FEB', 'MAR', 'APR') group by EMPID)
+  AS p
+ORDER BY EMPID;
+----
+1	10400	8000	11000	18000
+2	39500	90700	12000	5300
+
+# NULL pivot
+statement ok
+INSERT INTO monthly_sales VALUES (1, 250, NULL);
+
+query IIIIII
+SELECT *
+  FROM monthly_sales
+    PIVOT(SUM(amount) FOR MONTH IN (NULL, 'JAN', 'FEB', 'MAR', 'APR') GROUP BY EMPID)
+      AS p
+  ORDER BY EMPID;
+----
+1	250	10400	8000	11000	18000
+2	NULL	39500	90700	12000	5300
+
+query I
+SELECT * FROM (
+  SELECT DaysToManufacture, StandardCost
+  FROM Product
+) AS SourceTable
+PIVOT
+(
+  AVG(StandardCost)
+  FOR DaysToManufacture IN (100000)
+) AS PivotTable;
+----
+NULL
+
+statement error
+SELECT *
+FROM monthly_sales
+PIVOT(SUM(amount) FOR MONTH IN ('JAN', 'JAN') GROUP BY EMPID)
+  AS p
+ORDER BY EMPID;
+----
+db error: ERROR: duplicate value in PIVOT IN list: 'JAN'
+
+# unrecognized IN clause
+statement error
+SELECT *
+  FROM monthly_sales
+    PIVOT(SUM(amount) FOR MONTHx IN ('JAN', 'FEB', 'MAR', 'DEC') GROUP BY EMPID)
+      AS p
+  ORDER BY EMPID;
+----
+db error: ERROR: Invalid column: MONTHx
+
+# empty IN clause
+statement error
+SELECT *
+  FROM monthly_sales
+    PIVOT(SUM(amount) FOR MONTH IN () GROUP BY EMPID)
+      AS p
+  ORDER BY EMPID;
+----
+db error: ERROR: missing constant
+
+# star
+statement error
+SELECT *
+  FROM monthly_sales
+    PIVOT(SUM(amount) FOR MONTH IN (*) GROUP BY EMPID)
+      AS p
+  ORDER BY EMPID;
+----
+db error: ERROR: too few arguments for '*' [found=0,expected=2]

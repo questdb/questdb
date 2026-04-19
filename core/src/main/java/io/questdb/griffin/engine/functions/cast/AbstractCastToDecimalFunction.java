@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,15 +28,36 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.ToDecimalFunction;
 
-public abstract class AbstractCastToDecimalFunction extends ToDecimalFunction implements UnaryFunction {
+/**
+ * Abstract base class for functions that cast values to decimal.
+ */
+public abstract class AbstractCastToDecimalFunction extends ToDecimalFunction implements CastFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
+    /**
+     * The position in the SQL statement.
+     */
     protected final int position;
+    /**
+     * The target decimal precision.
+     */
     protected final int precision;
+    /**
+     * The target decimal scale.
+     */
     protected final int scale;
 
+    /**
+     * Constructs a new cast to decimal function.
+     *
+     * @param arg        the function argument to cast
+     * @param targetType the target decimal type
+     * @param position   the position in the SQL statement
+     */
     public AbstractCastToDecimalFunction(Function arg, int targetType, int position) {
         super(targetType);
         this.arg = arg;
@@ -68,7 +89,8 @@ public abstract class AbstractCastToDecimalFunction extends ToDecimalFunction im
      * The implementation must fill the decimal with the cast value following the target scale and precision.
      * If the value to cast is null, it must return false without doing additional work.
      *
-     * @return whether the result is not null.
+     * @param rec the record to read from
+     * @return whether the result is not null
      */
     protected abstract boolean cast(Record rec);
 }

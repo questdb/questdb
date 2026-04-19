@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,6 +27,8 @@ package io.questdb.tasks;
 import io.questdb.cairo.TableWriter;
 
 public interface AbstractTelemetryTask {
+    int getEventKey();
+
     long getQueueCursor();
 
     void setQueueCursor(long cursor);

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyImportRequestTask;
 import io.questdb.cutlass.text.CopyImportTask;
@@ -42,6 +43,7 @@ import io.questdb.std.Misc;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.tasks.LatestByTask;
 import io.questdb.tasks.O3CopyTask;
@@ -72,6 +74,9 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<CopyImportRequestTask> copyImportRequestQueue;
     private final SCSequence copyImportRequestSubSeq;
     private final MCSequence copyImportSubSeq;
+    private final MPSequence groupByLongTopKPubSeq;
+    private final RingQueue<GroupByLongTopKTask> groupByLongTopKQueue;
+    private final MCSequence groupByLongTopKSubSeq;
     private final MPSequence groupByMergeShardPubSeq;
     private final RingQueue<GroupByMergeShardTask> groupByMergeShardQueue;
     private final MCSequence groupByMergeShardSubSeq;
@@ -104,6 +109,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
+    private final MPSequence unorderedPageFrameReducePubSeq;
+    private final RingQueue<UnorderedPageFrameReduceTask> unorderedPageFrameReduceQueue;
+    private final MCSequence unorderedPageFrameReduceSubSeq;
     private final MPSequence vectorAggregatePubSeq;
     private final RingQueue<VectorAggregateTask> vectorAggregateQueue;
     private final MCSequence vectorAggregateSubSeq;
@@ -192,6 +200,12 @@ public class MessageBusImpl implements MessageBus {
                 reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
             }
 
+            int unorderedReduceQueueCapacity = configuration.getUnorderedPageFrameReduceQueueCapacity();
+            this.unorderedPageFrameReduceQueue = new RingQueue<>(UnorderedPageFrameReduceTask::new, unorderedReduceQueueCapacity);
+            this.unorderedPageFrameReducePubSeq = new MPSequence(unorderedReduceQueueCapacity);
+            this.unorderedPageFrameReduceSubSeq = new MCSequence(unorderedReduceQueueCapacity);
+            unorderedPageFrameReducePubSeq.then(unorderedPageFrameReduceSubSeq).then(unorderedPageFrameReducePubSeq);
+
             this.copyImportQueue = new RingQueue<>(CopyImportTask::new, configuration.getSqlCopyQueueCapacity());
             this.copyImportPubSeq = new SPSequence(copyImportQueue.getCycle());
             this.copyImportSubSeq = new MCSequence(copyImportQueue.getCycle());
@@ -218,6 +232,11 @@ public class MessageBusImpl implements MessageBus {
             this.groupByMergeShardPubSeq = new MPSequence(groupByMergeShardQueue.getCycle());
             this.groupByMergeShardSubSeq = new MCSequence(groupByMergeShardQueue.getCycle());
             groupByMergeShardPubSeq.then(groupByMergeShardSubSeq).then(groupByMergeShardPubSeq);
+
+            this.groupByLongTopKQueue = new RingQueue<>(GroupByLongTopKTask::new, configuration.getGroupByTopKQueueCapacity());
+            this.groupByLongTopKPubSeq = new MPSequence(groupByLongTopKQueue.getCycle());
+            this.groupByLongTopKSubSeq = new MCSequence(groupByLongTopKQueue.getCycle());
+            groupByLongTopKPubSeq.then(groupByLongTopKSubSeq).then(groupByLongTopKPubSeq);
 
             this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
             this.queryCacheEventSubSeq = new MCSequence(configuration.getQueryCacheEventQueueCapacity());
@@ -247,7 +266,7 @@ public class MessageBusImpl implements MessageBus {
         copyExportRequestSubSeq.clear();
         vectorAggregateSubSeq.clear();
         walTxnNotificationSubSequence.clear();
-        walTxnNotificationSubSequence.clear();
+        unorderedPageFrameReduceSubSeq.clear();
         for (int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
             pageFrameReduceSubSeq[i].clear();
         }
@@ -265,6 +284,7 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public void close() {
         // We need to close only queues with native backing memory.
+        Misc.free(copyExportRequestQueue);
         Misc.free(tableWriterEventQueue);
         Misc.free(pageFrameReduceQueue);
         Misc.free(latestByQueue);
@@ -353,6 +373,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getCopyImportSubSeq() {
         return copyImportSubSeq;
+    }
+
+    @Override
+    public MPSequence getGroupByLongTopKPubSeq() {
+        return groupByLongTopKPubSeq;
+    }
+
+    @Override
+    public RingQueue<GroupByLongTopKTask> getGroupByLongTopKQueue() {
+        return groupByLongTopKQueue;
+    }
+
+    @Override
+    public MCSequence getGroupByLongTopKSubSeq() {
+        return groupByLongTopKSubSeq;
     }
 
     @Override
@@ -513,6 +548,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<TableWriterTask> getTableWriterEventQueue() {
         return tableWriterEventQueue;
+    }
+
+    @Override
+    public MPSequence getUnorderedPageFrameReducePubSeq() {
+        return unorderedPageFrameReducePubSeq;
+    }
+
+    @Override
+    public RingQueue<UnorderedPageFrameReduceTask> getUnorderedPageFrameReduceQueue() {
+        return unorderedPageFrameReduceQueue;
+    }
+
+    @Override
+    public MCSequence getUnorderedPageFrameReduceSubSeq() {
+        return unorderedPageFrameReduceSubSeq;
     }
 
     @Override

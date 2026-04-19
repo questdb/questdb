@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -137,7 +137,7 @@ public abstract class IPv4Function implements Function {
 
     @Override
     public int getInt(Record rec) {
-        throw new UnsupportedOperationException();
+        return getIPv4(rec);
     }
 
     @Override
@@ -147,7 +147,7 @@ public abstract class IPv4Function implements Function {
 
     @Override
     public long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return getIPv4(rec);
     }
 
     @Override

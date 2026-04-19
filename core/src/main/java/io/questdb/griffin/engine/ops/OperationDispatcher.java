@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -65,6 +65,12 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             isDone = true;
             return doneFuture.of(result);
         } catch (EntryUnavailableException busyException) {
+            // For non-WAL tables, when another thread holds the writer, this code enqueues the operation
+            // on the TableWriter's async queue. The writer processes enqueued operations when it becomes free.
+            // The operation does not require re-authorization when executed from the async queue, because the
+            // caller already authorized it before enqueuing.
+            // The caller blocks on the returned future until the writer executes the operation or the timeout
+            // expires.
             if (eventSubSeq == null) {
                 throw busyException;
             }

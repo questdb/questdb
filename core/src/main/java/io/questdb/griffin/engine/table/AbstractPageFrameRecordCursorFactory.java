@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -41,16 +40,36 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
+/**
+ * Abstract base class for page frame record cursor factories.
+ */
 abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+    /**
+     * The column indexes.
+     */
     protected final IntList columnIndexes;
+    /**
+     * The column size shifts.
+     */
     protected final IntList columnSizeShifts;
+    /**
+     * The partition frame cursor factory.
+     */
     protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
+    /**
+     * The page frame cursor.
+     */
     protected TablePageFrameCursor pageFrameCursor;
-    protected int pageFrameMaxRows;
-    protected int pageFrameMinRows;
 
+    /**
+     * Constructs a new page frame record cursor factory.
+     *
+     * @param metadata                    the record metadata
+     * @param partitionFrameCursorFactory the partition frame cursor factory
+     * @param columnIndexes               the column indexes
+     * @param columnSizeShifts            the column size shifts
+     */
     public AbstractPageFrameRecordCursorFactory(
-            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull IntList columnIndexes,
@@ -60,14 +79,6 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         this.partitionFrameCursorFactory = partitionFrameCursorFactory;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
-        pageFrameMinRows = configuration.getSqlPageFrameMinRows();
-        pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
-    }
-
-    @Override
-    public void changePageFrameSizes(int minRows, int maxRows) {
-        this.pageFrameMinRows = minRows;
-        this.pageFrameMaxRows = maxRows;
     }
 
     @Override
@@ -102,31 +113,44 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         Misc.free(partitionFrameCursorFactory);
     }
 
+    /**
+     * Initializes the page frame cursor.
+     *
+     * @param executionContext the SQL execution context
+     * @return the initialized page frame cursor
+     * @throws SqlException if initialization fails
+     */
     protected TablePageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = partitionFrameCursorFactory.getOrder();
-        PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
+        PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, ORDER_ANY);
         if (pageFrameCursor == null) {
             if (order == ORDER_ASC || order == ORDER_ANY) {
                 pageFrameCursor = new FwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
-                        1, // used for single-threaded exec plans
-                        pageFrameMinRows,
-                        pageFrameMaxRows
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
+                        1 // used for single-threaded exec plans
                 );
             } else {
                 pageFrameCursor = new BwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
-                        1, // used for single-threaded exec plans
-                        pageFrameMinRows,
-                        pageFrameMaxRows
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
+                        1 // used for single-threaded exec plans
                 );
             }
         }
-        return pageFrameCursor.of(partitionFrameCursor);
+        return pageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
+    /**
+     * Initializes the record cursor from the page frame cursor.
+     *
+     * @param frameCursor      the page frame cursor
+     * @param executionContext the SQL execution context
+     * @return the initialized record cursor
+     * @throws SqlException if initialization fails
+     */
     protected abstract RecordCursor initRecordCursor(
             PageFrameCursor frameCursor,
             SqlExecutionContext executionContext

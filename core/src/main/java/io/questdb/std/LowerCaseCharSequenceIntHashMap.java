@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -54,45 +54,8 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         Arrays.fill(values, noEntryValue);
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        LowerCaseCharSequenceIntHashMap that = (LowerCaseCharSequenceIntHashMap) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (CharSequence key : keys) {
-            if (key == null) {
-                continue;
-            }
-            if (that.excludes(key)) {
-                return false;
-            }
-            int value = get(key);
-            if (value != noEntryValue) {
-                int thatValue = that.get(key);
-                if (value != thatValue) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     public int get(CharSequence key) {
         return valueAt(keyIndex(key));
-    }
-
-    @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKey) {
-                hashCode += Chars.hashCode(keys[i]) ^ values[i];
-            }
-        }
-        return hashCode;
     }
 
     public void inc(@NotNull CharSequence key) {
@@ -108,12 +71,26 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         return putAt(keyIndex(key), key, value);
     }
 
+    public boolean put(CharSequence key, int value, int lo, int hi) {
+        return putAt(keyIndex(key, lo, hi), key, value, lo, hi);
+    }
+
     public boolean putAt(int index, CharSequence key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
             return false;
         }
         final String keyString = Chars.toString(key);
+        putAt0(index, keyString, value);
+        return true;
+    }
+
+    public boolean putAt(int index, CharSequence key, int value, int lo, int hi) {
+        if (index < 0) {
+            values[-index - 1] = value;
+            return false;
+        }
+        final String keyString = Chars.toString(key, lo, hi);
         putAt0(index, keyString, value);
         return true;
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,7 +32,6 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -65,8 +64,8 @@ import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -87,7 +86,7 @@ public class GroupByUtils {
     public static void assembleGroupByFunctions(
             @NotNull FunctionParser functionParser,
             @NotNull ArrayDeque<ExpressionNode> sqlNodeStack,
-            QueryModel model,
+            IQueryModel model,
             SqlExecutionContext executionContext,
             RecordMetadata baseMetadata,
             int timestampIndex,
@@ -99,13 +98,13 @@ public class GroupByUtils {
             IntList projectionFunctionPositions,
             IntList projectionFunctionFlags,
             GenericRecordMetadata projectionMetadata,
-            PriorityMetadata outPriorityMetadata,
             ArrayColumnTypes outValueTypes,
             ArrayColumnTypes outKeyTypes,
             ListColumnFilter outColumnFilter,
             @Nullable ObjList<ExpressionNode> sampleByFill, // fill mode for sample by functions, for validation
             boolean validateFill,
-            ObjList<QueryColumn> columns
+            ObjList<QueryColumn> columns,
+            @Nullable ObjList<ObjList<Function>> extraOuterProjectionFunctions
     ) throws SqlException {
         try {
             outGroupByFunctionPositions.clear();
@@ -128,8 +127,13 @@ public class GroupByUtils {
                             executionContext
                     );
 
-                    // functions added to the outer projections will later be replaced by column references
                     outerProjectionFunctions.add(func);
+                    if (extraOuterProjectionFunctions != null) {
+                        for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                            Function extraFunc = functionParser.parseFunction(node, baseMetadata, executionContext);
+                            extraOuterProjectionFunctions.getQuick(d).add(extraFunc);
+                        }
+                    }
                     innerProjectionFunctions.add(func);
 
                     index = findColumnKeyIndex(node, func, baseMetadata);
@@ -158,6 +162,11 @@ public class GroupByUtils {
                     // timestamp function returns value of class member which makes it impossible
                     // to create these columns in advance of cursor instantiation
                     outerProjectionFunctions.add(null);
+                    if (extraOuterProjectionFunctions != null) {
+                        for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                            extraOuterProjectionFunctions.getQuick(d).add(null);
+                        }
+                    }
                     projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
 
                     if (projectionMetadata.getTimestampIndex() == -1) {
@@ -180,7 +189,6 @@ public class GroupByUtils {
                     }
                 }
                 projectionMetadata.add(m);
-                outPriorityMetadata.add(m);
             }
 
             // There are two iterations over the model's columns. The first iterations create value
@@ -240,7 +248,13 @@ public class GroupByUtils {
                                     throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
-                                } else if ((sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0) {
+                                } else if (
+                                        !SqlKeywords.isNullKeyword(fillNode.token) &&
+                                                !SqlKeywords.isPrevKeyword(fillNode.token) &&
+                                                !SqlKeywords.isLinearKeyword(fillNode.token) &&
+                                                !SqlKeywords.isNoneKeyword(fillNode.token) &&
+                                                (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0
+                                ) {
                                     throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
@@ -248,6 +262,14 @@ public class GroupByUtils {
                             }
                         }
                         groupByFunc.initValueTypes(outValueTypes);
+                        if (extraOuterProjectionFunctions != null) {
+                            for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                                Function extraFunc = extraOuterProjectionFunctions.getQuick(d).getQuick(i);
+                                if (extraFunc instanceof GroupByFunction extraGbf) {
+                                    extraGbf.initSharedFrom(groupByFunc);
+                                }
+                            }
+                        }
                     }
                 }
                 projectionFunctionPositions.add(node.position);
@@ -276,6 +298,11 @@ public class GroupByUtils {
                             lastIndex = index;
                         }
                         outerProjectionFunctions.set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
+                        if (extraOuterProjectionFunctions != null) {
+                            for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                                extraOuterProjectionFunctions.getQuick(d).set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
+                            }
+                        }
                     }
 
                     // and finish with populating metadata for this factory
@@ -291,12 +318,30 @@ public class GroupByUtils {
                     }
                     // override function with column ref function
                     outerProjectionFunctions.set(i, columnRefFunc);
+
+                    // Currently unreachable: VirtualRecordCursorFactory does not support shared cursors currently.
+                    // This code becomes reachable if VirtualRecordCursorFactory gains supportsSharedCursors() support in the future.
+                    if (extraOuterProjectionFunctions != null) {
+                        for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                            Function extraRef = createColumnFunction(null, functionKeyColumnIndex, func.getType(), -1);
+                            if (func.getType() == ColumnType.SYMBOL && extraRef.getType() == ColumnType.STRING) {
+                                extraRef = new CastStrToSymbolFunctionFactory.Func(extraRef);
+                            }
+                            extraOuterProjectionFunctions.getQuick(d).set(i, extraRef);
+                        }
+                    }
                     inferredKeyColumnCount++;
                 }
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
         } catch (Throwable e) {
             Misc.freeObjListAndClear(outerProjectionFunctions);
+            if (extraOuterProjectionFunctions != null) {
+                for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                    Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(d));
+                }
+                extraOuterProjectionFunctions.clear();
+            }
             throw e;
         }
     }
@@ -420,7 +465,7 @@ public class GroupByUtils {
     // assembleGroupByFunctions must be called before this call to get the idea of how many map values
     // we will have. Map value count is needed to calculate offsets for map key columns.
     public static void prepareWorkerGroupByFunctions(
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             @NotNull RecordMetadata metadata,
             @NotNull FunctionParser functionParser,
             @NotNull SqlExecutionContext executionContext,
@@ -474,7 +519,7 @@ public class GroupByUtils {
 
     public static void validateGroupByColumns(
             @NotNull ArrayDeque<ExpressionNode> sqlNodeStack,
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             int inferredKeyColumnCount
     ) throws SqlException {
         final ObjList<ExpressionNode> groupByColumns = model.getGroupBy();
@@ -483,10 +528,10 @@ public class GroupByUtils {
             return;
         }
 
-        QueryModel chooseModel = model;
+        IQueryModel chooseModel = model;
         while (chooseModel != null
-                && chooseModel.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE
-                && chooseModel.getSelectModelType() != QueryModel.SELECT_MODEL_NONE) {
+                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_CHOOSE
+                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
             chooseModel = chooseModel.getNestedModel();
         }
 
@@ -570,7 +615,7 @@ public class GroupByUtils {
 
     private static boolean compareNodesGroupByFunctionKey(
             ArrayDeque<ExpressionNode> sqlNodeStack,
-            QueryModel chooseModel,
+            IQueryModel chooseModel,
             ExpressionNode functionKey,
             ExpressionNode arg
     ) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,13 +25,15 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
+/**
+ * Interface for functions that take two arguments.
+ */
 public interface BinaryFunction extends Function {
 
     @Override
@@ -46,8 +48,23 @@ public interface BinaryFunction extends Function {
         getRight().cursorClosed();
     }
 
+    @Override
+    default int getComplexity() {
+        return Function.addComplexity(getLeft().getComplexity(), getRight().getComplexity());
+    }
+
+    /**
+     * Returns the left (first) argument of this binary function.
+     *
+     * @return the left function argument
+     */
     Function getLeft();
 
+    /**
+     * Returns the right (second) argument of this binary function.
+     *
+     * @return the right function argument
+     */
     Function getRight();
 
     @Override
@@ -97,12 +114,6 @@ public interface BinaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getRight().isThreadSafe();
-    }
-
-    @Override
-    default void memoize(Record recordA) {
-        getLeft().memoize(recordA);
-        getRight().memoize(recordA);
     }
 
     @Override

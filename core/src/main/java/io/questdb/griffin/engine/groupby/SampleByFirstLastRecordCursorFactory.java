@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -261,7 +261,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 queryToFrameColumnMapping[i] = underlyingColIndex;
 
                 int underlyingType = metadata.getColumnType(underlyingColIndex);
-                if (underlyingType != resultSetColumnType || ColumnType.pow2SizeOf(resultSetColumnType) > 3) {
+                int pow2 = ColumnType.pow2SizeOf(resultSetColumnType);
+                if (underlyingType != resultSetColumnType || pow2 < 0 || pow2 > 3) {
                     throw SqlException.$(ast.position, "column \"")
                             .put(metadata.getColumnName(underlyingColIndex))
                             .put("\": first(), last() is not supported on data type ")
@@ -345,7 +346,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleToFunc,
                     sampleToFuncPos
             );
-            frameAddressCache = new PageFrameAddressCache(configuration);
+            frameAddressCache = new PageFrameAddressCache();
             // We're using page frame memory only and do single scan
             // with no random access, hence cache size of 1.
             frameMemoryPool = new PageFrameMemoryPool(1);
@@ -354,7 +355,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         @Override
         public void close() {
             Misc.free(frameMemoryPool);
-            frameAddressCache.clear();
+            Misc.free(frameAddressCache);
             frameMemory = null;
             frameCursor = Misc.free(frameCursor);
         }
@@ -720,7 +721,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) throws SqlException {
             this.frameCursor = frameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
-            frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
+            frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             toTop();
             parseParams(this, sqlExecutionContext);
             initialized = false;

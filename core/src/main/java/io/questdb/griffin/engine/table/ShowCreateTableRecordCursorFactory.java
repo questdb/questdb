@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,6 +33,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,6 +42,8 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
@@ -202,27 +205,21 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             hasRun = false;
         }
 
-        private void putTtl() {
-            ttlToSink(table.getTtlHoursOrMonths(), sink);
-        }
-
         private void showCreateTable(CairoConfiguration config) {
             // CREATE TABLE table_name
             putCreateTable();
             // column_name TYPE
-            putColumns(config);
+            putColumns();
             // timestamp(ts)
             if (table.getTimestampIndex() != -1) {
                 putTimestamp();
                 // PARTITION BY unit
                 putPartitionBy();
                 // TTL n unit
-                putTtl();
+                ttlToSink(sink);
                 // (BYPASS) WAL
                 putWal();
             }
-            // WITH maxUncommittedRows=123, o3MaxLag=456s
-            putWith();
             // IN VOLUME OTHER_VOLUME
             putInVolume(config);
             // DEDUP UPSERT(key1, key2)
@@ -236,36 +233,58 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         protected void putAdditional() {
         }
 
-        protected void putColumn(CairoConfiguration config, CairoColumn column) {
+        protected void putColumn(CairoColumn column) {
             sink.put('\t')
                     .put(column.getName())
                     .putAscii(' ')
                     .put(ColumnType.nameOf(column.getType()));
 
             if (column.getType() == ColumnType.SYMBOL) {
-                // CAPACITY value (NO)CACHE
-                int symbolCapacity = column.getSymbolCapacity();
-
-                // some older versions of QuestDB can have `0` written to the metadata file
-                // this will produce an incorrect DDL if we print it
-                // so we fall back to default capacity
-                if (symbolCapacity < 2) {
-                    symbolCapacity = config.getDefaultSymbolCapacity();
+                // omit capacity due to autoscaling
+                if (!column.isSymbolCached()) {
+                    sink.putAscii(" NOCACHE");
                 }
-
-                sink.putAscii(" CAPACITY ").put(symbolCapacity);
-                sink.putAscii(column.isSymbolCached() ? " CACHE" : " NOCACHE");
 
                 if (column.isIndexed()) {
                     // INDEX CAPACITY value
                     sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
                 }
             }
+
+            int parquetConfig = column.getParquetEncodingConfig();
+            if (TableUtils.isParquetConfigExplicit(parquetConfig)) {
+                int encoding = TableUtils.getParquetConfigEncoding(parquetConfig);
+                int compression = TableUtils.getParquetConfigCompression(parquetConfig);
+                int level = TableUtils.getParquetConfigCompressionLevel(parquetConfig);
+                boolean hasBloomFilter = TableUtils.isParquetConfigBloomFilter(parquetConfig);
+                sink.putAscii(" PARQUET(");
+                if (encoding > 0 || compression > 0) {
+                    if (encoding > 0) {
+                        sink.put(ParquetEncoding.getEncodingName(encoding));
+                    } else {
+                        sink.putAscii("default");
+                    }
+                    if (compression > 0) {
+                        sink.putAscii(", ").put(ParquetCompression.getCompressionName(compression - 1));
+                        if (level > 0) {
+                            sink.putAscii('(').put(level - 1).putAscii(')');
+                        }
+                    }
+                    if (hasBloomFilter) {
+                        sink.putAscii(", bloom_filter");
+                    }
+                } else if (hasBloomFilter) {
+                    sink.putAscii("bloom_filter");
+                } else {
+                    sink.putAscii("default");
+                }
+                sink.putAscii(')');
+            }
         }
 
-        protected void putColumns(CairoConfiguration configuration) {
+        protected void putColumns() {
             for (int i = 0, n = table.getColumnCount(); i < n; i++) {
-                putColumn(configuration, table.getColumnQuiet(i));
+                putColumn(table.getColumnQuiet(i));
                 if (i < n - 1) {
                     sink.putAscii(',');
                 }
@@ -318,15 +337,13 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         protected void putWal() {
             if (!table.isWalEnabled()) {
                 sink.putAscii(" BYPASS");
+                sink.putAscii(" WAL");
             }
-            sink.putAscii(" WAL");
         }
 
-        protected void putWith() {
-            sink.putAscii('\n').putAscii("WITH ");
-            sink.putAscii("maxUncommittedRows=").put(table.getMaxUncommittedRows());
-            sink.put(", ");
-            sink.putAscii("o3MaxLag=").put(table.getO3MaxLag()).putAscii("us");
+        // overridden in ent, do not remove!
+        protected void ttlToSink(CharSink<?> sink) {
+            ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
         }
 
         public class ShowCreateTableRecord implements Record {

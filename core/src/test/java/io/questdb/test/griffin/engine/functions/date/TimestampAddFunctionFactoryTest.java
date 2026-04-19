@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -68,7 +68,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         1970-01-01T00:00:20.000000Z\t1970-01-01T00:00:20.000000Z\t0
                         """,
                 "select dateadd('u', 1000000, ts) date1, dateadd('u', 1000000, ts) date2, datediff('T', date1, date2) from x;",
-                null,
+                "date1",
                 true,
                 true
         );

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -1007,7 +1007,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, engine)) {
+            try (WriterPool pool = new WriterPool(configuration, engine, engine.getRecentWriteTracker())) {
                 code.run(pool);
             }
         });

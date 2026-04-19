@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,7 +45,6 @@ import io.questdb.std.str.Utf16Sink;
 import java.io.Closeable;
 
 public class JoinRecordMetadata extends AbstractRecordMetadata implements Closeable {
-
     private static final ColumnTypes keyTypes;
     private static final ColumnTypes valueTypes;
     private final Map map;
@@ -160,7 +159,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     }
 
     private int addAlias(CharSequence tableAlias, CharSequence columnName) {
-        int dot = Chars.indexOf(columnName, '.');
+        int dot = Chars.indexOfLastUnquoted(columnName, '.');
         // add column with its own alias
         MapKey key = map.withKey();
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -48,7 +48,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -92,7 +92,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             @NotNull TimestampSampler timestampSampler,
-            @Transient @NotNull QueryModel model,
+            @Transient @NotNull IQueryModel model,
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
@@ -103,7 +103,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            Function sampleToFunc
     ) throws SqlException {
         super(metadata);
         try {
@@ -171,11 +173,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);
 
             // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, configuration);
+            this.mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter);
             entityColumnFilter.of(keyTypes.getColumnCount());
-            this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, configuration);
+            this.mapSink2 = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter);
 
-            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleToFunc);
         } catch (Throwable th) {
             close();
             throw th;
@@ -258,13 +260,15 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private final Map dataMap;
         private final Function offsetFunc;
         private final int offsetFuncPos;
+        private final Function sampleFromFunc;
+        private final int sampleFromFuncType;
+        private final Function sampleToFunc;
         private final TimestampDriver timestampDriver;
         private final Function timezoneNameFunc;
         private final int timezoneNameFuncPos;
         private boolean areTimestampsInitialized;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long fixedOffset;
-        private boolean hasNextPending;
         private long hiSample = -1;
         private boolean isMapBuilt;
         private boolean isMapFilled;
@@ -287,7 +291,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Function timezoneNameFunc,
                 int timezoneNameFuncPos,
                 Function offsetFunc,
-                int offsetFuncPos
+                int offsetFuncPos,
+                Function sampleFromFunc,
+                Function sampleToFunc
         ) {
             super(functions);
             try {
@@ -304,7 +310,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 this.timezoneNameFuncPos = timezoneNameFuncPos;
                 this.offsetFunc = offsetFunc;
                 this.offsetFuncPos = offsetFuncPos;
+                this.sampleFromFunc = sampleFromFunc;
+                this.sampleToFunc = sampleToFunc;
                 this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+                this.sampleFromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -313,6 +322,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         @Override
         public void close() {
+            super.close();
             if (isOpen) {
                 isOpen = false;
                 recordKeyMap.close();
@@ -325,6 +335,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             Misc.free(timezoneNameFunc);
             Misc.clear(offsetFunc);
             Misc.free(offsetFunc);
+            Misc.clear(sampleFromFunc);
+            Misc.free(sampleFromFunc);
+            Misc.clear(sampleToFunc);
+            Misc.free(sampleToFunc);
         }
 
         @Override
@@ -339,6 +353,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 isOpen = true;
                 recordKeyMap.reopen();
                 dataMap.reopen();
+                allocator.reopen();
             }
             circuitBreaker = executionContext.getCircuitBreaker();
             managedRecord = managedCursor.getRecord();
@@ -346,11 +361,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             hiSample = -1;
             prevSample = -1;
             rowId = 0;
-            hasNextPending = false;
             isMapInitialized = false;
             isMapFilled = false;
             isMapBuilt = false;
             parseParams(this, executionContext);
+            sampleFromFunc.init(managedCursor, executionContext);
+            sampleToFunc.init(managedCursor, executionContext);
             areTimestampsInitialized = false;
         }
 
@@ -375,7 +391,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 hiSample = -1;
                 prevSample = -1;
                 rowId = 0;
-                hasNextPending = false;
                 isMapInitialized = false;
                 isMapFilled = false;
             }
@@ -572,49 +587,39 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             do {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
-                if (!hasNextPending) {
-                    // this seems inefficient, but we only double-sample
-                    // very first record and nothing else
-                    long sample = sampler.round(managedRecord.getTimestamp(timestampIndex));
-                    if (sample != prevSample) {
-                        // before we continue with next interval
-                        // we need to fill gaps in current interval
-                        // we will go over unique keys and attempt to
-                        // find them in data map with current timestamp
+                // this seems inefficient, but we only double-sample
+                // very first record and nothing else
+                long sample = sampler.round(managedRecord.getTimestamp(timestampIndex));
+                if (sample != prevSample) {
+                    // before we continue with next interval
+                    // we need to fill gaps in current interval
+                    // we will go over unique keys and attempt to
+                    // find them in data map with current timestamp
 
-                        fillGaps(prevSample, sample);
-                        prevSample = sample;
-                        GroupByUtils.toTop(groupByFunctions);
-                    }
-
-                    // same data group - evaluate group-by functions
-                    MapKey key = dataMap.withKey();
-                    mapSink.copy(managedRecord, key);
-                    key.putLong(sample);
-
-                    MapValue value = key.createValue();
-                    if (value.isNew()) {
-                        value.putByte(0, (byte) 0); // not a gap
-                        for (int i = 0; i < groupByFunctionCount; i++) {
-                            groupByFunctions.getQuick(i).computeFirst(value, managedRecord, rowId++);
-                        }
-                    } else {
-                        for (int i = 0; i < groupByFunctionCount; i++) {
-                            groupByFunctions.getQuick(i).computeNext(value, managedRecord, rowId++);
-                        }
-                    }
+                    fillGaps(prevSample, sample);
+                    prevSample = sample;
+                    GroupByUtils.toTop(groupByFunctions);
                 }
 
-                hasNextPending = true;
-                boolean hasNext = managedCursor.hasNext();
-                hasNextPending = false;
+                // same data group - evaluate group-by functions
+                MapKey key = dataMap.withKey();
+                mapSink.copy(managedRecord, key);
+                key.putLong(sample);
 
-                if (!hasNext) {
-                    hiSample = sampler.nextTimestamp(prevSample);
-                    break;
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    value.putByte(0, (byte) 0); // not a gap
+                    for (int i = 0; i < groupByFunctionCount; i++) {
+                        groupByFunctions.getQuick(i).computeFirst(value, managedRecord, rowId++);
+                    }
+                } else {
+                    for (int i = 0; i < groupByFunctionCount; i++) {
+                        groupByFunctions.getQuick(i).computeNext(value, managedRecord, rowId++);
+                    }
                 }
-            } while (true);
+            } while (managedCursor.hasNext());
 
+            hiSample = sampler.nextTimestamp(prevSample);
             // fill gaps if any at the end of base cursor
             fillGaps(prevSample, hiSample);
         }
@@ -727,7 +732,13 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 // this is the default path, we align time intervals to the first observation
                 sampler.setStart(timestamp);
             } else {
-                sampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+                // FROM-TO may apply to align to calendar queries, fixing the lower bound.
+                if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
+                    long from = sampleFromFunc.getTimestamp(null);
+                    sampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) : 0);
+                } else {
+                    sampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+                }
             }
             prevSample = sampler.round(timestamp);
             loSample = prevSample; // the lowest timestamp value

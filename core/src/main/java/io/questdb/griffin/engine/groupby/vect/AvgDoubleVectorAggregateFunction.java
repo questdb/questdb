@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -52,7 +52,7 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     private long countsAddr;
     private int valueOffset;
 
-    public AvgDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public AvgDoubleVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;

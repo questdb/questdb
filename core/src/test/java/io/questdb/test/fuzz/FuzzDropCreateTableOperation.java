@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -64,7 +64,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
             while (true) {
                 try {
                     LOG.info().$("dropping table ").$(tableToken).$();
-                    engine.dropTableOrMatView(path, tableToken);
+                    engine.dropTableOrViewOrMatView(path, tableToken);
                     break;
                 } catch (CairoException ignore) {
                     if (!isWal) {

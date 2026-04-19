@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -61,6 +61,19 @@ public interface Map extends Mutable, Closeable, Reopenable {
     boolean isOpen();
 
     void merge(Map srcMap, MapValueMergeFunction mergeFunc);
+
+    /**
+     * Creates an independent cursor over the same materialized data.
+     * Each cursor has its own iteration state (position, record) but
+     * shares the underlying data store.
+     */
+    MapRecordCursor newCursor();
+
+    /**
+     * Reinitializes an existing cursor (previously created by {@link #newCursor()})
+     * with the map's current state, avoiding allocation.
+     */
+    void initCursor(MapRecordCursor cursor);
 
     /**
      * Reopens previously closed map with given key capacity and initial heap size.

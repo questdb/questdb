@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -366,6 +366,11 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFormatOptionalMicros6Zero() throws NumericException {
+        assertFormat("2026-03-31T09:02:28.000000", "yyyy-MM-ddTHH:mm:ss.U+", "2026-03-31T09:02:28.000000Z");
+    }
+
+    @Test
     public void testFormatMicros6Three() throws NumericException {
         assertFormat("2022-02-02 02:02:02.000812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000812Z");
     }
@@ -450,6 +455,11 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testFormatNano9Six() throws NumericException {
         assertFormat("2022-02-02 02:02:02.374812", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.374812Z");
+    }
+
+    @Test
+    public void testFormatOptionalNano9Zero() throws NumericException {
+        assertFormat("2026-03-31T09:02:28.000000", "yyyy-MM-ddTHH:mm:ss.N+", "2026-03-31T09:02:28.000000Z");
     }
 
     @Test
@@ -820,6 +830,37 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testNanosGreedySingleN() throws NumericException {
+        // Micros format ignores nanos, but should still consume correct number of chars
+        // Pattern .SSSUUUN with .1234567 should parse correctly
+        assertMicros("y-MM-dd HH:mm:ss.SSSUUUN", "2014-04-03T04:32:49.123456Z", "2014-04-03 04:32:49.1234567");
+    }
+
+    @Test
+    public void testNanosGreedySingleNEmptyFraction() throws NumericException {
+        assertException("y-MM-dd HH:mm:ss.N", "2014-04-03 04:32:49.");
+    }
+
+    @Test
+    public void testNanosGreedySingleNNonDigitBoundary() throws NumericException {
+        // single N = nanos, up to 3 digits -> parsed as 999 nanos, but our resolution is in micros => it gets truncated to 0 micros
+        assertMicros("y-MM-dd HH:mm:ss.Nz", "2014-04-03T04:32:49.000000Z", "2014-04-03 04:32:49.999Z");
+
+        // N+ = nanos, up to 9 digits -> gets parsed as 999,000,000 nanos, but our resolution is in micros => it gets truncated to 999 millis
+        assertMicros("y-MM-dd HH:mm:ss.N+z", "2014-04-03T04:32:49.999000Z", "2014-04-03 04:32:49.999Z");
+    }
+
+    @Test
+    public void testNanosGreedySingleNOverflow() throws NumericException {
+        assertException("y-MM-dd HH:mm:ss.N", "2014-04-03 04:32:49.1234");
+    }
+
+    @Test
+    public void testNanosGreedySingleNZero() throws NumericException {
+        assertMicros("y-MM-dd HH:mm:ss.N", "2014-04-03T04:32:49.000000Z", "2014-04-03 04:32:49.0");
+    }
+
+    @Test
     public void testNegativeYear() {
         assertThat("yyyy MMM dd", "-2010-08-01T00:00:00.000Z", "-2010 Aug 01");
 
@@ -860,6 +901,41 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testParseMicros6Small() {
         assertMicros("y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.100000Z", "2022-02-02 02:02:02.1");
+    }
+
+    @Test
+    public void testParseOptionalMicros6Absent() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.U+'Z'", "2026-03-31T09:02:28.000000Z", "2026-03-31T09:02:28Z");
+    }
+
+    @Test
+    public void testParseOptionalMicros6Present() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.U+'Z'", "2026-03-31T09:02:28.123456Z", "2026-03-31T09:02:28.123456Z");
+    }
+
+    @Test
+    public void testParseOptionalMicros6RejectsBareDot() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.U+'Z'", "2026-03-31T09:02:28.Z");
+    }
+
+    @Test
+    public void testParseOptionalMicros6RejectsBareDotAtEnd() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.U+", "2026-03-31T09:02:28.");
+    }
+
+    @Test
+    public void testParseOptionalMicros6AbsentAtEnd() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.U+", "2026-03-31T09:02:28.000000Z", "2026-03-31T09:02:28");
+    }
+
+    @Test
+    public void testParseOptionalMicros6LeavesDotForLiteral() throws NumericException {
+        assertMicros(".U+.", "1970-01-01T00:00:00.000000Z", ".");
+    }
+
+    @Test
+    public void testParseOptionalMicros6LeavesDotForLiteralWhenFollowedByNonDigit() throws NumericException {
+        assertMicros(".U+..", "1970-01-01T00:00:00.000000Z", "..");
     }
 
     @Test
@@ -910,6 +986,41 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testParseNanos9Two() {
         assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.120000Z", "2022-02-02 02:02:02.12");
+    }
+
+    @Test
+    public void testParseOptionalNanos9Absent() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.000000Z", "2026-03-31T09:02:28Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9Present() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.123456Z", "2026-03-31T09:02:28.123456789Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9RejectsBareDot() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9AbsentAtEnd() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.N+", "2026-03-31T09:02:28.000000Z", "2026-03-31T09:02:28");
+    }
+
+    @Test
+    public void testParseOptionalNanos9RejectsBareDotAtEnd() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.N+", "2026-03-31T09:02:28.");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteral() throws NumericException {
+        assertMicros(".N+.", "1970-01-01T00:00:00.000000Z", ".");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteralWhenFollowedByNonDigit() throws NumericException {
+        assertMicros(".N+..", "1970-01-01T00:00:00.000000Z", "..");
     }
 
     @Test
@@ -1039,8 +1150,19 @@ public class TimestampFormatCompilerTest {
         return compiler.compile(pattern, true);
     }
 
-    private void assertFormat(String expected, String pattern, String date) throws NumericException {
-        assertFormat(expected, pattern, date, 0);
+    private void assertException(String pattern, String input) {
+
+        try {
+            REFERENCE.format(get(pattern).parse(input, defaultLocale), defaultLocale, "Z", sink);
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
+
+        try {
+            REFERENCE.format(compiler.compile(pattern).parse(input, defaultLocale), defaultLocale, "Z", sink);
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
     }
 
     private void assertFormat(String expected, String pattern, String date, int mic) throws NumericException {
@@ -1053,6 +1175,10 @@ public class TimestampFormatCompilerTest {
         TestUtils.assertEqualsIgnoreCase(expected, sink);
     }
 
+    private void assertFormat(String expected, String pattern, String date) throws NumericException {
+        assertFormat(expected, pattern, date, 0);
+    }
+
     private void assertMicros(String pattern, String expected, String input) throws NumericException {
         sink.clear();
         REFERENCE.format(get(pattern).parse(input, defaultLocale), defaultLocale, "Z", sink);
@@ -1060,10 +1186,7 @@ public class TimestampFormatCompilerTest {
 
         sink.clear();
         REFERENCE.format(compiler.compile(pattern).parse(input, defaultLocale), defaultLocale, "Z", sink);
-    }
-
-    private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {
-        assertThat(pattern, expected, input, DateLocaleFactory.INSTANCE.getLocale(localeId));
+        TestUtils.assertEquals(expected, sink);
     }
 
     private void assertThat(String pattern, String expected, String input) throws NumericException {
@@ -1076,6 +1199,10 @@ public class TimestampFormatCompilerTest {
 
         DateFormat compiled = compiler.compile(pattern);
         TestUtils.assertEquals(expected, Micros.toString(compiled.parse(input, locale)));
+    }
+
+    private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {
+        assertThat(pattern, expected, input, DateLocaleFactory.INSTANCE.getLocale(localeId));
     }
 
     private void testAgainstJavaReferenceImpl(String pattern) throws ParseException {

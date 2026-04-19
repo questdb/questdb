@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,6 +45,16 @@ public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     @Override
     public int getQueueCapacity() {
         return 16;
+    }
+
+    @Override
+    public long getThrottleIntervalMicros() {
+        return Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getTtlWeeks() {
+        return 4;
     }
 
     @Override

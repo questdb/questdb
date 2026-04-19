@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -131,9 +131,11 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
 
             try {
                 assertSql(
-                        "query\twas_cancelled\n" +
-                                "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n" +
-                                "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n",
+                        """
+                                query\twas_cancelled
+                                select 1 t from long_sequence(1) where sleep(120000)\ttrue
+                                select 1 t from long_sequence(1) where sleep(120000)\ttrue
+                                """,
                         "select query, cancel_query(query_id) was_cancelled from query_activity() where query = '" + query + "'"
                 );
             } finally {

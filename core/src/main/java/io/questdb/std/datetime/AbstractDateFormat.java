@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,6 +27,9 @@ package io.questdb.std.datetime;
 import io.questdb.std.NumericException;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Abstract base class for date format implementations.
+ */
 public abstract class AbstractDateFormat implements DateFormat {
 
     @Override

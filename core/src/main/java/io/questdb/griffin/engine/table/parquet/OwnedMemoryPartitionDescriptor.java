@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,6 +33,35 @@ import io.questdb.std.Unsafe;
 public class OwnedMemoryPartitionDescriptor extends PartitionDescriptor {
 
     @Override
+    public void addColumn(
+            final CharSequence columnName,
+            int columnType,
+            int columnId,
+            long columnTop,
+            long columnAddr,
+            long columnSize,
+            long columnSecondaryAddr,
+            long columnSecondarySize,
+            long symbolOffsetsAddr,
+            long symbolOffsetsCount,
+            int parquetEncodingConfig
+    ) {
+        final long savedPos = columnData.size();
+        try {
+            super.addColumn(columnName, columnType, columnId, columnTop,
+                    columnAddr, columnSize, columnSecondaryAddr, columnSecondarySize,
+                    symbolOffsetsAddr, symbolOffsetsCount, parquetEncodingConfig);
+        } catch (Throwable th) {
+            columnData.setPos(savedPos);
+            Unsafe.free(columnAddr, columnSize, MemoryTag.NATIVE_O3);
+            if (!ColumnType.isSymbol(ColumnType.tagOf(columnType))) {
+                Unsafe.free(columnSecondaryAddr, columnSecondarySize, MemoryTag.NATIVE_O3);
+            }
+            throw th;
+        }
+    }
+
+    @Override
     public void clear() {
         final int columnCount = getColumnCount();
         for (long columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -44,7 +73,7 @@ public class OwnedMemoryPartitionDescriptor extends PartitionDescriptor {
             Unsafe.free(columnAddr, columnSize, MemoryTag.NATIVE_O3);
             // for symbol columns, the secondary memory is provided by the symbol map
             // no need to free it here
-            if (!ColumnType.isSymbol(columnType)) {
+            if (!ColumnType.isSymbol(ColumnType.tagOf(columnType))) {
                 final long columnSecondaryAddr = columnData.get(rawIndex + COLUMN_SECONDARY_ADDR_OFFSET);
                 final long columnSecondarySize = columnData.get(rawIndex + COLUMN_SECONDARY_SIZE_OFFSET);
                 Unsafe.free(columnSecondaryAddr, columnSecondarySize, MemoryTag.NATIVE_O3);

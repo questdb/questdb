@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,7 +46,7 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     private final LongAdder sum = new LongAdder();
     private int valueOffset;
 
-    public SumLongVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public SumLongVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;

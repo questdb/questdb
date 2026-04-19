@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -117,6 +117,14 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         final String s = Chars.toString(key);
         keys[index] = s;
         list.add(s);
+        if (--free < 1) {
+            rehash();
+        }
+    }
+
+    public void addAtWithBorrowed(int index, @NotNull CharSequence key) {
+        keys[index] = key;
+        list.add(key);
         if (--free < 1) {
             rehash();
         }

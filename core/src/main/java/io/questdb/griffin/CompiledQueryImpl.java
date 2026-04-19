@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -50,6 +51,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
     private AlterOperation alterOp;
+    private boolean cacheable;
     private boolean done;
     private InsertOperation insertOp;
     private boolean isExecutedAtParseTime;
@@ -66,7 +68,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
-                return writerAPI.apply(operation);
+                try {
+                    return writerAPI.apply(operation);
+                } finally {
+                    operation.clearSecurityContext();
+                }
             }
         };
         alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
@@ -91,6 +97,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.updateOp = null;
         this.statementName = null;
         this.operation = null;
+        this.cacheable = false;
         this.isExecutedAtParseTime = false;
         this.done = false;
     }
@@ -202,20 +209,29 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         return updateOp;
     }
 
+    @Override
+    public boolean isCacheable() {
+        return cacheable;
+    }
+
     public void ofAlter(AlterOperation alterOp) {
         of(ALTER);
         this.alterOp = alterOp;
         this.isExecutedAtParseTime = false;
     }
 
-    @SuppressWarnings("unused")
+    public void ofAlterStoragePolicy() {
+        of(ALTER_STORAGE_POLICY);
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofAlterUser() {
         of(ALTER_USER);
         this.isExecutedAtParseTime = true;
     }
 
-    public void ofBackupTable() {
-        of(BACKUP_TABLE);
+    public void ofAlterView() {
+        of(ALTER_VIEW);
         this.isExecutedAtParseTime = true;
     }
 
@@ -244,6 +260,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
+    public void ofCompileView() {
+        of(COMPILE_VIEW);
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofCopyRemote() {
         of(COPY_REMOTE);
         this.isExecutedAtParseTime = true;
@@ -261,10 +282,15 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    @SuppressWarnings("unused")
     public void ofCreateUser() {
         of(CREATE_USER);
         this.isExecutedAtParseTime = true;
+    }
+
+    public void ofCreateView(CreateViewOperation createViewOp) {
+        of(CREATE_VIEW);
+        this.operation = createViewOp;
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofDeallocate(CharSequence statementName) {
@@ -295,9 +321,8 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    // although executor was there it had to fail back to the model
-    // used in enterprise version . Do NOT remove.
-    @SuppressWarnings("unused")
+    // although executor was there it had to fall back to the model
+    // used in enterprise version. Do NOT remove.
     public void ofNone() {
         of(NONE);
     }
@@ -329,9 +354,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    public void ofSelect(RecordCursorFactory recordCursorFactory) {
+    public void ofSelect(RecordCursorFactory recordCursorFactory, boolean cacheable) {
         of(SELECT, recordCursorFactory);
         this.isExecutedAtParseTime = false;
+        this.cacheable = cacheable;
     }
 
     public void ofSet() {
@@ -388,14 +414,13 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.sqlStatement = sqlText;
     }
 
-    private CompiledQuery of(short type) {
-        return of(type, null);
+    private void of(short type) {
+        of(type, null);
     }
 
-    private CompiledQuery of(short type, RecordCursorFactory factory) {
+    private void of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
         this.affectedRowsCount = -1;
-        return this;
     }
 }

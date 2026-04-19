@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.str.Utf8StringSink;
@@ -82,6 +83,10 @@ public interface ServerConfiguration {
 
     PublicPassthroughConfiguration getPublicPassthroughConfiguration();
 
+    default QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
+        return null;
+    }
+
     default String getReleaseType() {
         return OSS;
     }
@@ -96,6 +101,8 @@ public interface ServerConfiguration {
     default long getVersion() {
         return 0;
     }
+
+    WorkerPoolConfiguration getViewCompilerPoolConfiguration();
 
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 

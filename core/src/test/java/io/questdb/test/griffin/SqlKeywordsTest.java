@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -176,6 +176,17 @@ public class SqlKeywordsTest {
     }
 
     @Test
+    public void testIsWindowKeywordIsCaseInsensitive() {
+        Assert.assertTrue(isWindowKeyword("window"));
+        Assert.assertTrue(isWindowKeyword("WINDOW"));
+        Assert.assertTrue(isWindowKeyword("Window"));
+        Assert.assertTrue(isWindowKeyword("wINDOW"));
+        Assert.assertFalse(isWindowKeyword("windo"));
+        Assert.assertFalse(isWindowKeyword("windoww"));
+        Assert.assertFalse(isWindowKeyword("windox"));
+    }
+
+    @Test
     public void testLinear() {
         Assert.assertFalse(isLinearKeyword("12345"));
         Assert.assertFalse(isLinearKeyword("123456"));
@@ -247,8 +258,12 @@ public class SqlKeywordsTest {
         specialCases.put("isDefaultTransactionReadOnly", "default_transaction_read_only");
         specialCases.put("isExcluding", "excluding");
         specialCases.put("isIncluding", "including");
+        specialCases.put("isComma", ",");
+        specialCases.put("isRightParen", ")");
+        specialCases.put("isCurrentTimestampKeyword", "current_timestamp");
+        specialCases.put("isBloomFilterKeyword", "bloom_filter");
+        specialCases.put("isBloomFilterColumnsKeyword", "bloom_filter_columns");
 
         excludedCases.add("isPublicKeyword");
-        excludedCases.add("isWindowKeyword");
     }
 }

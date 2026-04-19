@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,8 +28,17 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 
-public abstract class AbstractCastToTimestampFunction extends AbstractUnaryTimestampFunction {
+/**
+ * Abstract base class for functions that cast values to timestamp.
+ */
+public abstract class AbstractCastToTimestampFunction extends AbstractUnaryTimestampFunction implements CastFunction {
 
+    /**
+     * Constructs a new cast to timestamp function.
+     *
+     * @param arg           the function argument to cast
+     * @param timestampType the target timestamp type
+     */
     protected AbstractCastToTimestampFunction(Function arg, int timestampType) {
         super(arg, timestampType);
     }

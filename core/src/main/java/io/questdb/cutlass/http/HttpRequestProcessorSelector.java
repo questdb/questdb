@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,8 +27,16 @@ package io.questdb.cutlass.http;
 import java.io.Closeable;
 
 public interface HttpRequestProcessorSelector extends Closeable {
+    int REJECT_PROCESSOR_ID = -1;
+
     @Override
     void close();
+
+    default int getLastSelectedHandlerId() {
+        return REJECT_PROCESSOR_ID;
+    }
+
+    HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header);
 
     HttpRequestProcessor select(HttpRequestHeader requestHeader);
 }

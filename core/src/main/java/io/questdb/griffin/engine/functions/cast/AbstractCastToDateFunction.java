@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,8 +28,16 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.AbstractUnaryDateFunction;
 
-public abstract class AbstractCastToDateFunction extends AbstractUnaryDateFunction {
+/**
+ * Abstract base class for functions that cast values to date.
+ */
+public abstract class AbstractCastToDateFunction extends AbstractUnaryDateFunction implements CastFunction {
 
+    /**
+     * Constructs a new cast to date function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToDateFunction(Function arg) {
         super(arg);
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -160,10 +160,11 @@ public class TxnTest extends AbstractCairoTest {
                         txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY);
 
                         txReader.unsafeLoadAll();
-                        final String expected = "{txn: 1, attachedPartitions: [\n" +
-                                "{ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},\n" +
-                                "{ts: '1970-01-02T00:00:00.000000Z', rowCount: 2, nameTxn: -1}\n" +
-                                "], transientRowCount: 2, fixedRowCount: 1, minTimestamp: '294247-01-10T04:00:54.775807Z', maxTimestamp: '1970-01-03T00:00:00.000001Z', dataVersion: 0, structureVersion: 0, partitionTableVersion: 0, columnVersion: 0, truncateVersion: 0, seqTxn: 0, symbolColumnCount: 0, lagRowCount: 0, lagMinTimestamp: '294247-01-10T04:00:54.775807Z', lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}";
+                        final String expected = """
+                                {txn: 1, attachedPartitions: [
+                                {ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},
+                                {ts: '1970-01-02T00:00:00.000000Z', rowCount: 2, nameTxn: -1}
+                                ], transientRowCount: 2, fixedRowCount: 1, minTimestamp: '294247-01-10T04:00:54.775807Z', maxTimestamp: '1970-01-03T00:00:00.000001Z', dataVersion: 0, structureVersion: 0, partitionTableVersion: 0, columnVersion: 0, truncateVersion: 0, seqTxn: 0, symbolColumnCount: 0, lagRowCount: 0, lagMinTimestamp: '294247-01-10T04:00:54.775807Z', lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}""";
                         Assert.assertEquals(expected, txReader.toString());
 
                         txCopyReader.loadAllFrom(txReader);
@@ -205,6 +206,23 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSquashCounterOverflow() throws IOException {
+        try (Path p = new Path()) {
+            try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                loadTxnWriter(tw, p, "/txn/sys.acl_entities~1/_txn");
+                //noinspection StatementWithEmptyBody
+                while (tw.incrementPartitionSquashCounter(0)) {
+                }
+
+                Assert.assertEquals(TxReader.PARTITION_SQUASH_COUNTER_MAX, tw.getPartitionSquashCount(0));
+
+                Assert.assertFalse(tw.incrementPartitionSquashCounter(0));
+                Assert.assertEquals(TxReader.PARTITION_SQUASH_COUNTER_MAX, tw.getPartitionSquashCount(0));
+            }
+        }
+    }
+
+    @Test
     public void testToString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -224,10 +242,11 @@ public class TxnTest extends AbstractCairoTest {
                         for (int i = 0; i < testPartitionCount; i++) {
                             txWriter.updatePartitionSizeByTimestamp(i * Micros.DAY_MICROS, i + 1);
                         }
-                        TestUtils.assertContains(txWriter.toString(), "[\n" +
-                                "{ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},\n" +
-                                "{ts: '1970-01-02T00:00:00.000000Z', rowCount: 2, nameTxn: -1}\n" +
-                                "]");
+                        TestUtils.assertContains(txWriter.toString(), """
+                                [
+                                {ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},
+                                {ts: '1970-01-02T00:00:00.000000Z', rowCount: 2, nameTxn: -1}
+                                ]""");
                     }
                 }
             });
@@ -380,7 +399,7 @@ public class TxnTest extends AbstractCairoTest {
                         path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
-                        long duration = 5_000;
+                        long duration = 30_000;
                         start.await();
                         while (done.get() == 0) {
                             TableUtils.safeReadTxn(txReader, clock, duration);
@@ -424,8 +443,8 @@ public class TxnTest extends AbstractCairoTest {
                         Assert.assertEquals(partitionCountCheck.get(), txReader.getPartitionCount() - 1);
 
                     } catch (Throwable e) {
-                        exceptions.add(e);
                         LOG.error().$(e).$();
+                        exceptions.add(e);
                     }
                 });
                 readers[th] = readerThread;

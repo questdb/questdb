@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,6 +37,7 @@ import io.questdb.cairo.DefaultDdlListener;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.LogRecordSinkAdapter;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -53,14 +54,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -116,6 +116,7 @@ import io.questdb.test.QuestDBTestNode;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.cutlass.http.HttpUtils;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
@@ -152,6 +153,8 @@ import static io.questdb.test.AbstractTest.CLOSEABLE;
 import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
+    public static final boolean INVALID = true;
+    public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
@@ -170,14 +173,13 @@ public final class TestUtils {
     }
 
     public static void assertAsciiCompliance(@Nullable Utf8Sequence utf8Sequence) {
-        if (utf8Sequence == null || utf8Sequence.isAscii() != Utf8s.isAscii(utf8Sequence)) {
+        if (utf8Sequence != null && utf8Sequence.isAscii() && !Utf8s.isAscii(utf8Sequence)) {
+            // isAscii()=true but value is not actually ASCII — this is always wrong.
+            // isAscii()=false is conservatively valid even for ASCII values (e.g. Parquet
+            // VarcharSlice uses column-level metadata and may not know per-value).
             Utf8StringSink sink = new Utf8StringSink();
-            sink.put("ascii flag set to '").put(utf8Sequence == null || utf8Sequence.isAscii())
-                    .put("' for value '").put(utf8Sequence).put("'. ");
-            Assert.assertEquals(
-                    sink.toString(),
-                    Utf8s.isAscii(utf8Sequence), utf8Sequence == null || utf8Sequence.isAscii()
-            );
+            sink.put("ascii flag set to 'true' for non-ASCII value '").put(utf8Sequence).put("'. ");
+            Assert.fail(sink.toString());
         }
     }
 
@@ -914,19 +916,8 @@ public final class TestUtils {
     public static void assertResponse(HttpClient.Request request, int expectedStatusCode, String expectedHttpResponse) {
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
-
             assertEquals(String.valueOf(expectedStatusCode), responseHeaders.getStatusCode());
-
-            final Utf8StringSink sink = new Utf8StringSink();
-
-            Fragment fragment;
-            final Response response = responseHeaders.getResponse();
-            while ((fragment = response.recv()) != null) {
-                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-            }
-
-            assertEquals(expectedHttpResponse, sink);
-            sink.clear();
+            HttpUtils.assertChunkedBody(responseHeaders, expectedHttpResponse);
         }
     }
 
@@ -1154,6 +1145,16 @@ public final class TestUtils {
     ) throws SqlException {
         printSqlWithTypes(compiler, sqlExecutionContext, sql, sink);
         assertEquals(expected, sink);
+    }
+
+    public static void assertViewState(boolean expectedInvalid, ViewState viewState) {
+        assertNotNull(viewState);
+        try {
+            viewState.lockForRead();
+            Assert.assertEquals(expectedInvalid, viewState.isInvalid());
+        } finally {
+            viewState.unlockAfterRead();
+        }
     }
 
     public static void await(CyclicBarrier barrier) {
@@ -1439,7 +1440,7 @@ public final class TestUtils {
                 Path path = new Path();
                 MemoryMARW mem = Vm.getCMARWInstance()
         ) {
-            TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
+            TableUtils.createTable(configuration, mem, null, path, model, tableVersion, tableId, tableToken.getDirName());
         }
     }
 
@@ -1457,12 +1458,12 @@ public final class TestUtils {
             int tableId,
             CharSequence tableName
     ) {
-        TableToken token = engine.lockTableName(tableName, tableId, structure.isMatView(), structure.isWalEnabled());
+        TableToken token = engine.lockTableName(tableName, tableId, structure.isView(), structure.isMatView(), structure.isWalEnabled());
         if (token == null) {
             throw new RuntimeException("table already exists: " + tableName);
         }
         path.of(engine.getConfiguration().getDbRoot()).concat(token);
-        TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
+        TableUtils.createTable(engine.getConfiguration(), memory, engine.getTelemetry(), path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
         if (structure.isWalEnabled()) {
             engine.getTableSequencerAPI().registerTable(tableId, structure, token);
@@ -1509,7 +1510,6 @@ public final class TestUtils {
                 filesFacade,
                 engine.getConfiguration().getMicrosecondClock()
         )) {
-            engine.setWalPurgeJobRunLock(job.getRunLock());
             job.drain(0);
         }
     }
@@ -2580,6 +2580,7 @@ public final class TestUtils {
         public LeakCheck() {
             Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
             mem = Unsafe.getMemUsed();
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
@@ -2606,6 +2607,7 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
             if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
                 Assert.fail(

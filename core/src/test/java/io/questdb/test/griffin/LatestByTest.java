@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -265,6 +266,51 @@ public class LatestByTest extends AbstractCairoTest {
                     "select ts, s from t " +
                             "where s in ('a', 'b') " +
                             "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByInsertNullSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month");
+            execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
+            execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
+            assertQuery(
+                    """
+                            ts\ts2\ts
+                            2025-01-03T00:00:00.000000Z\t\t
+                            2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
+                            """,
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByInsertNullSymbolsOnWal() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month wal");
+            execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
+            execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
+            drainWalQueue();
+            assertQuery(
+                    """
+                            ts\ts2\ts
+                            2025-01-03T00:00:00.000000Z\t\t
+                            2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
+                            """,
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
                     "ts",
                     true,
                     true
@@ -730,7 +776,7 @@ public class LatestByTest extends AbstractCairoTest {
                 // with the same value for the parameter as was injected into the global binding variable service
                 try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
                     BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
-                    localContext.with(localBindings);
+                    localContext.with(AllowAllSecurityContext.INSTANCE, localBindings);
                     localBindings.setStr("sym", "c");
                     assertFactoryCursor(
                             "ts\ts\n" +
@@ -748,7 +794,7 @@ public class LatestByTest extends AbstractCairoTest {
                 // this must yield a different result
                 try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
                     BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
-                    localContext.with(localBindings);
+                    localContext.with(AllowAllSecurityContext.INSTANCE, localBindings);
                     localBindings.setStr("sym", "a");
 
                     assertFactoryCursor(

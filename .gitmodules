@@ -1,6 +1,6 @@
 [submodule "core/src/main/c/share/jemalloc"]
 	path = core/src/main/c/share/jemalloc
-	url = https://github.com/jemalloc/jemalloc.git
+	url = https://github.com/questdb/jemalloc.git
 [submodule "core/src/main/c/share/simdjson"]
 	path = core/src/main/c/share/simdjson
 	url = https://github.com/simdjson/simdjson.git
@@ -14,3 +14,6 @@
 	path = core/src/main/c/share/async-profiler
 	url = https://github.com/async-profiler/async-profiler.git
 	shallow = true
+[submodule "java-questdb-client"]
+	path = java-questdb-client
+	url = https://github.com/questdb/java-questdb-client.git

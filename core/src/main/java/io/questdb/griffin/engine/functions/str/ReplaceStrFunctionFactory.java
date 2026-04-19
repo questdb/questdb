@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -91,6 +91,11 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             this.oldSubStr = oldSubStr;
             this.newSubStr = newSubStr;
             this.maxLength = maxLength;
+        }
+
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_STRING_OP, TernaryFunction.super.getComplexity());
         }
 
         @Override

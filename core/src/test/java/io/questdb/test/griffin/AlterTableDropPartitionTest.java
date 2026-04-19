@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,8 +32,13 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -329,6 +334,50 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     @Test
     public void testDropPartitionNameMissing2() throws Exception {
         createXAndAssertException("alter table x drop partition list '202';", 34, "'yyyy' expected, found [ts=202]");
+    }
+
+    @Test
+    public void testDropPartitionReadonlyFailsAtExecutionTime() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (" +
+                            "select x as i, timestamp_sequence('2018-01-01', 72_000_000L) ts " +
+                            "from long_sequence(100)" +
+                            ") timestamp(ts) partition by DAY"
+            );
+
+            SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(
+                    AllowAllSecurityContext.INSTANCE,
+                    bindVariableService,
+                    null,
+                    -1,
+                    null
+            );
+            SqlExecutionContext readOnlyContext = new SqlExecutionContextImpl(engine, 1).with(
+                    ReadOnlySecurityContext.INSTANCE,
+                    bindVariableService,
+                    null,
+                    -1,
+                    null
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery cq = compiler.compile("ALTER TABLE x DROP PARTITION LIST '2018-01-01'", allowAllContext);
+                Assert.assertEquals(CompiledQuery.ALTER, cq.getType());
+                try {
+                    cq.execute(readOnlyContext, null, false);
+                    Assert.fail();
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
+                }
+            }
+
+            // verify partition was not dropped
+            assertSql(
+                    "count\n100\n",
+                    "SELECT count() FROM x"
+            );
+        });
     }
 
     @Test
@@ -914,22 +963,14 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testSimpleWhere() throws Exception {
         assertMemoryLeak(() -> {
                     createX("YEAR", 3 * 72000000000L);
+                    assertPartitionResult("count\n145\n", "2018");
+                    assertPartitionResult("count\n147\n", "2020");
 
-                    assertPartitionResult("count\n" +
-                                    "145\n",
-                            "2018");
-
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
-
-                    execute("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')) ");
-
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    execute("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')");
+                    String expectedAfterDrop = "count\n0\n";
 
                     assertPartitionResult(expectedAfterDrop, "2018");
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
+                    assertPartitionResult("count\n147\n", "2020");
                 }
         );
     }

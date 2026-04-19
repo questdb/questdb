@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,14 +37,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.validationException;
 
-public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
+public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata {
     protected final CairoConfiguration configuration;
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
@@ -65,6 +64,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private MemoryMR transitionMeta;
     private int ttlHoursOrMonths;
     private boolean walEnabled;
+    private int writerColumnCount;
 
     public TableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
         try {
@@ -120,6 +120,14 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         Misc.free(metaCopyMem);
         Misc.free(transitionMeta);
         isCopy = false;
+        partitionBy = 0;
+        walEnabled = false;
+        metadataVersion = 0;
+        tableId = 0;
+        maxUncommittedRows = 0;
+        o3MaxLag = 0;
+        ttlHoursOrMonths = 0;
+        writerColumnCount = 0;
     }
 
     @Override
@@ -203,6 +211,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return ttlHoursOrMonths;
     }
 
+    public int getWriterColumnCount() {
+        return writerColumnCount;
+    }
+
     @Override
     public boolean isIndexed(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolIndexFlag();
@@ -215,6 +227,21 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public boolean isWalEnabled() {
         return walEnabled;
+    }
+
+    public void loadFrom(TableReaderMetadata srcMeta) {
+        assert tableToken.equals(srcMeta.tableToken);
+        // Copy src meta memory.
+        copyMemFrom(srcMeta);
+        // Now, read it.
+        try {
+            isCopy = true;
+            Misc.free(metaMem);
+            readFromMem(metaCopyMem);
+        } catch (Throwable e) {
+            clear();
+            throw e;
+        }
     }
 
     public void loadMetadata(LPSZ path) {
@@ -254,21 +281,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
-    public void loadFrom(TableReaderMetadata srcMeta) {
-        assert tableToken.equals(srcMeta.tableToken);
-        // Copy src meta memory.
-        copyMemFrom(srcMeta);
-        // Now, read it.
-        try {
-            isCopy = true;
-            Misc.free(metaMem);
-            readFromMem(metaCopyMem);
-        } catch (Throwable e) {
-            clear();
-            throw e;
-        }
-    }
-
     public boolean prepareTransition(long txnMetadataVersion) {
         if (transitionMeta == null) {
             transitionMeta = Vm.getCMRInstance();
@@ -289,6 +301,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public void readFromMem(MemoryR mem) {
         int columnCount = mem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.writerColumnCount = columnCount;
         int timestampIndex = mem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.partitionBy = mem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
         this.tableId = mem.getInt(TableUtils.META_OFFSET_TABLE_ID);
@@ -317,22 +330,22 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
             if (columnType > -1) {
                 String colName = Chars.toString(name);
-                columnMetadata.add(
-                        new TableReaderMetadataColumn(
-                                colName,
-                                columnType,
-                                TableUtils.isColumnIndexed(mem, writerIndex),
-                                TableUtils.getIndexBlockCapacity(mem, writerIndex),
-                                true,
-                                null,
-                                writerIndex,
-                                TableUtils.isColumnDedupKey(mem, writerIndex),
-                                denseSymbolIndex,
-                                stableIndex,
-                                TableUtils.isSymbolCached(mem, writerIndex),
-                                TableUtils.getSymbolCapacity(mem, writerIndex)
-                        )
+                TableReaderMetadataColumn colMeta = new TableReaderMetadataColumn(
+                        colName,
+                        columnType,
+                        TableUtils.isColumnIndexed(mem, writerIndex),
+                        TableUtils.getIndexBlockCapacity(mem, writerIndex),
+                        true,
+                        null,
+                        writerIndex,
+                        TableUtils.isColumnDedupKey(mem, writerIndex),
+                        denseSymbolIndex,
+                        stableIndex,
+                        TableUtils.isSymbolCached(mem, writerIndex),
+                        TableUtils.getSymbolCapacity(mem, writerIndex)
                 );
+                colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(mem, writerIndex));
+                columnMetadata.add(colMeta);
                 int denseIndex = columnMetadata.size() - 1;
                 if (!columnNameIndexMap.put(colName, denseIndex)) {
                     throw validationException(mem).put("Duplicate column [name=").put(name).put("] at ").put(i);
@@ -353,6 +366,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         columnNameIndexMap.clear();
 
         int columnCount = newMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.writerColumnCount = columnCount;
         assert columnCount >= existingColumnCount;
         columnMetadata.setPos(columnCount);
         int timestampIndex = newMetaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);

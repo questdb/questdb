@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -57,7 +56,7 @@ public class ShardedMapCursor implements MapRecordCursor {
 
     @Override
     public void close() {
-        Misc.freeObjList(shardCursors);
+        Misc.freeObjListAndKeepObjects(shardCursors);
     }
 
     @Override
@@ -71,7 +70,7 @@ public class ShardedMapCursor implements MapRecordCursor {
     }
 
     @Override
-    public boolean hasNext() throws DataUnavailableException {
+    public boolean hasNext() {
         if (currentCursor.hasNext()) {
             recordA.of(currentCursor.getRecord(), currentIndex);
             return true;
@@ -102,6 +101,20 @@ public class ShardedMapCursor implements MapRecordCursor {
         toTop();
     }
 
+    public void ofShared(ObjList<Map> shards) {
+        if (shardCursors.size() == 0) {
+            for (int i = 0, n = shards.size(); i < n; i++) {
+                shardCursors.add(shards.getQuick(i).newCursor());
+            }
+        } else {
+            assert shardCursors.size() == shards.size();
+            for (int i = 0, n = shards.size(); i < n; i++) {
+                shards.getQuick(i).initCursor(shardCursors.getQuick(i));
+            }
+        }
+        toTop();
+    }
+
     @Override
     public long preComputedStateSize() {
         return 0;
@@ -115,7 +128,7 @@ public class ShardedMapCursor implements MapRecordCursor {
     }
 
     @Override
-    public long size() throws DataUnavailableException {
+    public long size() {
         long size = 0;
         for (int i = 0, n = shardCursors.size(); i < n; i++) {
             size += shardCursors.getQuick(i).size();

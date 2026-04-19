@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -22,17 +22,23 @@
  *
  ******************************************************************************/
 
+use std::collections::HashSet;
 use std::mem::size_of;
 
+use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
+use parquet2::write::DynIter;
+use rapidhash::RapidHashMap;
 
 use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_primitive_def_levels, ExactSizedIter};
+use crate::parquet_write::util::{
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter,
+};
 
 pub fn binary_to_page(
     offsets: &[i64],
@@ -41,6 +47,7 @@ pub fn binary_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows = column_top + offsets.len();
     let mut buffer = vec![];
@@ -66,11 +73,24 @@ pub fn binary_to_page(
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     match encoding {
         Encoding::Plain => {
-            encode_plain(offsets, data, &mut buffer, &mut stats);
+            encode_plain(
+                offsets,
+                data,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes.as_deref_mut(),
+            )?;
             Ok(())
         }
         Encoding::DeltaLengthByteArray => {
-            encode_delta(offsets, data, null_count, &mut buffer, &mut stats);
+            encode_delta(
+                offsets,
+                data,
+                null_count,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes,
+            )?;
             Ok(())
         }
         _ => Err(fmt_err!(
@@ -79,6 +99,7 @@ pub fn binary_to_page(
         )),
     }?;
 
+    let null_count = column_top + null_count;
     build_plain_page(
         buffer,
         num_rows,
@@ -92,6 +113,7 @@ pub fn binary_to_page(
         primitive_type,
         options,
         encoding,
+        false,
     )
     .map(Page::Data)
 }
@@ -101,11 +123,17 @@ fn encode_plain(
     values: &[u8],
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
-) {
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<()> {
     let size_of_header = size_of::<i64>();
 
     for offset in offsets {
-        let offset = usize::try_from(*offset).expect("invalid offset value in binary aux column");
+        let offset = usize::try_from(*offset).map_err(|_| {
+            fmt_err!(
+                Layout,
+                "invalid offset value in binary aux column: {offset}"
+            )
+        })?;
         let len = types::decode::<i64>(&values[offset..offset + size_of_header]);
         if len < 0 {
             continue;
@@ -116,7 +144,11 @@ fn encode_plain(
         buffer.extend_from_slice(&encoded_len);
         buffer.extend_from_slice(value);
         stats.update(value);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(value));
+        }
     }
+    Ok(())
 }
 
 fn encode_delta(
@@ -125,13 +157,23 @@ fn encode_delta(
     null_count: usize,
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
-) {
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<()> {
     let size_of_header = size_of::<i64>();
     let row_count = offsets.len();
 
     if row_count == 0 {
         delta_bitpacked::encode(std::iter::empty(), buffer);
-        return;
+        return Ok(());
+    }
+
+    for &off in offsets {
+        if off < 0 {
+            return Err(fmt_err!(
+                Layout,
+                "invalid offset value in binary aux column: {off}"
+            ));
+        }
     }
 
     // Reserve buffer capacity for performance reasons only. No effect on correctness.
@@ -165,5 +207,122 @@ fn encode_delta(
         let value = &values[value_offset..value_offset + len as usize];
         buffer.extend_from_slice(value);
         stats.update(value);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(value));
+        }
     }
+    Ok(())
+}
+
+pub fn binary_to_dict_pages(
+    offsets: &[i64],
+    data: &[u8],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let num_rows = column_top + offsets.len();
+    let size_of_header = size_of::<i64>();
+    let mut null_count = 0;
+
+    // Collect byte slices
+    let byte_slices: Vec<Option<&[u8]>> = offsets
+        .iter()
+        .map(|offset| {
+            let offset = usize::try_from(*offset).map_err(|_| {
+                fmt_err!(
+                    Layout,
+                    "invalid offset value in binary aux column: {offset}"
+                )
+            })?;
+            let len = data.get(offset..offset + size_of_header).ok_or_else(|| {
+                fmt_err!(
+                    Layout,
+                    "invalid offset value in binary aux column: {offset}"
+                )
+            })?;
+            let len = types::decode::<i64>(len);
+            if len < 0 {
+                null_count += 1;
+                Ok(None)
+            } else {
+                let value_offset = offset + size_of_header;
+                if value_offset + len as usize > data.len() {
+                    return Err(fmt_err!(
+                        Layout,
+                        "invalid offset and length in binary aux column: offset {offset}, length {len}"
+                    ));
+                }
+                Ok(Some(&data[value_offset..value_offset + len as usize]))
+            }
+        })
+        .collect::<ParquetResult<Vec<_>>>()?;
+
+    // Build dictionary
+    let mut dict_map: RapidHashMap<&[u8], u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<&[u8]> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(offsets.len());
+    let mut total_keys_bytes = 0usize;
+
+    for s in byte_slices.iter().flatten() {
+        let next_id = u32::try_from(dict_entries.len())
+            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
+        let key = *dict_map.entry(s).or_insert_with(|| {
+            total_keys_bytes += 4 + s.len();
+            dict_entries.push(s);
+            next_id
+        });
+        keys.push(key);
+    }
+
+    // Build dict buffer (length-prefixed bytes)
+    let mut dict_buffer = Vec::with_capacity(total_keys_bytes);
+    let mut stats = if options.write_statistics {
+        Some(BinaryMaxMinStats::new(&primitive_type))
+    } else {
+        None
+    };
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+        dict_buffer.extend_from_slice(entry);
+        if let Some(ref mut s) = stats {
+            s.update(entry);
+        }
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(entry));
+        }
+    }
+
+    // Encode data page
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            byte_slices[i - column_top].is_some()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let non_null_len = offsets.len() - null_count;
+    let statistics = stats.map(|s| s.into_parquet_stats(total_null_count));
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
+        data_buffer,
+        definition_levels_byte_length,
+        num_rows,
+        total_null_count,
+        statistics,
+        primitive_type,
+        options,
+        false,
+    )
 }

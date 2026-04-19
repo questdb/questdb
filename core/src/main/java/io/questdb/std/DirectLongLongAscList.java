@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,9 +25,9 @@
 package io.questdb.std;
 
 public class DirectLongLongAscList implements DirectLongLongSortedList {
-    private final int capacity;
     private final Cursor cursor = new Cursor();
     private final int memoryTag;
+    private int capacity;
     private long ptr;
     private int size;
 
@@ -82,11 +82,25 @@ public class DirectLongLongAscList implements DirectLongLongSortedList {
     }
 
     @Override
+    public int getOrder() {
+        return DirectLongLongSortedList.ASC_ORDER;
+    }
+
+    @Override
+    public void reopen(int capacity) {
+        if (ptr == 0) {
+            ptr = Unsafe.malloc(16L * capacity, memoryTag);
+            this.capacity = capacity;
+            clear();
+        }
+    }
+
+    @Override
     public void reopen() {
         if (ptr == 0) {
             ptr = Unsafe.malloc(16L * capacity, memoryTag);
+            clear();
         }
-        clear();
     }
 
     @Override

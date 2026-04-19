@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -42,6 +42,13 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     public RowGroupBuffers(int memoryTag) {
         this.memoryTag = memoryTag;
         this.ptr = create(Unsafe.getNativeAllocator(memoryTag));
+    }
+
+    public RowGroupBuffers(int memoryTag, boolean keepClosed) {
+        this.memoryTag = memoryTag;
+        if (!keepClosed) {
+            this.ptr = create(Unsafe.getNativeAllocator(memoryTag));
+        }
     }
 
     @Override

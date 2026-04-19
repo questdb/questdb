@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,10 +24,10 @@
 
 package io.questdb.test;
 
+import io.questdb.ConfigPropertyKey;
 import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
-import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -114,15 +114,15 @@ public class QuestDBTestNode {
         griffin = new Griffin(cairo, circuitBreaker);
     }
 
-    public void setProperty(PropertyKey propertyKey, long value) {
+    public void setProperty(ConfigPropertyKey propertyKey, long value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
-    public void setProperty(PropertyKey propertyKey, String value) {
+    public void setProperty(ConfigPropertyKey propertyKey, String value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
-    public void setProperty(PropertyKey propertyKey, boolean value) {
+    public void setProperty(ConfigPropertyKey propertyKey, boolean value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
@@ -184,12 +184,14 @@ public class QuestDBTestNode {
             engine.getTableIdGenerator().open();
             engine.getTableIdGenerator().reset();
             engine.resetNameRegistryMemory();
+            engine.getWalLocker().clear();
             engine.setUp();
         }
 
         public void tearDown(boolean removeDir) {
             engine.getTableIdGenerator().close();
             engine.clear();
+            engine.getViewStateStore().clear();
             engine.closeNameRegistry();
             engine.getMetrics().clear();
             if (removeDir && ownRoot) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -59,6 +59,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Returns true when the context doesn't require all SQL functions to be deterministic.
     // Deterministic-only functions are enforced e.g. when compiling a mat view.
     boolean allowNonDeterministicFunctions();
+
+    void changePageFrameSizes(int minRows, int maxRows);
 
     void clearWindowContext();
 
@@ -146,16 +148,20 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     int getNowTimestampType();
 
+    int getPageFrameMaxRows();
+
+    int getPageFrameMinRows();
+
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
     Rnd getRandom();
 
-    default TableReader getReader(TableToken tableName, long version) {
-        return getCairoEngine().getReader(tableName, version);
+    default TableReader getReader(TableToken tableToken, long version) {
+        return getCairoEngine().getReader(tableToken, version);
     }
 
-    default TableReader getReader(TableToken tableName) {
-        return getCairoEngine().getReader(tableName);
+    default TableReader getReader(TableToken tableToken) {
+        return getCairoEngine().getReader(tableToken);
     }
 
     long getRequestFd();
@@ -210,17 +216,21 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelReadParquetEnabled();
 
+    boolean isParquetRowGroupPruningEnabled();
+
     boolean isParallelTopKEnabled();
+
+    boolean isParallelHorizonJoinEnabled();
 
     boolean isParallelWindowJoinEnabled();
 
     boolean isTimestampRequired();
 
-    boolean isValidationOnly();
-
     default boolean isUninterruptible() {
         return false;
     }
+
+    boolean isValidationOnly();
 
     boolean isWalApplication();
 
@@ -244,7 +254,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void pushTimestampRequiredFlag(boolean flag);
 
-    void resetFlags();
+    void reset();
+
+    void restoreToDefaultPageFrameSizes();
 
     void setAllowNonDeterministicFunction(boolean value);
 
@@ -266,7 +278,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
+    void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
+
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
+
+    void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
 
     void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
 

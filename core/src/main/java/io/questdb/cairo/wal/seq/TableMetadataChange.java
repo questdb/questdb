@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,5 +36,12 @@ public interface TableMetadataChange {
      */
     default String matViewInvalidationReason() {
         return null;
+    }
+
+    /**
+     * Returns true if the operation should trigger the re-compilation of dependent views.
+     */
+    default boolean shouldCompileDependentViews() {
+        return false;
     }
 }

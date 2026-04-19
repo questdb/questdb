@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -49,7 +49,7 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     );
     private int valueOffset;
 
-    public MaxLongVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public MaxLongVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             this.distinctFunc = Rosti::keyedMicroHourDistinct;

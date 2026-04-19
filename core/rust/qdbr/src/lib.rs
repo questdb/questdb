@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -23,22 +23,23 @@
  ******************************************************************************/
 
 #![feature(allocator_api)]
+#![feature(portable_simd)]
 extern crate core;
 pub extern crate jni;
 
-mod allocator;
-mod cairo;
-mod files;
-mod parquet;
-mod parquet_read;
-mod parquet_write;
+pub mod allocator;
+pub mod files;
+pub mod parquet;
+pub mod parquet_read;
+pub mod parquet_write;
+mod wal_lock;
 
 use jni::sys::jlong;
 use jni::{objects::JClass, JNIEnv};
-use once_cell::sync::Lazy;
 use rayon::{ThreadPool, ThreadPoolBuilder};
+use std::sync::LazyLock;
 
-pub static POOL: Lazy<ThreadPool> = Lazy::new(|| {
+pub static POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
     let num_threads = std::env::var("QUESTDB_MAX_THREADS") // TODO: Use a proper config system
         .map(|s| s.parse::<usize>().expect("max_threads"))
         .unwrap_or_else(|_| {
@@ -72,8 +73,7 @@ pub extern "system" fn Java_io_questdb_std_Os_smokeTest(
     a: i64,
     b: i64,
 ) -> i64 {
-    let result = a + b;
-    result
+    a + b
 }
 
 #[no_mangle]
@@ -82,4 +82,31 @@ pub extern "system" fn Java_io_questdb_std_Os_isRustReleaseBuild(
     _class: JClass,
 ) -> bool {
     !cfg!(debug_assertions)
+}
+
+#[cfg(test)]
+mod tests {
+    /// Verify that release builds retain function name symbols so that panic
+    /// backtraces remain readable. This test catches accidental `strip = true`
+    /// in the release profile — use `strip = "debuginfo"` instead.
+    ///
+    /// Run with `cargo test --release` for a meaningful check;
+    /// in debug builds symbols are always present.
+    #[test]
+    fn backtrace_contains_function_names() {
+        backtrace_probe();
+    }
+
+    #[inline(never)]
+    fn backtrace_probe() {
+        let bt = std::backtrace::Backtrace::force_capture();
+        let bt_str = bt.to_string();
+        assert!(
+            bt_str.contains("backtrace_probe"),
+            "Backtrace missing function names. The binary is likely \
+             compiled with `strip = true`. Use `strip = \"debuginfo\"` \
+             to keep symbol names for panic diagnostics.\n\
+             Backtrace:\n{bt_str}"
+        );
+    }
 }

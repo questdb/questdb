@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -210,7 +210,7 @@ public final class Chars {
     }
 
     public static boolean empty(@Nullable CharSequence value) {
-        return value == null || value.length() < 1;
+        return value == null || value.isEmpty();
     }
 
     public static boolean endsWith(CharSequence cs, CharSequence ends) {
@@ -476,18 +476,13 @@ public final class Chars {
     }
 
     /**
-     * Strictly greater than (&gt;) comparison of two UTF16 sequences in lexicographical
-     * order. For example, for:
-     * l = aaaaa
-     * r = aaaaaaa
-     * the l &gt; r will produce "false", however for:
-     * l = bbbb
-     * r = aaaaaaa
-     * the l &gt; r will produce "true", because b &gt; a.
+     * Strictly greater than (&gt;) comparison of two CharSequences in Unicode code point order.
+     * For well-formed UTF-16 input, this produces the same ordering as comparing the
+     * UTF-8 encoded byte sequences.
      *
      * @param l left sequence, can be null
      * @param r right sequence, can be null
-     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     * @return false if either argument is null, otherwise true if l is lexicographically greater than r
      */
     public static boolean greaterThan(@Nullable CharSequence l, @Nullable CharSequence r) {
         if (l == null || r == null) {
@@ -495,15 +490,18 @@ public final class Chars {
         }
         final int ll = l.length();
         final int rl = r.length();
-        final int min = Math.min(ll, rl);
-
-        for (int i = 0; i < min; i++) {
-            final int k = l.charAt(i) - r.charAt(i);
-            if (k != 0) {
-                return k > 0;
+        int i = 0;
+        int j = 0;
+        while (i < ll && j < rl) {
+            final int cpL = Character.codePointAt(l, i);
+            final int cpR = Character.codePointAt(r, j);
+            if (cpL != cpR) {
+                return cpL > cpR;
             }
+            i += Character.charCount(cpL);
+            j += Character.charCount(cpR);
         }
-        return ll > rl;
+        return i < ll;
     }
 
     public static int hashCode(@NotNull CharSequence value, int lo, int hi) {
@@ -989,6 +987,18 @@ public final class Chars {
         return true;
     }
 
+    public static boolean isAsciiDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    public static boolean isAsciiLetter(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    public static boolean isAsciiWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+    }
+
     public static boolean isBlank(CharSequence s) {
         if (s == null) {
             return true;
@@ -1028,14 +1038,10 @@ public final class Chars {
     }
 
     public static boolean isQuote(char c) {
-        switch (c) {
-            case '\'':
-            case '"':
-            case '`':
-                return true;
-            default:
-                return false;
-        }
+        return switch (c) {
+            case '\'', '"', '`' -> true;
+            default -> false;
+        };
     }
 
     public static boolean isQuoted(CharSequence s) {
@@ -1074,18 +1080,13 @@ public final class Chars {
     }
 
     /**
-     * Strictly greater than (&lt;) comparison of two UTF16 sequences in lexicographical
-     * order. For example, for:
-     * l = aaaaa
-     * r = aaaaaaa
-     * the l &gt; r will produce "false", however for:
-     * l = bbbb
-     * r = aaaaaaa
-     * the l &lt; r will produce "true", because b &lt; a.
+     * Strictly less than (&lt;) comparison of two CharSequences in Unicode code point order.
+     * For well-formed UTF-16 input, this produces the same ordering as comparing the
+     * UTF-8 encoded byte sequences.
      *
      * @param l left sequence, can be null
      * @param r right sequence, can be null
-     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     * @return false if either argument is null, otherwise true if l is lexicographically less than r
      */
     public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r) {
         if (l == null || r == null) {
@@ -1093,15 +1094,18 @@ public final class Chars {
         }
         final int ll = l.length();
         final int rl = r.length();
-        final int min = Math.min(ll, rl);
-
-        for (int i = 0; i < min; i++) {
-            final int k = l.charAt(i) - r.charAt(i);
-            if (k != 0) {
-                return k < 0;
+        int i = 0;
+        int j = 0;
+        while (i < ll && j < rl) {
+            final int cpL = Character.codePointAt(l, i);
+            final int cpR = Character.codePointAt(r, j);
+            if (cpL != cpR) {
+                return cpL < cpR;
             }
+            i += Character.charCount(cpL);
+            j += Character.charCount(cpR);
         }
-        return ll < rl;
+        return j < rl;
     }
 
     public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r, boolean negated) {
@@ -1265,7 +1269,7 @@ public final class Chars {
     }
 
     public static boolean startsWith(CharSequence _this, char c) {
-        return _this.length() > 0 && _this.charAt(0) == c;
+        return !_this.isEmpty() && _this.charAt(0) == c;
     }
 
     public static boolean startsWithIgnoreCase(CharSequence cs, CharSequence startsWith) {

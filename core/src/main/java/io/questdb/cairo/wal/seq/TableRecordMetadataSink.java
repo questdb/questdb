@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -48,7 +48,6 @@ public interface TableRecordMetadataSink extends Mutable {
             int tableId,
             int timestampIndex,
             int compressedTimestampIndex,
-            boolean suspended,
             long structureVersion,
             int columnCount,
             @Transient IntList readColumnOrder

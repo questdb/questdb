@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,6 +46,14 @@ public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable, Sin
      * @return opaque index value
      */
     int getIndex();
+
+    /**
+     * Returns the root entry (first segment) of the entry chain this tenant belongs to.
+     * This is used to check if the table has been dropped from the pool.
+     *
+     * @return root entry instance (segment 0).
+     */
+    AbstractMultiTenantPool.Entry<T> getRootEntry();
 
     /**
      * Supervisor this reader is attached to.

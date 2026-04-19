@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,6 +32,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.ops.AlterOperation.*;
+import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 
 public class AlterOperationBuilder implements Mutable {
     private final LongList extraInfo = new LongList();
@@ -44,7 +45,7 @@ public class AlterOperationBuilder implements Mutable {
 
     // the builder and the operation it builds share the extraInfo list
     public AlterOperationBuilder() {
-        this.op = new AlterOperation(extraInfo, extraStrInfo);
+        this.op = createAlterOperation(extraInfo, extraStrInfo);
     }
 
     public void addColumnToList(
@@ -57,7 +58,7 @@ public class AlterOperationBuilder implements Mutable {
             int indexValueBlockCapacity,
             boolean dedupKey
     ) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
@@ -75,7 +76,11 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public AlterOperation build() {
-        return op.of(command, tableToken, tableId, tableNamePosition);
+        return build(CMD_ALTER_TABLE);
+    }
+
+    public AlterOperation build(int cmdType) {
+        return op.of(cmdType, command, tableToken, tableId, tableNamePosition);
     }
 
     @Override
@@ -102,7 +107,7 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
@@ -178,7 +183,7 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public AlterOperationBuilder ofDropColumn(CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         this.extraStrInfo.add(columnName);
         return this;
     }
@@ -217,7 +222,7 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public void ofRemoveCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         this.command = REMOVE_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
@@ -295,6 +300,16 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofSetParquetEncoding(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int parquetEncodingConfig) {
+        this.command = SET_PARQUET_ENCODING;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        this.extraInfo.add(parquetEncodingConfig);
+        return this;
+    }
+
     public AlterOperationBuilder ofSetTtl(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
         this.command = SET_TTL;
         this.tableNamePosition = tableNamePosition;
@@ -322,5 +337,14 @@ public class AlterOperationBuilder implements Mutable {
 
     public void setDedupKeyFlag(int writerColumnIndex) {
         extraInfo.add(writerColumnIndex);
+    }
+
+    public void setParquetConversionOptions(@Nullable CharSequence bloomFilterColumns, double fpp) {
+        extraStrInfo.add(bloomFilterColumns);
+        extraInfo.add(Double.doubleToLongBits(fpp));
+    }
+
+    protected AlterOperation createAlterOperation(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
     }
 }

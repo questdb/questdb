@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -102,7 +102,7 @@ public final class Vect {
             int dedupColumnCount,
             long dedupColumnData
     ) {
-        long dedupCount = dedupSortedTimestampIndex(
+        long dedupRowCount = dedupSortedTimestampIndex(
                 inIndexAddr,
                 count,
                 outIndexAddr,
@@ -110,8 +110,8 @@ public final class Vect {
                 dedupColumnCount,
                 dedupColumnData
         );
-        assert dedupCount != -1 : "unsorted data passed to deduplication";
-        return dedupCount;
+        assert dedupRowCount != -1 : "unsorted data passed to deduplication";
+        return dedupRowCount;
     }
 
     public static native long dedupSortedTimestampIndexManyAddresses(
@@ -424,6 +424,8 @@ public final class Vect {
             long tgtDataAddr,
             long tgtAuxAdd
     );
+
+    public static native void sortEncodedEntries(long addr, long count, int keyLongs, long parallelThreshold);
 
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 

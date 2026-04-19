@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -67,7 +67,9 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         if (index < 0) {
             values[-index - 1]++;
         } else {
-            putAt0(index, Chars.toString(key), 1);
+            String keyString = Chars.toString(key);
+            putAt0(index, keyString, 1);
+            list.add(keyString);
         }
     }
 

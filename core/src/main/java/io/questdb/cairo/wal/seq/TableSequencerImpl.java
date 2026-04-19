@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -99,7 +99,7 @@ public class TableSequencerImpl implements TableSequencer {
                     WAL_INDEX_FILE_NAME,
                     configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep()
             );
-            tableTransactionLog = new TableTransactionLog(configuration);
+            tableTransactionLog = new TableTransactionLog(configuration, walDirectoryPolicy);
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
                 schemaLock.writeLock().lock();
@@ -194,6 +194,10 @@ public class TableSequencerImpl implements TableSequencer {
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }
 
+    public int getCurrentWalId() {
+        return (int) walIdGenerator.getCurrentId();
+    }
+
     @Override
     public TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo) {
         checkDropped();
@@ -265,7 +269,6 @@ public class TableSequencerImpl implements TableSequencer {
                 metadata.getTableId(),
                 timestampIndex,
                 compressedTimestampIndex,
-                metadata.isSuspended(),
                 metadata.getMetadataVersion(),
                 compressedColumnCount,
                 reorderNeeded ? metadata.getReadColumnOrder() : null
@@ -337,7 +340,7 @@ public class TableSequencerImpl implements TableSequencer {
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
 
-                if (!metadata.isSuspended()) {
+                if (!seqTxnTracker.isSuspended()) {
                     notifyTxnCommitted(txn);
                     if (!tableToken.equals(oldTableToken)) {
                         engine.getWalListener().tableRenamed(tableToken, txn, timestamp, oldTableToken);
@@ -429,7 +432,6 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public void resumeTable() {
-        metadata.resumeTable();
         notifyTxnCommitted(Long.MAX_VALUE);
         seqTxnTracker.setUnsuspended();
     }
@@ -437,11 +439,6 @@ public class TableSequencerImpl implements TableSequencer {
     @TestOnly
     public void setDistressed() {
         this.distressed = true;
-    }
-
-    @Override
-    public void suspendTable() {
-        metadata.suspendTable();
     }
 
     private void applyToMetadata(TableMetadataChange change) {

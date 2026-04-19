@@ -169,9 +169,9 @@ function export_jemalloc() {
           echo "  - Remove or comment out 'export QDB_JEMALLOC=true' from your env.sh or shell profile"
           exit 55
       fi
-      jemalloc_so=$(ls $BASE/libjemalloc* 2>/dev/null)
+      jemalloc_so=$(ls $BASE/libjemalloc.so* 2>/dev/null | head -1)
       if [[ -r "${jemalloc_so}" ]]; then
-          export LD_PRELOAD=${jemalloc_so}
+          export QDB_JEMALLOC_LIB=${jemalloc_so}
           echo "Using jemalloc"
       else
           echo "Error: QDB_JEMALLOC is enabled but jemalloc library not found in ${BASE}"
@@ -380,14 +380,21 @@ function start {
     DATE=`date +%Y-%m-%dT%H-%M-%S`
     HELLO_FILE=${QDB_ROOT}/hello.txt
     rm ${HELLO_FILE} 2> /dev/null
+
+    # Set LD_PRELOAD only for the Java process, not the shell
+    JAVA_CMD="${JAVA}"
+    if [ -n "${QDB_JEMALLOC_LIB}" ]; then
+        JAVA_CMD="env LD_PRELOAD=${QDB_JEMALLOC_LIB} ${JAVA}"
+    fi
+
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
+        ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
+        ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
         $BASE/print-hello.sh ${HELLO_FILE}
     else
         $BASE/print-hello.sh ${HELLO_FILE} &
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
+        ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
     fi
 }
 

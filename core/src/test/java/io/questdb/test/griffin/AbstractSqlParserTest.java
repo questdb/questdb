@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,8 +32,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -150,6 +150,10 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         }
     }
 
+    protected void assertCreate(String expected, String query) throws SqlException {
+        assertModel(expected, query, ExecutionModel.CREATE_TABLE);
+    }
+
     protected void assertInsertQuery(TableModel... tableModels) throws SqlException {
         assertModel(
                 "insert into test (test_timestamp, test_value) values ('2020-12-31 15:15:51.663+00:00'::timestamp, '256')",
@@ -164,12 +168,12 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 () -> {
                     sink.clear();
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
+                        ExecutionModel model = compiler.generateExecutionModel(query, sqlExecutionContext);
                         Assert.assertEquals(model.getModelType(), modelType);
                         ((Sinkable) model).toSink(sink);
                         TestUtils.assertEquals(expected, sink);
-                        if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
-                            validateTopDownColumns((QueryModel) model);
+                        if (model instanceof IQueryModel && model.getModelType() == ExecutionModel.QUERY) {
+                            validateTopDownColumns((IQueryModel) model);
                         }
                     }
                 },
@@ -183,10 +187,6 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
 
     protected void assertUpdate(String expected, String query, TableModel... tableModels) throws SqlException {
         assertModel(expected, query, ExecutionModel.UPDATE, tableModels);
-    }
-
-    protected void assertCreate(String expected, String query) throws SqlException {
-        assertModel(expected, query, ExecutionModel.CREATE_TABLE);
     }
 
     protected void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
@@ -210,17 +210,17 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         }
     }
 
-    protected void validateTopDownColumns(QueryModel model) {
+    protected void validateTopDownColumns(IQueryModel model) {
         ObjList<QueryColumn> columns = model.getColumns();
         final ObjList<LowerCaseCharSequenceHashSet> nameSets = new ObjList<>();
 
-        QueryModel nested = model.getNestedModel();
+        IQueryModel nested = model.getNestedModel();
         while (nested != null) {
             nameSets.clear();
 
             for (int i = 0, n = nested.getJoinModels().size(); i < n; i++) {
                 LowerCaseCharSequenceHashSet set = new LowerCaseCharSequenceHashSet();
-                final QueryModel m = nested.getJoinModels().getQuick(i);
+                final IQueryModel m = nested.getJoinModels().getQuick(i);
                 // validate uniqueness of top-down column names.
                 final ObjList<QueryColumn> cols = m.getTopDownColumns();
                 for (int j = 0, k = cols.size(); j < k; j++) {

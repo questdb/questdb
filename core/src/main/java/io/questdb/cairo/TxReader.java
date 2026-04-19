@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -48,23 +48,28 @@ public class TxReader implements Closeable, Mutable {
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
     public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
+    public static final int PARTITION_SQUASH_COUNTER_MAX = 0xFFFF;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
+    protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
     protected static final int PARTITION_MASK_READ_ONLY_BIT_OFFSET = 62;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_PARQUET_FILE_SIZE_OFFSET = 3;
+    protected static final int PARTITION_SQUASH_COUNTER_BIT_OFFSET = 44;
+    protected static final long PARTITION_SQUASH_COUNTER_MASK = 0xFFFFL << PARTITION_SQUASH_COUNTER_BIT_OFFSET;
     // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
     //
-    // | reserved | read-only | parquet format | available bits | partition size |
-    // +----------+-----------+----------------+----------------+----------------+
-    // |  1 bit   |  1 bit    |  1 bit         |  17 bits       |      44 bits   |
+    // | reserved | read-only | parquet format | parquet generated | squash counter | partition size |
+    // +----------+-----------+----------------+-------------------+----------------+----------------+
+    // |  1 bit   |  1 bit    |  1 bit         |  1 bit            |   16 bit       |      44 bits   |
     //
     // when read-only bit is set, the partition is read only.
     // we reserve the highest bit to allow negative values to
     // have meaning (in future). For instance the table reader uses
     // a negative size value to mean that the partition is not open.
-    // parquet format bit is used to indicate that partition was converted to parquet format
+    // the parquet format bit indicates that the partition has been converted to parquet format
+    // the parquet generated bit indicates that a parquet file has been generated for the partition
     // The last long in partition is the parquet file size.
     protected static final int PARTITION_TS_OFFSET = 0;
     protected final LongList attachedPartitions = new LongList();
@@ -197,6 +202,24 @@ public class TxReader implements Closeable, Mutable {
 
     public long getDataVersion() {
         return dataVersion;
+    }
+
+    public int getFirstNativePartitionIndex() {
+        for (int i = 0, n = getPartitionCount(); i < n; i++) {
+            if (!isPartitionParquet(i)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public int getFirstNativePartitionWithoutParquetGenerated() {
+        for (int i = 0, n = getPartitionCount(); i < n; i++) {
+            if (!isPartitionParquetGenerated(i) && !isPartitionParquet(i)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     public long getFixedRowCount() {
@@ -349,6 +372,10 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionSizeByRawIndex(attachedPartitions, index);
     }
 
+    public int getPartitionSquashCount(int i) {
+        return getPartitionSquashCountByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
     public long getPartitionTableVersion() {
         return partitionTableVersion;
     }
@@ -405,6 +432,15 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
+    public boolean hasParquetPartitions() {
+        for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            if (isPartitionParquetByRawIndex(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void initPartitionBy(int timestampType, int partitionBy) {
         this.timestampType = timestampType;
         this.partitionBy = partitionBy;
@@ -432,6 +468,10 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isPartitionParquetByRawIndex(int indexRaw) {
         return checkPartitionOptionBit(indexRaw, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
+    }
+
+    public boolean isPartitionParquetGenerated(int i) {
+        return isPartitionParquetGeneratedByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     public boolean isPartitionReadOnly(int i) {
@@ -686,6 +726,10 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.getQuick(partitionRawIndex + PARTITION_PARQUET_FILE_SIZE_OFFSET);
     }
 
+    private boolean isPartitionParquetGeneratedByRawIndex(int indexRaw) {
+        return checkPartitionOptionBit(indexRaw, PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET);
+    }
+
     private void openTxnFile(FilesFacade ff, LPSZ path) {
         long len = ff.length(path);
         // we check for length rather than file existence to account for possible delay
@@ -806,6 +850,11 @@ public class TxReader implements Closeable, Mutable {
     int findAttachedPartitionRawIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
         return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, Vect.BIN_SEARCH_SCAN_UP);
+    }
+
+    int getPartitionSquashCountByRawIndex(int indexRaw) {
+        long partitionSizeMasked = attachedPartitions.getQuick(indexRaw + PARTITION_MASKED_SIZE_OFFSET);
+        return (int) ((partitionSizeMasked >>> PARTITION_SQUASH_COUNTER_BIT_OFFSET) & PARTITION_SQUASH_COUNTER_MAX);
     }
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {

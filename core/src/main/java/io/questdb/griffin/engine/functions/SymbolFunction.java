@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -256,6 +256,11 @@ public abstract class SymbolFunction implements Function, SymbolTable {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Returns true if the symbol table is static (immutable).
+     *
+     * @return true if the symbol table is static
+     */
     public abstract boolean isSymbolTableStatic();
 
     /**

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -33,9 +34,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -47,6 +51,7 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
     private PageFrameRecordCursorImpl cursor;
     private ReadParquetPageFrameCursor pageFrameCursor;
     private Path path;
+    private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     public ReadParquetPageFrameRecordCursorFactory(
             @Transient Path path,
@@ -58,41 +63,53 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (this.cursor == null) {
-            this.cursor = new PageFrameRecordCursorImpl(
-                    executionContext.getCairoEngine().getConfiguration(),
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        if (cursor == null) {
+            cursor = new PageFrameRecordCursorImpl(
+                    configuration,
                     getMetadata(),
                     new PageFrameRowCursorFactory(ORDER_ASC),
                     true,
                     null
             );
         }
-        if (this.pageFrameCursor == null) {
-            this.pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        if (pageFrameCursor == null) {
+            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
         }
-        pageFrameCursor.of(path.$());
+        pageFrameCursor.of(path.$(), executionContext);
         try {
             cursor.of(pageFrameCursor, executionContext);
             return cursor;
-        } catch (Throwable e) {
-            pageFrameCursor.close();
-            throw e;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
         }
     }
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         assert order != ORDER_DESC;
-        if (this.pageFrameCursor == null) {
-            this.pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        if (pageFrameCursor == null) {
+            final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
         }
-        pageFrameCursor.of(path.$());
+        pageFrameCursor.of(path.$(), executionContext);
         return pageFrameCursor;
+    }
+
+    @Override
+    public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
+        return true;
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+        this.pushdownFilterConditions = pushdownFilterConditions;
     }
 
     @Override
@@ -111,5 +128,6 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
         Misc.free(cursor);
         Misc.free(pageFrameCursor);
         path = Misc.free(path);
+        Misc.freeObjListAndClear(this.pushdownFilterConditions);
     }
 }

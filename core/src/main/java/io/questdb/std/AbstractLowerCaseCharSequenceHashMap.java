@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,14 +36,6 @@ abstract class AbstractLowerCaseCharSequenceHashMap extends AbstractLowerCaseCha
     public void clear() {
         super.clear();
         list.clear();
-    }
-
-    public boolean contains(CharSequence key) {
-        return keyIndex(key) < 0;
-    }
-
-    public boolean contains(CharSequence key, int lo, int hi) {
-        return keyIndex(key, lo, hi) < 0;
     }
 
     public ObjList<CharSequence> keys() {

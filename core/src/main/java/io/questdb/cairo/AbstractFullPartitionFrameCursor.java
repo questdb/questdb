@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,10 +31,18 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.TestOnly;
 
+/**
+ * Abstract base class for full partition frame cursors.
+ */
 public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
+    // Partition high boundary.
     protected int partitionHi;
+    // Current partition index.
     protected int partitionIndex;
+    // The scan high boundary. Defaults to partitionHi but can be narrowed
+    // by toPartition(int) to limit iteration to a single partition.
+    protected int partitionScanHi;
     protected TableReader reader;
 
     @Override
@@ -61,8 +69,15 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         return reader.newSymbolTable(columnIndex);
     }
 
+    /**
+     * Initializes the cursor with the given table reader.
+     *
+     * @param reader the table reader
+     * @return this cursor
+     */
     public PartitionFrameCursor of(TableReader reader) {
         partitionHi = reader.getPartitionCount();
+        partitionScanHi = partitionHi;
         toTop();
         this.reader = reader;
         return this;
@@ -82,11 +97,35 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         return reader.size();
     }
 
+    @Override
+    public void toPartition(int targetPartitionIndex) {
+        this.partitionIndex = targetPartitionIndex;
+        this.partitionScanHi = targetPartitionIndex + 1;
+    }
+
+    /**
+     * A partition frame representing a full table partition.
+     */
     protected static class FullTablePartitionFrame implements PartitionFrame {
+        /**
+         * The partition format.
+         */
         protected byte format;
+        /**
+         * The Parquet decoder if applicable.
+         */
         protected PartitionDecoder parquetDecoder;
+        /**
+         * The partition index.
+         */
         protected int partitionIndex;
+        /**
+         * The high row boundary.
+         */
         protected long rowHi;
+        /**
+         * The low row boundary.
+         */
         protected long rowLo;
 
         @Override

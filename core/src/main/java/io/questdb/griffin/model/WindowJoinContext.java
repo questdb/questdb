@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,8 +26,6 @@ package io.questdb.griffin.model;
 
 import io.questdb.std.Mutable;
 
-import java.util.Objects;
-
 public class WindowJoinContext implements Mutable {
     public static final int CURRENT = 3;
     public static final int FOLLOWING = 2;
@@ -39,14 +37,15 @@ public class WindowJoinContext implements Mutable {
     private int hiKind = CURRENT;
     private int hiKindPos;
     private boolean includePrevailing = true;
+    private boolean isDynamicHi;
+    private boolean isDynamicLo;
     private long lo = Long.MIN_VALUE;
     private ExpressionNode loExpr;
     private int loExprPos;
     private char loExprTimeUnit;
     private int loKind = PRECEDING;
     private int loKindPos;
-    private QueryModel parentModel;
-    private int prevailingPos;
+    private IQueryModel parentModel;
 
     @Override
     public void clear() {
@@ -63,29 +62,9 @@ public class WindowJoinContext implements Mutable {
         hiKind = CURRENT;
         hiKindPos = 0;
         includePrevailing = true;
-        prevailingPos = 0;
+        isDynamicHi = false;
+        isDynamicLo = false;
         parentModel = null;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        WindowJoinContext that = (WindowJoinContext) o;
-        return hi == that.hi &&
-                hiExprPos == that.hiExprPos &&
-                hiExprTimeUnit == that.hiExprTimeUnit &&
-                hiKind == that.hiKind &&
-                hiKindPos == that.hiKindPos &&
-                includePrevailing == that.includePrevailing &&
-                prevailingPos == that.prevailingPos &&
-                lo == that.lo &&
-                loExprPos == that.loExprPos &&
-                loExprTimeUnit == that.loExprTimeUnit &&
-                loKind == that.loKind &&
-                loKindPos == that.loKindPos &&
-                Objects.equals(hiExpr, that.hiExpr) &&
-                Objects.equals(loExpr, that.loExpr);
     }
 
     public long getHi() {
@@ -136,22 +115,28 @@ public class WindowJoinContext implements Mutable {
         return loKindPos;
     }
 
-    public QueryModel getParentModel() {
+    public IQueryModel getParentModel() {
         return parentModel;
     }
 
-    public int getPrevailingPos() {
-        return prevailingPos;
+    public boolean isDynamicHi() {
+        return isDynamicHi;
     }
 
-    @Override
-    public int hashCode() {
-        return Objects.hash(hi, hiExpr, hiExprPos, hiExprTimeUnit, hiKind, hiKindPos,
-                includePrevailing, prevailingPos, lo, loExpr, loExprPos, loExprTimeUnit, loKind, loKindPos);
+    public boolean isDynamicLo() {
+        return isDynamicLo;
     }
 
     public boolean isIncludePrevailing() {
         return includePrevailing;
+    }
+
+    public void setDynamicHi(boolean isDynamicHi) {
+        this.isDynamicHi = isDynamicHi;
+    }
+
+    public void setDynamicLo(boolean isDynamicLo) {
+        this.isDynamicLo = isDynamicLo;
     }
 
     public void setHi(long hi) {
@@ -172,9 +157,8 @@ public class WindowJoinContext implements Mutable {
         this.hiKindPos = hiKindPos;
     }
 
-    public void setIncludePrevailing(boolean includePrevailing, int pos) {
+    public void setIncludePrevailing(boolean includePrevailing) {
         this.includePrevailing = includePrevailing;
-        this.prevailingPos = pos;
     }
 
     public void setLo(long lo) {
@@ -195,7 +179,7 @@ public class WindowJoinContext implements Mutable {
         this.loKindPos = loKindPos;
     }
 
-    public void setParentModel(QueryModel parentModel) {
+    public void setParentModel(IQueryModel parentModel) {
         this.parentModel = parentModel;
     }
 }

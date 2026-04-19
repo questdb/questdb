@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -336,7 +336,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
             case ColumnType.STRING -> STRING_HEADER_TYPE;
             case ColumnType.BINARY -> BINARY_HEADER_TYPE;
-            case ColumnType.VARCHAR -> VARCHAR_HEADER_TYPE;
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> VARCHAR_HEADER_TYPE;
             default -> UNDEFINED_CODE;
         };
     }
@@ -1066,11 +1066,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
         final LongList intervals = predicateContext.inIntervals;
-        IntervalUtils.parseAndApplyInterval(
+        IntervalUtils.parseTickExprAndIntersect(
                 ColumnType.getTimestampDriver(predicateContext.columnType),
+                executionContext.getCairoEngine().getConfiguration(),
                 intervalEx,
                 intervals,
-                position
+                position,
+                sink,
+                true
         );
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;

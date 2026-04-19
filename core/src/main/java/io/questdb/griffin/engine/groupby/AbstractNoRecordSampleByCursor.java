@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -79,7 +79,18 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             Function sampleToFunc,
             int sampleToFuncPos
     ) {
-        super(timestampSampler, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
+        super(
+                timestampSampler,
+                timestampType,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos,
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos
+        );
         this.timestampIndex = timestampIndex;
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
@@ -118,6 +129,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         areTimestampsInitialized = false;
         sampleFromFunc.init(baseCursor, executionContext);
         sampleToFunc.init(baseCursor, executionContext);
+        allocator.reopen();
     }
 
     @Override

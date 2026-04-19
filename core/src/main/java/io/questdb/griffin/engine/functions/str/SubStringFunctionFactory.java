@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -89,6 +89,11 @@ public class SubStringFunctionFactory implements FunctionFactory {
 
             this.isSimplifiable = startFunc.isConstant() && lenFunc.isConstant()
                     && startFunc.getInt(null) + lenFunc.getInt(null) < 1;
+        }
+
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_STRING_OP, TernaryFunction.super.getComplexity());
         }
 
         @Override

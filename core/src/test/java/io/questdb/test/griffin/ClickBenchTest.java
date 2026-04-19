@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -48,7 +48,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 Title varchar,
                 GoodEvent byte,
                 EventTime timestamp,
-                Eventdate date,
+                EventDate date,
                 CounterID int,
                 ClientIP ipv4,
                 RegionID int,
@@ -229,10 +229,10 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q6",
-                        "SELECT MIN(EventDate), MAX(EventDate) FROM hits;",
+                        "SELECT MIN(EventTime), MAX(EventTime) FROM hits;",
                         """
                                 GroupBy vectorized: true workers: 1
-                                  values: [min(Eventdate),max(Eventdate)]
+                                  values: [min_designated(EventTime),max_designated(EventTime)]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits
@@ -242,7 +242,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q7",
                         "SELECT AdvEngineID, COUNT(*) AS c FROM hits WHERE AdvEngineID <> 0 GROUP BY AdvEngineID ORDER BY c DESC;",
                         """
-                                Radix sort light
+                                Encode sort light
                                   keys: [c desc]
                                     Async JIT Group By workers: 1
                                       keys: [AdvEngineID]
@@ -412,6 +412,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                       functions: [UserID,m,SearchPhrase,c]
                                         Async Group By workers: 1
                                           keys: [UserID,m,SearchPhrase]
+                                          keyFunctions: [minute(EventTime)]
                                           values: [count(*)]
                                           filter: null
                                             PageFrame
@@ -525,14 +526,14 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q27",
-                        "SELECT * FROM (SELECT CounterID, AVG(length(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL IS NOT NULL GROUP BY CounterID) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
+                        "SELECT * FROM (SELECT CounterID, AVG(length_bytes(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL IS NOT NULL GROUP BY CounterID) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
                         """
                                 Sort light lo: 25
                                   keys: [l desc]
                                     Filter filter: 100000<c
                                         Async JIT Group By workers: 1
                                           keys: [CounterID]
-                                          values: [avg(length(URL)),count(*)]
+                                          values: [avg(length_bytes(URL)),count(*)]
                                           filter: URL is not null
                                             PageFrame
                                                 Row forward scan
@@ -541,7 +542,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q28",
-                        "SELECT * FROM (SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') AS k, AVG(length(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer IS NOT NULL GROUP BY k) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
+                        "SELECT * FROM (SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') AS k, AVG(length_bytes(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer IS NOT NULL GROUP BY k) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
                         "Sort light lo: 25\n" +
                                 "  keys: [l desc]\n" +
                                 "    VirtualRecord\n" +
@@ -549,7 +550,8 @@ public class ClickBenchTest extends AbstractCairoTest {
                                 "        Filter filter: 100000<c\n" +
                                 "            Async JIT Group By workers: 1\n" +
                                 "              keys: [k]\n" +
-                                "              values: [avg(length(Referer)),count(*),min(Referer)]\n" +
+                                "              keyFunctions: [regexp_replace(Referer,^https?://(?:www\\.)?([^/]+)/.*$,$1)]\n" +
+                                "              values: [avg(length_bytes(Referer)),count(*),min(Referer)]\n" +
                                 "              filter: Referer is not null\n" +
                                 "                PageFrame\n" +
                                 "                    Row forward scan\n" +
@@ -722,6 +724,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                       functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
                                         Async JIT Group By workers: 1
                                           keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]
+                                          keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
                                           values: [count(*)]
                                           filter: (CounterID=62 and IsRefresh=0)
                                             PageFrame
@@ -732,12 +735,12 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q40",
-                        "SELECT URLHash, EventDate, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventDate ORDER BY PageViews DESC LIMIT 100, 110;",
+                        "SELECT URLHash, EventTime, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventTime ORDER BY PageViews DESC LIMIT 100, 110;",
                         """
                                 Sort light lo: 100 hi: 110
                                   keys: [PageViews desc]
                                     Async JIT Group By workers: 1
-                                      keys: [URLHash,EventDate]
+                                      keys: [URLHash,EventTime]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0 and TraficSourceID in [-1,6] and RefererHash=3594120000172545465L)
                                         PageFrame
@@ -770,6 +773,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                   keys: [M]
                                     Async JIT Group By workers: 1
                                       keys: [M]
+                                      keyFunctions: [timestamp_floor_utc('1m',EventTime)]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0 and DontCountHits=0)
                                         PageFrame

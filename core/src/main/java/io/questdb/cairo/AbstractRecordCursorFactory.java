@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,9 +27,20 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 
+/**
+ * Abstract base class for record cursor factory implementations.
+ */
 public abstract class AbstractRecordCursorFactory implements RecordCursorFactory {
+    /**
+     * The record metadata.
+     */
     private final RecordMetadata metadata;
 
+    /**
+     * Constructs a new record cursor factory.
+     *
+     * @param metadata the record metadata
+     */
     public AbstractRecordCursorFactory(RecordMetadata metadata) {
         this.metadata = metadata;
     }
@@ -44,6 +55,9 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
         return metadata;
     }
 
+    /**
+     * Closes resources held by this factory. Subclasses should override to release resources.
+     */
     protected void _close() {
         // nothing to do
     }

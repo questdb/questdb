@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -77,7 +77,7 @@ public class GroupByLongHashSetBenchmark {
     @Setup(Level.Iteration)
     public void reset() {
         orderedMap.clear();
-        allocator.close();
+        allocator.clear();
         groupByLongHashSet.setAllocator(allocator);
         ptr = 0;
         rnd.reset();

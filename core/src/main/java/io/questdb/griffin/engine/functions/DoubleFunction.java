@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -106,7 +106,7 @@ public abstract class DoubleFunction implements Function {
 
     @Override
     public final float getFloat(Record rec) {
-        throw new UnsupportedOperationException();
+        return (float) getDouble(rec);
     }
 
     @Override

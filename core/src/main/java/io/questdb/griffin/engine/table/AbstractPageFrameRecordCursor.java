@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -53,7 +53,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         this.metadata = metadata;
         recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
-        frameAddressCache = new PageFrameAddressCache(configuration);
+        frameAddressCache = new PageFrameAddressCache();
         frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
@@ -62,7 +62,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         Misc.free(frameMemoryPool);
         Misc.free(recordA);
         Misc.free(recordB);
-        frameAddressCache.clear();
+        Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
     }
 
@@ -105,7 +105,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     }
 
     protected void init() {
-        frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
+        frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
         frameMemoryPool.of(frameAddressCache);
         frameCount = 0;
         frameCursor.toTop();

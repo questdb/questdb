@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -57,7 +57,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private boolean notificationQueueIsFull = false;
     private Path threadLocalPath;
 
-
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
         this.ff = engine.getConfiguration().getFilesFacade();
@@ -70,12 +69,12 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         lastRunMs = millisecondClock.getTicks();
     }
 
-    public void checkMissingWalTransactions() {
+    private void checkMissingWalTransactions() {
         threadLocalPath = Path.PATH.get().of(dbRoot);
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWalRef);
     }
 
-    public void checkNotifyOutstandingTxnInWal(@NotNull TableToken tableToken, long seqTxn) {
+    protected void checkNotifyOutstandingTxnInWal(@NotNull TableToken tableToken, long seqTxn) {
         if (notificationQueueIsFull) {
             return;
         }
@@ -104,6 +103,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                     ) {
                         TableUtils.safeReadTxn(this.txReader, millisecondClock, spinLockTimeout);
                         if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader.getSeqTxn(), seqTxn)) {
+                            long floorSeqTxn = engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn();
+                            engine.getRecentWriteTracker().setFloorSeqTxn(tableToken, floorSeqTxn);
                             notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
                         }
                     } catch (CairoException e) {

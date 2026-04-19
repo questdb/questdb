@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -80,6 +79,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     private final ObjList<VectorAggregateFunction> vafList;
     private final WorkStealingStrategy workStealingStrategy;
     private final int workerCount;
+    private ObjList<NotKeyedVectorSharedCursor> sharedCursors;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
             CairoEngine engine,
@@ -92,7 +92,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         super(metadata);
         try {
             this.base = base;
-            this.frameAddressCache = new PageFrameAddressCache(configuration);
+            this.frameAddressCache = new PageFrameAddressCache();
             this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
             this.vafList = new ObjList<>(vafList.size());
             this.vafList.addAll(vafList);
@@ -134,8 +134,28 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        if (sharedCursors == null) {
+            sharedCursors = new ObjList<>();
+        }
+        int idx = sharedId - 1;
+        NotKeyedVectorSharedCursor shared = sharedCursors.getQuiet(idx);
+        if (shared == null) {
+            shared = new NotKeyedVectorSharedCursor();
+            sharedCursors.extendAndSet(idx, shared);
+        }
+        shared.of();
+        return shared;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public boolean supportsSharedCursors() {
+        return true;
     }
 
     @Override
@@ -194,6 +214,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         Misc.freeObjListAndKeepObjects(frameMemoryPools);
         Misc.freeObjList(vafList);
         Misc.free(base);
+        Misc.clear(sharedCursors);
     }
 
     private class GroupByNotKeyedVectorRecordCursor implements NoRandomAccessRecordCursor {
@@ -219,7 +240,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void close() {
-            frameAddressCache.clear();
+            Misc.free(frameAddressCache);
             frameCursor = Misc.free(frameCursor);
         }
 
@@ -233,10 +254,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             if (isExhausted) {
                 return false;
             }
-            if (!areFunctionsBuilt) {
-                buildFunctions();
-                areFunctionsBuilt = true;
-            }
+            buildFunctionsConditionally();
             isExhausted = true;
             return true;
         }
@@ -250,7 +268,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
-            frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
+            frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             for (int i = 0; i < workerCount; i++) {
                 frameMemoryPools.getQuick(i).of(frameAddressCache);
             }
@@ -368,14 +386,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 }
 
                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            } catch (DataUnavailableException e) {
-                // We're not yet done, so no need to cancel the circuit breaker.
-                throw e;
-            } catch (Throwable e) {
+            } catch (Throwable th) {
                 sharedCircuitBreaker.cancel();
-                // Release page frame memory.
-                Misc.freeObjListAndKeepObjects(frameMemoryPools);
-                throw e;
+                throw th;
             } finally {
                 // all done? great start consuming the queue we just published
                 // how do we get to the end? If we consume our own queue there is chance we will be consuming
@@ -393,10 +406,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         sharedCircuitBreaker,
                         workStealingStrategy
                 );
+                // Release page frame memory now, when no worker is using it.
+                Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
-
-            // Release page frame memory.
-            Misc.freeObjListAndKeepObjects(frameMemoryPools);
 
             toTop();
 
@@ -405,6 +417,68 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                     .$(", reclaimed=").$(reclaimed)
                     .$(", queuedCount=").$(queuedCount)
                     .I$();
+        }
+
+        void buildFunctionsConditionally() {
+            if (!areFunctionsBuilt) {
+                buildFunctions();
+                areFunctionsBuilt = true;
+            }
+        }
+    }
+
+    private class NotKeyedVectorSharedCursor implements NoRandomAccessRecordCursor {
+        private final Record record;
+        private boolean isExhausted;
+
+        NotKeyedVectorSharedCursor() {
+            this.record = new VirtualRecordNoRowid(vafList);
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (!isExhausted) {
+                counter.inc();
+                isExhausted = true;
+            }
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (isExhausted) {
+                return false;
+            }
+            cursor.buildFunctionsConditionally();
+            isExhausted = true;
+            return true;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public long size() {
+            return 1;
+        }
+
+        @Override
+        public void toTop() {
+            isExhausted = false;
+        }
+
+        void of() {
+            isExhausted = false;
         }
     }
 }

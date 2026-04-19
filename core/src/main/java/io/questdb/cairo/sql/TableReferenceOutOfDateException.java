@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -78,6 +78,17 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
                 .put(", actualTableId=").put(actualTableId)
                 .put(", expectedMetadataVersion=").put(expectedMetadataVersion)
                 .put(", actualMetadataVersion=").put(actualMetadataVersion).put(']');
+        return ex;
+    }
+
+    public static TableReferenceOutOfDateException ofOutdatedView(TableToken tableToken, long expectedTxn, long actualTxn) {
+        TableReferenceOutOfDateException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new TableReferenceOutOfDateException()) != null;
+        ex.message.clear(prefix.length());
+        ex.message.put(tableToken.getTableName())
+                .put("', expectedSeqTxn=").put(expectedTxn)
+                .put(", actualSeqTxn=").put(actualTxn).put(']');
         return ex;
     }
 

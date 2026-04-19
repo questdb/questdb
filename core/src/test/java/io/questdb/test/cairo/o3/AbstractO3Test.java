@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -388,6 +388,11 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
+                    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+                        return isParquetStatisticsEnabled();
+                    }
+
+                    @Override
                     public boolean isWriterMixedIOEnabled() {
                         // Allow enabling mixed I/O only if the ff allows it.
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
@@ -477,6 +482,11 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
+                    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+                        return isParquetStatisticsEnabled();
+                    }
+
+                    @Override
                     public boolean isWriterMixedIOEnabled() {
                         // Allow enabling mixed I/O only if the ff allows it.
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
@@ -522,6 +532,10 @@ public class AbstractO3Test extends AbstractTest {
                 }
             }
         }
+    }
+
+    protected boolean isParquetStatisticsEnabled() {
+        return true;
     }
 
     @FunctionalInterface

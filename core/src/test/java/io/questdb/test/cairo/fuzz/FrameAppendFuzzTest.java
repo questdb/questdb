@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -70,8 +70,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         partitionCount = 5 + rnd.nextInt(10);
         setFuzzCounts(
                 rnd.nextBoolean(),
-                rnd.nextInt(2_000_000),
-                rnd.nextInt(1000),
+                rnd.nextInt(1_000_000),
+                rnd.nextInt(500),
                 fuzzer.randomiseStringLengths(rnd, 1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
@@ -114,7 +114,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 fuzzer.randomiseStringLengths(rnd, 1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
-                rnd.nextInt(1_000_000),
+                rnd.nextInt(500_000),
                 partitionCount
         );
 

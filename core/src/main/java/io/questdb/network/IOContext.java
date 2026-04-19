@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -72,10 +72,6 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         return socket;
     }
 
-    public SuspendEvent getSuspendEvent() {
-        return null;
-    }
-
     public final void init() throws TlsSessionInitFailedException {
         if (!initialized) {
             doInit();
@@ -118,11 +114,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         heartbeatId = -1;
         socket.close();
         disconnectReason = -1;
-        clearSuspendEvent();
         initialized = false;
-    }
-
-    protected void clearSuspendEvent() {
     }
 
     /**

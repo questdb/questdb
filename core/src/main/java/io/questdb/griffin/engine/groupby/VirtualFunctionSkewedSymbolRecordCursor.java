@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,8 +39,8 @@ public abstract class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVi
 
     @Override
     public void close() {
+        super.close();
         managedCursor = Misc.free(managedCursor);
-        baseCursor = null;
     }
 
     public void of(RecordCursor managedCursor, RecordCursor baseCursor) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,20 +32,16 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
 
-public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperationBuilder, Mutable, Sinkable {
-    public static final ObjectFactory<CreateMatViewOperationBuilderImpl> FACTORY = CreateMatViewOperationBuilderImpl::new;
+public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperationBuilder, Mutable {
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
     private int baseTableNamePosition;
@@ -110,7 +106,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     }
 
     @Override
-    public QueryModel getQueryModel() {
+    public IQueryModel getQueryModel() {
         return createTableOperationBuilder.getQueryModel();
     }
 
@@ -148,7 +144,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     }
 
     @Override
-    public void setSelectModel(QueryModel selectModel) {
+    public void setSelectModel(IQueryModel selectModel) {
         createTableOperationBuilder.setSelectModel(selectModel);
     }
 
@@ -249,8 +245,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             sink.putAscii(" partition by ").put(PartitionBy.toString(createTableOperationBuilder.getPartitionByFromExpr()));
         }
 
-        final int ttlHoursOrMonths = createTableOperationBuilder.getTtlHoursOrMonths();
-        ttlToSink(ttlHoursOrMonths, sink);
+        createTableOperationBuilder.ttlToSink(sink);
 
         final CharSequence volumeAlias = createTableOperationBuilder.getVolumeAlias();
         if (volumeAlias != null) {

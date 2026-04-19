@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -43,7 +42,17 @@ public interface UnaryFunction extends Function {
         getArg().cursorClosed();
     }
 
+    /**
+     * Returns the single argument of this unary function.
+     *
+     * @return the function argument
+     */
     Function getArg();
+
+    @Override
+    default int getComplexity() {
+        return getArg().getComplexity();
+    }
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
@@ -84,11 +93,6 @@ public interface UnaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getArg().isThreadSafe();
-    }
-
-    @Override
-    default void memoize(Record record) {
-        getArg().memoize(record);
     }
 
     @Override

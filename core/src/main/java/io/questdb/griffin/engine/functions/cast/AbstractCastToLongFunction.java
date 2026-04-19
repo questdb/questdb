@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,11 +27,21 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
-public abstract class AbstractCastToLongFunction extends LongFunction implements UnaryFunction {
+/**
+ * Abstract base class for functions that cast values to long.
+ */
+public abstract class AbstractCastToLongFunction extends LongFunction implements CastFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to long function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToLongFunction(Function arg) {
         this.arg = arg;
     }

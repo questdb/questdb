@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,6 +34,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.TableMetadata;
@@ -45,6 +46,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -737,7 +739,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     AlterOperationBuilder dropPartition = new AlterOperationBuilder().ofDropPartition(0, tableToken, 1);
                     dropPartition.addPartitionToList(MicrosTimestampDriver.floor("2022-02-24"), 0);
                     AlterOperation dropAlter = dropPartition.build();
-                    dropAlter.withContext(sqlExecutionContext);
+                    dropAlter.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
                     dropAlter.withSqlStatement("alter table " + tableName + " drop partition list '2022-02-24'");
                     walWriter3.apply(dropAlter, true);
                     Assert.fail();
@@ -1002,6 +1004,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1027,6 +1030,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1051,6 +1055,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1075,6 +1080,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1088,7 +1094,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("drop table " + tableNameNonWal);
 
             assertQueryNoLeakCheck("table_name\n", "all_tables() order by table_name", null, true);
-            assertQueryNoLeakCheck("table_name\n", "select table_name from tables() order by table_name", null, true);
+            assertQueryNoLeakCheck("table_name\n", "select table_name from tables() order by table_name", null, true, true);
             assertQueryNoLeakCheck("relname\npg_class\n", "select relname from pg_class() order by relname", null, true);
         });
     }
@@ -1113,11 +1119,6 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 execute("drop table " + tableName);
                 drainWalQueue();
                 checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
-            }
-
-            if (Os.type == Os.WINDOWS) {
-                // Release WAL writers
-                engine.releaseInactive();
             }
             drainWalQueue();
 
@@ -1736,6 +1737,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
 
@@ -1763,6 +1765,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\t" + newTabledirectoryName.getDirName() + "\n",
                     "select table_name, directoryName from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1826,6 +1829,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
 
@@ -1853,6 +1857,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\t" + newTableDirectoryName.getDirName() + "\n",
                     "select table_name, directoryName from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(

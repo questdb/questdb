@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -86,20 +86,23 @@ public class WriterPool extends AbstractPool {
     @NotNull
     private final CairoEngine engine;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
+    private final RecentWriteTracker recentWriteTracker;
     private final CharSequence root;
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
      *
-     * @param configuration configuration parameters.
-     * @param engine        engine instance.
+     * @param configuration      configuration parameters.
+     * @param engine             engine instance.
+     * @param recentWriteTracker tracker for recent table writes.
      */
-    public WriterPool(CairoConfiguration configuration, @NotNull CairoEngine engine) {
+    public WriterPool(CairoConfiguration configuration, @NotNull CairoEngine engine, @NotNull RecentWriteTracker recentWriteTracker) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.clock = configuration.getMicrosecondClock();
         this.root = configuration.getDbRoot();
         this.engine = engine;
+        this.recentWriteTracker = recentWriteTracker;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
@@ -307,9 +310,15 @@ public class WriterPool extends AbstractPool {
         unlock(tableToken, null, false);
     }
 
-    private void addCommandToWriterQueue(Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
+    private void addCommandToWriterQueue(TableToken tableToken, Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
         TableWriter writer;
         while ((writer = e.writer) == null && e.owner != UNALLOCATED) {
+            // If the entry has been removed from the pool (e.g. distressed close),
+            // our reference is orphaned and the spin condition will never be satisfied.
+            // Bail out and let the caller retry.
+            if (entries.get(tableToken.getDirName()) != e) {
+                throw EntryUnavailableException.instance("please retry");
+            }
             Os.pause();
         }
         if (writer == null) {
@@ -478,7 +487,7 @@ public class WriterPool extends AbstractPool {
                     }
                 }
                 if (asyncWriterCommand != null) {
-                    addCommandToWriterQueue(e, asyncWriterCommand, thread);
+                    addCommandToWriterQueue(tableToken, e, asyncWriterCommand, thread);
                     return null;
                 }
 
@@ -568,6 +577,16 @@ public class WriterPool extends AbstractPool {
 
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
+
+            // Track the write for UI/observability purposes.
+            // Use try-catch to ensure writer is always returned even if tracking fails.
+            try {
+                recentWriteTracker.recordWrite(tableToken, e.lastReleaseTime, e.writer.getRowCount(), e.writer.getAppliedSeqTxn());
+            } catch (Throwable th) {
+                LOG.error().$("failed to track write [table=").$(tableToken)
+                        .$(", error=").$(th).I$();
+            }
+
             Unsafe.getUnsafe().storeFence();
             Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
 
@@ -600,7 +619,7 @@ public class WriterPool extends AbstractPool {
     @Override
     protected void closePool() {
         super.closePool();
-        LOG.info().$("closed").$();
+        LOG.debug().$("closed").$();
     }
 
     @Override

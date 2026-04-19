@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,10 +30,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ShortFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+/**
+ * Factory for the abs() function on short type.
+ */
 public class AbsShortFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -45,7 +48,7 @@ public class AbsShortFunctionFactory implements FunctionFactory {
         return new AbsFunction(args.getQuick(0));
     }
 
-    private static class AbsFunction extends ShortFunction implements UnaryFunction {
+    private static class AbsFunction extends ShortFunction implements ArithmeticUnaryFunction {
         final Function function;
 
         public AbsFunction(Function function) {

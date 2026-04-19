@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -48,6 +47,14 @@ public interface TernaryFunction extends Function {
     }
 
     Function getCenter();
+
+    @Override
+    default int getComplexity() {
+        return Function.addComplexity(
+                getLeft().getComplexity(),
+                Function.addComplexity(getCenter().getComplexity(), getRight().getComplexity())
+        );
+    }
 
     Function getLeft();
 
@@ -104,13 +111,6 @@ public interface TernaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
-    }
-
-    @Override
-    default void memoize(Record record) {
-        getLeft().memoize(record);
-        getCenter().memoize(record);
-        getRight().memoize(record);
     }
 
     @Override

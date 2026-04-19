@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,8 +37,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
@@ -63,7 +63,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         // Passing zero as TTL, because SqlCompiler instances are expected to be returned to the pool immediately
         // after usage. The `releaseInactive()` method is also overridden to return with hardcoded 'false' for the
         // same reason. It is not meant to be called.
-        super(engine.getConfiguration(), (engine.getConfiguration().getSqlCompilerPoolCapacity() / ENTRY_SIZE) + 1, 0L);
+        super(engine.getConfiguration(), (engine.getConfiguration().getSqlCompilerPoolCapacity() / engine.getConfiguration().getPoolSegmentSize()) + 1, 0L);
         this.engine = engine;
     }
 
@@ -87,11 +87,12 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     }
 
     @Override
-    protected C newTenant(TableToken tableToken, Entry<C> entry, int index, @Nullable ResourcePoolSupervisor<C> supervisor) {
+    protected C newTenant(TableToken tableToken, Entry<C> rootEntry, Entry<C> entry, int index, @Nullable ResourcePoolSupervisor<C> supervisor) {
         return new C(
                 engine.getSqlCompilerFactory().getInstance(engine),
                 this,
                 tableToken,
+                rootEntry,
                 entry,
                 index
         );
@@ -100,6 +101,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     public static class C implements SqlCompiler, PoolTenant<C> {
         private final SqlCompiler delegate;
         private final int index;
+        private final Entry<C> rootEntry;
         private Entry<C> entry;
         private AbstractMultiTenantPool<C> pool;
         private TableToken tableToken;
@@ -108,12 +110,14 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
                 SqlCompiler delegate,
                 AbstractMultiTenantPool<C> pool,
                 TableToken tableToken,
+                Entry<C> rootEntry,
                 Entry<C> entry,
                 int index
         ) {
             this.delegate = delegate;
             this.pool = pool;
             this.tableToken = tableToken;
+            this.rootEntry = rootEntry;
             this.entry = entry;
             this.index = index;
         }
@@ -147,13 +151,18 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public void execute(Operation op, SqlExecutionContext executionContext) throws SqlException {
-            delegate.execute(op, executionContext);
+        public boolean execute(Operation op, SqlExecutionContext executionContext) throws SqlException {
+            return delegate.execute(op, executionContext);
+        }
+
+        @Override
+        public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
+            return delegate.generateExecutionModel(sqlText, executionContext);
         }
 
         @Override
         public RecordCursorFactory generateSelectWithRetries(
-                QueryModel queryModel,
+                IQueryModel queryModel,
                 @Nullable InsertModel insertModel,
                 SqlExecutionContext executionContext,
                 boolean generateProgressLogger
@@ -183,6 +192,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public int getIndex() {
             return index;
+        }
+
+        @Override
+        public Entry<C> getRootEntry() {
+            return rootEntry;
         }
 
         @Override
@@ -217,12 +231,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
-            return delegate.testCompileModel(sqlText, executionContext);
-        }
-
-        @Override
-        public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
+        public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
             return delegate.testParseExpression(expression, model);
         }
 

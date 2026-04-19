@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -54,7 +54,7 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     private final Long256Impl sumB = new Long256Impl();
     private int valueOffset;
 
-    public SumLong256VectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public SumLong256VectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;

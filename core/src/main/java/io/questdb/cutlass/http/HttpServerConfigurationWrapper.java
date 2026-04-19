@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -108,6 +108,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     @Override
     public ObjHashSet<String> getContextPathSettings() {
         return getDelegate().getContextPathSettings();
+    }
+
+    @Override
+    public ObjHashSet<String> getContextPathSqlValidation() {
+        return getDelegate().getContextPathSqlValidation();
     }
 
     @Override

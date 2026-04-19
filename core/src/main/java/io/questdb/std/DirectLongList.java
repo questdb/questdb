@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,15 +24,12 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf16Sink;
 
 import java.io.Closeable;
-
-import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 public class DirectLongList implements Mutable, Closeable, Reopenable {
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
@@ -43,19 +40,31 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     private long limit;
     private long pos;
 
+    /**
+     * Creates a DirectLongList with optional deferred memory allocation.
+     * <p>
+     * When alloc=false, this constructor uses deferred allocation pattern:
+     * - No memory is allocated immediately (address remains 0)
+     * - Memory will be allocated later when reopen() is called
+     * <p>
+     *
+     * @param capacity  the initial capacity in number of long elements (not bytes)
+     * @param memoryTag memory tag for tracking allocations
+     */
     public DirectLongList(long capacity, int memoryTag) {
-        this(capacity, true, memoryTag);
+        this(capacity, memoryTag, false);
     }
 
-    public DirectLongList(long capacity, boolean alloc, int memoryTag) {
+    public DirectLongList(long capacity, int memoryTag, boolean keepClosed) {
         this.memoryTag = memoryTag;
-        this.capacity = (capacity * Long.BYTES);
-        if (alloc) {
-            this.address = Unsafe.malloc(this.capacity, memoryTag);
+        final long capacityBytes = capacity * Long.BYTES;
+        this.initialCapacity = capacityBytes;
+        if (!keepClosed) {
+            this.address = capacityBytes > 0 ? Unsafe.malloc(capacityBytes, memoryTag) : 0;
+            this.capacity = capacityBytes;
             this.pos = address;
-            this.limit = pos + this.capacity;
+            this.limit = pos + capacityBytes;
         }
-        this.initialCapacity = this.capacity;
     }
 
     public void add(long value) {
@@ -83,6 +92,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     // clear without "zeroing" memory
+    @Override
     public void clear() {
         pos = address;
     }
@@ -157,7 +167,8 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         Unsafe.getUnsafe().putLong(address + (p << 3), v);
     }
 
-    // desired capacity in LONGs (not count of bytes)
+    // Desired capacity in LONGs (not count of bytes).
+    // Safe to call on a closed list - it will allocate memory.
     public void setCapacity(long capacity) {
         assert capacity > 0;
         setCapacityBytes(capacity << 3);
@@ -213,9 +224,6 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     // desired capacity in bytes (not count of LONG values)
     private void setCapacityBytes(long capacity) {
         if (this.capacity != capacity) {
-            if ((capacity >>> 3) > MAX_SAFE_INT_POW_2) {
-                throw CairoException.nonCritical().put("long list capacity overflow");
-            }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
             final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);

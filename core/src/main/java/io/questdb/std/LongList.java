@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -217,7 +217,11 @@ public class LongList implements Mutable, LongVec, Sinkable {
         int l = data.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
-            this.data = Arrays.copyOf(data, newCap);
+            long[] newData = new long[newCap];
+            if (pos > 0) {
+                System.arraycopy(data, 0, newData, 0, Math.min(pos, l));
+            }
+            this.data = newData;
         }
     }
 
@@ -610,6 +614,11 @@ public class LongList implements Mutable, LongVec, Sinkable {
             }
         } while (data[low << shl] == value);
         return (low - 1) << shl;
+    }
+
+    long[] resetCapacityInternal(int longCapacity) {
+        checkCapacity(longCapacity);
+        return data;
     }
 
     private int scrollUp(int high, long value) {

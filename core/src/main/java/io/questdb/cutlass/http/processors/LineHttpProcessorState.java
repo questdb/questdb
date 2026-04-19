@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.line.tcp.AdaptiveRecvBuffer;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
@@ -89,7 +90,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         assert initRecvBufSize > 0;
         // Response is measured in bytes some error messages can have non-ascii characters
         // approximate 1.5 bytes per character
-        this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
+        this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
         this.parser = new LineTcpParser();
         recvBuffer = new AdaptiveRecvBuffer(parser, MemoryTag.NATIVE_HTTP_CONN)
                 .of(initRecvBufSize, configuration.getMaxRecvBufferSize());
@@ -98,7 +99,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 configuration.isStringToCharCastAllowed(),
                 configuration.getTimestampUnit(),
                 utf8Sink,
-                engine.getConfiguration().getMaxFileNameLength()
+                engine.getConfiguration().getMaxFileNameLength(),
+                engine.getConfiguration().getMaxSqlRecompileAttempts()
         );
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.ilpTudCache = new LineHttpTudCache(
@@ -359,6 +361,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 errorRec = LOG.critical();
                 status = Status.INTERNAL_ERROR;
             }
+        } else if (ex instanceof TableReferenceOutOfDateException) {
+            errorId = ERROR_COUNT.incrementAndGet();
+            errorLine = -1;
+            error.put("table renamed during request, retry the operation");
+            LOG.info().$('[').$(fd).$("] table renamed during request, rejecting with retryable error [errorId=")
+                    .$(ERROR_ID).$('-').$(errorId).I$();
+            return Status.TABLE_SCHEMA_CHANGED;
         } else {
             error.put(", error: ").put(ex.getClass().getCanonicalName());
             errorRec = LOG.critical();
@@ -545,7 +554,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         MESSAGE_TOO_LARGE("request too large", 413),
         COLUMN_ADD_ERROR("invalid", 400),
         COMMITTED(null, 204),
-        NOT_ACCEPTING_WRITES("not accepting writes", 421);
+        NOT_ACCEPTING_WRITES("not accepting writes", 421),
+        TABLE_SCHEMA_CHANGED("retry operation", 503);
 
         private final String codeStr;
         private final int responseCode;

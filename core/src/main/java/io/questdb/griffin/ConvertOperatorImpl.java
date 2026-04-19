@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -138,7 +138,8 @@ public class ConvertOperatorImpl implements Closeable {
                     tableWriter.getTableToken(),
                     tableWriter.getMetadata().getTimestampType(),
                     tableWriter.getPartitionBy(),
-                    tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
+                    tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn()
+                            || tableWriter.isCheckpointInProgress(),
                     tableWriter.getTruncateVersion(),
                     tableWriter.getTxn()
             );
@@ -194,6 +195,7 @@ public class ConvertOperatorImpl implements Closeable {
     ) {
         try {
             this.columnName = columnName;
+
             if (ColumnType.isSymbol(newType)) {
                 if (symbolMapper == null) {
                     symbolMapper = new SymbolMapper();

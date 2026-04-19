@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -292,7 +292,6 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         engine.getConfiguration().getMicrosecondClock())
                 ) {
                     barrier.await();
-                    engine.setWalPurgeJobRunLock(job.getRunLock());
                     //noinspection StatementWithEmptyBody
                     while (!done.get() && job.run(0)) {
                         // run until empty
@@ -391,7 +390,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         if (rnd.nextDouble() > 0.2) {
                             // Add table
                             String tableName = "tab" + iteration;
-                            TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, false, true);
+                            String tableDir = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + iteration;
+                            TableToken tableToken = rw.lockTableName(tableName, tableDir, iteration, false, false, true);
                             TestUtils.createTable(tm, configuration, ColumnType.VERSION, iteration, tableToken);
                             rw.registerName(tableToken);
                             addedTables.add(iteration);
@@ -405,7 +405,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
                             // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
                             // Remove _txn file first
-                            rmPath.trimTo(rootLen).concat(tableName);
+                            rmPath.trimTo(rootLen).concat(tableToken.getDirName());
                             int len = rmPath.size();
                             rmPath.concat(TableUtils.TXN_FILE_NAME);
                             ff.remove(rmPath.$());

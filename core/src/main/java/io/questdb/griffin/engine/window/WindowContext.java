@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.SqlException;
 
 public interface WindowContext {
-    boolean baseSupportsRandomAccess();
 
     int getExclusionKind();
 
@@ -57,6 +56,8 @@ public interface WindowContext {
     int getRowsLoKindPos();
 
     int getTimestampIndex();
+
+    int getTimestampType();
 
     boolean isDefaultFrame();
 

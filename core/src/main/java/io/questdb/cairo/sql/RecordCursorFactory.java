@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,6 +32,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
@@ -72,6 +73,12 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     int SCAN_DIRECTION_FORWARD = 1;
     int SCAN_DIRECTION_OTHER = 0;
 
+    /**
+     * Changes the page frame sizes for this factory.
+     *
+     * @param minRows minimum rows per page frame
+     * @param maxRows maximum rows per page frame
+     */
     default void changePageFrameSizes(int minRows, int maxRows) {
     }
 
@@ -111,10 +118,21 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns the base column name at the given index.
+     *
+     * @param idx the column index
+     * @return the column name
+     */
     default String getBaseColumnName(int idx) {
         return getBaseFactory().getMetadata().getColumnName(idx);
     }
 
+    /**
+     * Returns the base factory, if any.
+     *
+     * @return the base factory, or null if none
+     */
     default RecordCursorFactory getBaseFactory() {
         return null;
     }
@@ -179,9 +197,23 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Note: tables with designated timestamp keep rows in timestamp order, so:
      * - forward scan produces rows in ascending ts order
      * - backward scan produces rows in descending ts order
+     *
+     * @return the scan direction
      */
     default int getScanDirection() {
         return SCAN_DIRECTION_FORWARD;
+    }
+
+    /**
+     * Returns an independent cursor for the given consumer ID. Idempotent —
+     * same sharedId always returns the same cursor instance.
+     *
+     * @param executionContext SQL execution context
+     * @param sharedId         unique consumer identifier (0-based)
+     * @return cursor for the given consumer
+     */
+    default RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        throw new UnsupportedOperationException();
     }
 
     /**
@@ -209,6 +241,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     /**
      * Returns time frame cursor or null if time frames aren't supported by the factory.
+     *
+     * @param executionContext the SQL execution context
+     * @return the time frame cursor, or null if not supported
+     * @throws SqlException if an error occurs
      */
     default TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         return null;
@@ -224,6 +260,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Returns true if this factory handles {@code limit(M, N)} clause.
      * If true, then a separate limit cursor factory is not needed (and could actually cause problem
      * by re-applying limit logic).
+     *
+     * @return true if limit is implemented
      */
     default boolean implementsLimit() {
         return false;
@@ -243,6 +281,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    default boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
+        return false;
+    }
+
     /**
      * Returns a new time frame cursor instance or null if time frames aren't supported by the factory.
      * The returned instance can be used by a worker thread, i.e. the underlying interaction with
@@ -250,6 +292,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * <p>
      * Unlike with {@link #getTimeFrameCursor(SqlExecutionContext)}, the returned cursor has to be
      * initialized before usage.
+     *
+     * @return a new concurrent time frame cursor, or null if not supported
      */
     default ConcurrentTimeFrameCursor newTimeFrameCursor() {
         return null;
@@ -266,20 +310,45 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns true if the record cursor supports random access.
+     *
+     * @return true if random access is supported
+     */
     boolean recordCursorSupportsRandomAccess();
 
     default void revertFromSampleByIndexPageFrameCursorFactory() {
     }
 
+    default void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+    }
+
     /**
      * Returns true if the factory stands for nothing more but a filter, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
+     *
+     * @return true if filter stealing is supported
      */
     default boolean supportsFilterStealing() {
         return false;
     }
 
+    /**
+     * Returns true if the factory supports page frame cursor.
+     *
+     * @return true if page frame cursor is supported
+     */
     default boolean supportsPageFrameCursor() {
+        return false;
+    }
+
+    /**
+     * Returns true if this factory supports multiple independent cursors
+     * over the same materialized data. When true,
+     * {@link #getSharedCursor(SqlExecutionContext, int)} can be called with
+     * different consumer IDs to obtain independent cursors.
+     */
+    default boolean supportsSharedCursors() {
         return false;
     }
 
@@ -294,6 +363,12 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns true if the factory supports UPDATE row ID for the given table.
+     *
+     * @param tableName the table token
+     * @return true if UPDATE row ID is supported
+     */
     default boolean supportsUpdateRowId(TableToken tableName) {
         return false;
     }
@@ -319,6 +394,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     /**
      * Returns true if the factory uses index-based access.
+     *
+     * @return true if the factory uses index-based access
      */
     default boolean usesIndex() {
         return false;

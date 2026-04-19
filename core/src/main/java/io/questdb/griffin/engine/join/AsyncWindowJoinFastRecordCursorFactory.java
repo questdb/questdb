@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.groupby.FlyweightMapValue;
 import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
+import io.questdb.griffin.engine.table.AsyncFilterUtils;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
@@ -61,6 +62,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -75,7 +77,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.toSymbolMapKey;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 /**
  * Multi-threaded WINDOW JOIN factory with symbol-based join key optimization.
@@ -108,8 +109,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
     public AsyncWindowJoinFastRecordCursorFactory(
             @NotNull CairoEngine engine,
-            @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
+            @Transient @NotNull BytecodeAssembler asm,
             @NotNull MessageBus messageBus,
             @NotNull JoinRecordMetadata joinMetadata,
             @NotNull RecordMetadata outMetadata,
@@ -121,8 +122,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             boolean includePrevailing,
             int masterSymbolIndex,
             int slaveSymbolIndex,
-            long joinWindowLo,
-            long joinWindowHi,
+            long windowLo,
+            long windowHi,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
@@ -131,6 +132,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function masterFilter,
             @Nullable ObjList<Function> perWorkerMasterFilters,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             boolean vectorized,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount
@@ -144,7 +146,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         this.slaveFactory = slaveFactory;
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
         this.cursor = new AsyncWindowJoinRecordCursor(
-                configuration,
                 groupByFunctions,
                 slaveFactory.getMetadata(),
                 columnIndex,
@@ -168,8 +169,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 perWorkerJoinFilters,
                 masterSymbolIndex,
                 slaveSymbolIndex,
-                joinWindowLo,
-                joinWindowHi,
+                windowLo,
+                windowHi,
                 includePrevailing,
                 columnSplit,
                 masterFactory.getMetadata().getTimestampIndex(),
@@ -181,6 +182,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 bindVarFunctions,
                 masterFilter,
                 perWorkerMasterFilters,
+                filterUsedColumnIndexes,
                 vectorized,
                 masterTsScale,
                 slaveTsScale,
@@ -218,7 +220,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public PageFrameSequence<AsyncWindowJoinFastAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
+        CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
+        executionContext.changePageFrameSizes(config.getSqlSmallPageFrameMinRows(), config.getSqlSmallPageFrameMaxRows());
+        try {
+            return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
+        } finally {
+            executionContext.restoreToDefaultPageFrameSizes();
+        }
     }
 
     @Override
@@ -301,8 +309,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         task.setFilteredRowCount(frameRowCount);
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
-        final long joinWindowLo = atom.getJoinWindowLo();
-        final long joinWindowHi = atom.getJoinWindowHi();
+        final long windowLo = atom.getWindowLo();
+        final long windowHi = atom.getWindowHi();
         final long valueSizeInBytes = atom.getValueSizeBytes();
         assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
@@ -336,8 +344,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
+            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowIndex != Long.MIN_VALUE) {
@@ -373,6 +381,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
             // Next, iterate through the master rows looking into the index we've built.
             for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -381,8 +390,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
+                slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = toSymbolMapKey(masterKey);
@@ -445,8 +454,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         task.setFilteredRowCount(frameRowCount);
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
-        final long joinWindowLo = atom.getJoinWindowLo();
-        final long joinWindowHi = atom.getJoinWindowHi();
+        final long windowLo = atom.getWindowLo();
+        final long windowHi = atom.getWindowHi();
         final long valueSizeInBytes = atom.getValueSizeBytes();
         assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
@@ -484,8 +493,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
+            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowIndex != Long.MIN_VALUE) {
@@ -518,12 +527,15 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             break;
                         }
                         slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                        // don't forget to switch the record to the new frame
+                        slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     }
                 }
             }
 
             // Next, iterate through the master rows looking into the index we've built.
             for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
 
                 rows.ensureCapacity(valueSizeInLongs);
@@ -534,8 +546,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 }
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
+                slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = toSymbolMapKey(masterKey);
@@ -556,9 +568,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         final long ptr = slaveData.get(idx, mapIndex + 2);
                         if (ptr != 0) {
                             final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
                         } else { // no-arg function, e.g. count()
-                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                         }
                     }
                 }
@@ -591,8 +603,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         task.setFilteredRowCount(frameRowCount);
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
-        final long joinWindowLo = atom.getJoinWindowLo();
-        final long joinWindowHi = atom.getJoinWindowHi();
+        final long windowLo = atom.getWindowLo();
+        final long windowHi = atom.getWindowHi();
         final long valueSizeInBytes = atom.getValueSizeBytes();
         assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
@@ -632,8 +644,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
+            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
             final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
@@ -676,11 +688,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             break;
                         }
                         slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                        // don't forget to switch the record to the new frame
+                        slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     }
                 }
             }
 
             for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
 
                 rows.ensureCapacity(valueSizeInLongs);
@@ -691,8 +706,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 }
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
+                final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = toSymbolMapKey(masterKey);
@@ -749,9 +764,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                 // column values are shifted by one slot, hence `rowLo + 1`
-                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * (rowLo + 1), (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * (rowLo + 1), (int) (rowHi - rowLo), 0);
                             } else { // no-arg function, e.g. count()
-                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                             }
                         }
                     }
@@ -799,8 +814,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         task.setFilteredRowCount(frameRowCount);
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
-        final long joinWindowLo = atom.getJoinWindowLo();
-        final long joinWindowHi = atom.getJoinWindowHi();
+        final long windowLo = atom.getWindowLo();
+        final long windowHi = atom.getWindowHi();
         final long valueSizeInBytes = atom.getValueSizeBytes();
         assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
@@ -833,8 +848,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
-            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
+            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
             final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
@@ -872,6 +887,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             }
 
             for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -880,8 +896,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
+                final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = toSymbolMapKey(masterKey);
@@ -981,8 +997,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         task.setFilteredRowCount(frameRowCount);
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
-        final long joinWindowLo = atom.getJoinWindowLo();
-        final long joinWindowHi = atom.getJoinWindowHi();
+        final long windowLo = atom.getWindowLo();
+        final long windowHi = atom.getWindowHi();
         final long valueSizeInBytes = atom.getValueSizeBytes();
         assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
@@ -1016,8 +1032,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
+            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
@@ -1054,6 +1070,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             }
 
             for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -1062,8 +1079,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
+                final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = toSymbolMapKey(masterKey);
@@ -1202,6 +1219,44 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    private static long applyFilter(
+            @NotNull PageFrameMemoryRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull AsyncWindowJoinFastAtom atom,
+            int slotId,
+            long frameRowCount
+    ) {
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+        final PageFrameMemory frameMemory;
+        if (useLateMaterialization) {
+            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = task.populateFrameMemory();
+        }
+        record.init(frameMemory);
+        final DirectLongList rows = task.getFilteredRows();
+        rows.clear();
+
+        final Function filter = atom.getMasterFilter(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
+        if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
+        } else {
+            applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+        }
+
+        final long filteredRowCount = rows.size();
+        task.setFilteredRowCount(filteredRowCount);
+        if (isParquetFrame) {
+            atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+        }
+        if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+            record.init(frameMemory);
+        }
+        return filteredRowCount;
+    }
+
     /**
      * Aggregate with master filter (no join filter).
      */
@@ -1215,31 +1270,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final Function filter = atom.getMasterFilter(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
+            final long filteredRowCount = applyFilter(record, task, atom, slotId, frameRowCount);
+            final DirectLongList rows = task.getFilteredRows();
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
-                final long joinWindowLo = atom.getJoinWindowLo();
-                final long joinWindowHi = atom.getJoinWindowHi();
+                final long windowLo = atom.getWindowLo();
+                final long windowHi = atom.getWindowHi();
                 final long valueSizeInBytes = atom.getValueSizeBytes();
                 assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
@@ -1269,8 +1309,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
+                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
 
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowIndex != Long.MIN_VALUE) {
@@ -1306,6 +1346,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
                 // Process filtered master rows
                 for (long p = 0; p < filteredRowCount; p++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     long r = rows.get(p);
                     record.setRowIndex(r);
                     rows.ensureCapacity(valueSizeInLongs);
@@ -1315,8 +1356,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     value.setNew(true);
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                    slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                    slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
+                    slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
@@ -1370,30 +1411,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final Function filter = atom.getMasterFilter(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
+            final long filteredRowCount = applyFilter(record, task, atom, slotId, frameRowCount);
+            final DirectLongList rows = task.getFilteredRows();
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
-                final long joinWindowLo = atom.getJoinWindowLo();
-                final long joinWindowHi = atom.getJoinWindowHi();
+                final long windowLo = atom.getWindowLo();
+                final long windowHi = atom.getWindowHi();
                 final long valueSizeInBytes = atom.getValueSizeBytes();
                 assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
@@ -1427,8 +1454,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
+                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
 
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowIndex != Long.MIN_VALUE) {
@@ -1461,11 +1488,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            // don't forget to switch the record to the new frame
+                            slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         }
                     }
                 }
 
                 for (long p = 0; p < filteredRowCount; p++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -1477,8 +1507,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     }
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                    slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                    slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
+                    slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
@@ -1499,9 +1529,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             final long ptr = slaveData.get(idx, mapIndex + 2);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
                             } else { // no-arg function, e.g. count()
-                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                             }
                         }
                     }
@@ -1525,30 +1555,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final Function filter = atom.getMasterFilter(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
+            final long filteredRowCount = applyFilter(record, task, atom, slotId, frameRowCount);
+            final DirectLongList rows = task.getFilteredRows();
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
-                final long joinWindowLo = atom.getJoinWindowLo();
-                final long joinWindowHi = atom.getJoinWindowHi();
+                final long windowLo = atom.getWindowLo();
+                final long windowHi = atom.getWindowHi();
                 final long valueSizeInBytes = atom.getValueSizeBytes();
                 assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
@@ -1584,8 +1600,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
@@ -1627,11 +1643,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            // don't forget to switch the record to the new frame
+                            slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         }
                     }
                 }
 
                 for (long p = 0; p < filteredRowCount; p++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -1643,8 +1662,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     }
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                    final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                    final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
+                    final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
@@ -1701,9 +1720,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                 if (ptr != 0) {
                                     final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                     // column values are shifted by one slot, hence `rowLo + 1`
-                                    groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * (rowLo + 1), (int) (rowHi - rowLo));
+                                    groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * (rowLo + 1), (int) (rowHi - rowLo), 0);
                                 } else { // no-arg function, e.g. count()
-                                    groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                                    groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                                 }
                             }
                         }
@@ -1742,31 +1761,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final Function filter = atom.getMasterFilter(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
+            final long filteredRowCount = applyFilter(record, task, atom, slotId, frameRowCount);
+            final DirectLongList rows = task.getFilteredRows();
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
-                final long joinWindowLo = atom.getJoinWindowLo();
-                final long joinWindowHi = atom.getJoinWindowHi();
+                final long windowLo = atom.getWindowLo();
+                final long windowHi = atom.getWindowHi();
                 final long valueSizeInBytes = atom.getValueSizeBytes();
                 assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
@@ -1796,8 +1800,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
@@ -1834,6 +1838,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 }
 
                 for (long p = 0; p < filteredRowCount; p++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     long r = rows.get(p);
                     record.setRowIndex(r);
                     rows.ensureCapacity(valueSizeInLongs);
@@ -1843,8 +1848,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     value.setNew(true);
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                    final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                    final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
+                    final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
@@ -1935,31 +1940,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final Function filter = atom.getMasterFilter(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
+            final long filteredRowCount = applyFilter(record, task, atom, slotId, frameRowCount);
+            final DirectLongList rows = task.getFilteredRows();
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
-                final long joinWindowLo = atom.getJoinWindowLo();
-                final long joinWindowHi = atom.getJoinWindowHi();
+                final long windowLo = atom.getWindowLo();
+                final long windowHi = atom.getWindowHi();
                 final long valueSizeInBytes = atom.getValueSizeBytes();
                 assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
@@ -1989,8 +1979,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
 
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
@@ -2027,6 +2017,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
                 // Process filtered master rows
                 for (long p = 0; p < filteredRowCount; p++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     long r = rows.get(p);
                     record.setRowIndex(r);
                     rows.ensureCapacity(valueSizeInLongs);
@@ -2036,8 +2027,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     value.setNew(true);
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                    final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                    final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
+                    final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
                     final long rowIdsPtr = slaveData.get(idx, 0);
@@ -2199,7 +2190,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             slaveTimeFrameHelper.restoreBookmark(slaveRowFrameIndex, 0);
             do {
                 // actual row index doesn't matter here due to the later recordAtRowIndex() call
-                slaveTimeFrameHelper.recordAt(Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0));
+                slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
 
                 long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
                 long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();

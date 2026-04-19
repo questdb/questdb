@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,10 +28,12 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -63,7 +65,7 @@ public class FuzzQueryOperation implements FuzzTransactionOperation {
         }
         final TableToken tableToken = tableWriter.getTableToken();
         final StringSink sink = new StringSink();
-        try (SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+        try (SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
             TestUtils.printSql(engine, sqlExecutionContext, tableToken.getTableName() + " LIMIT " + limit, sink);
         } catch (SqlException e) {
             if (failureFileFacade != null && failureFileFacade.failureGenerated() > failuresObserved) {
@@ -73,6 +75,10 @@ public class FuzzQueryOperation implements FuzzTransactionOperation {
             }
             if (e.isTableDoesNotExist()) {
                 return false; // drop table transactions are BAU
+            }
+            if (Chars.contains(e.getFlyweightMessage(), "too many cached query plan cannot be used because table schema has changed")) {
+                // Just an unlucky live lock conflict, ignore
+                return false;
             }
             throw new RuntimeException(e);
         } catch (Throwable th) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
@@ -64,11 +63,10 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     void calculateSize(RecordCursor.Counter counter);
 
     /**
-     * Returns local (query) to table reader index mapping.
-     * Used to map local column indexes to indexes from the Parquet file.
-     * Such mapping requires knowing the corresponding table reader indexes.
+     * Returns column mapping that bundles local (query) column indexes
+     * and writer indexes (field_ids) for parquet column mapping.
      */
-    IntList getColumnIndexes();
+    ColumnMapping getColumnMapping();
 
     /**
      * Returns the number of rows remaining in the current interval that have not yet been
@@ -143,6 +141,25 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      */
     @Nullable
     PageFrame next(long skipTarget);
+
+    default void releaseOpenPartitions() {
+        // no-op by default
+    }
+
+    /**
+     * Enables or disables streaming mode for the cursor.
+     * When streaming mode is enabled, underlying resources (e.g., partitions) are opened
+     * with hints to release page cache after reading. This is useful for large sequential
+     * scans like Parquet export to avoid page cache exhaustion under memory pressure.
+     * <p>
+     * Default implementation is a no-op. Subclasses backed by TableReader should override
+     * this method to delegate to the TableReader's streaming mode setting.
+     *
+     * @param enabled true to enable streaming mode, false to disable
+     */
+    default void setStreamingMode(boolean enabled) {
+        // no-op by default
+    }
 
     /**
      * @return number of rows in all page frames

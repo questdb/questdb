@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,7 +31,8 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class CountLongVectorAggregateFunction extends AbstractCountVectorAggregateFunction {
-    public CountLongVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+
+    public CountLongVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         super(columnIndex);
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;

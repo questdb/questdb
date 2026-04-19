@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -153,7 +153,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         private boolean forwardScanExhausted;
         private boolean slaveCursorReadyForForwardScan;
 
-
         protected AsOfJoinDenseRecordCursorBase(
                 int columnSplit,
                 Map fwdScanKeyToRowId,
@@ -178,11 +177,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
         @Override
         public boolean hasNext() {
-            if (isMasterHasNextPending) {
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            }
-            if (!masterHasNext) {
+            if (!masterCursor.hasNext()) {
                 return false;
             }
             final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
@@ -192,7 +187,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             int slaveKeyToFind = setupSymbolKeyToFind();
             if (slaveKeyToFind == SymbolTable.VALUE_NOT_FOUND) {
                 record.hasSlave(false);
-                isMasterHasNextPending = true;
                 return true;
             }
 
@@ -201,7 +195,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 nextSlave(masterTimestamp);
                 if (!record.hasSlave()) {
                     // There are no prevailing slave rows (all are more recent than master row)
-                    isMasterHasNextPending = true;
                     return true;
                 }
                 long rowId = slaveRecB.getRowId();
@@ -239,7 +232,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             if (backwardScanExhausted) {
                 // Symbol not found in backward scan, and the scan already reached the end, report no match
                 record.hasSlave(false);
-                isMasterHasNextPending = true;
                 return true;
             }
 
@@ -281,7 +273,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
             record.hasSlave(false);
-            isMasterHasNextPending = true;
             return true;
         }
 
@@ -303,7 +294,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             if (bwdScanKeyToRowId.isOpen()) {
                 bwdScanKeyToRowId.clear();
             }
-            isMasterHasNextPending = true;
             slaveCursorReadyForForwardScan = false;
             forwardScanExhausted = false;
             backwardRowId = -1;
@@ -345,7 +335,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             slaveTimeFrameCursor.recordAt(slaveRecB, slaveRowId);
             long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
             record.hasSlave(slaveTimestamp >= minSlaveTimestamp);
-            isMasterHasNextPending = true;
             return true;
         }
 

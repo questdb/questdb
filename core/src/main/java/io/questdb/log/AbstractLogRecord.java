@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -198,7 +198,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         final Utf8Sink sink = sink();
         final ObjHashSet<Throwable> dejaVu = tlSet.get();
         dejaVu.add(e);
-        sink.putEOL();
+        // Do not log EOL before exception type and message for log alerting to have more context.
         put0(sink, e);
         sink.putEOL();
 

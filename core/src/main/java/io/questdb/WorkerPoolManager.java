@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,7 +31,7 @@ import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -60,16 +60,16 @@ public abstract class WorkerPoolManager implements Target {
         config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getSharedPoolNetwork(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
-        return getWorkerPool(config, requester, sharedPoolNetwork);
+    public WorkerPool getSharedPoolNetwork(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName) {
+        return getWorkerPool(config, requesterName, sharedPoolNetwork);
     }
 
     public WorkerPool getSharedPoolNetwork() {
         return sharedPoolNetwork;
     }
 
-    public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
-        return getWorkerPool(config, requester, sharedPoolWrite);
+    public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName) {
+        return getWorkerPool(config, requesterName, sharedPoolWrite);
     }
 
     public int getSharedQueryWorkerCount() {
@@ -77,13 +77,13 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     @NotNull
-    public WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester, WorkerPool sharedPool) {
+    public WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName, WorkerPool sharedPool) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
 
         if (config.getWorkerCount() < 1) {
-            LOG.info().$("using SHARED pool [requester=").$(requester)
+            LOG.info().$("default thread pool [requester=").$(requesterName)
                     .$(", workers=").$(sharedPool.getWorkerCount())
                     .$(", pool=").$(sharedPool.getPoolName())
                     .I$();
@@ -96,8 +96,8 @@ public abstract class WorkerPoolManager implements Target {
             pool = new WorkerPool(config);
             dedicatedPools.put(poolName, pool);
         }
-        LOG.info().$("new DEDICATED pool [name=").$(poolName)
-                .$(", requester=").$(requester)
+        LOG.info().$("custom thread pool [name=").$(poolName)
+                .$(", requester=").$(requesterName)
                 .$(", workers=").$(pool.getWorkerCount())
                 .$(", priority=").$(config.workerPoolPriority())
                 .I$();
@@ -108,7 +108,7 @@ public abstract class WorkerPoolManager implements Target {
         // halt is idempotent, and start may have not been called, still
         // we want to free pool resources, so we do not check the closed
         // flag, but we ensure it is true at the end.
-        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
             CharSequence name = poolNames.getQuick(i);
             WorkerPool pool = dedicatedPools.get(name);
@@ -131,7 +131,7 @@ public abstract class WorkerPoolManager implements Target {
             sharedPoolQuery.updateWorkerMetrics(now);
         }
         sharedPoolWrite.updateWorkerMetrics(now);
-        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
             dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics(now);
         }
@@ -143,7 +143,7 @@ public abstract class WorkerPoolManager implements Target {
             startWorkerPool(sharedPoolLog, sharedPoolQuery, "started shared pool [name=");
             startWorkerPool(sharedPoolLog, sharedPoolWrite, "started shared pool [name=");
 
-            ObjList<CharSequence> poolNames = dedicatedPools.keys();
+            ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
                 CharSequence name = poolNames.get(i);
                 WorkerPool pool = dedicatedPools.get(name);
@@ -156,7 +156,7 @@ public abstract class WorkerPoolManager implements Target {
     private static void startWorkerPool(Log sharedPoolLog, WorkerPool p, String msg) {
         if (p != null) {
             p.start(sharedPoolLog);
-            LOG.info().$(msg).$(p.getPoolName())
+            LOG.debug().$(msg).$(p.getPoolName())
                     .$(", workers=").$(p.getWorkerCount())
                     .I$();
         }
@@ -164,7 +164,7 @@ public abstract class WorkerPoolManager implements Target {
 
     private void closePool(WorkerPool p, String message) {
         if (p != null) {
-            LOG.info().$(message).$(p.getPoolName())
+            LOG.debug().$(message).$(p.getPoolName())
                     .$(", workers=").$(p.getWorkerCount())
                     .I$();
             p.halt();
@@ -180,7 +180,11 @@ public abstract class WorkerPoolManager implements Target {
             final WorkerPool sharedPoolWrite
     );
 
-    public enum Requester {
+    public interface RequesterName {
+        String toString();
+    }
+
+    public enum Requester implements RequesterName {
 
         HTTP_SERVER("http"),
         HTTP_MIN_SERVER("min-http"),
@@ -189,6 +193,7 @@ public abstract class WorkerPoolManager implements Target {
         LINE_TCP_WRITER("line-tcp-writer"),
         OTHER("other"),
         WAL_APPLY("wal-apply"),
+        VIEW_COMPILER("view-compiler"),
         MAT_VIEW_REFRESH("mat-view-refresh"),
         EXPORT("export");
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,12 +30,27 @@ import io.questdb.cairo.Reopenable;
  * Off-heap bounded sorted list for long values accompanied by a long index.
  */
 public interface DirectLongLongSortedList extends QuietCloseable, Mutable, Reopenable {
+    int ASC_ORDER = 0;
+    int DESC_ORDER = 1;
+
+    static DirectLongLongSortedList getInstance(int order, int limit, int memoryTag) {
+        return order == ASC_ORDER
+                ? new DirectLongLongAscList(limit, memoryTag)
+                : new DirectLongLongDescList(limit, memoryTag);
+    }
 
     void add(long index, long value);
 
     int getCapacity();
 
     Cursor getCursor();
+
+    /**
+     * @return 0 for ascending and 1 for descending
+     */
+    int getOrder();
+
+    void reopen(int capacity);
 
     int size();
 

@@ -1,0 +1,63 @@
+statement ok
+CREATE TABLE Cities(Country VARCHAR, Name VARCHAR, Year INT, Population INT);
+
+statement ok
+INSERT INTO Cities VALUES ('NL', 'Amsterdam', 2000, 1005);
+
+statement ok
+INSERT INTO Cities VALUES ('NL', 'Amsterdam', 2010, 1065);
+
+statement ok
+INSERT INTO Cities VALUES ('NL', 'Amsterdam', 2020, 1158);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'Seattle', 2000, 564);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'Seattle', 2010, 608);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'Seattle', 2020, 738);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'New York City', 2000, 8015);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'New York City', 2010, 8175);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'New York City', 2020, 8772);
+
+# PIVOT Cities USING SUM(Population);
+query I
+SELECT sum(population) FROM Cities;
+----
+30100
+
+# PIVOT Cities USING SUM(Population) GROUP BY Country;
+query II rowsort
+SELECT country, sum(population) FROM Cities ORDER BY country;
+----
+NL	3228
+US	26872
+
+# PIVOT Cities GROUP BY Country;
+query I rowsort
+SELECT country FROM Cities GROUP BY country ORDER BY country;
+----
+NL
+US
+
+# PIVOT Cities ON Year GROUP BY Country;
+query IIII rowsort
+Cities PIVOT (count() FOR year IN ('2000', '2010', '2020') GROUP BY country)  ORDER BY country;
+----
+NL	1	1	1
+US	2	2	2
+
+# PIVOT (SELECT Country, Year FROM Cities) ON Year;
+query IIII rowsort
+(SELECT Country, Year FROM Cities) PIVOT (count() FOR year IN ('2000', '2010', '2020') GROUP BY country) ORDER BY country;
+----
+NL	1	1	1
+US	2	2	2

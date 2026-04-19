@@ -3,6 +3,7 @@ steps:
     fetchDepth: 1
     lfs: false
     submodules: false
+  - template: detect-local-client.yml
   - bash: |
       rm -rf /tmp/junit* /tmp/surefire-agent /tmp/libquestdbr* /tmp/libqdbsqllogic*
     displayName: "Cleanup dangling test artifacts from /tmp"
@@ -12,9 +13,9 @@ steps:
     condition: |
       and(
         eq(variables['os'], 'Linux'),
-        ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-incus'),
+        ne(variables['poolName'], 'hetzner-incus-arm'),
+        ne(variables['poolName'], 'hetzner-incus-zfs')
       )
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
@@ -25,8 +26,8 @@ steps:
     displayName: "Install JDK and Maven"
     condition: |
       or(
-        eq(variables['poolName'], 'hetzner-docker'),
-        eq(variables['poolName'], 'hetzner-docker-zfs')
+        eq(variables['poolName'], 'hetzner-incus'),
+        eq(variables['poolName'], 'hetzner-incus-zfs')
       )
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
@@ -36,7 +37,7 @@ steps:
       echo "JAVA_HOME will be set to: $JAVA_PATH"
     displayName: "Install JDK and Maven"
     condition: |
-      eq(variables['poolName'], 'hetzner-docker-arm')
+      eq(variables['poolName'], 'hetzner-incus-arm')
   - bash: |
       JAVA_PATH="/opt/graalvm"
       echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
@@ -55,9 +56,9 @@ steps:
     condition: |
       and(
         ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
-        ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-incus'),
+        ne(variables['poolName'], 'hetzner-incus-arm'),
+        ne(variables['poolName'], 'hetzner-incus-zfs')
       )
   - task: Cache@2
     displayName: "Cache .m2/repository"
@@ -67,9 +68,9 @@ steps:
       path: $(MAVEN_CACHE_FOLDER)
     condition: |
       and(
-        ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-incus'),
+        ne(variables['poolName'], 'hetzner-incus-arm'),
+        ne(variables['poolName'], 'hetzner-incus-zfs')
       )
   - task: Cache@2
     displayName: "Cache .cargo/registry"
@@ -83,9 +84,9 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-incus'),
+        ne(variables['poolName'], 'hetzner-incus-arm'),
+        ne(variables['poolName'], 'hetzner-incus-zfs')
       )
   - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
     displayName: "Ensure .m2/repository exists (PowerShell)"
@@ -93,12 +94,12 @@ steps:
   - bash: mkdir -p "$HOME/.m2/repository"
     displayName: "Ensure .m2/repository exists (bash)"
     condition: ne(variables['os'], 'Windows')
-  - script: 'wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
+  - script: "wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip"
     displayName: "Get non-default Maven (bash)"
     condition: |
       and(
-        ne(variables['MAVEN_VERSION_OPTION'], 'Default'), 
-        ne(variables.MVN_CACHE_RESTORED, 'true'), 
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
+        ne(variables.MVN_CACHE_RESTORED, 'true'),
         ne(variables['os'], 'Windows')
       )
   - pwsh: |
@@ -106,14 +107,14 @@ steps:
     displayName: "Get non-default Maven (PowerShell)"
     condition: |
       and(
-        ne(variables['MAVEN_VERSION_OPTION'], 'Default'), 
-        ne(variables.MVN_CACHE_RESTORED, 'true'), 
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
+        ne(variables.MVN_CACHE_RESTORED, 'true'),
         eq(variables['os'], 'Windows')
       )
   - task: ExtractFiles@1
     inputs:
-      archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
-      destinationFolder: '$(build.sourcesdirectory)/maven'
+      archiveFilePatterns: "apache-maven-$(MAVEN_VERSION)-bin.zip"
+      destinationFolder: "$(build.sourcesdirectory)/maven"
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
   - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
@@ -133,11 +134,11 @@ steps:
     displayName: "Compile with Maven"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
-      options:
-        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
+      goals: "compile"
+      options: "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition: |
       or(
@@ -148,18 +149,17 @@ steps:
     displayName: "Run tests"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
-      options:
-        "--batch-mode --quiet -Dtest.include=$(includeTests)
+      options: "--batch-mode --quiet -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         -P build-web-console
-         $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
@@ -169,20 +169,48 @@ steps:
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
+  - bash: find . -name '*.profraw' -delete
+    displayName: "Clean stale profraw files"
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+  - task: Maven@3
+    displayName: "Pre-build for Coverage"
+    inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
+      mavenPomFile: "pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      goals: "install"
+      options: "--batch-mode -pl core -am -DskipTests
+        -P build-web-console
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+      jdkVersionOption: $(jdk)
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['System.PullRequest.IsFork'], 'false'),
+        or(
+            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        )
+      )
   - task: Maven@3
     displayName: "Run tests with Coverage (jemalloc)"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "core/pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "test"
-      options:
-        "--batch-mode -Dtest.include=$(includeTests)
+      options: "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -P qdbr-coverage,build-web-console
-        $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"
@@ -194,7 +222,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['System.PullRequest.IsFork'], 'false'),
-        or( 
+        or(
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
         )
@@ -261,15 +289,24 @@ steps:
       export PATH=$LLVM_TOOLS_PATH:$PATH
       # List profraw files for debugging purposes
       find . -name \*.profraw
-      CANDIDATE_FILES="core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw"
-      PROFRAW_FILES=$(for f in $CANDIDATE_FILES; do [ -f "$f" ] && echo -n "$f "; done)
-      PROFRAW_FILES=${PROFRAW_FILES% }
-      if [ -z "$PROFRAW_FILES" ]; then
-        echo "LLVM profiling files not found"
+      PROFRAW="core/questdbr-junit.profraw"
+      if [ ! -f "$PROFRAW" ]; then
+        echo "LLVM profiling file not found: $PROFRAW"
         exit -1
       fi
-      llvm-profdata merge -sparse -o $(testset).profdata $PROFRAW_FILES
-    displayName: "Create partial Rust coverage report in LLVM format"
+      llvm-profdata merge -sparse -o $(testset).profdata "$PROFRAW"
+
+      IGNORE_RE='(.cargo/registry|rustc/.*\.rs)'
+      OBJECTS="--object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so"
+
+      llvm-cov export \
+        --format=lcov \
+        --ignore-filename-regex="$IGNORE_RE" \
+        $OBJECTS \
+        --instr-profile=$(testset).profdata \
+        > $(testset).lcov
+      echo "Generated $(testset).lcov"
+    displayName: "Create partial Rust coverage report (LCOV)"
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
@@ -277,7 +314,7 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: PublishBuildArtifacts@1
-    displayName: "Upload partial Rust coverage report"
+    displayName: "Upload partial Rust coverage report (LCOV)"
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
@@ -285,29 +322,5 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
     inputs:
-      pathToPublish: $(Build.SourcesDirectory)/$(testset).profdata
-      artifactName: rust-llvm-coverage
-  - bash: |
-      set -eux
-      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
-      mkdir rust-coverage-binaries
-      mv core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so rust-coverage-binaries/
-      mv $QUESTDBR_TEST_BIN rust-coverage-binaries/questdbr-test-binary
-    displayName: "Prepare Rust binaries for upload"
-    condition: |
-      and(
-        eq(variables['testset'], 'coverage-griffin-root'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-  - task: PublishBuildArtifacts@1
-    displayName: "Upload Rust binaries needed to merge coverage files"
-    condition: |
-      and(
-        eq(variables['testset'], 'coverage-griffin-root'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-    inputs:
-      pathToPublish: $(Build.SourcesDirectory)/rust-coverage-binaries
+      pathToPublish: $(Build.SourcesDirectory)/$(testset).lcov
       artifactName: rust-llvm-coverage

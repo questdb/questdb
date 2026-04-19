@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.FactoryProvider;
+import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -48,6 +49,10 @@ public interface JsonQueryProcessorConfiguration {
     MillisecondClock getMillisecondClock();
 
     NanosecondClock getNanosecondClock();
+
+    default QueryFutureUpdateListener getQueryFutureUpdateListener() {
+        return QueryFutureUpdateListener.EMPTY;
+    }
 
     default byte getRequiredAuthType() {
         return AUTH_TYPE_CREDENTIALS;

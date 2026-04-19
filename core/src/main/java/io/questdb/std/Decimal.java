@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -107,6 +107,17 @@ public interface Decimal {
      * </pre>
      */
     void negate();
+
+    /**
+     * Sets this decimal to {@code digits * 10^power}.
+     * <p>
+     * When {@code power >= 0}, the value is {@code digits * 10^power} with scale 0.
+     * When {@code power < 0}, the value is {@code digits} with scale {@code -power}.
+     *
+     * @param digits the significant digits
+     * @param power  the base-10 exponent
+     */
+    void ofDigitsAndPower(long digits, int power);
 
     /**
      * Sets this decimal to the null value.

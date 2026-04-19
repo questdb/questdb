@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,11 +27,21 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
-public abstract class AbstractCastToIntFunction extends IntFunction implements UnaryFunction {
+/**
+ * Abstract base class for functions that cast values to int.
+ */
+public abstract class AbstractCastToIntFunction extends IntFunction implements CastFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to int function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToIntFunction(Function arg) {
         this.arg = arg;
     }

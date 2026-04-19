@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,7 +34,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
-public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata, TableStructure {
+public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -43,6 +43,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int tableId;
     private TableToken tableToken;
     private int ttlHoursOrMonths;
+    private TxReader txReader;
     private boolean walEnabled;
 
     public TableWriterMetadata(TableToken tableToken) {
@@ -72,6 +73,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public long getO3MaxLag() {
         return o3MaxLag;
+    }
+
+    @Override
+    public int getParquetEncodingConfig(int columnIndex) {
+        return getColumnMetadata(columnIndex).getParquetEncodingConfig();
     }
 
     @Override
@@ -118,6 +124,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public boolean hasParquetPartitions() {
+        return txReader != null && txReader.hasParquetPartitions();
+    }
+
+    @Override
     public boolean isIndexed(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
@@ -150,21 +161,21 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             assert name != null;
             int type = TableUtils.getColumnType(metaMem, i);
             String nameStr = Chars.toString(name);
-            columnMetadata.add(
-                    new WriterTableColumnMetadata(
-                            nameStr,
-                            type,
-                            TableUtils.isColumnIndexed(metaMem, i),
-                            TableUtils.getIndexBlockCapacity(metaMem, i),
-                            true,
-                            null,
-                            i,
-                            TableUtils.getSymbolCapacity(metaMem, i),
-                            TableUtils.isColumnDedupKey(metaMem, i),
-                            TableUtils.getReplacingColumnIndex(metaMem, i),
-                            TableUtils.isSymbolCached(metaMem, i)
-                    )
+            WriterTableColumnMetadata colMeta = new WriterTableColumnMetadata(
+                    nameStr,
+                    type,
+                    TableUtils.isColumnIndexed(metaMem, i),
+                    TableUtils.getIndexBlockCapacity(metaMem, i),
+                    true,
+                    null,
+                    i,
+                    TableUtils.getSymbolCapacity(metaMem, i),
+                    TableUtils.isColumnDedupKey(metaMem, i),
+                    TableUtils.getReplacingColumnIndex(metaMem, i),
+                    TableUtils.isSymbolCached(metaMem, i)
             );
+            colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, i));
+            columnMetadata.add(colMeta);
             if (type > -1) {
                 columnNameIndexMap.put(nameStr, i);
                 if (ColumnType.isSymbol(type)) {
@@ -185,6 +196,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public void setO3MaxLag(long o3MaxLagUs) {
         this.o3MaxLag = o3MaxLagUs;
+    }
+
+    public void setTxReader(TxReader txReader) {
+        this.txReader = txReader;
     }
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
@@ -268,6 +283,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 oldMeta.getReplacingIndex(),
                 oldMeta.isSymbolCacheFlag()
         );
+        newColumnMetadata.setParquetEncodingConfig(oldMeta.getParquetEncodingConfig());
         columnMetadata.set(columnIndex, newColumnMetadata);
     }
 

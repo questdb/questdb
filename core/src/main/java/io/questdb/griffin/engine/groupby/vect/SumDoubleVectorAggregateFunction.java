@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -51,7 +51,7 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     private final int workerCount;
     private int valueOffset;
 
-    public SumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public SumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         this.sum = new double[workerCount * SUM_PADDING];
         this.count = new long[workerCount * COUNT_PADDING];

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -58,15 +58,22 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void computeBatch(MapValue mapValue, long ptr, int count) {
+        public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
             if (count > 0) {
                 long hi = ptr + (count - 1) * 4L;
+                long offset = count - 1;
                 for (; hi >= ptr; hi -= 4L) {
                     int value = Unsafe.getUnsafe().getInt(hi);
                     if (value != Numbers.IPv4_NULL) {
-                        mapValue.putInt(valueIndex + 1, value);
+                        long rowId = startRowId + offset;
+                        long existingRowId = mapValue.getLong(valueIndex);
+                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                            mapValue.putLong(valueIndex, rowId);
+                            mapValue.putInt(valueIndex + 1, value);
+                        }
                         break;
                     }
+                    offset--;
                 }
             }
         }

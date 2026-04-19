@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -53,6 +53,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     @Override
     public boolean allowNonDeterministicFunctions() {
         return true;
+    }
+
+    @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
     }
 
     @Override
@@ -147,6 +151,16 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public int getPageFrameMaxRows() {
+        return engine.getConfiguration().getSqlPageFrameMaxRows();
+    }
+
+    @Override
+    public int getPageFrameMinRows() {
+        return engine.getConfiguration().getSqlPageFrameMinRows();
+    }
+
+    @Override
     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
         return null;
     }
@@ -211,7 +225,17 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public boolean isParquetRowGroupPruningEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isParallelTopKEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelHorizonJoinEnabled() {
         return false;
     }
 
@@ -265,7 +289,11 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
-    public void resetFlags() {
+    public void reset() {
+    }
+
+    @Override
+    public void restoreToDefaultPageFrameSizes() {
     }
 
     @Override
@@ -309,7 +337,15 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled) {
+    }
+
+    @Override
     public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
+    }
+
+    @Override
+    public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
     }
 
     @Override

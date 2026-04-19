@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -317,6 +317,14 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
+        if (checkForFailure()) {
+            return -1;
+        }
+        return ff.mmapNoCache(fd, len, offset, flags, memoryTag);
+    }
+
+    @Override
     public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
         if (newSize != previousSize) {
             if (checkForFailure()) {
@@ -325,6 +333,14 @@ public class FailureFileFacade implements FilesFacade {
             return ff.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
         }
         return addr;
+    }
+
+    @Override
+    public long mremapNoCache(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+        if (checkForFailure()) {
+            return -1;
+        }
+        return ff.mremapNoCache(fd, addr, previousSize, newSize, offset, mode, memoryTag);
     }
 
     @Override
