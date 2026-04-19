@@ -77,7 +77,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
                                 "FROM long_sequence(500000))");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+                                "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
                         .withInitialCredit(4 * 1024)) {
                     client.connect();
 
@@ -124,7 +124,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
                         "CREATE TABLE tiny AS (SELECT x AS id FROM long_sequence(50000))");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+                                "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
                         .withInitialCredit(1)) {
                     client.connect();
 
@@ -195,7 +195,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
                 serverMain.execute("INSERT INTO a SELECT x FROM long_sequence(3000)");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+                                "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
                         .withInitialCredit(8 * 1024)) {
                     client.connect();
                     for (int q = 0; q < 5; q++) {

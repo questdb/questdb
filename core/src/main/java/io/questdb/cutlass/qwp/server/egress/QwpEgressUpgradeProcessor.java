@@ -69,13 +69,44 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
- * HTTP request processor that handles WebSocket upgrade for QWP egress at /read/v1.
+ * HTTP request processor for the QWP egress endpoint at {@code /read/v1}.
  * <p>
- * Phase 1 skeleton: completes the WebSocket handshake (reusing the validation and
- * response helpers from {@link QwpWebSocketHttpProcessor}), switches the connection
- * to WebSocket mode, and runs a frame-receive loop that handles control frames
- * (PING/PONG/CLOSE) and discards binary frames. Query execution wiring lands in a
- * follow-up commit.
+ * The processor owns three distinct responsibilities, each triggered by a
+ * different callback from the HTTP framework:
+ * <ol>
+ *   <li><b>WebSocket handshake</b> ({@code onHeadersReady} -> {@code onRequestComplete}
+ *       -> {@code resumeSend}). Validates the upgrade headers, writes the 101
+ *       response, then defers {@code rawSocket.send} to
+ *       {@code onRequestComplete} so a partial write (e.g. under
+ *       {@code DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE}) can park the
+ *       connection for write-ready; {@code resumeSend} finalises the protocol
+ *       switch after the flush completes.</li>
+ *   <li><b>Inbound frame dispatch</b> ({@code resumeRecv} -> {@code processWebSocketFrames}
+ *       -> {@code dispatchEgressMessage}). Decodes WebSocket frames from the
+ *       recv buffer and routes QWP messages: {@code QUERY_REQUEST} to
+ *       {@link #handleQueryRequest}, {@code CANCEL} to {@link #handleCancel},
+ *       {@code CREDIT} to {@link #handleCredit}, plus PING/PONG/CLOSE for
+ *       WebSocket control frames.</li>
+ *   <li><b>Query streaming</b> ({@link #streamResults}, re-entered from
+ *       {@link #resumeSend} and {@link #handleCredit}). Iterates the cursor
+ *       batch-by-batch, emits {@code RESULT_BATCH} frames, and yields
+ *       cooperatively on cancellation, credit exhaustion, or peer back-pressure.
+ *       Non-SELECT statements (DDL / INSERT / UPDATE / ALTER / DROP / etc.) run
+ *       synchronously via {@link #executeNonSelect} and reply with
+ *       {@code EXEC_DONE}.</li>
+ * </ol>
+ * <p>
+ * Per-connection state lives on {@link QwpEgressProcessorState} held via
+ * {@code LocalValue} on the connection context. It carries the in-flight
+ * cursor, schema registry, bind-variable service, credit / cancel flags, the
+ * per-batch {@link QwpResultBatchBuffer}, and the connection-scoped SYMBOL
+ * dictionary shared across queries on the same connection.
+ * <p>
+ * Wire-level flags on every {@code RESULT_BATCH}: {@code FLAG_DELTA_SYMBOL_DICT}
+ * (SYMBOL values ship once per connection, per-row payload is a varint id) and
+ * {@code FLAG_GORILLA} (TIMESTAMP / TIMESTAMP_NANOS / DATE columns carry a 1-byte
+ * encoding discriminator; ordered columns compress via delta-of-delta, jumpy
+ * ones fall back to raw).
  */
 public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
 
@@ -225,15 +256,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         // rest of the handshake bytes flush.
         rawSocket.send(state.getPendingHandshakeBytes());
         finalizeHandshake(context, state);
-    }
-
-    private void finalizeHandshake(HttpConnectionContext context, QwpEgressProcessorState state) {
-        state.setWsHandshakeSent(true);
-        state.setHandshakeFlushPending(false);
-        state.setPendingHandshakeBytes(0);
-        LOG.info().$("Egress WebSocket handshake sent [fd=").$(context.getFd())
-                .$(", qwpVersion=").$(state.getNegotiatedVersion() & 0xFF).I$();
-        context.switchProtocol();
     }
 
     @Override
@@ -495,6 +517,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         sendExecDone(context, state, requestId, type, rowsAffected);
     }
 
+    private void finalizeHandshake(HttpConnectionContext context, QwpEgressProcessorState state) {
+        state.setWsHandshakeSent(true);
+        state.setHandshakeFlushPending(false);
+        state.setPendingHandshakeBytes(0);
+        LOG.info().$("Egress WebSocket handshake sent [fd=").$(context.getFd())
+                .$(", qwpVersion=").$(state.getNegotiatedVersion() & 0xFF).I$();
+        context.switchProtocol();
+    }
+
     // Egress message dispatch and query execution
 
     /**
@@ -530,6 +561,29 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         } catch (QwpParseException e) {
             LOG.error().$("Egress CANCEL malformed [fd=").$(context.getFd())
                     .$(", error=").$(e.getFlyweightMessage()).I$();
+        }
+    }
+
+    private void handleClose(HttpConnectionContext context, long payload, int length) {
+        int closeCode = -1;
+        if (length >= 2) {
+            int high = Unsafe.getUnsafe().getByte(payload) & 0xFF;
+            int low = Unsafe.getUnsafe().getByte(payload + 1) & 0xFF;
+            closeCode = (high << 8) | low;
+        }
+        LOG.info().$("Egress WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
+        try {
+            HttpRawSocket rawSocket = context.getRawResponseSocket();
+            int written = WebSocketFrameWriter.writeCloseFrame(
+                    rawSocket.getBufferAddress(),
+                    rawSocket.getBufferSize(),
+                    WebSocketCloseCode.NORMAL_CLOSURE,
+                    null);
+            if (written > 0) {
+                rawSocket.send(written);
+            }
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+            // Best effort
         }
     }
 
@@ -585,29 +639,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         } catch (QwpParseException e) {
             LOG.error().$("Egress CREDIT malformed [fd=").$(context.getFd())
                     .$(", error=").$(e.getFlyweightMessage()).I$();
-        }
-    }
-
-    private void handleClose(HttpConnectionContext context, long payload, int length) {
-        int closeCode = -1;
-        if (length >= 2) {
-            int high = Unsafe.getUnsafe().getByte(payload) & 0xFF;
-            int low = Unsafe.getUnsafe().getByte(payload + 1) & 0xFF;
-            closeCode = (high << 8) | low;
-        }
-        LOG.info().$("Egress WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
-        try {
-            HttpRawSocket rawSocket = context.getRawResponseSocket();
-            int written = WebSocketFrameWriter.writeCloseFrame(
-                    rawSocket.getBufferAddress(),
-                    rawSocket.getBufferSize(),
-                    WebSocketCloseCode.NORMAL_CLOSURE,
-                    null);
-            if (written > 0) {
-                rawSocket.send(written);
-            }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            // Best effort
         }
     }
 
@@ -909,13 +940,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
      *   [0 .. 10)                 WS header reservation
      *   [10 .. 10 + qwpSize)      QWP message header + prelude + table block
      * </pre>
-     * After computing {@code qwpSize}, we pick the real WS header size and may
-     * memmove the QWP bytes left so the wire frame abuts offset 0 (which is
-     * what {@link HttpRawSocket#send(int)} flushes).
-     */
-    /**
+     * After computing {@code qwpSize}, the method picks the real WS header size
+     * and may memmove the QWP bytes left so the wire frame abuts offset 0
+     * (which is what {@link HttpRawSocket#send(int)} flushes).
+     *
      * @return the WS payload size (QWP bytes) actually written -- used by the
-     *         credit bookkeeping to debit the stream's remaining budget.
+     * credit bookkeeping to debit the stream's remaining budget.
      */
     private int sendResultBatch(
             HttpConnectionContext context,

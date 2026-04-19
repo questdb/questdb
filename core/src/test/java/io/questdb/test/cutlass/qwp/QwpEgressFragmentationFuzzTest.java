@@ -109,7 +109,7 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
                         "CREATE TABLE cf AS (SELECT x AS id FROM long_sequence(20000))");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+                                "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
                         .withInitialCredit(2 * 1024)) {
                     client.connect();
                     final long[] idSum = {0};
@@ -143,27 +143,6 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testHandshakeSurvivesMicroChunk() throws Exception {
-        // Pin chunk to 5 bytes: the ~220 B WebSocket 101 handshake response
-        // fragments across ~44 socket writes, forcing rawSocket.send() to park
-        // repeatedly. Regression for the "Egress 101 handshake blocked" bug
-        // that used to surface when any chunk was smaller than the handshake
-        // response. Now onHeadersReady defers send() to onRequestComplete,
-        // where PISR propagates cleanly into the park-resume path.
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented(5)) {
-                serverMain.execute("CREATE TABLE tiny(id LONG)");
-                serverMain.execute("INSERT INTO tiny SELECT x FROM long_sequence(3)");
-                try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
-                    runAndVerify(client, "tiny", 3);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testFragmentedStreamingBigResult() throws Exception {
         int chunk = pickChunk();
         LOG.info().$("=== fragmentation big result: chunk=").$(chunk).$();
@@ -179,6 +158,27 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
                     runAndVerify(client, "bigt", 50_000);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHandshakeSurvivesMicroChunk() throws Exception {
+        // Pin chunk to 5 bytes: the ~220 B WebSocket 101 handshake response
+        // fragments across ~44 socket writes, forcing rawSocket.send() to park
+        // repeatedly. Regression for the "Egress 101 handshake blocked" bug
+        // that used to surface when any chunk was smaller than the handshake
+        // response. Now onHeadersReady defers send() to onRequestComplete,
+        // where PISR propagates cleanly into the park-resume path.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(5)) {
+                serverMain.execute("CREATE TABLE tiny(id LONG)");
+                serverMain.execute("INSERT INTO tiny SELECT x FROM long_sequence(3)");
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    runAndVerify(client, "tiny", 3);
                 }
             }
         });

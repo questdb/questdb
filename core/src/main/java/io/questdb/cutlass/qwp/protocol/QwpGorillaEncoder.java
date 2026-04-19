@@ -69,7 +69,7 @@ public class QwpGorillaEncoder {
      * @param srcAddress source address of contiguous int64 timestamps in native memory
      * @param count      number of timestamps
      * @return encoded size in bytes (excluding encoding flag), or {@code -1} if
-     *         Gorilla cannot be used (a delta-of-delta exceeds int32 range)
+     * Gorilla cannot be used (a delta-of-delta exceeds int32 range)
      */
     public static int calculateEncodedSizeIfSupported(long srcAddress, int count) {
         if (count == 0) {
@@ -116,6 +116,20 @@ public class QwpGorillaEncoder {
     }
 
     /**
+     * Returns the number of bits required to encode a delta-of-delta value.
+     */
+    public static int getBitsRequired(long deltaOfDelta) {
+        int bucket = getBucket(deltaOfDelta);
+        return switch (bucket) {
+            case 0 -> 1;
+            case 1 -> 9;
+            case 2 -> 12;
+            case 3 -> 16;
+            default -> 36;
+        };
+    }
+
+    /**
      * Determines which bucket a delta-of-delta value falls into.
      *
      * @return bucket number (0 = 1-bit, 1 = 9-bit, 2 = 12-bit, 3 = 16-bit, 4 = 36-bit)
@@ -131,25 +145,6 @@ public class QwpGorillaEncoder {
             return 3;
         } else {
             return 4;
-        }
-    }
-
-    /**
-     * Returns the number of bits required to encode a delta-of-delta value.
-     */
-    public static int getBitsRequired(long deltaOfDelta) {
-        int bucket = getBucket(deltaOfDelta);
-        switch (bucket) {
-            case 0:
-                return 1;
-            case 1:
-                return 9;
-            case 2:
-                return 12;
-            case 3:
-                return 16;
-            default:
-                return 36;
         }
     }
 

@@ -83,11 +83,6 @@ public class QwpEgressReadBenchmarkWide {
     private static final boolean SKIP_POPULATE;
     private static final String TABLE_NAME = "egress_bench_wide";
 
-    static {
-        ROW_COUNT = Long.getLong("rowCount", DEFAULT_ROW_COUNT);
-        SKIP_POPULATE = Boolean.parseBoolean(System.getProperty("skip.populate", "false"));
-    }
-
     public static void main(String[] args) throws Exception {
         if (!SKIP_POPULATE) {
             recreateTable();
@@ -117,25 +112,13 @@ public class QwpEgressReadBenchmarkWide {
         printRow("HTTP /exec JSON", http);
     }
 
-    private static void printRow(String label, Result r) {
-        double secs = r.elapsedNanos / 1e9;
-        double rowsPerSec = r.rows / secs;
-        double mibPerSec = r.bytes / secs / (1024.0 * 1024.0);
-        System.out.printf("%-20s %12d %,12.0f %12.2f%n",
-                label, TimeUnit.NANOSECONDS.toMillis(r.elapsedNanos), rowsPerSec, mibPerSec);
-    }
-
-    private static String[] buildSymbolPool(String prefix, int size) {
-        String[] pool = new String[size];
-        for (int i = 0; i < size; i++) {
+    private static String[] buildSymbolPool(String prefix) {
+        String[] pool = new String[QwpEgressReadBenchmarkWide.HIGH_CARD];
+        for (int i = 0; i < QwpEgressReadBenchmarkWide.HIGH_CARD; i++) {
             pool[i] = prefix + i;
         }
         return pool;
     }
-
-    // ------------------------------------------------------------------
-    // Workload
-    // ------------------------------------------------------------------
 
     private static Connection createPgConnection() throws Exception {
         Properties p = new Properties();
@@ -149,23 +132,6 @@ public class QwpEgressReadBenchmarkWide {
                 String.format("jdbc:postgresql://%s:%d/qdb", HOST, PG_PORT), p);
     }
 
-    private static void recreateTable() throws Exception {
-        try (Connection c = createPgConnection(); Statement st = c.createStatement()) {
-            st.execute("DROP TABLE IF EXISTS " + TABLE_NAME);
-            // Wide schema that stresses the protocol. Low-cardinality symbol (8 values) +
-            // five high-cardinality symbols (100k distinct values each) + five extra
-            // doubles. Representative of a realistic analytics row: mixed numerics with
-            // several categorical dimensions of differing cardinality.
-            st.execute("CREATE TABLE " + TABLE_NAME + " ("
-                    + "ts TIMESTAMP, id LONG, price DOUBLE, sym SYMBOL, note VARCHAR,"
-                    + " d1 DOUBLE, d2 DOUBLE, d3 DOUBLE, d4 DOUBLE, d5 DOUBLE,"
-                    + " s1 SYMBOL capacity 200000, s2 SYMBOL capacity 200000,"
-                    + " s3 SYMBOL capacity 200000, s4 SYMBOL capacity 200000,"
-                    + " s5 SYMBOL capacity 200000"
-                    + ") TIMESTAMP(ts) PARTITION BY HOUR WAL");
-        }
-    }
-
     private static void ingestRows() {
         System.out.printf("Ingesting %,d rows over QWP/WebSocket...%n", ROW_COUNT);
         long start = System.nanoTime();
@@ -173,11 +139,11 @@ public class QwpEgressReadBenchmarkWide {
         // Pre-generate 100k unique values per high-cardinality symbol column so the ingest
         // loop reuses String references instead of allocating fresh ones per row. Rotate
         // s1..s5 through different offsets so any correlation between columns is coincidental.
-        String[] s1Pool = buildSymbolPool("s1_", HIGH_CARD);
-        String[] s2Pool = buildSymbolPool("s2_", HIGH_CARD);
-        String[] s3Pool = buildSymbolPool("s3_", HIGH_CARD);
-        String[] s4Pool = buildSymbolPool("s4_", HIGH_CARD);
-        String[] s5Pool = buildSymbolPool("s5_", HIGH_CARD);
+        String[] s1Pool = buildSymbolPool("s1_");
+        String[] s2Pool = buildSymbolPool("s2_");
+        String[] s3Pool = buildSymbolPool("s3_");
+        String[] s4Pool = buildSymbolPool("s4_");
+        String[] s5Pool = buildSymbolPool("s5_");
         // auto_flush_rows sized so the ILP frame stays under the server's 2 MiB
         // WebSocket buffer given our 15-column row layout (~130 bytes/row encoded).
         try (Sender sender = Sender.fromConfig("ws::addr=" + HOST + ":" + HTTP_PORT + ";auto_flush_rows=10000;")) {
@@ -233,93 +199,70 @@ public class QwpEgressReadBenchmarkWide {
     }
 
     // ------------------------------------------------------------------
+    // Workload
+    // ------------------------------------------------------------------
+
+    private static void log(String label, boolean warmup, long elapsedNanos, long rows, long checksumOrBytes) {
+        String phase = warmup ? "[warmup]" : "[measure]";
+        System.out.printf("%s %s : %,d rows in %,d ms (checksum/bytes=0x%x)%n",
+                phase, label, rows, TimeUnit.NANOSECONDS.toMillis(elapsedNanos), checksumOrBytes);
+    }
+
+    private static void printRow(String label, Result r) {
+        double secs = r.elapsedNanos / 1e9;
+        double rowsPerSec = r.rows / secs;
+        double mibPerSec = r.bytes / secs / (1024.0 * 1024.0);
+        System.out.printf("%-20s %12d %,12.0f %12.2f%n",
+                label, TimeUnit.NANOSECONDS.toMillis(r.elapsedNanos), rowsPerSec, mibPerSec);
+    }
+
+    private static void recreateTable() throws Exception {
+        try (Connection c = createPgConnection(); Statement st = c.createStatement()) {
+            st.execute("DROP TABLE IF EXISTS " + TABLE_NAME);
+            // Wide schema that stresses the protocol. Low-cardinality symbol (8 values) +
+            // five high-cardinality symbols (100k distinct values each) + five extra
+            // doubles. Representative of a realistic analytics row: mixed numerics with
+            // several categorical dimensions of differing cardinality.
+            st.execute("CREATE TABLE " + TABLE_NAME + " ("
+                    + "ts TIMESTAMP, id LONG, price DOUBLE, sym SYMBOL, note VARCHAR,"
+                    + " d1 DOUBLE, d2 DOUBLE, d3 DOUBLE, d4 DOUBLE, d5 DOUBLE,"
+                    + " s1 SYMBOL capacity 200000, s2 SYMBOL capacity 200000,"
+                    + " s3 SYMBOL capacity 200000, s4 SYMBOL capacity 200000,"
+                    + " s5 SYMBOL capacity 200000"
+                    + ") TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        }
+    }
+
+    // ------------------------------------------------------------------
     // QWP egress
     // ------------------------------------------------------------------
 
-    private static Result runQwp(boolean warmup) throws Exception {
-        final long[] rowsSeen = {0};
-        final long[] bytesSeen = {0};
-        final long[] checksum = {0};
+    private static Result runHttpExec(boolean warmup) throws Exception {
+        long bytes = 0;
         long start = System.nanoTime();
-        try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                "ws::addr=" + HOST + ":" + HTTP_PORT + ";client_id=qwp-egress-bench/1.0;")) {
-            client.connect();
-            client.execute(
-                    "SELECT ts, id, price, sym, note,"
-                            + " d1, d2, d3, d4, d5,"
-                            + " s1, s2, s3, s4, s5"
-                            + " FROM " + TABLE_NAME,
-                    new QwpColumnBatchHandler() {
-                @Override
-                public void onBatch(QwpColumnBatch batch) {
-                    int n = batch.getRowCount();
-                    // Fixed-width 8-byte columns: ts (TIMESTAMP), id (LONG), price + d1..d5 (DOUBLE).
-                    // Hoist their base addresses and non-null index arrays once per batch so the
-                    // inner row loop is just pointer arithmetic.
-                    long tsBase = batch.valuesAddr(0);
-                    long idBase = batch.valuesAddr(1);
-                    long priceBase = batch.valuesAddr(2);
-                    long d1Base = batch.valuesAddr(5);
-                    long d2Base = batch.valuesAddr(6);
-                    long d3Base = batch.valuesAddr(7);
-                    long d4Base = batch.valuesAddr(8);
-                    long d5Base = batch.valuesAddr(9);
-                    int[] tsIdx = batch.nonNullIndex(0);
-                    int[] idIdx = batch.nonNullIndex(1);
-                    int[] priceIdx = batch.nonNullIndex(2);
-                    int[] d1Idx = batch.nonNullIndex(5);
-                    int[] d2Idx = batch.nonNullIndex(6);
-                    int[] d3Idx = batch.nonNullIndex(7);
-                    int[] d4Idx = batch.nonNullIndex(8);
-                    int[] d5Idx = batch.nonNullIndex(9);
-                    for (int r = 0; r < n; r++) {
-                        long ts = io.questdb.client.std.Unsafe.getUnsafe().getLong(tsBase + 8L * tsIdx[r]);
-                        long id = io.questdb.client.std.Unsafe.getUnsafe().getLong(idBase + 8L * idIdx[r]);
-                        long priceBits = io.questdb.client.std.Unsafe.getUnsafe().getLong(priceBase + 8L * priceIdx[r]);
-                        long d1 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d1Base + 8L * d1Idx[r]);
-                        long d2 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d2Base + 8L * d2Idx[r]);
-                        long d3 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d3Base + 8L * d3Idx[r]);
-                        long d4 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d4Base + 8L * d4Idx[r]);
-                        long d5 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d5Base + 8L * d5Idx[r]);
-                        DirectUtf8Sequence sym = batch.getStrA(3, r);
-                        DirectUtf8Sequence note = batch.getVarcharB(4, r);
-                        DirectUtf8Sequence s1 = batch.getStrA(10, r);
-                        DirectUtf8Sequence s2 = batch.getStrA(11, r);
-                        DirectUtf8Sequence s3 = batch.getStrA(12, r);
-                        DirectUtf8Sequence s4 = batch.getStrA(13, r);
-                        DirectUtf8Sequence s5 = batch.getStrA(14, r);
-                        checksum[0] ^= ts ^ id ^ priceBits ^ d1 ^ d2 ^ d3 ^ d4 ^ d5
-                                ^ (sym != null ? sym.size() : 0)
-                                ^ (note != null ? note.size() : 0)
-                                ^ (s1 != null ? s1.size() : 0)
-                                ^ (s2 != null ? s2.size() : 0)
-                                ^ (s3 != null ? s3.size() : 0)
-                                ^ (s4 != null ? s4.size() : 0)
-                                ^ (s5 != null ? s5.size() : 0);
-                    }
-                    rowsSeen[0] += n;
-                    // Sum the actual QWP message bytes delivered in this frame. The batch
-                    // view holds a native slice [payloadAddr .. payloadLimit) that matches
-                    // the WebSocket payload length reported by the frame parser. Add 10
-                    // bytes per batch to approximate the WebSocket header for large frames
-                    // (worst case; smaller frames carry a shorter header but the batches
-                    // here are always > 65 KiB so 10 bytes is exact).
-                    bytesSeen[0] += (batch.payloadLimit() - batch.payloadAddr()) + 10L;
+        String sql = "SELECT+ts,id,price,sym,note,d1,d2,d3,d4,d5,s1,s2,s3,s4,s5+FROM+" + TABLE_NAME;
+        URL url = new URL("http://" + HOST + ":" + HTTP_PORT + "/exec?query=" + sql + "&count=true");
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestProperty("Accept-Encoding", "identity");
+        long rows = 0;
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8), 128 * 1024)) {
+            // JSON response is one line with {"columns":[...],"dataset":[[...],[...]...]}. Scan for ']],[[' boundaries and count.
+            // For the benchmark we just sink all bytes — the JIT will otherwise optimize the whole loop away.
+            char[] buf = new char[16 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                bytes += n;
+                // Count rows by counting occurrences of the inner array start marker.
+                for (int i = 0; i < n; i++) {
+                    if (buf[i] == '[') rows++;
                 }
-
-                @Override
-                public void onEnd(long totalRows) {
-                }
-
-                @Override
-                public void onError(byte status, String message) {
-                    throw new RuntimeException("QWP error: " + message);
-                }
-            });
+            }
         }
         long elapsed = System.nanoTime() - start;
-        log("QWP", warmup, elapsed, rowsSeen[0], checksum[0]);
-        return new Result(elapsed, rowsSeen[0], bytesSeen[0]);
+        // Rows counter was incremented for every '[' including the outer ones; subtract those.
+        long rowCount = rows > 1 ? rows - 2 : 0;
+        log("HTTP", warmup, elapsed, rowCount, bytes);
+        return new Result(elapsed, rowCount, bytes);
     }
 
     // ------------------------------------------------------------------
@@ -397,43 +340,95 @@ public class QwpEgressReadBenchmarkWide {
     // HTTP /exec JSON
     // ------------------------------------------------------------------
 
-    private static Result runHttpExec(boolean warmup) throws Exception {
-        long bytes = 0;
+    private static Result runQwp(boolean warmup) throws Exception {
+        final long[] rowsSeen = {0};
+        final long[] bytesSeen = {0};
+        final long[] checksum = {0};
         long start = System.nanoTime();
-        String sql = "SELECT+ts,id,price,sym,note,d1,d2,d3,d4,d5,s1,s2,s3,s4,s5+FROM+" + TABLE_NAME;
-        URL url = new URL("http://" + HOST + ":" + HTTP_PORT + "/exec?query=" + sql + "&count=true");
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestProperty("Accept-Encoding", "identity");
-        long rows = 0;
-        try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8), 128 * 1024)) {
-            // JSON response is one line with {"columns":[...],"dataset":[[...],[...]...]}. Scan for ']],[[' boundaries and count.
-            // For the benchmark we just sink all bytes — the JIT will otherwise optimize the whole loop away.
-            char[] buf = new char[16 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                bytes += n;
-                // Count rows by counting occurrences of the inner array start marker.
-                for (int i = 0; i < n; i++) {
-                    if (buf[i] == '[') rows++;
-                }
-            }
+        try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                "ws::addr=" + HOST + ":" + HTTP_PORT + ";client_id=qwp-egress-bench/1.0;")) {
+            client.connect();
+            client.execute(
+                    "SELECT ts, id, price, sym, note,"
+                            + " d1, d2, d3, d4, d5,"
+                            + " s1, s2, s3, s4, s5"
+                            + " FROM " + TABLE_NAME,
+                    new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            int n = batch.getRowCount();
+                            // Fixed-width 8-byte columns: ts (TIMESTAMP), id (LONG), price + d1..d5 (DOUBLE).
+                            // Hoist their base addresses and non-null index arrays once per batch so the
+                            // inner row loop is just pointer arithmetic.
+                            long tsBase = batch.valuesAddr(0);
+                            long idBase = batch.valuesAddr(1);
+                            long priceBase = batch.valuesAddr(2);
+                            long d1Base = batch.valuesAddr(5);
+                            long d2Base = batch.valuesAddr(6);
+                            long d3Base = batch.valuesAddr(7);
+                            long d4Base = batch.valuesAddr(8);
+                            long d5Base = batch.valuesAddr(9);
+                            int[] tsIdx = batch.nonNullIndex(0);
+                            int[] idIdx = batch.nonNullIndex(1);
+                            int[] priceIdx = batch.nonNullIndex(2);
+                            int[] d1Idx = batch.nonNullIndex(5);
+                            int[] d2Idx = batch.nonNullIndex(6);
+                            int[] d3Idx = batch.nonNullIndex(7);
+                            int[] d4Idx = batch.nonNullIndex(8);
+                            int[] d5Idx = batch.nonNullIndex(9);
+                            for (int r = 0; r < n; r++) {
+                                long ts = io.questdb.client.std.Unsafe.getUnsafe().getLong(tsBase + 8L * tsIdx[r]);
+                                long id = io.questdb.client.std.Unsafe.getUnsafe().getLong(idBase + 8L * idIdx[r]);
+                                long priceBits = io.questdb.client.std.Unsafe.getUnsafe().getLong(priceBase + 8L * priceIdx[r]);
+                                long d1 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d1Base + 8L * d1Idx[r]);
+                                long d2 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d2Base + 8L * d2Idx[r]);
+                                long d3 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d3Base + 8L * d3Idx[r]);
+                                long d4 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d4Base + 8L * d4Idx[r]);
+                                long d5 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d5Base + 8L * d5Idx[r]);
+                                DirectUtf8Sequence sym = batch.getStrA(3, r);
+                                DirectUtf8Sequence note = batch.getVarcharB(4, r);
+                                DirectUtf8Sequence s1 = batch.getStrA(10, r);
+                                DirectUtf8Sequence s2 = batch.getStrA(11, r);
+                                DirectUtf8Sequence s3 = batch.getStrA(12, r);
+                                DirectUtf8Sequence s4 = batch.getStrA(13, r);
+                                DirectUtf8Sequence s5 = batch.getStrA(14, r);
+                                checksum[0] ^= ts ^ id ^ priceBits ^ d1 ^ d2 ^ d3 ^ d4 ^ d5
+                                        ^ (sym != null ? sym.size() : 0)
+                                        ^ (note != null ? note.size() : 0)
+                                        ^ (s1 != null ? s1.size() : 0)
+                                        ^ (s2 != null ? s2.size() : 0)
+                                        ^ (s3 != null ? s3.size() : 0)
+                                        ^ (s4 != null ? s4.size() : 0)
+                                        ^ (s5 != null ? s5.size() : 0);
+                            }
+                            rowsSeen[0] += n;
+                            // Sum the actual QWP message bytes delivered in this frame. The batch
+                            // view holds a native slice [payloadAddr .. payloadLimit) that matches
+                            // the WebSocket payload length reported by the frame parser. Add 10
+                            // bytes per batch to approximate the WebSocket header for large frames
+                            // (worst case; smaller frames carry a shorter header but the batches
+                            // here are always > 65 KiB so 10 bytes is exact).
+                            bytesSeen[0] += (batch.payloadLimit() - batch.payloadAddr()) + 10L;
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            throw new RuntimeException("QWP error: " + message);
+                        }
+                    });
         }
         long elapsed = System.nanoTime() - start;
-        // Rows counter was incremented for every '[' including the outer ones; subtract those.
-        long rowCount = rows > 1 ? rows - 2 : 0;
-        log("HTTP", warmup, elapsed, rowCount, bytes);
-        return new Result(elapsed, rowCount, bytes);
+        log("QWP", warmup, elapsed, rowsSeen[0], checksum[0]);
+        return new Result(elapsed, rowsSeen[0], bytesSeen[0]);
     }
 
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
-
-    private static void log(String label, boolean warmup, long elapsedNanos, long rows, long checksumOrBytes) {
-        String phase = warmup ? "[warmup]" : "[measure]";
-        System.out.printf("%s %s : %,d rows in %,d ms (checksum/bytes=0x%x)%n",
-                phase, label, rows, TimeUnit.NANOSECONDS.toMillis(elapsedNanos), checksumOrBytes);
-    }
 
     private static final class Result {
         final long bytes;
@@ -445,5 +440,10 @@ public class QwpEgressReadBenchmarkWide {
             this.rows = rows;
             this.bytes = bytes;
         }
+    }
+
+    static {
+        ROW_COUNT = Long.getLong("rowCount", DEFAULT_ROW_COUNT);
+        SKIP_POPULATE = Boolean.parseBoolean(System.getProperty("skip.populate", "false"));
     }
 }
