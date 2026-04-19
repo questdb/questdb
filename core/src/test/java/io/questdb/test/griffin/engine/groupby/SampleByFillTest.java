@@ -6,6 +6,7 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -940,37 +941,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
-        });
-    }
-
-    @Test
-    public void testFillPrevCaseOverDecimalFallback() throws Exception {
-        assertMemoryLeak(() -> {
-            // Aggregate argument is a CASE expression returning DECIMAL256.
-            // The optimizer gate passes through expression-argument aggregates,
-            // and the retro-fallback at codegen detects the unsupported output
-            // type and re-dispatches to the legacy Sample By cursor path.
-            // Plan assertion proves retro-fallback fires (legacy "Sample By",
-            // not fast-path "Sample By Fill").
-            execute("CREATE TABLE t (v DOUBLE, d256_col DECIMAL(39, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "(1.0, cast('1.0' AS DECIMAL(39,2)), '2024-01-01T00:00:00.000000Z')," +
-                    "(2.0, cast('3.0' AS DECIMAL(39,2)), '2024-01-01T02:00:00.000000Z')");
-            assertPlanNoLeakCheck(
-                    "SELECT ts, first(CASE WHEN v > 0 THEN d256_col ELSE NULL::decimal(39,2) END) f " +
-                            "FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
-                    """
-                            Encode sort
-                              keys: [ts]
-                                Sample By
-                                  keys: [ts]
-                                  values: [first(case([0<v,d256_col,null]))]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                            """
-            );
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -1065,31 +1036,6 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillPrevCrossColumnUnsupportedFallback() throws Exception {
-        assertMemoryLeak(() -> {
-            // PREV(s) targets a STRING column via cross-column reference.
-            // The optimizer gate detects the unsupported type and skips the
-            // fast-path rewrite; the query falls back to the legacy cursor.
-            execute("CREATE TABLE x (s STRING, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "('hello', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('world', 2.0, '2024-01-01T02:00:00.000000Z')");
-            // Plan should show legacy path (Sample By), not Async Group By
-            assertPlanNoLeakCheck(
-                    "SELECT ts, first(s), sum(val) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR",
-                    """
-                            Sample By
-                              fill: value
-                              values: [first(s),sum(val)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                            """
-            );
-        });
-    }
-
-    @Test
     public void testFillPrevDecimal128() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (d DECIMAL(20, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1109,7 +1055,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -1133,61 +1079,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
-        });
-    }
-
-    @Test
-    public void testFillPrevExpressionArgDecimal128Fallback() throws Exception {
-        assertMemoryLeak(() -> {
-            // Aggregate argument is an expression returning DECIMAL128 (scale promotes
-            // DECIMAL(25,2) to DECIMAL128). The optimizer gate cannot resolve expression
-            // output types, so the rewrite proceeds; retro-fallback at codegen detects
-            // the unsupported type on the fully resolved groupBy metadata and re-dispatches
-            // to the legacy cursor. Plan asserts "Sample By" (legacy), not "Sample By Fill".
-            execute("CREATE TABLE t (d128_col DECIMAL(25, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "(cast('1.0' AS DECIMAL(25,2)), '2024-01-01T00:00:00.000000Z')," +
-                    "(cast('3.0' AS DECIMAL(25,2)), '2024-01-01T02:00:00.000000Z')");
-            assertPlanNoLeakCheck(
-                    "SELECT ts, sum(d128_col * 1::decimal(25,2)) s FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
-                    """
-                            Encode sort
-                              keys: [ts]
-                                Sample By
-                                  keys: [ts]
-                                  values: [sum(d128_col*1.00)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                            """
-            );
-        });
-    }
-
-    @Test
-    public void testFillPrevExpressionArgStringFallback() throws Exception {
-        assertMemoryLeak(() -> {
-            // Aggregate argument is an expression returning STRING (concat). The output
-            // type STRING is not fast-path-supported, so retro-fallback routes to the
-            // legacy cursor path after the rewrite.
-            execute("CREATE TABLE t (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "('hello', '2024-01-01T00:00:00.000000Z')," +
-                    "('world', '2024-01-01T02:00:00.000000Z')");
-            assertPlanNoLeakCheck(
-                    "SELECT ts, first(concat(s, 'x')) f FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
-                    """
-                            Encode sort
-                              keys: [ts]
-                                Sample By
-                                  keys: [ts]
-                                  values: [first(concat([s,'x']))]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                            """
-            );
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -1292,35 +1184,6 @@ public class SampleByFillTest extends AbstractCairoTest {
                             "SAMPLE BY 1h FROM '2024-01-01T20:00:00.000000Z' TO '2024-01-02T00:00:00.000000Z' " +
                             "FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
-            );
-        });
-    }
-
-    @Test
-    public void testFillPrevIntervalFallback() throws Exception {
-        assertMemoryLeak(() -> {
-            // INTERVAL aggregate expression (first(interval(ts1, ts2))) is auto-cast to
-            // STRING, which is not fast-path-supported. The query takes the retro-fallback
-            // path and is served by the legacy Sample By cursor. Plan asserts "Sample By"
-            // (legacy), not "Sample By Fill" (fast path). The Tier 1 gate addition of
-            // ColumnType.INTERVAL (plan 12-01) closes the asymmetry against
-            // isFastPathPrevSupportedType.
-            execute("CREATE TABLE t (ts1 TIMESTAMP, ts2 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "('2024-01-01T00:00:00.000000Z', '2024-01-01T01:00:00.000000Z', '2024-01-01T00:00:00.000000Z')," +
-                    "('2024-01-01T02:00:00.000000Z', '2024-01-01T03:00:00.000000Z', '2024-01-01T02:00:00.000000Z')");
-            assertPlanNoLeakCheck(
-                    "SELECT ts, first(interval(ts1, ts2)) i FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
-                    """
-                            Encode sort
-                              keys: [ts]
-                                Sample By
-                                  keys: [ts]
-                                  values: [first(interval(ts1,ts2)::string)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                            """
             );
         });
     }
@@ -1445,12 +1308,9 @@ public class SampleByFillTest extends AbstractCairoTest {
     public void testFillPrevLong128Fallback() throws Exception {
         assertMemoryLeak(() -> {
             // LONG128 has no first/last/sum/min/max aggregate function in QuestDB,
-            // so SELECT first(long128_col) ... fails at aggregate resolution. This test
-            // documents that LONG128 PREV aggregates cannot reach the fast path and
-            // are rejected at compile time. The Tier 1 optimizer gate addition of
-            // ColumnType.LONG128 to isUnsupportedPrevType (plan 12-01) closes the
-            // asymmetry against isFastPathPrevSupportedType and protects against the
-            // day LONG128 aggregates ship.
+            // so SELECT first(long128_col) ... fails at aggregate resolution. This
+            // test documents that LONG128 PREV aggregates are rejected at compile
+            // time regardless of the fill cursor routing.
             execute("CREATE TABLE t (val LONG128, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(to_long128(0, 1), '2024-01-01T00:00:00.000000Z')," +
@@ -1482,7 +1342,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -1908,7 +1768,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -1935,7 +1795,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -1960,30 +1820,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
-        });
-    }
-
-    @Test
-    public void testFillPrevSymbolLegacyFallback() throws Exception {
-        assertMemoryLeak(() -> {
-            // PREV on first(s) where s is STRING — unsupported type triggers
-            // legacy fallback. The query plan shows Sample By (not Async Group By).
-            execute("CREATE TABLE x AS (" +
-                    "SELECT rnd_str('hello','world') s, x::DOUBLE val, " +
-                    "timestamp_sequence(0, 3_600_000_000) ts " +
-                    "FROM long_sequence(3)) TIMESTAMP(ts)");
-            assertPlanNoLeakCheck(
-                    "SELECT ts, first(s), sum(val) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR",
-                    """
-                            Sample By
-                              fill: value
-                              values: [first(s),sum(val)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                            """
-            );
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -2009,7 +1846,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -2035,7 +1872,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -2060,7 +1897,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -2084,7 +1921,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -2109,7 +1946,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 
@@ -2135,7 +1972,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     query
             );
-            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+            Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
     }
 

@@ -642,11 +642,6 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public ExpressionNode getStashedSampleByNode() {
-        return delegate.getStashedSampleByNode();
-    }
-
-    @Override
     public int getTableId() {
         return delegate.getTableId();
     }
@@ -1239,11 +1234,6 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setStandaloneUnnest(boolean standaloneUnnest) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void setStashedSampleByNode(ExpressionNode stashedSampleByNode) {
         throw new UnsupportedOperationException();
     }
 

@@ -359,30 +359,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillPrevSymbolLegacyFallbackNano() throws Exception {
-        assertMemoryLeak(() -> {
-            // Nanosecond parity for legacy fallback: PREV on first(s) where
-            // s is STRING triggers legacy path.
-            execute("CREATE TABLE x AS (" +
-                    "SELECT rnd_str('hello','world') s, x::DOUBLE val, " +
-                    "timestamp_sequence_ns(cast('2024-01-01T00:00:00' AS TIMESTAMP_NS), 3_600_000_000_000) ts " +
-                    "FROM long_sequence(3)) TIMESTAMP(ts)");
-            assertPlanNoLeakCheck(
-                    "SELECT ts, first(s), sum(val) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR",
-                    """
-                            Sample By
-                              fill: value
-                              range: (,)
-                              values: [first(s),sum(val)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                            """
-            );
-        });
-    }
-
-    @Test
     public void testFillValueException() throws SqlException {
         execute("create table telem (created timestamp_ns, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
 

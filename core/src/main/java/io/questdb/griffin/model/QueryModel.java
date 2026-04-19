@@ -182,7 +182,6 @@ public class QueryModel implements IQueryModel {
     private int showKind = -1;
     private boolean skipped;
     private boolean standaloneUnnest;
-    private ExpressionNode stashedSampleByNode;
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
     private RecordCursorFactory tableNameFunction;
@@ -468,7 +467,6 @@ public class QueryModel implements IQueryModel {
         sampleByOffset = ZERO_OFFSET;
         sampleByTo = null;
         sampleByFrom = null;
-        stashedSampleByNode = null;
         fillFrom = null;
         fillOffset = null;
         fillTo = null;
@@ -1059,11 +1057,6 @@ public class QueryModel implements IQueryModel {
     @Override
     public int getShowKind() {
         return showKind;
-    }
-
-    @Override
-    public ExpressionNode getStashedSampleByNode() {
-        return stashedSampleByNode;
     }
 
     @Override
@@ -1849,11 +1842,6 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setStandaloneUnnest(boolean standaloneUnnest) {
         this.standaloneUnnest = standaloneUnnest;
-    }
-
-    @Override
-    public void setStashedSampleByNode(ExpressionNode stashedSampleByNode) {
-        this.stashedSampleByNode = stashedSampleByNode;
     }
 
     @Override

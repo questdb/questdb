@@ -107,7 +107,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             ObjList<Function> constantFills,
             int timestampIndex,
             int timestampType,
-            IntList prevSourceCols,
             RecordSink keySink,
             ArrayColumnTypes mapKeyTypes,
             ArrayColumnTypes mapValueTypes,
@@ -116,6 +115,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             long calendarOffset
     ) {
         super(metadata);
+        // hasPrevFill mirrors the "any PREV mode" signal consumed by toPlan and
+        // the cursor's emit branches. Self-prev (FILL_PREV_SELF) and cross-column
+        // prev (mode >= 0) both count.
+        boolean localHasPrevFill = false;
+        for (int i = 0, n = fillModes.size(); i < n; i++) {
+            int mode = fillModes.getQuick(i);
+            if (mode == FILL_PREV_SELF || mode >= 0) {
+                localHasPrevFill = true;
+                break;
+            }
+        }
         Map keysMapLocal = null;
         SampleByFillCursor cursorLocal;
         try {
@@ -125,7 +135,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             cursorLocal = new SampleByFillCursor(
                     configuration, metadata, timestampSampler,
                     fromFunc, toFunc, fillModes, constantFills,
-                    timestampIndex, timestampType, prevSourceCols,
+                    timestampIndex, timestampType, localHasPrevFill,
                     keySink, keysMapLocal, keyColIndices, symbolTableColIndices,
                     calendarOffset
             );
@@ -145,7 +155,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.timestampType = timestampType;
         this.constantFills = constantFills;
         this.fillModes = fillModes;
-        this.hasPrevFill = prevSourceCols != null && prevSourceCols.size() > 0;
+        this.hasPrevFill = localHasPrevFill;
         this.keysMap = keysMapLocal;
         this.cursor = cursorLocal;
     }
@@ -288,7 +298,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 ObjList<Function> constantFills,
                 int timestampIndex,
                 int timestampType,
-                IntList prevSourceCols,
+                boolean hasPrevFill,
                 RecordSink keySink,
                 Map keysMap,
                 IntList keyColIndices,
@@ -305,7 +315,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.columnCount = metadata.getColumnCount();
             this.fillTimestampFunc = new FillTimestampConstant(timestampType);
-            this.hasPrevFill = prevSourceCols != null && prevSourceCols.size() > 0;
+            this.hasPrevFill = hasPrevFill;
             this.keySink = keySink;
             this.keysMap = keysMap;
             this.keyColIndices = keyColIndices;
