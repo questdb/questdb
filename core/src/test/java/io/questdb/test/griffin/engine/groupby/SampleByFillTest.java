@@ -921,6 +921,30 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevArrayDouble1D() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(ARRAY[1.0, 2.0, 3.0], '2024-01-01T00:00:00.000000Z')," +
+                    "(NULL, '2024-01-01T02:00:00.000000Z')," +
+                    "(ARRAY[4.0, 5.0], '2024-01-01T04:00:00.000000Z')");
+            final String query = "SELECT ts, first(a) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tfirst
+                            2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]
+                            2024-01-01T01:00:00.000000Z\t[1.0,2.0,3.0]
+                            2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\tnull
+                            2024-01-01T04:00:00.000000Z\t[4.0,5.0]
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+        });
+    }
+
+    @Test
     public void testFillPrevCaseOverDecimalFallback() throws Exception {
         assertMemoryLeak(() -> {
             // Aggregate argument is a CASE expression returning DECIMAL256.
@@ -1062,6 +1086,54 @@ public class SampleByFillTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """
             );
+        });
+    }
+
+    @Test
+    public void testFillPrevDecimal128() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (d DECIMAL(20, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(12.34::DECIMAL(20, 2), '2024-01-01T00:00:00.000000Z')," +
+                    "(NULL, '2024-01-01T02:00:00.000000Z')," +
+                    "(56.78::DECIMAL(20, 2), '2024-01-01T04:00:00.000000Z')");
+            final String query = "SELECT ts, first(d) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tfirst
+                            2024-01-01T00:00:00.000000Z\t12.34
+                            2024-01-01T01:00:00.000000Z\t12.34
+                            2024-01-01T02:00:00.000000Z\t
+                            2024-01-01T03:00:00.000000Z\t
+                            2024-01-01T04:00:00.000000Z\t56.78
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+        });
+    }
+
+    @Test
+    public void testFillPrevDecimal256() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (d DECIMAL(40, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(100.25::DECIMAL(40, 2), '2024-01-01T00:00:00.000000Z')," +
+                    "(NULL, '2024-01-01T02:00:00.000000Z')," +
+                    "(200.50::DECIMAL(40, 2), '2024-01-01T04:00:00.000000Z')");
+            final String query = "SELECT ts, first(d) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tfirst
+                            2024-01-01T00:00:00.000000Z\t100.25
+                            2024-01-01T01:00:00.000000Z\t100.25
+                            2024-01-01T02:00:00.000000Z\t
+                            2024-01-01T03:00:00.000000Z\t
+                            2024-01-01T04:00:00.000000Z\t200.50
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
         });
     }
 
@@ -1388,6 +1460,29 @@ public class SampleByFillTest extends AbstractCairoTest {
                     11,
                     "there is no matching function `first` with the argument types"
             );
+        });
+    }
+
+    @Test
+    public void testFillPrevLong256NonKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (h LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('0x10', '2024-01-01T00:00:00.000000Z')," +
+                    "('0xabcdef', '2024-01-01T04:00:00.000000Z')");
+            final String query = "SELECT ts, sum(h) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tsum
+                            2024-01-01T00:00:00.000000Z\t0x10
+                            2024-01-01T01:00:00.000000Z\t0x10
+                            2024-01-01T02:00:00.000000Z\t0x10
+                            2024-01-01T03:00:00.000000Z\t0x10
+                            2024-01-01T04:00:00.000000Z\t0xabcdef
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
         });
     }
 
@@ -1793,6 +1888,83 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevStringKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (key SYMBOL, s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('K1', 'alpha', '2024-01-01T00:00:00.000000Z')," +
+                    "('K2', 'beta', '2024-01-01T00:00:00.000000Z')," +
+                    "('K1', 'gamma', '2024-01-01T02:00:00.000000Z')");
+            final String query = "SELECT ts, key, first(s) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tkey\tfirst
+                            2024-01-01T00:00:00.000000Z\tK1\talpha
+                            2024-01-01T00:00:00.000000Z\tK2\tbeta
+                            2024-01-01T01:00:00.000000Z\tK1\talpha
+                            2024-01-01T01:00:00.000000Z\tK2\tbeta
+                            2024-01-01T02:00:00.000000Z\tK1\tgamma
+                            2024-01-01T02:00:00.000000Z\tK2\tbeta
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+        });
+    }
+
+    @Test
+    public void testFillPrevStringNonKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('alpha', '2024-01-01T00:00:00.000000Z')," +
+                    "(NULL, '2024-01-01T02:00:00.000000Z')," +
+                    "('', '2024-01-01T04:00:00.000000Z')," +
+                    "('longer string that requires reallocation', '2024-01-01T06:00:00.000000Z')");
+            final String query = "SELECT ts, first(s) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tfirst
+                            2024-01-01T00:00:00.000000Z\talpha
+                            2024-01-01T01:00:00.000000Z\talpha
+                            2024-01-01T02:00:00.000000Z\t
+                            2024-01-01T03:00:00.000000Z\t
+                            2024-01-01T04:00:00.000000Z\t
+                            2024-01-01T05:00:00.000000Z\t
+                            2024-01-01T06:00:00.000000Z\tlonger string that requires reallocation
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+        });
+    }
+
+    @Test
+    public void testFillPrevSymbolKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (key SYMBOL, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('K1', 'A', '2024-01-01T00:00:00.000000Z')," +
+                    "('K2', 'B', '2024-01-01T00:00:00.000000Z')," +
+                    "('K1', 'C', '2024-01-01T02:00:00.000000Z')");
+            final String query = "SELECT ts, key, first(sym) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tkey\tfirst
+                            2024-01-01T00:00:00.000000Z\tK1\tA
+                            2024-01-01T00:00:00.000000Z\tK2\tB
+                            2024-01-01T01:00:00.000000Z\tK1\tA
+                            2024-01-01T01:00:00.000000Z\tK2\tB
+                            2024-01-01T02:00:00.000000Z\tK1\tC
+                            2024-01-01T02:00:00.000000Z\tK2\tB
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+        });
+    }
+
+    @Test
     public void testFillPrevSymbolLegacyFallback() throws Exception {
         assertMemoryLeak(() -> {
             // PREV on first(s) where s is STRING — unsupported type triggers
@@ -1812,6 +1984,158 @@ public class SampleByFillTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """
             );
+        });
+    }
+
+    @Test
+    public void testFillPrevSymbolNonKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('A', '2024-01-01T00:00:00.000000Z')," +
+                    "('B', '2024-01-01T02:00:00.000000Z')," +
+                    "('C', '2024-01-01T06:00:00.000000Z')");
+            final String query = "SELECT ts, first(sym) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tfirst
+                            2024-01-01T00:00:00.000000Z\tA
+                            2024-01-01T01:00:00.000000Z\tA
+                            2024-01-01T02:00:00.000000Z\tB
+                            2024-01-01T03:00:00.000000Z\tB
+                            2024-01-01T04:00:00.000000Z\tB
+                            2024-01-01T05:00:00.000000Z\tB
+                            2024-01-01T06:00:00.000000Z\tC
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+        });
+    }
+
+    @Test
+    public void testFillPrevSymbolNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // First snapshotted symbol is NULL — the PREV branch must emit the null
+            // symbol, not a CharSequence resolved from the INT_NULL sentinel.
+            execute("CREATE TABLE x (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(NULL, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', '2024-01-01T02:00:00.000000Z')," +
+                    "(NULL, '2024-01-01T04:00:00.000000Z')");
+            final String query = "SELECT ts, first(sym) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tfirst
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T01:00:00.000000Z\t
+                            2024-01-01T02:00:00.000000Z\tA
+                            2024-01-01T03:00:00.000000Z\tA
+                            2024-01-01T04:00:00.000000Z\t
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+        });
+    }
+
+    @Test
+    public void testFillPrevUuidKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (key SYMBOL, u UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('K1', '11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:00.000000Z')," +
+                    "('K2', '22222222-2222-2222-2222-222222222222', '2024-01-01T00:00:00.000000Z')," +
+                    "('K1', '33333333-3333-3333-3333-333333333333', '2024-01-01T02:00:00.000000Z')");
+            final String query = "SELECT ts, key, first(u) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tkey\tfirst
+                            2024-01-01T00:00:00.000000Z\tK1\t11111111-1111-1111-1111-111111111111
+                            2024-01-01T00:00:00.000000Z\tK2\t22222222-2222-2222-2222-222222222222
+                            2024-01-01T01:00:00.000000Z\tK1\t11111111-1111-1111-1111-111111111111
+                            2024-01-01T01:00:00.000000Z\tK2\t22222222-2222-2222-2222-222222222222
+                            2024-01-01T02:00:00.000000Z\tK1\t33333333-3333-3333-3333-333333333333
+                            2024-01-01T02:00:00.000000Z\tK2\t22222222-2222-2222-2222-222222222222
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+        });
+    }
+
+    @Test
+    public void testFillPrevUuidNonKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (u UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '2024-01-01T00:00:00.000000Z')," +
+                    "(NULL, '2024-01-01T02:00:00.000000Z')," +
+                    "('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '2024-01-01T04:00:00.000000Z')");
+            final String query = "SELECT ts, first(u) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tfirst
+                            2024-01-01T00:00:00.000000Z\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+                            2024-01-01T01:00:00.000000Z\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+                            2024-01-01T02:00:00.000000Z\t
+                            2024-01-01T03:00:00.000000Z\t
+                            2024-01-01T04:00:00.000000Z\tbbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+        });
+    }
+
+    @Test
+    public void testFillPrevVarcharKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (key SYMBOL, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('K1', 'alpha', '2024-01-01T00:00:00.000000Z')," +
+                    "('K2', 'beta', '2024-01-01T00:00:00.000000Z')," +
+                    "('K1', 'gamma', '2024-01-01T02:00:00.000000Z')");
+            final String query = "SELECT ts, key, first(v) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tkey\tfirst
+                            2024-01-01T00:00:00.000000Z\tK1\talpha
+                            2024-01-01T00:00:00.000000Z\tK2\tbeta
+                            2024-01-01T01:00:00.000000Z\tK1\talpha
+                            2024-01-01T01:00:00.000000Z\tK2\tbeta
+                            2024-01-01T02:00:00.000000Z\tK1\tgamma
+                            2024-01-01T02:00:00.000000Z\tK2\tbeta
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
+        });
+    }
+
+    @Test
+    public void testFillPrevVarcharNonKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('ascii-only', '2024-01-01T00:00:00.000000Z')," +
+                    "(NULL, '2024-01-01T02:00:00.000000Z')," +
+                    "('unicode: \u20ac \u00f1', '2024-01-01T06:00:00.000000Z')");
+            final String query = "SELECT ts, first(v) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertSql(
+                    """
+                            ts\tfirst
+                            2024-01-01T00:00:00.000000Z\tascii-only
+                            2024-01-01T01:00:00.000000Z\tascii-only
+                            2024-01-01T02:00:00.000000Z\t
+                            2024-01-01T03:00:00.000000Z\t
+                            2024-01-01T04:00:00.000000Z\t
+                            2024-01-01T05:00:00.000000Z\t
+                            2024-01-01T06:00:00.000000Z\tunicode: \u20ac \u00f1
+                            """,
+                    query
+            );
+            // Plan 04 adds "Sample By Fill" plan assertion once fast-path gates are lifted.
         });
     }
 
