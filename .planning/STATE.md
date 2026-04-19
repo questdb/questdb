@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed Phase 13 Plan 01 (chain.clear() fix + D-02 investigation)
-last_updated: "2026-04-19T00:02:58.590Z"
+stopped_at: Completed Phase 13 Plan 02 (rowId rewrite in SampleByFillRecordCursorFactory + mapValueTypes shrink)
+last_updated: "2026-04-19T01:02:35.223Z"
 last_activity: 2026-04-19
 progress:
   total_phases: 13
   completed_phases: 11
   total_plans: 20
-  completed_plans: 15
-  percent: 75
+  completed_plans: 16
+  percent: 80
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 13 (migrate-fill-prev-snapshots-from-materialized-values-to-rowi) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-04-19
 
@@ -60,6 +60,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 12-replace-safety-net-reclassification-with-legacy-fallback-and P03 | 22min | 3 tasks | 1 files |
 | Phase 12 P04 | 80min | 3 tasks | 4 files |
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P01 | ~100 min | 2 tasks | 1 files |
+| Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P02 | ~100 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -104,6 +105,10 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 13]: D-02 verdict (a): chain.clear() on SortedRecordCursor.of() reuse sufficient; SortedRecordCursor chosen as vehicle for Plan 02 rowId rewrite
 - [Phase 13]: chain.clear() fix shipped as Commit 1 of phase 13 (standalone, backportable, bisectable) per D-03/D-07
 - [Phase 13]: Plan 01 accepted as complete with caveat: pre-existing SampleByTest#testSampleByFillNeedFix assertion #2 failure is Plan 05 scope per D-06 (user decision at checkpoint, Option 1)
+- [Phase 13]: Plan 02: SampleByFillCursor stores PREV snapshots as chain rowId (one per key or one simplePrevRowId); MapValue schema fixed at 3 LONG slots; FillRecord getters uniformly delegate PREV reads to prevRecord; 10 KIND_* dispatch constants removed
+- [Phase 13]: Plan 02: prevRecord aliased once in initialize() at the post-buildChain peek-success branch; single assignment covers both keyed (after pass-1 loop + toTop) and non-keyed (after first hasNext peek) paths — never in of() to avoid recordB repositioning
+- [Phase 13]: Plan 02: FILL_KEY for Array/Bin/BinLen kept as pre-existing null/-1 fallthrough (scope-trimmed during verification after two regression tests pinned the old behavior); rowId rewrite preserves var-width FILL_KEY semantics unchanged
+- [Phase 13]: Plan 02: Retro-fallback machinery (FallbackToLegacyException, prevSourceCols, isFastPathPrevSupportedType, three try/catch sites) retained; Plan 04 deletes it after Plan 03 validates the fast path across every currently-unsupported type
 
 ### Roadmap Evolution
 
@@ -127,6 +132,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-19T00:02:58.587Z
-Stopped at: Completed Phase 13 Plan 01 (chain.clear() fix + D-02 investigation)
+Last session: 2026-04-19T01:02:35.220Z
+Stopped at: Completed Phase 13 Plan 02 (rowId rewrite in SampleByFillRecordCursorFactory + mapValueTypes shrink)
 Resume file: None
