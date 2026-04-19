@@ -667,7 +667,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         RecordCursor cursor = state.getStreamingCursor();
 
         while (true) {
-            batchBuffer.beginBatch(columnDefs);
+            // Passing the cursor lets the batch buffer pick up native SymbolTables for
+            // SYMBOL columns, taking the getInt-based fast path instead of getSymA.
+            batchBuffer.beginBatch(columnDefs, cursor);
             int rowsThisBatch = 0;
             while (rowsThisBatch < MAX_ROWS_PER_BATCH && cursor.hasNext()) {
                 batchBuffer.appendRow(cursor.getRecord());

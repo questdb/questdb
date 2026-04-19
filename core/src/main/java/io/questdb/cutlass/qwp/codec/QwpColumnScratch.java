@@ -24,11 +24,14 @@
 
 package io.questdb.cutlass.qwp.codec;
 
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -59,8 +62,15 @@ final class QwpColumnScratch implements QuietCloseable {
     private static final int INITIAL_BYTES = 4096;
     final Decimal128 decimal128Sink = new Decimal128();
     final Decimal256 decimal256Sink = new Decimal256();
+    // Fallback dedup path keyed by CharSequence, used when the cursor doesn't expose a
+    // SymbolTable for the column (e.g. synthetic records). The int-keyed path below is
+    // preferred whenever it's available because it skips the getSymA() + charseq-hash.
     final CharSequenceIntHashMap symbolDict = new CharSequenceIntHashMap();
     final ObjList<String> symbolDictOrder = new ObjList<>();
+    // Dedup by native symbol-table key for the SYMBOL fast path (see appendSymbolKey).
+    // Cleared together with symbolDict at beginBatch, so only one of the two is
+    // populated for any given column-batch.
+    final IntIntHashMap symbolKeyToDictId = new IntIntHashMap();
     long arrayHeapAddr;
     int arrayHeapCapacity;
     int arrayHeapPos;
@@ -240,11 +250,27 @@ final class QwpColumnScratch implements QuietCloseable {
         markNonNullAndAdvanceRow();
     }
 
+    void appendDoubleOrNull(double v) {
+        if (Double.isNaN(v)) {
+            appendNull();
+        } else {
+            appendDouble(v);
+        }
+    }
+
     void appendFloat(float v) {
         ensureValuesCapacity(valuesPos + 4);
         Unsafe.getUnsafe().putFloat(valuesAddr + valuesPos, v);
         valuesPos += 4;
         markNonNullAndAdvanceRow();
+    }
+
+    void appendFloatOrNull(float v) {
+        if (Float.isNaN(v)) {
+            appendNull();
+        } else {
+            appendFloat(v);
+        }
     }
 
     /**
@@ -259,11 +285,30 @@ final class QwpColumnScratch implements QuietCloseable {
         markNonNullAndAdvanceRow();
     }
 
+    void appendIPv4OrNull(int v) {
+        // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL). The wire
+        // format cannot represent the literal address 0.0.0.0 as non-null - QuestDB-level
+        // limitation inherited by the wire format.
+        if (v == Numbers.IPv4_NULL) {
+            appendNull();
+        } else {
+            appendInt(v);
+        }
+    }
+
     void appendInt(int v) {
         ensureValuesCapacity(valuesPos + 4);
         Unsafe.getUnsafe().putInt(valuesAddr + valuesPos, v);
         valuesPos += 4;
         markNonNullAndAdvanceRow();
+    }
+
+    void appendIntOrNull(int v) {
+        if (v == Numbers.INT_NULL) {
+            appendNull();
+        } else {
+            appendInt(v);
+        }
     }
 
     void appendLong(long v) {
@@ -281,6 +326,14 @@ final class QwpColumnScratch implements QuietCloseable {
         Unsafe.getUnsafe().putLong(valuesAddr + valuesPos + 24, l3);
         valuesPos += 32;
         markNonNullAndAdvanceRow();
+    }
+
+    void appendLongOrNull(long v) {
+        if (v == Numbers.LONG_NULL) {
+            appendNull();
+        } else {
+            appendLong(v);
+        }
     }
 
     void appendNull() {
@@ -340,7 +393,8 @@ final class QwpColumnScratch implements QuietCloseable {
     /**
      * SYMBOL: dedup against the per-batch dict; store dict id (i32) in {@link #symbolIdsAddr}.
      * Dict keys remain on the heap (CharSequenceIntHashMap); per unique value we allocate a
-     * String once per batch.
+     * String once per batch. This fallback path runs when the cursor doesn't expose a
+     * native SymbolTable for the column - prefer {@link #appendSymbolKey} otherwise.
      */
     void appendSymbol(CharSequence cs) {
         int id = symbolDict.get(cs);
@@ -348,6 +402,29 @@ final class QwpColumnScratch implements QuietCloseable {
             String s = cs.toString();
             id = symbolDictOrder.size();
             symbolDict.put(s, id);
+            symbolDictOrder.add(s);
+        }
+        ensureSymbolIdsCapacity(symbolIdsCapacity == 0 ? INITIAL_BYTES : 4 * (nonNullCount + 1));
+        Unsafe.getUnsafe().putInt(symbolIdsAddr + 4L * nonNullCount, id);
+        markNonNullAndAdvanceRow();
+    }
+
+    /**
+     * SYMBOL fast path: dedup by native symbol-table key (a plain {@code int}) instead
+     * of by CharSequence. Caller has already handled {@link SymbolTable#VALUE_IS_NULL}
+     * and passed a non-null table. Materialises the string via {@code table.valueOf}
+     * only on first occurrence per batch.
+     */
+    void appendSymbolKey(int key, SymbolTable table) {
+        int mapIdx = symbolKeyToDictId.keyIndex(key);
+        int id;
+        if (mapIdx < 0) {
+            id = symbolKeyToDictId.valueAt(mapIdx);
+        } else {
+            CharSequence cs = table.valueOf(key);
+            String s = cs.toString();
+            id = symbolDictOrder.size();
+            symbolKeyToDictId.putAt(mapIdx, key, id);
             symbolDictOrder.add(s);
         }
         ensureSymbolIdsCapacity(symbolIdsCapacity == 0 ? INITIAL_BYTES : 4 * (nonNullCount + 1));
@@ -365,13 +442,19 @@ final class QwpColumnScratch implements QuietCloseable {
 
     /**
      * VARCHAR: copy raw UTF-8 bytes from {@code Utf8Sequence} into the string heap.
+     * For direct-backed sequences we issue a single {@code Unsafe.copyMemory} over the
+     * bytes; on-heap sequences fall through to {@code Utf8Sequence.writeTo}, which
+     * already does 8-byte chunked writes via {@code longAt} rather than per-byte loads.
      */
     void appendVarchar(Utf8Sequence us) {
         int n = us.size();
         ensureStringHeapCapacity(stringHeapPos + n);
-        long p = stringHeapAddr + stringHeapPos;
-        for (int i = 0; i < n; i++) {
-            Unsafe.getUnsafe().putByte(p + i, us.byteAt(i));
+        long dst = stringHeapAddr + stringHeapPos;
+        long src = us.ptr();
+        if (src >= 0) {
+            Unsafe.getUnsafe().copyMemory(src, dst, n);
+        } else {
+            us.writeTo(dst, 0, n);
         }
         stringHeapPos += n;
         recordStringOffset();
@@ -387,6 +470,7 @@ final class QwpColumnScratch implements QuietCloseable {
         this.stringHeapPos = 0;
         this.arrayHeapPos = 0;
         this.symbolDict.clear();
+        this.symbolKeyToDictId.clear();
         this.symbolDictOrder.clear();
         // Zero the null bitmap so appendNull() can OR in bits without per-byte init.
         // This costs nullBitmapCapacity bytes per batch (e.g. 512 B for 4096 rows). Cheap.

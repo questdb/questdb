@@ -218,6 +218,13 @@ public class QwpEgressReadBenchmark {
                         checksum[0] ^= id ^ priceBits ^ (sym != null ? sym.size() : 0) ^ (note != null ? note.size() : 0);
                     }
                     rowsSeen[0] += n;
+                    // Sum the actual QWP message bytes delivered in this frame. The batch
+                    // view holds a native slice [payloadAddr .. payloadLimit) that matches
+                    // the WebSocket payload length reported by the frame parser. Add 10
+                    // bytes per batch to approximate the WebSocket header for large frames
+                    // (worst case; smaller frames carry a shorter header but the batches
+                    // here are always > 65 KiB so 10 bytes is exact).
+                    bytesSeen[0] += (batch.payloadLimit() - batch.payloadAddr()) + 10L;
                 }
 
                 @Override
@@ -231,9 +238,6 @@ public class QwpEgressReadBenchmark {
             });
         }
         long elapsed = System.nanoTime() - start;
-        // Bytes is hard to measure cleanly without instrumenting the socket; estimate from row count.
-        // Approx wire per row: 8 (id) + 8 (price) + varint dict index + short varchar bytes ≈ 24 bytes dense.
-        bytesSeen[0] = rowsSeen[0] * 24L;
         log("QWP", warmup, elapsed, rowsSeen[0], checksum[0]);
         return new Result(elapsed, rowsSeen[0], bytesSeen[0]);
     }
@@ -245,6 +249,7 @@ public class QwpEgressReadBenchmark {
     private static Result runPgWire(boolean warmup) throws Exception {
         long rows = 0;
         long checksum = 0;
+        long bytes = 0;
         long start = System.nanoTime();
         try (Connection c = createPgConnection(); Statement st = c.createStatement()) {
             st.setFetchSize(10_000);
@@ -256,14 +261,20 @@ public class QwpEgressReadBenchmark {
                     String note = rs.getString(4);
                     checksum ^= id ^ Double.doubleToLongBits(price)
                             ^ (sym != null ? sym.length() : 0) ^ (note != null ? note.length() : 0);
+                    // PG DataRow wire size per row in binary mode: 1 byte 'D' msg tag,
+                    // 4 bytes msg length, 2 bytes col count, then 4-byte length prefix +
+                    // value for each of the 4 columns. id/price are 8 bytes each, sym +
+                    // note vary - measure directly rather than estimating.
+                    int symBytes = sym != null ? sym.getBytes(StandardCharsets.UTF_8).length : 0;
+                    int noteBytes = note != null ? note.getBytes(StandardCharsets.UTF_8).length : 0;
+                    bytes += 7 + 4 + 8 + 4 + 8 + 4 + symBytes + 4 + noteBytes;
                     rows++;
                 }
             }
         }
         long elapsed = System.nanoTime() - start;
         log("PG", warmup, elapsed, rows, checksum);
-        // Approx: fixed row size ~30 bytes binary including length prefixes.
-        return new Result(elapsed, rows, rows * 30L);
+        return new Result(elapsed, rows, bytes);
     }
 
     // ------------------------------------------------------------------

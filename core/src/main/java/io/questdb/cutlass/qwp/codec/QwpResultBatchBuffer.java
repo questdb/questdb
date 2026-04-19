@@ -26,6 +26,8 @@ package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.std.Long256;
@@ -48,10 +50,23 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class QwpResultBatchBuffer implements QuietCloseable {
 
+    private static final QwpEgressColumnDef[] EMPTY_DEFS = new QwpEgressColumnDef[0];
+    private static final int[] EMPTY_INTS = new int[0];
+    private static final QwpColumnScratch[] EMPTY_SCRATCHES = new QwpColumnScratch[0];
+    private static final SymbolTable[] EMPTY_SYMBOL_TABLES = new SymbolTable[0];
+    private static final byte[] EMPTY_WIRE_TYPES = new byte[0];
     private final ObjList<QwpColumnScratch> scratches = new ObjList<>();
-    private ObjList<QwpEgressColumnDef> columns;
     private int columnCount;
+    private ObjList<QwpEgressColumnDef> columns;
+    // Per-batch caches, sized to max column count observed so far. Hoisted out of
+    // the appendRow hot loop so the inner iteration reads from plain arrays instead
+    // of ObjList.getQuick + def getter chains per cell.
+    private QwpEgressColumnDef[] defsArr = EMPTY_DEFS;
+    private int[] qdbTypesArr = EMPTY_INTS;
     private int rowCount;
+    private QwpColumnScratch[] scratchesArr = EMPTY_SCRATCHES;
+    private SymbolTable[] symbolTablesArr = EMPTY_SYMBOL_TABLES;
+    private byte[] wireTypesArr = EMPTY_WIRE_TYPES;
 
     public QwpResultBatchBuffer() {
     }
@@ -60,12 +75,18 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * Appends one row's worth of values from the given record.
      */
     public void appendRow(Record record) {
-        for (int ci = 0; ci < columnCount; ci++) {
-            QwpEgressColumnDef def = columns.getQuick(ci);
-            QwpColumnScratch scratch = scratches.getQuick(ci);
-            int qdbType = def.getQuestdbColumnType();
-            byte wire = def.getWireType();
-            switch (wire) {
+        // Hoist all per-column caches into locals so the JIT can trust they don't
+        // alias across columns; ObjList.getQuick chains were the dominant overhead
+        // in the previous version.
+        final int n = columnCount;
+        final QwpColumnScratch[] scs = scratchesArr;
+        final byte[] wts = wireTypesArr;
+        final int[] qts = qdbTypesArr;
+        final QwpEgressColumnDef[] defs = defsArr;
+        final SymbolTable[] sts = symbolTablesArr;
+        for (int ci = 0; ci < n; ci++) {
+            final QwpColumnScratch scratch = scs[ci];
+            switch (wts[ci]) {
                 case QwpConstants.TYPE_BOOLEAN:
                     scratch.appendBool(record.getBool(ci));
                     break;
@@ -78,57 +99,35 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_CHAR:
                     scratch.appendChar(record.getChar(ci));
                     break;
-                case QwpConstants.TYPE_INT: {
-                    int v = record.getInt(ci);
-                    if (v == Numbers.INT_NULL) scratch.appendNull();
-                    else scratch.appendInt(v);
+                case QwpConstants.TYPE_INT:
+                    scratch.appendIntOrNull(record.getInt(ci));
                     break;
-                }
-                case QwpConstants.TYPE_IPv4: {
+                case QwpConstants.TYPE_IPv4:
                     // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
-                    // We mark such rows NULL in the wire bitmap; non-null rows write the
-                    // 4 bytes of the address. The wire reader still cannot represent
-                    // the literal address 0.0.0.0 as non-null -- that's a QuestDB-level
-                    // limitation inherited by the wire format.
-                    int v = record.getInt(ci);
-                    if (v == Numbers.IPv4_NULL) scratch.appendNull();
-                    else scratch.appendInt(v);
+                    // The wire reader still cannot represent the literal address 0.0.0.0
+                    // as non-null - that's a QuestDB-level limitation inherited by the
+                    // wire format.
+                    scratch.appendIPv4OrNull(record.getInt(ci));
                     break;
-                }
-                case QwpConstants.TYPE_LONG: {
-                    long v = record.getLong(ci);
-                    if (v == Numbers.LONG_NULL) scratch.appendNull();
-                    else scratch.appendLong(v);
+                case QwpConstants.TYPE_LONG:
+                    scratch.appendLongOrNull(record.getLong(ci));
                     break;
-                }
-                case QwpConstants.TYPE_DATE: {
-                    long v = record.getDate(ci);
-                    if (v == Numbers.LONG_NULL) scratch.appendNull();
-                    else scratch.appendLong(v);
+                case QwpConstants.TYPE_DATE:
+                    scratch.appendLongOrNull(record.getDate(ci));
                     break;
-                }
                 case QwpConstants.TYPE_TIMESTAMP:
-                case QwpConstants.TYPE_TIMESTAMP_NANOS: {
-                    long v = record.getTimestamp(ci);
-                    if (v == Numbers.LONG_NULL) scratch.appendNull();
-                    else scratch.appendLong(v);
+                case QwpConstants.TYPE_TIMESTAMP_NANOS:
+                    scratch.appendLongOrNull(record.getTimestamp(ci));
                     break;
-                }
-                case QwpConstants.TYPE_FLOAT: {
+                case QwpConstants.TYPE_FLOAT:
                     // QuestDB FLOAT NULL == NaN. Spec sec 11.5 documents that NaN values
                     // (including a "legitimate" NaN such as 0/0) round-trip as NULL.
-                    float v = record.getFloat(ci);
-                    if (Float.isNaN(v)) scratch.appendNull();
-                    else scratch.appendFloat(v);
+                    scratch.appendFloatOrNull(record.getFloat(ci));
                     break;
-                }
-                case QwpConstants.TYPE_DOUBLE: {
+                case QwpConstants.TYPE_DOUBLE:
                     // Same NaN-as-NULL convention as FLOAT (spec sec 11.5).
-                    double v = record.getDouble(ci);
-                    if (Double.isNaN(v)) scratch.appendNull();
-                    else scratch.appendDouble(v);
+                    scratch.appendDoubleOrNull(record.getDouble(ci));
                     break;
-                }
                 case QwpConstants.TYPE_STRING: {
                     CharSequence cs = record.getStrA(ci);
                     if (cs == null) scratch.appendNull();
@@ -159,9 +158,16 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_SYMBOL: {
-                    CharSequence cs = record.getSymA(ci);
-                    if (cs == null) scratch.appendNull();
-                    else scratch.appendSymbol(cs);
+                    SymbolTable st = sts[ci];
+                    if (st != null) {
+                        int key = record.getInt(ci);
+                        if (key == SymbolTable.VALUE_IS_NULL) scratch.appendNull();
+                        else scratch.appendSymbolKey(key, st);
+                    } else {
+                        CharSequence cs = record.getSymA(ci);
+                        if (cs == null) scratch.appendNull();
+                        else scratch.appendSymbol(cs);
+                    }
                     break;
                 }
                 case QwpConstants.TYPE_UUID: {
@@ -184,18 +190,15 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_GEOHASH: {
-                    int precBits = def.getPrecisionBits();
+                    int precBits = defs[ci].getPrecisionBits();
                     long bits = readGeoBits(record, ci, precBits);
                     if (bits == -1L) scratch.appendNull();
                     else scratch.appendGeohash(bits, (precBits + 7) >>> 3);
                     break;
                 }
-                case QwpConstants.TYPE_DECIMAL64: {
-                    long v = record.getDecimal64(ci);
-                    if (v == Numbers.LONG_NULL) scratch.appendNull();
-                    else scratch.appendLong(v);
+                case QwpConstants.TYPE_DECIMAL64:
+                    scratch.appendLongOrNull(record.getDecimal64(ci));
                     break;
-                }
                 case QwpConstants.TYPE_DECIMAL128: {
                     record.getDecimal128(ci, scratch.decimal128Sink);
                     if (scratch.decimal128Sink.isNull()) scratch.appendNull();
@@ -214,34 +217,66 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case QwpConstants.TYPE_DOUBLE_ARRAY:
                 case QwpConstants.TYPE_LONG_ARRAY: {
-                    ArrayView av = record.getArray(ci, qdbType);
+                    ArrayView av = record.getArray(ci, qts[ci]);
                     if (av == null || av.isNull()) {
                         scratch.appendNull();
                     } else {
-                        appendArrayBytesDirect(scratch, av, wire);
+                        appendArrayBytesDirect(scratch, av, wts[ci]);
                     }
                     break;
                 }
                 default:
                     throw new UnsupportedOperationException(
-                            "QWP egress append: unsupported wire type 0x" + Integer.toHexString(wire & 0xFF));
+                            "QWP egress append: unsupported wire type 0x" + Integer.toHexString(wts[ci] & 0xFF));
             }
         }
         rowCount++;
     }
 
     /**
-     * Starts a new batch with the given schema. Re-sizes the scratch pool and resets each scratch.
+     * Starts a new batch with the given schema. Re-sizes the scratch pool, resets each
+     * scratch, and populates the per-column hot-path caches read by {@link #appendRow}.
+     * When {@code symbolTables} is non-null, {@code SYMBOL} columns use the native
+     * key fast path via {@link QwpColumnScratch#appendSymbolKey}; otherwise they fall
+     * back to {@link QwpColumnScratch#appendSymbol} via {@code record.getSymA}.
      */
-    public void beginBatch(ObjList<QwpEgressColumnDef> columns) {
+    public void beginBatch(ObjList<QwpEgressColumnDef> columns, SymbolTableSource symbolTables) {
         this.columns = columns;
         this.columnCount = columns.size();
         this.rowCount = 0;
         while (scratches.size() < columnCount) {
             scratches.add(new QwpColumnScratch());
         }
+        if (defsArr.length < columnCount) {
+            int cap = Math.max(columnCount, defsArr.length * 2);
+            defsArr = new QwpEgressColumnDef[cap];
+            scratchesArr = new QwpColumnScratch[cap];
+            wireTypesArr = new byte[cap];
+            qdbTypesArr = new int[cap];
+            symbolTablesArr = new SymbolTable[cap];
+        }
         for (int i = 0; i < columnCount; i++) {
-            scratches.getQuick(i).beginBatch(columns.getQuick(i));
+            QwpEgressColumnDef def = columns.getQuick(i);
+            QwpColumnScratch scratch = scratches.getQuick(i);
+            scratch.beginBatch(def);
+            defsArr[i] = def;
+            scratchesArr[i] = scratch;
+            wireTypesArr[i] = def.getWireType();
+            qdbTypesArr[i] = def.getQuestdbColumnType();
+            SymbolTable st = null;
+            if (symbolTables != null && wireTypesArr[i] == QwpConstants.TYPE_SYMBOL) {
+                try {
+                    st = symbolTables.getSymbolTable(i);
+                } catch (UnsupportedOperationException ignored) {
+                    // Cursor doesn't expose symbol tables (rare) - fall back to getSymA.
+                }
+            }
+            symbolTablesArr[i] = st;
+        }
+        // Poison any trailing slots from a wider previous batch so a stray SYMBOL
+        // lookup against an old table can never fire.
+        for (int i = columnCount; i < defsArr.length; i++) {
+            symbolTablesArr[i] = null;
         }
     }
 
