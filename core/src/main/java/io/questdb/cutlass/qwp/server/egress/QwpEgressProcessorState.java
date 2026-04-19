@@ -98,6 +98,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // first calling onStreamingBatchSent) produces duplicate seq=N batches if the
     // first send parks mid-flight -- silent data corruption from the client's view.
     private boolean streamingBatchSeqCommitted;
+    /**
+     * Set when a CANCEL frame arriving on this connection targets the in-flight
+     * streaming query's {@code requestId}. {@code streamResults} reads the flag
+     * between batches and aborts with {@code STATUS_CANCELLED} when true.
+     * Cleared on {@code beginStreaming}/{@code beginStreamingPageFrame} so a
+     * stale cancel can't kill the next query.
+     */
+    private boolean streamingCancelRequested;
     private int streamingColumnCount;
     private RecordCursor streamingCursor;
     private RecordCursorFactory streamingFactory;
@@ -192,6 +200,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingSchemaId = schemaId;
         this.streamingBatchSeq = 0;
         this.streamingBatchSeqCommitted = false;
+        this.streamingCancelRequested = false;
         this.streamingFullSchemaSent = false;
         this.streamingRowsEmitted = 0;
         this.streamingActive = true;
@@ -238,6 +247,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingSchemaId = schemaId;
         this.streamingBatchSeq = 0;
         this.streamingBatchSeqCommitted = false;
+        this.streamingCancelRequested = false;
         this.streamingFullSchemaSent = false;
         this.streamingRowsEmitted = 0;
         this.streamingPageFrameIndex = 0;
@@ -319,6 +329,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingSchemaId = 0;
         streamingBatchSeq = 0;
         streamingBatchSeqCommitted = false;
+        streamingCancelRequested = false;
         streamingFullSchemaSent = false;
         streamingResultEndInitiated = false;
         streamingPageFrameIndex = 0;
@@ -409,6 +420,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingActive;
     }
 
+    /**
+     * True if a CANCEL frame has been observed for this query since it started
+     * streaming.
+     */
+    public boolean isStreamingCancelRequested() {
+        return streamingCancelRequested;
+    }
+
     public boolean isStreamingFullSchemaSent() {
         return streamingFullSchemaSent;
     }
@@ -427,6 +446,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public boolean isWsHandshakeSent() {
         return wsHandshakeSent;
+    }
+
+    /**
+     * Records that a CANCEL frame was received for the current streaming query.
+     * Idempotent -- multiple CANCELs coalesce into a single abort path.
+     */
+    public void markStreamingCancelRequested() {
+        streamingCancelRequested = true;
     }
 
     public void markStreamingResultEndInitiated() {

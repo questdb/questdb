@@ -45,6 +45,7 @@ import io.questdb.cutlass.qwp.codec.QwpEgressFrameWriter;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
@@ -101,6 +102,34 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                 .getForceRecvFragmentationChunkSize();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.sharedWorkerCount = sharedWorkerCount;
+    }
+
+    // Exposed for unit tests in a different package that verify the error ->
+    // status mapping (QwpEgressCancelTest). No production callers outside
+    // this class.
+    public static byte mapErrorStatus(Throwable e) {
+        // SqlException covers both syntax errors and semantic errors (e.g., table not found).
+        // Its getMessage() already embeds the "[position] text" form.
+        if (e instanceof io.questdb.griffin.SqlException) {
+            return QwpConstants.STATUS_PARSE_ERROR;
+        }
+        if (e instanceof io.questdb.cairo.CairoException ce) {
+            if (ce.isAuthorizationError()) {
+                return QwpConstants.STATUS_SECURITY_ERROR;
+            }
+            // Explicit cancellation (setCancellation=true) surfaces as STATUS_CANCELLED.
+            if (ce.isCancellation()) {
+                return QwpEgressMsgKind.STATUS_CANCELLED;
+            }
+            // Non-cancellation interruptions (query timeout, circuit breaker) and
+            // out-of-memory both map to STATUS_LIMIT_EXCEEDED -- the client can
+            // distinguish them via the message text.
+            if (ce.isInterruption() || ce.isOutOfMemory()) {
+                return QwpEgressMsgKind.STATUS_LIMIT_EXCEEDED;
+            }
+            return QwpConstants.STATUS_INTERNAL_ERROR;
+        }
+        return QwpConstants.STATUS_INTERNAL_ERROR;
     }
 
     @Override
@@ -317,21 +346,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         return type == CompiledQuery.PSEUDO_SELECT && cq.getRecordCursorFactory() != null;
     }
 
-    private static byte mapErrorStatus(Throwable e) {
-        // SqlException covers both syntax errors and semantic errors (e.g., table not found).
-        // Its getMessage() already embeds the "[position] text" form.
-        if (e instanceof io.questdb.griffin.SqlException) {
-            return QwpConstants.STATUS_PARSE_ERROR;
-        }
-        if (e instanceof io.questdb.cairo.CairoException ce) {
-            if (ce.isAuthorizationError()) {
-                return QwpConstants.STATUS_SECURITY_ERROR;
-            }
-            return QwpConstants.STATUS_INTERNAL_ERROR;
-        }
-        return QwpConstants.STATUS_INTERNAL_ERROR;
-    }
-
     private static int parseClientMaxVersion(HttpRequestHeader requestHeader) {
         Utf8Sequence maxVersionHeader = requestHeader.getHeader(QwpWebSocketHttpProcessor.HEADER_X_QWP_MAX_VERSION);
         if (maxVersionHeader == null) {
@@ -371,9 +385,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         byte msgKind = state.getDecoder().peekMsgKind(payload);
         switch (msgKind) {
             case QwpEgressMsgKind.QUERY_REQUEST -> handleQueryRequest(context, state, payload, length);
-            case QwpEgressMsgKind.CANCEL, QwpEgressMsgKind.CREDIT -> // Phase 1: parse and log, do not act.
-                    LOG.debug().$("Egress control frame (Phase 1 ignored) [fd=").$(context.getFd())
-                            .$(", kind=0x").$(Integer.toHexString(msgKind & 0xFF)).I$();
+            case QwpEgressMsgKind.CANCEL -> handleCancel(context, state, payload, length);
+            case QwpEgressMsgKind.CREDIT -> // CREDIT (flow control) is not wired yet.
+                    LOG.debug().$("Egress CREDIT (Phase 1 ignored) [fd=").$(context.getFd()).I$();
             default -> {
                 LOG.error().$("Egress unknown msg_kind [fd=").$(context.getFd())
                         .$(", kind=0x").$(Integer.toHexString(msgKind & 0xFF)).I$();
@@ -454,6 +468,42 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     // Egress message dispatch and query execution
+
+    /**
+     * CANCEL handler: decodes the target {@code requestId} and, if it matches
+     * the currently streaming query, flags the state so {@code streamResults}
+     * aborts between batches with a {@code QUERY_ERROR} (status
+     * {@code STATUS_CANCELLED}). Cancels against non-matching or absent queries
+     * are logged and dropped.
+     * <p>
+     * Known limitation (not yet fixed): the IO dispatcher registers each fd for
+     * a single operation (read OR write). While a streaming query is parked on
+     * write backpressure, inbound CANCEL frames queue in the kernel recv buffer
+     * but this handler is only invoked once write completes. That makes
+     * mid-stream CANCEL effectively ineffective over slow consumers today -- the
+     * query finishes before CANCEL is seen. Fixing it requires registering for
+     * both read and write during streaming, which is a dispatcher-level change.
+     * The in-place plumbing (flag + streamResults check + STATUS_CANCELLED
+     * mapping) is ready for that fix.
+     */
+    private void handleCancel(HttpConnectionContext context, QwpEgressProcessorState state, long payload, int length) {
+        try {
+            long targetRequestId = state.getDecoder().decodeCancel(payload, length);
+            if (state.isStreamingActive() && state.getStreamingRequestId() == targetRequestId) {
+                state.markStreamingCancelRequested();
+                LOG.info().$("Egress CANCEL accepted [fd=").$(context.getFd())
+                        .$(", requestId=").$(targetRequestId).I$();
+            } else {
+                LOG.debug().$("Egress CANCEL for unknown query [fd=").$(context.getFd())
+                        .$(", targetRequestId=").$(targetRequestId)
+                        .$(", currentRequestId=").$(state.isStreamingActive() ? state.getStreamingRequestId() : -1L)
+                        .I$();
+            }
+        } catch (QwpParseException e) {
+            LOG.error().$("Egress CANCEL malformed [fd=").$(context.getFd())
+                    .$(", error=").$(e.getFlyweightMessage()).I$();
+        }
+    }
 
     private void handleClose(HttpConnectionContext context, long payload, int length) {
         int closeCode = -1;
@@ -865,6 +915,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         final RecordCursor cursor = pageFrame ? null : state.getStreamingCursor();
 
         while (true) {
+            // CANCEL arriving while the query is streaming sets a flag on state.
+            // We observe it between batches (not mid-batch -- Phase 1 doesn't plumb
+            // a circuit breaker into the SQL layer) and abort with STATUS_CANCELLED.
+            if (state.isStreamingCancelRequested()) {
+                LOG.info().$("Egress streaming cancelled by client [fd=").$(context.getFd())
+                        .$(", requestId=").$(requestId)
+                        .$(", batchSeq=").$(state.getStreamingBatchSeq())
+                        .$(", rowsEmitted=").$(state.getStreamingRowsEmitted())
+                        .I$();
+                state.endStreaming();
+                sendQueryError(context, state, requestId, QwpEgressMsgKind.STATUS_CANCELLED, "cancelled by client");
+                return;
+            }
             // Passing the symbol-table source lets the batch buffer pick up native
             // SymbolTables for SYMBOL columns, taking the getInt-based fast path.
             batchBuffer.beginBatch(columnDefs, state.getStreamingSymbolTableSource(), state.getConnSymbolDict());
