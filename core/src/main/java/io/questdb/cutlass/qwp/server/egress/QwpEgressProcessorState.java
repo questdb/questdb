@@ -107,6 +107,41 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     private boolean streamingCancelRequested;
     private int streamingColumnCount;
+    /**
+     * True between {@code onHeadersReady} (which writes the 101 response bytes
+     * into the raw-socket buffer) and {@code resumeSend}'s flush + protocol
+     * switch. While true, {@code onRequestComplete} / {@code resumeSend} are
+     * responsible for committing the bytes and calling {@code switchProtocol}.
+     * Handles the case where {@code rawSocket.send} parks mid-write on a
+     * fragmented send buffer.
+     */
+    private boolean handshakeFlushPending;
+    /**
+     * Byte count of the WebSocket 101 handshake response written by
+     * {@code onHeadersReady} but not yet committed. {@code onRequestComplete}
+     * issues the {@code rawSocket.send(pendingHandshakeBytes)} -- PISR from
+     * that path is legal (unlike in {@code onHeadersReady}) and lets the
+     * framework park + resume the remainder properly.
+     */
+    private int pendingHandshakeBytes;
+    /**
+     * Credit-flow state for the in-flight query.
+     * <p>
+     * {@code initialCredit} captures the value the client advertised in
+     * QUERY_REQUEST. Zero means "unbounded" (the Phase-1 default -- no credit
+     * checking at all). A positive value puts the stream under byte-based flow
+     * control: the server tracks {@code creditRemaining} (in bytes of egress
+     * payload), refuses to start a new batch when it hits zero, and parks the
+     * stream until a CREDIT frame replenishes it.
+     */
+    private long streamingCreditInitial;
+    private long streamingCreditRemaining;
+    /**
+     * True when {@code streamResults} returned early because credit is exhausted.
+     * The state is still "active"; an inbound CREDIT frame will replenish the
+     * budget and re-enter {@code streamResults} to continue.
+     */
+    private boolean streamingCreditSuspended;
     private RecordCursor streamingCursor;
     private RecordCursorFactory streamingFactory;
     private boolean streamingFullSchemaSent;
@@ -184,7 +219,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             RecordCursorFactory factory,
             RecordCursor cursor,
             int columnCount,
-            int schemaId
+            int schemaId,
+            long initialCredit
     ) {
         // Defence in depth: if a caller forgets to check isStreamingActive(), free the
         // previous factory/cursor before overwriting. The primary gate lives in
@@ -201,6 +237,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingBatchSeq = 0;
         this.streamingBatchSeqCommitted = false;
         this.streamingCancelRequested = false;
+        this.streamingCreditInitial = initialCredit;
+        this.streamingCreditRemaining = initialCredit;
+        this.streamingCreditSuspended = false;
         this.streamingFullSchemaSent = false;
         this.streamingRowsEmitted = 0;
         this.streamingActive = true;
@@ -223,7 +262,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             RecordCursorFactory factory,
             PageFrameCursor pageFrameCursor,
             int columnCount,
-            int schemaId
+            int schemaId,
+            long initialCredit
     ) {
         if (streamingActive) {
             endStreaming();
@@ -248,6 +288,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingBatchSeq = 0;
         this.streamingBatchSeqCommitted = false;
         this.streamingCancelRequested = false;
+        this.streamingCreditInitial = initialCredit;
+        this.streamingCreditRemaining = initialCredit;
+        this.streamingCreditSuspended = false;
         this.streamingFullSchemaSent = false;
         this.streamingRowsEmitted = 0;
         this.streamingPageFrameIndex = 0;
@@ -280,6 +323,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         endStreaming();
         recvBufferLen = 0;
         wsHandshakeSent = false;
+        handshakeFlushPending = false;
+        pendingHandshakeBytes = 0;
         fd = -1;
         securityContext = null;
         negotiatedVersion = QwpConstants.VERSION_1;
@@ -330,6 +375,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingBatchSeq = 0;
         streamingBatchSeqCommitted = false;
         streamingCancelRequested = false;
+        streamingCreditInitial = 0;
+        streamingCreditRemaining = 0;
+        streamingCreditSuspended = false;
         streamingFullSchemaSent = false;
         streamingResultEndInitiated = false;
         streamingPageFrameIndex = 0;
@@ -428,6 +476,27 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingCancelRequested;
     }
 
+    /**
+     * True when the client advertised a non-zero {@code initial_credit} for this
+     * query. Credit-limited streams honour {@code creditRemaining} and park on
+     * exhaustion; uncapped streams ignore credit entirely (Phase-1 default).
+     */
+    public boolean isStreamingCreditLimited() {
+        return streamingCreditInitial > 0;
+    }
+
+    public long getStreamingCreditRemaining() {
+        return streamingCreditRemaining;
+    }
+
+    /**
+     * True when {@code streamResults} exited early because {@code creditRemaining}
+     * hit zero. An inbound CREDIT frame replenishes and un-suspends.
+     */
+    public boolean isStreamingCreditSuspended() {
+        return streamingCreditSuspended;
+    }
+
     public boolean isStreamingFullSchemaSent() {
         return streamingFullSchemaSent;
     }
@@ -448,12 +517,60 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return wsHandshakeSent;
     }
 
+    public boolean isHandshakeFlushPending() {
+        return handshakeFlushPending;
+    }
+
+    public void setHandshakeFlushPending(boolean pending) {
+        this.handshakeFlushPending = pending;
+    }
+
+    public int getPendingHandshakeBytes() {
+        return pendingHandshakeBytes;
+    }
+
+    public void setPendingHandshakeBytes(int bytes) {
+        this.pendingHandshakeBytes = bytes;
+    }
+
     /**
      * Records that a CANCEL frame was received for the current streaming query.
      * Idempotent -- multiple CANCELs coalesce into a single abort path.
      */
     public void markStreamingCancelRequested() {
         streamingCancelRequested = true;
+    }
+
+    /**
+     * Adds the given number of bytes to the remaining credit. Called from the
+     * CREDIT frame handler. Saturates at {@code Long.MAX_VALUE} to avoid
+     * overflow on pathological clients.
+     */
+    public void addStreamingCredit(long bytes) {
+        long sum = streamingCreditRemaining + bytes;
+        streamingCreditRemaining = sum < streamingCreditRemaining ? Long.MAX_VALUE : sum;
+    }
+
+    /**
+     * Subtracts the bytes actually sent in the just-completed batch from
+     * {@code creditRemaining}. No-op when the stream is not credit-limited.
+     */
+    public void consumeStreamingCredit(long bytes) {
+        if (streamingCreditInitial > 0) {
+            streamingCreditRemaining -= bytes;
+        }
+    }
+
+    /**
+     * Marks the streaming loop as credit-suspended. {@code streamResults} returns
+     * early; the next CREDIT frame (or cancel) re-enters it.
+     */
+    public void markStreamingCreditSuspended() {
+        streamingCreditSuspended = true;
+    }
+
+    public void clearStreamingCreditSuspended() {
+        streamingCreditSuspended = false;
     }
 
     public void markStreamingResultEndInitiated() {

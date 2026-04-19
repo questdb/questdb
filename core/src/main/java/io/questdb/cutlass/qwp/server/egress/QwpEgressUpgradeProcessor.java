@@ -195,24 +195,45 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         state.setNegotiatedVersion((byte) negotiatedVersion);
 
         int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion);
-        try {
-            rawSocket.send(bytesWritten);
-        } catch (PeerIsSlowToReadException e) {
-            throw HttpException.instance("Egress 101 handshake blocked");
-        }
-        state.setWsHandshakeSent(true);
-        LOG.info().$("Egress WebSocket handshake sent [fd=").$(context.getFd())
-                .$(", qwpVersion=").$(negotiatedVersion).I$();
-
-        context.switchProtocol();
+        // The HttpRequestProcessor contract forbids PeerIsSlowToReadException
+        // from onHeadersReady, so we defer the raw-socket send to
+        // onRequestComplete where PISR propagates cleanly into the framework's
+        // park-on-write path. State carries the byte count across the two
+        // calls (the framework invokes them back-to-back in handleClientRecv).
+        state.setPendingHandshakeBytes(bytesWritten);
+        state.setHandshakeFlushPending(true);
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context) {
+    public void onRequestComplete(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         QwpEgressProcessorState state = LV.get(context);
-        if (state != null && state.isWsHandshakeSent()) {
-            LOG.debug().$("Egress WebSocket ready for frames [fd=").$(context.getFd()).I$();
+        if (state == null || !state.isHandshakeFlushPending()) {
+            // Either we're already past the handshake (protocol-switched
+            // connection's onRequestComplete after a recv cycle) or a previous
+            // handshake failure already disconnected us.
+            if (state != null && state.isWsHandshakeSent()) {
+                LOG.debug().$("Egress WebSocket ready for frames [fd=").$(context.getFd()).I$();
+            }
+            return;
         }
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        // rawSocket.send may park us (partial write against a small send
+        // fragmentation cap, or kernel send buffer full). PISR propagates to
+        // handleClientRecv which parks the connection for write and schedules
+        // resumeSend -- resumeSend finalises the protocol switch after the
+        // rest of the handshake bytes flush.
+        rawSocket.send(state.getPendingHandshakeBytes());
+        finalizeHandshake(context, state);
+    }
+
+    private void finalizeHandshake(HttpConnectionContext context, QwpEgressProcessorState state) {
+        state.setWsHandshakeSent(true);
+        state.setHandshakeFlushPending(false);
+        state.setPendingHandshakeBytes(0);
+        LOG.info().$("Egress WebSocket handshake sent [fd=").$(context.getFd())
+                .$(", qwpVersion=").$(state.getNegotiatedVersion() & 0xFF).I$();
+        context.switchProtocol();
     }
 
     @Override
@@ -289,6 +310,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                 .$(", streaming=").$(state != null && state.isStreamingActive())
                 .I$();
         context.resumeResponseSend();
+
+        // 2. If the handshake response was parked mid-write, the flush above
+        //    just completed it. Finalise the protocol switch now so subsequent
+        //    recvs parse WebSocket frames rather than HTTP.
+        if (state != null && state.isHandshakeFlushPending()) {
+            finalizeHandshake(context, state);
+            return;
+        }
 
         if (state == null || !state.isStreamingActive()) {
             // Nothing to drive -- the deferred flush above was the last thing
@@ -386,8 +415,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         switch (msgKind) {
             case QwpEgressMsgKind.QUERY_REQUEST -> handleQueryRequest(context, state, payload, length);
             case QwpEgressMsgKind.CANCEL -> handleCancel(context, state, payload, length);
-            case QwpEgressMsgKind.CREDIT -> // CREDIT (flow control) is not wired yet.
-                    LOG.debug().$("Egress CREDIT (Phase 1 ignored) [fd=").$(context.getFd()).I$();
+            case QwpEgressMsgKind.CREDIT -> handleCredit(context, state, payload, length);
             default -> {
                 LOG.error().$("Egress unknown msg_kind [fd=").$(context.getFd())
                         .$(", kind=0x").$(Integer.toHexString(msgKind & 0xFF)).I$();
@@ -505,6 +533,61 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
+    /**
+     * CREDIT handler: the client advertises {@code additional_bytes} of
+     * send-ahead budget for {@code request_id}. If the target matches the
+     * currently streaming query, we add it to {@code streamingCreditRemaining}
+     * and, if the stream is credit-suspended, resume it by re-entering
+     * {@code streamResults}. Re-entering inline (same thread, same processor)
+     * is safe: the suspended state left nothing mid-batch -- it exited cleanly
+     * at the top of the loop.
+     */
+    private void handleCredit(HttpConnectionContext context, QwpEgressProcessorState state, long payload, int length)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        try {
+            long targetRequestId = Unsafe.getUnsafe().getLong(payload + 1);
+            long additional = state.getDecoder().decodeCredit(payload, length);
+            if (additional <= 0) {
+                LOG.error().$("Egress CREDIT rejected [fd=").$(context.getFd())
+                        .$(", requestId=").$(targetRequestId)
+                        .$(", additional=").$(additional).I$();
+                return;
+            }
+            if (!state.isStreamingActive() || state.getStreamingRequestId() != targetRequestId) {
+                LOG.debug().$("Egress CREDIT for unknown query [fd=").$(context.getFd())
+                        .$(", targetRequestId=").$(targetRequestId).I$();
+                return;
+            }
+            state.addStreamingCredit(additional);
+            if (!state.isStreamingCreditSuspended()) {
+                // Stream isn't parked -- just banked the credit for future batches.
+                return;
+            }
+            LOG.debug().$("Egress CREDIT resume [fd=").$(context.getFd())
+                    .$(", requestId=").$(targetRequestId)
+                    .$(", added=").$(additional)
+                    .$(", remaining=").$(state.getStreamingCreditRemaining()).I$();
+            state.clearStreamingCreditSuspended();
+            try {
+                streamResults(context, state);
+            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+                throw e;
+            } catch (Throwable t) {
+                LOG.error().$("Egress CREDIT resume failed [fd=").$(context.getFd())
+                        .$(", requestId=").$(targetRequestId).$(", error=").$(t).I$();
+                state.endStreaming();
+                try {
+                    sendQueryError(context, state, targetRequestId, mapErrorStatus(t),
+                            t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (QwpParseException e) {
+            LOG.error().$("Egress CREDIT malformed [fd=").$(context.getFd())
+                    .$(", error=").$(e.getFlyweightMessage()).I$();
+        }
+    }
+
     private void handleClose(HttpConnectionContext context, long payload, int length) {
         int closeCode = -1;
         if (length >= 2) {
@@ -618,10 +701,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                     // after reading, so a 10M-row scan doesn't evict the server's
                     // working set. Same hint used by the parquet exporter.
                     pageFrameCursor.setStreamingMode(true);
-                    state.beginStreamingPageFrame(requestId, factory, pageFrameCursor, columnCount, schemaId);
+                    state.beginStreamingPageFrame(requestId, factory, pageFrameCursor, columnCount, schemaId, decoder.initialCredit);
                 } else {
                     cursor = factory.getCursor(sqlCtx);
-                    state.beginStreaming(requestId, factory, cursor, columnCount, schemaId);
+                    state.beginStreaming(requestId, factory, cursor, columnCount, schemaId, decoder.initialCredit);
                 }
                 streamingHandedOff = true;     // ownership of factory + cursor passed to state
             }
@@ -830,7 +913,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
      * memmove the QWP bytes left so the wire frame abuts offset 0 (which is
      * what {@link HttpRawSocket#send(int)} flushes).
      */
-    private void sendResultBatch(
+    /**
+     * @return the WS payload size (QWP bytes) actually written -- used by the
+     *         credit bookkeeping to debit the stream's remaining budget.
+     */
+    private int sendResultBatch(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
             long requestId,
@@ -876,6 +963,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
 
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
+        return qwpSize;
     }
 
     private void sendResultEnd(
@@ -928,6 +1016,17 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                 sendQueryError(context, state, requestId, QwpEgressMsgKind.STATUS_CANCELLED, "cancelled by client");
                 return;
             }
+            // Credit-limited streams park when the client-advertised budget hits
+            // zero. The next CREDIT frame replenishes via handleCredit and
+            // re-enters streamResults to continue.
+            if (state.isStreamingCreditLimited() && state.getStreamingCreditRemaining() <= 0) {
+                LOG.debug().$("Egress streaming credit-suspended [fd=").$(context.getFd())
+                        .$(", requestId=").$(requestId)
+                        .$(", batchSeq=").$(state.getStreamingBatchSeq())
+                        .I$();
+                state.markStreamingCreditSuspended();
+                return;
+            }
             // Passing the symbol-table source lets the batch buffer pick up native
             // SymbolTables for SYMBOL columns, taking the getInt-based fast path.
             batchBuffer.beginBatch(columnDefs, state.getStreamingSymbolTableSource(), state.getConnSymbolDict());
@@ -965,7 +1064,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             // the same seq number, producing two batches labelled seq=N with different rows.
             long currentSeq = state.getStreamingBatchSeq();
             state.onStreamingBatchSent(rowsThisBatch);
-            sendResultBatch(context, state, requestId, currentSeq, batchBuffer, schemaId, writeFullSchema);
+            int qwpBytes = sendResultBatch(context, state, requestId, currentSeq, batchBuffer, schemaId, writeFullSchema);
+            // Credit bookkeeping: debit by the bytes we just committed to the wire.
+            // No-op when the stream isn't credit-limited (initialCredit==0).
+            state.consumeStreamingCredit(qwpBytes);
             if (cursorExhausted) {
                 long totalRows = state.getStreamingRowsEmitted();
                 state.markStreamingResultEndInitiated();

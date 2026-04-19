@@ -28,6 +28,7 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
+import io.questdb.PropertyKey;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
@@ -120,7 +121,9 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
-        random = TestUtils.generateRandom(LOG);
+        // Pinned seeds make the fuzz deterministic across runs -- swap for new
+        // constants if/when a CI run surfaces a previously-unseen failure.
+        random = TestUtils.generateRandom(LOG, 485786647934791L, 1776628971981L);
     }
 
     @Test
@@ -128,8 +131,10 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         // Exercises per-connection state that survives across queries: the conn
         // symbol dict (dedup map + bytes heap + packed entries), the conn dict
         // reset by resetForNewQuery, schema registry, Gorilla decoder state.
+        int chunk = pickChunk();
+        LOG.info().$("=== back-to-back: chunk=").$(chunk).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startWithEnvVariables()) {
+            try (TestServerMain server = startFragmented(chunk)) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
@@ -144,8 +149,10 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     @Test
     public void testRandomSchemaRoundtrip() throws Exception {
         // Main sweep: fresh connection per case so state pollution can't mask a bug.
+        int chunk = pickChunk();
+        LOG.info().$("=== random schema: chunk=").$(chunk).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startWithEnvVariables()) {
+            try (TestServerMain server = startFragmented(chunk)) {
                 for (int i = 0; i < 15; i++) {
                     try (QwpQueryClient client = QwpQueryClient.fromConfig(
                             "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
@@ -161,8 +168,10 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     public void testWideTables() throws Exception {
         // 10-16 columns stresses the batch buffer's per-column state arrays and
         // the schema block encoder.
+        int chunk = pickChunk();
+        LOG.info().$("=== wide: chunk=").$(chunk).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startWithEnvVariables()) {
+            try (TestServerMain server = startFragmented(chunk)) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
@@ -211,6 +220,23 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         // Skewed distribution that hits small, mid, and batch-boundary sizes.
         int[] choices = {1, 2, 7, 64, 257, MAX_ROWS_PER_CASE - 1, MAX_ROWS_PER_CASE};
         return choices[rnd.nextInt(choices.length)];
+    }
+
+    /**
+     * Random send+recv fragmentation chunk size. Lower bound 10 exercises the
+     * park-resume path on every WS frame (handshake included, since the
+     * onRequestComplete/resumeSend split handles partial handshake writes);
+     * upper bound keeps small-result iterations fast.
+     */
+    private int pickChunk() {
+        return 1 + random.nextInt(500);
+    }
+
+    private TestServerMain startFragmented(int chunk) {
+        return startWithEnvVariables(
+                PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(chunk),
+                PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(chunk)
+        );
     }
 
     private static String randomAsciiString(Rnd rnd, int len) {
