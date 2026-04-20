@@ -984,6 +984,32 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevCrossColumnArrayDimsMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        a DOUBLE[],
+                        b DOUBLE[][]
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0], ARRAY[[1.0, 2.0], [3.0, 4.0]]),
+                        ('2024-01-01T02:00:00.000000Z', ARRAY[5.0, 6.0], ARRAY[[5.0, 6.0], [7.0, 8.0]])""");
+            // Column layout: ts(0), a(1 DOUBLE[]), b(2 DOUBLE[][]).
+            // FILL(PREV, PREV(a)): col=1 (a) is bare PREV -> FILL_PREV_SELF;
+            // col=2 (b DOUBLE[][]) is filled from a (col=1 DOUBLE[]). Target
+            // col=2 != srcColIdx=1 bypasses PREV(self) normalization and reaches
+            // the M-9 type check: ARRAY target requires exact type equality;
+            // dimensionality differs, so reject.
+            String sql = "SELECT ts, first(a) a, first(b) b FROM t SAMPLE BY 1h FILL(PREV, PREV(a)) ALIGN TO CALENDAR";
+            int prevArgPos = sql.indexOf("a", sql.indexOf("PREV(a)") + 5);
+            assertExceptionNoLeakCheck(sql, prevArgPos, "cannot fill target column of type DOUBLE[][]");
+            assertExceptionNoLeakCheck(sql, prevArgPos, "source type DOUBLE[]");
+        });
+    }
+
+    @Test
     public void testFillPrevCrossColumnBadAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -993,6 +1019,78 @@ public class SampleByFillTest extends AbstractCairoTest {
                     55,
                     "column not found"
             );
+        });
+    }
+
+    @Test
+    public void testFillPrevCrossColumnBroadcastRejection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        x DOUBLE,
+                        y DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1.0, 2.0),
+                        ('2024-01-01T02:00:00.000000Z', 3.0, 4.0)""");
+            // Two aggregates (a, b), single FILL(PREV(a)). Pre-fix: silently
+            // broadcast PREV(a) to both aggregates. Post-fix (M-3): PREV(colX)
+            // is FUNCTION-typed and no longer qualifies as broadcastable; the
+            // under-spec guard throws at fillValuesExprs.getQuick(0).position
+            // which is the `P` of the first PREV inside FILL(...).
+            String sql = "SELECT ts, sum(x) a, sum(y) b FROM t SAMPLE BY 1h FILL(PREV(a)) ALIGN TO CALENDAR";
+            int prevLiteralPos = sql.indexOf("PREV(", sql.indexOf("FILL("));
+            assertExceptionNoLeakCheck(sql, prevLiteralPos, "not enough fill values");
+        });
+    }
+
+    @Test
+    public void testFillPrevCrossColumnDecimalPrecisionMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        a DECIMAL(10, 2),
+                        b DECIMAL(18, 6)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 12.34::DECIMAL(10,2), 987654.321000::DECIMAL(18,6))""");
+            // Column layout: ts(0), a(1 DECIMAL(10,2)), b(2 DECIMAL(18,6)).
+            // FILL(PREV, PREV(a)): col=2 (b) is filled from source=a. srcColIdx=1
+            // differs from col=2, bypasses PREV(self) normalization and reaches
+            // the M-9 type check. needsExactTypeMatch fires for DECIMAL targets;
+            // precisions differ, so reject.
+            String sql = "SELECT ts, first(a) a, first(b) b FROM t SAMPLE BY 1h FILL(PREV, PREV(a)) ALIGN TO CALENDAR";
+            int prevArgPos = sql.indexOf("a", sql.indexOf("PREV(a)") + 5);
+            assertExceptionNoLeakCheck(sql, prevArgPos, "cannot fill target column of type DECIMAL(18,6)");
+            assertExceptionNoLeakCheck(sql, prevArgPos, "source type DECIMAL(10,2)");
+        });
+    }
+
+    @Test
+    public void testFillPrevCrossColumnGeoHashWidthMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        a GEOHASH(17b),
+                        b GEOHASH(18b)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', rnd_geohash(17), rnd_geohash(18))""");
+            // Column layout: ts(0), a(1 GEOHASH(17b)), b(2 GEOHASH(18b)).
+            // FILL(PREV, PREV(a)): col=2 (b) is filled from source=a. Widths
+            // differ, so needsExactTypeMatch fires and rejects. Widths 17 and
+            // 18 are both non-multiples of 5 so they render as GEOHASH(Nb)
+            // rather than the GEOHASH(Nc) alias form.
+            String sql = "SELECT ts, first(a) a, first(b) b FROM t SAMPLE BY 1h FILL(PREV, PREV(a)) ALIGN TO CALENDAR";
+            int prevArgPos = sql.indexOf("a", sql.indexOf("PREV(a)") + 5);
+            assertExceptionNoLeakCheck(sql, prevArgPos, "cannot fill target column of type GEOHASH(18b)");
+            assertExceptionNoLeakCheck(sql, prevArgPos, "source type GEOHASH(17b)");
         });
     }
 
@@ -1118,6 +1216,46 @@ public class SampleByFillTest extends AbstractCairoTest {
                     query
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
+        });
+    }
+
+    @Test
+    public void testFillPrevDecimalZeroVsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        d DECIMAL(10, 2)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            // Insert a legitimate 0.00 at 01:00 and a data value at 03:00.
+            // Query spans 00:00..04:00 via FROM/TO so bucket at 00:00 predates
+            // any data (produces NULL fill), bucket at 02:00 is between data
+            // rows (produces PREV fill carrying the prior 0.00), bucket at
+            // 03:00 is a data row (12.34), bucket at 04:00 carries the prior
+            // 12.34. The Decimal null sentinel (MIN_VALUE) is preserved
+            // through the fill pipeline and renders distinctly from a
+            // legitimate 0.00.
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T01:00:00.000000Z', 0.00::DECIMAL(10,2)),
+                        ('2024-01-01T03:00:00.000000Z', 12.34::DECIMAL(10,2))""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\td
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T01:00:00.000000Z\t0.00
+                            2024-01-01T02:00:00.000000Z\t0.00
+                            2024-01-01T03:00:00.000000Z\t12.34
+                            2024-01-01T04:00:00.000000Z\t12.34
+                            """,
+                    """
+                            SELECT ts, first(d) d
+                            FROM t
+                            SAMPLE BY 1h FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-01T05:00:00.000000Z' FILL(PREV)""",
+                    "ts",
+                    false,
+                    false
+            );
         });
     }
 
@@ -1594,6 +1732,57 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SELECT ts, k, sum(val) AS s, last(mirror) AS m " +
                             "FROM x SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR",
                     "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevOuterProjectionReorder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        k SYMBOL,
+                        x DOUBLE,
+                        y DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            // Two distinct keys, with a data gap between 00:00 and 04:00 so
+            // the intermediate buckets must carry forward key + a+b via
+            // FILL(PREV). The outer expression `a + b` over the inner
+            // SAMPLE BY triggers propagateTopDownColumns0 in SqlOptimiser,
+            // reordering the inner model's columns. Pre-fix: the bare
+            // FILL(PREV) branch called isKeyColumn(factoryIdx, bottomUpCols,
+            // timestampIndex) with a factory-indexed `i` against a
+            // user-ordered bottomUpCols, misclassifying columns. Post-fix:
+            // factoryColToUserFillIdx is authoritative and key `k` is
+            // carried forward while aggregates self-prev.
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'A', 1.0, 10.0),
+                        ('2024-01-01T00:00:00.000000Z', 'B', 2.0, 20.0),
+                        ('2024-01-01T04:00:00.000000Z', 'A', 5.0, 50.0),
+                        ('2024-01-01T04:00:00.000000Z', 'B', 6.0, 60.0)""");
+            assertQueryNoLeakCheck(
+                    """
+                            column\tk
+                            11.0\tA
+                            22.0\tB
+                            11.0\tA
+                            22.0\tB
+                            11.0\tA
+                            22.0\tB
+                            11.0\tA
+                            22.0\tB
+                            55.0\tA
+                            66.0\tB
+                            """,
+                    """
+                            SELECT a + b, k FROM (
+                                SELECT k, sum(x) a, sum(y) b FROM t SAMPLE BY 1h FILL(PREV)
+                            )""",
+                    null,
+                    false,
+                    false
             );
         });
     }

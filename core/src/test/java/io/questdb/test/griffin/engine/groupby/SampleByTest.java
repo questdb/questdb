@@ -6966,19 +6966,44 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFromToIsDisallowedForKeyedQueries() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
-
+    public void testSampleByFromToIsAllowedForKeyedQueries() throws Exception {
+        // Originally testSampleByFromToIsDisallowedForKeyedQueries: this case
+        // used to be a grammar error. Phase 6 (keyed FROM/TO fast path) landed
+        // support; Phase 12 tightened the per-column grammar so a single
+        // non-null constant cannot broadcast. Providing one fill value per
+        // aggregate is now valid and produces the expected cartesian-product
+        // output. The FROM_TO_DDL input is deterministic, so the expected
+        // output is stable.
+        //
+        // The cartesian product produces 9 buckets x 479 keys (480 rows from
+        // long_sequence minus the s='5' row) = 4311 rows. Assert on the
+        // aggregated shape (one row per bucket with row and key counts) for
+        // readability; the wrapped outer aggregate proves every bucket emits
+        // the full key cross-product.
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
-            // Keyed FROM/TO fill queries are now supported through the fast path.
-            // A single non-null constant no longer broadcasts across multiple
-            // aggregates; provide one fill value per aggregate.
-            printSql("""
-                    select ts, avg(x), first(x), last(x), x from fromto
-                    where s != '5'
-                    sample by 5d from '2017-12-20' to '2018-01-31' fill(42, 42, 42)""");
+            assertSql(
+                    """
+                            ts\trows\tkeys
+                            2017-12-20T00:00:00.000000Z\t479\t479
+                            2017-12-25T00:00:00.000000Z\t479\t479
+                            2017-12-30T00:00:00.000000Z\t479\t479
+                            2018-01-04T00:00:00.000000Z\t479\t479
+                            2018-01-09T00:00:00.000000Z\t479\t479
+                            2018-01-14T00:00:00.000000Z\t479\t479
+                            2018-01-19T00:00:00.000000Z\t479\t479
+                            2018-01-24T00:00:00.000000Z\t479\t479
+                            2018-01-29T00:00:00.000000Z\t479\t479
+                            """,
+                    """
+                            SELECT ts, count(*) rows, count_distinct(x) keys FROM (
+                                SELECT ts, avg(x), first(x), last(x), x FROM fromto
+                                WHERE s != '5'
+                                SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42, 42, 42)
+                            )
+                            GROUP BY ts
+                            ORDER BY ts"""
+            );
         });
     }
 
