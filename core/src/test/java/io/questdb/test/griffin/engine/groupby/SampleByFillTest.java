@@ -148,12 +148,11 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillInsufficientFillValues() throws Exception {
         assertMemoryLeak(() -> {
-            // SEED-001 Defect 3: with 7 aggregate columns and only 5 fill specs,
-            // generateFill must reject the query rather than silently padding
-            // the missing slots with null. The single-element broadcast form
-            // (bare FILL(PREV) or FILL(NULL)) is exempt and covered elsewhere.
-            // Error position points at the first fill expression as that is the
-            // stable anchor for the entire fill clause.
+            // With 7 aggregates and only 5 fill specs, the query must be rejected
+            // rather than silently padding the missing slots with null. The
+            // single-element broadcast form (bare FILL(PREV) or FILL(NULL)) is
+            // exempt and covered elsewhere. Error position points at the first
+            // fill expression.
             execute("CREATE TABLE t (ts TIMESTAMP, a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e DOUBLE, f DOUBLE, g DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 2, 3, 4, 5, 6, 7)");
             assertExceptionNoLeakCheck(
@@ -167,12 +166,10 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillInsufficientFillValuesSingleConstant() throws Exception {
         assertMemoryLeak(() -> {
-            // WR-01: a single non-null constant (FILL(0)) must not broadcast
-            // across multiple aggregates. Only bare FILL(PREV) and FILL(NULL)
-            // broadcast; a lone constant with multi-aggregate is an
-            // under-specified fill list and must raise "not enough fill
-            // values". Previously, the guard skipped the size()==1 case,
-            // silently padding the tail aggregates with null.
+            // A single non-null constant (FILL(0)) must not broadcast across
+            // multiple aggregates. Only bare FILL(PREV) and FILL(NULL) broadcast;
+            // a lone constant with multi-aggregate is under-specified and must
+            // raise "not enough fill values".
             execute("CREATE TABLE t (ts TIMESTAMP, a DOUBLE, b DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 2)");
             assertExceptionNoLeakCheck(
@@ -868,11 +865,10 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevAcceptPrevToConstant() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV(b), NULL) and FILL(PREV(b), 42.0): the source `b` is
-            // FILL_CONSTANT at codegen (fillModes[b] = FILL_CONSTANT = -1). The
-            // D-07 chain rule rejects only when fillModes[src] >= 0, so a source
-            // column that resolves to FILL_CONSTANT is accepted. Both NULL and
-            // a literal constant are tested in a single flow.
+            // FILL(PREV(b), NULL) and FILL(PREV(b), 42.0): the source `b` resolves
+            // to FILL_CONSTANT at codegen. The chain-rejection rule rejects only
+            // when the source is itself cross-column PREV, so a FILL_CONSTANT
+            // source is accepted. Both NULL and a literal constant are exercised.
             execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
@@ -907,8 +903,8 @@ public class SampleByFillTest extends AbstractCairoTest {
     public void testFillPrevAcceptPrevToSelfPrev() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(PREV(b), PREV): a references b, and b is bare PREV
-            // (FILL_PREV_SELF, internal value -2). The D-07 chain rule rejects
-            // only when fillModes[src] >= 0, so FILL_PREV_SELF is accepted.
+            // (FILL_PREV_SELF). The chain-rejection rule rejects only when the
+            // source is itself cross-column PREV, so self-prev is accepted.
             execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
@@ -1048,11 +1044,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                         ('2024-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0], ARRAY[[1.0, 2.0], [3.0, 4.0]]),
                         ('2024-01-01T02:00:00.000000Z', ARRAY[5.0, 6.0], ARRAY[[5.0, 6.0], [7.0, 8.0]])""");
             // Column layout: ts(0), a(1 DOUBLE[]), b(2 DOUBLE[][]).
-            // FILL(PREV, PREV(a)): col=1 (a) is bare PREV -> FILL_PREV_SELF;
-            // col=2 (b DOUBLE[][]) is filled from a (col=1 DOUBLE[]). Target
-            // col=2 != srcColIdx=1 bypasses PREV(self) normalization and reaches
-            // the M-9 type check: ARRAY target requires exact type equality;
-            // dimensionality differs, so reject.
+            // FILL(PREV, PREV(a)): col=1 (a) is self-prev; col=2 (b DOUBLE[][])
+            // is filled from col=1 (a DOUBLE[]). ARRAY target requires exact
+            // type equality; dimensionality differs, so reject.
             String sql = "SELECT ts, first(a) a, first(b) b FROM t SAMPLE BY 1h FILL(PREV, PREV(a)) ALIGN TO CALENDAR";
             int prevArgPos = sql.indexOf("a", sql.indexOf("PREV(a)") + 5);
             assertExceptionNoLeakCheck(sql, prevArgPos, "cannot fill target column of type DOUBLE[][]");
@@ -1086,11 +1080,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                     INSERT INTO t VALUES
                         ('2024-01-01T00:00:00.000000Z', 1.0, 2.0),
                         ('2024-01-01T02:00:00.000000Z', 3.0, 4.0)""");
-            // Two aggregates (a, b), single FILL(PREV(a)). Pre-fix: silently
-            // broadcast PREV(a) to both aggregates. Post-fix (M-3): PREV(colX)
-            // is FUNCTION-typed and no longer qualifies as broadcastable; the
-            // under-spec guard throws at fillValuesExprs.getQuick(0).position
-            // which is the `P` of the first PREV inside FILL(...).
+            // Two aggregates, single FILL(PREV(a)). PREV(colX) is FUNCTION-typed
+            // and does not broadcast across aggregates, so the under-spec guard
+            // throws at the position of the `P` of PREV inside FILL(...).
             String sql = "SELECT ts, sum(x) a, sum(y) b FROM t SAMPLE BY 1h FILL(PREV(a)) ALIGN TO CALENDAR";
             int prevLiteralPos = sql.indexOf("PREV(", sql.indexOf("FILL("));
             assertExceptionNoLeakCheck(sql, prevLiteralPos, "not enough fill values");
@@ -1110,10 +1102,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                     INSERT INTO t VALUES
                         ('2024-01-01T00:00:00.000000Z', 12.34::DECIMAL(10,2), 987654.321000::DECIMAL(18,6))""");
             // Column layout: ts(0), a(1 DECIMAL(10,2)), b(2 DECIMAL(18,6)).
-            // FILL(PREV, PREV(a)): col=2 (b) is filled from source=a. srcColIdx=1
-            // differs from col=2, bypasses PREV(self) normalization and reaches
-            // the M-9 type check. needsExactTypeMatch fires for DECIMAL targets;
-            // precisions differ, so reject.
+            // FILL(PREV, PREV(a)): col=2 (b) is filled from a. DECIMAL targets
+            // require exact type equality; precisions differ, so reject.
             String sql = "SELECT ts, first(a) a, first(b) b FROM t SAMPLE BY 1h FILL(PREV, PREV(a)) ALIGN TO CALENDAR";
             int prevArgPos = sql.indexOf("a", sql.indexOf("PREV(a)") + 5);
             assertExceptionNoLeakCheck(sql, prevArgPos, "cannot fill target column of type DECIMAL(18,6)");
@@ -1489,10 +1479,9 @@ public class SampleByFillTest extends AbstractCairoTest {
         // INTERVAL is not a persistable column type and QuestDB has no
         // first(INTERVAL) aggregate, so the only route to an INTERVAL in a
         // SAMPLE BY output column is an inline interval(lo, hi) expression
-        // used as the GROUP BY key. This is the M-8 crash-path repro: before
-        // Task 2 added FillRecord.getInterval, gap rows invoked
-        // Record.getInterval's default which threw
-        // UnsupportedOperationException.
+        // used as the GROUP BY key. Without FillRecord.getInterval, gap rows
+        // would fall through to Record.getInterval's default and throw
+        // UnsupportedOperationException — this test pins the contract.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t (
@@ -1520,12 +1509,11 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevKeyedArray() throws Exception {
         assertMemoryLeak(() -> {
-            // ARRAY as key column. Prior to Task 1, FillRecord.getArray had no
-            // FILL_KEY branch, so gap rows returned null for the ARRAY key.
-            // Post-fix: keysMapRecord.getArray carries the key through gap rows.
+            // ARRAY as key column — the FILL_KEY branch of FillRecord.getArray
+            // must carry the key through gap rows via keysMapRecord.getArray.
             // Use assertSql to match the rendering precedent at
-            // testFillPrevArrayDouble1D (a mixed-column cursor surfaces factory-
-            // property noise in assertQueryNoLeakCheck).
+            // testFillPrevArrayDouble1D (a mixed-column cursor surfaces
+            // factory-property noise in assertQueryNoLeakCheck).
             execute("""
                     CREATE TABLE x (
                         k DOUBLE[],
@@ -1550,18 +1538,13 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevKeyedBinary() throws Exception {
-        // BINARY as key column. Prior to Task 1, FillRecord.getBin / getBinLen
-        // had no FILL_KEY branch, so gap rows returned null / -1 for the
-        // BINARY key. Post-fix: keysMapRecord carries the key bytes through
-        // gap rows.
+        // BINARY as key column — the FILL_KEY branch of FillRecord.getBin and
+        // getBinLen must carry the key bytes through gap rows via keysMapRecord.
         //
-        // Rendering strategy: the BINARY test harness emits space-separated
-        // hex with a hex offset prefix. rnd_bin() output is seeded-Rnd
-        // deterministic BUT subtle harness wiring makes it fragile to pin
-        // exact hex in assertSql. Instead, this test asserts the STRUCTURAL
-        // property we care about: gap rows' BINARY key is NON-NULL (before the
-        // fix, it was null). The test walks the cursor and asserts every row
-        // (data or fill) emits getBin != null and getBinLen > 0.
+        // Rendering strategy: rnd_bin() output is seeded-Rnd deterministic but
+        // subtle harness wiring makes it fragile to pin exact hex. Instead this
+        // test asserts the structural property: every row (data or fill) emits
+        // getBin != null and getBinLen > 0.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE x AS (
@@ -1935,16 +1918,13 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevOfSymbolKeyColumn() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV(k)) where k is a SYMBOL key column.
-            // Covers the getSymA key-mirror path.
-            // Uses assertSql rather than assertQueryNoLeakCheck because
-            // assertQueryNoLeakCheck's testSymbolAPI check reads the mirror
-            // symbol through both getSymA and getSymbolAPI paths, and the
+            // FILL(PREV(k)) where k is a SYMBOL key column. Covers the getSymA
+            // key-mirror path.
+            // Uses assertSql rather than assertQueryNoLeakCheck because the
             // mirrored-SYMBOL fill row's symbol-table entry is inconsistent
-            // across readers in the current cursor implementation (pre-existing
-            // discrepancy: getSymA returns "A"/"B" while the symbol-table
-            // lookup returns "foo"/"bar"). Skipping the D-10 conversion here
-            // until the symbol-mirror path is tightened.
+            // across readers in the current cursor implementation (getSymA
+            // returns "A"/"B" while the symbol-table lookup returns "foo"/"bar").
+            // This is a pre-existing quirk of the symbol-mirror path.
             execute("CREATE TABLE x (k SYMBOL, val DOUBLE, mirror SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "('A', 10.0, 'foo', '2024-01-01T00:00:00.000000Z')," +
@@ -2047,9 +2027,8 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevRejectBindVar() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV($1)) - bind variable is not a LITERAL column name.
-            // D-08 rejects at compile time with "PREV argument must be a single
-            // column name" at fillExpr.position (the `P` of PREV).
+            // FILL(PREV($1)) — bind variable is not a LITERAL column name and
+            // must be rejected with "PREV argument must be a single column name".
             execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2067,11 +2046,9 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevRejectFuncArg() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV(abs(a))) - PREV argument is a FUNCTION, not a LITERAL.
-            // D-08 rejects with "PREV argument must be a single column name"
-            // at fillExpr.position. Uses DOUBLE aggregate so the query reaches
-            // the fast-path generateFill (STRING args would retro-fallback to
-            // legacy before the grammar check fires).
+            // FILL(PREV(abs(a))) — PREV argument is a FUNCTION, not a LITERAL.
+            // Must be rejected with "PREV argument must be a single column name"
+            // at the position of the expression.
             execute("CREATE TABLE t (a DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2087,8 +2064,8 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevRejectMultiArg() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV(a, b)) - paramCount > 1. D-08 rejects with
-            // "PREV argument must be a single column name" at fillExpr.position.
+            // FILL(PREV(a, b)) — paramCount > 1. Must be rejected with
+            // "PREV argument must be a single column name".
             execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2104,9 +2081,8 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevRejectMutualChain() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV(b), PREV(a)) - mutual cycle: a -> b and b -> a. D-07
-            // rejects because fillModes[a] = b (>=0) and fillModes[b] = a (>=0).
-            // Error at fillValuesExprs[0].position (the `P` of the first PREV).
+            // FILL(PREV(b), PREV(a)) — mutual cycle: a -> b and b -> a. Must be
+            // rejected as a chain. Error at the position of the first PREV.
             execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2122,11 +2098,11 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevRejectNoArg() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV()) - zero-argument function call. The parser may accept
-            // PREV() or reject it before reaching generateFill. This test
-            // documents the observed behavior: either the parser rejects PREV()
-            // as malformed syntax, or generateFill's D-08 fires. Both produce
-            // an error with a useful message.
+            // FILL(PREV()) — zero-argument function call. Either the parser
+            // rejects it as malformed syntax, or the grammar rule fires at
+            // codegen. Both produce an error with a useful message; what
+            // matters is that PREV() does not silently pass through as if it
+            // were bare FILL(PREV).
             execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2150,10 +2126,9 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevRejectThreeHopChain() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV(b), PREV(c), PREV): a->b, b->c, c->self(FILL_PREV_SELF).
-            // For column a: fillModes[a] = b (>=0) AND fillModes[b] = c (>=0) ->
-            // D-07 chain rejection fires. Column c is self-prev (-2), which
-            // breaks the chain for column b's rule check but not for column a.
+            // FILL(PREV(b), PREV(c), PREV): a -> b, b -> c, c -> self-prev.
+            // Column a forms a chain through b to c, so chain rejection fires
+            // for column a even though column c breaks the chain.
             execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, 10.0, 100.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2169,10 +2144,10 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevRejectTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV(ts)) where ts is the designated timestamp column.
-            // D-05 rejects at compile time with
-            // "PREV cannot reference the designated timestamp column"
-            // at fillExpr.rhs.position (the `t` of ts inside PREV(ts)).
+            // FILL(PREV(ts)) where ts is the designated timestamp column must
+            // be rejected at compile time with "PREV cannot reference the
+            // designated timestamp column" at the position of the timestamp
+            // token inside PREV(ts).
             execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2188,17 +2163,13 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevRejectTypeMismatch() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV, PREV(i)) - column `i` is LONG-output; column `d` is
-            // DOUBLE-output. PREV(i) on column `d` gives source tag INT-family
-            // vs target tag DOUBLE -> D-09 rejects with "cannot fill target
-            // column of type" at fillExpr.rhs.position.
+            // FILL(PREV(d), PREV) on a query projecting (first(i) INT, sum(d) DOUBLE).
+            // For column `i`, the cross-column source `d` has tag DOUBLE; the
+            // target tag is INT, so the type check must reject.
             execute("CREATE TABLE t (d DOUBLE, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, 10, '2024-01-01T00:00:00.000000Z')," +
                     "(3.0, 30, '2024-01-01T02:00:00.000000Z')");
-            // Column layout in output: ts(0), i(1 aggregated first(i)), d(2 aggregated sum(d)).
-            // FILL(PREV(d), PREV) - for column `i`, source = `d` (DOUBLE tag) vs
-            // target `i` (INT tag) -> D-09 rejects.
             assertExceptionNoLeakCheck(
                     "SELECT ts, first(i) AS i, sum(d) AS d FROM t SAMPLE BY 1h FILL(PREV(d), PREV) ALIGN TO CALENDAR",
                     68,
@@ -2210,8 +2181,8 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevSelfAlias() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV(a)) where `a` is the target column name. D-06 normalizes
-            // internally to FILL_PREV_SELF so the output matches bare FILL(PREV).
+            // FILL(PREV(a)) where `a` is the target column name — normalized
+            // internally to self-prev so output matches bare FILL(PREV).
             execute("CREATE TABLE t (a DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2782,32 +2753,24 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testSortedRecordCursorFactoryConstructorThrow() throws Exception {
-        // M-7 regression: pin the SortedRecordCursorFactory constructor-throw
-        // ownership contract. sqlSortKeyMaxPages = -1 makes MemoryPages fire a
+        // Pin the SortedRecordCursorFactory constructor-throw ownership
+        // contract. sqlSortKeyMaxPages = -1 makes MemoryPages fire a
         // LimitOverflowException inside `new RecordTreeChain(...)`, which
-        // propagates out of the SortedRecordCursorFactory constructor.
+        // propagates out of the constructor.
         //
-        // Post-fix, the constructor assigns this.base only after
-        // RecordTreeChain succeeds; the catch block nulls this.base before
-        // cascading close(). _close() calls Misc.free(base) which becomes a
-        // no-op when base is null, so the caller retains ownership of base on
-        // any constructor-throw path and frees it exactly once through its
-        // own error handling.
+        // The constructor must assign this.base only after RecordTreeChain
+        // succeeds, and the catch block must null this.base before cascading
+        // close(). That way Misc.free(base) becomes a no-op on a
+        // constructor-throw path and the caller retains ownership of base.
         //
-        // Pre-fix, the constructor assigned this.base before the try block.
-        // Misc.free(base) in the cascaded _close() closed the caller-owned
-        // base factory; the caller's own error-handling path then closed it
-        // again. Most QuestDB factory classes make close() idempotent at the
-        // native-memory level (internal pointer state is cleared after the
-        // first free), so the latent double-free rarely produces observable
-        // native-memory imbalance. This test nevertheless locks in the clean
-        // exception-propagation path and assertMemoryLeak guards against any
+        // Most QuestDB factory classes make close() idempotent at the
+        // native-memory level, so a latent double-free rarely produces
+        // observable imbalance. This test locks in the clean
+        // exception-propagation path; assertMemoryLeak guards against any
         // future factory whose close() is not idempotent.
         //
-        // No try/finally restore is needed: AbstractCairoTest.tearDown() runs
-        // QuestDBTestNode.Cairo.tearDown() which calls Overrides.reset() and
-        // clears the property map back to harness defaults. Every setProperty
-        // call in SampleByTest follows this same pattern.
+        // AbstractCairoTest.tearDown() restores property overrides via
+        // Overrides.reset(), so no try/finally restore is needed here.
         setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, -1);
 
         assertMemoryLeak(() -> {

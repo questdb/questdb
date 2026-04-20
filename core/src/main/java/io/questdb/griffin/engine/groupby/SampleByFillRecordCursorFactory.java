@@ -178,8 +178,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            // Defensive: cursor.of() currently only calls Function.init() and toTop(),
-            // which do not throw on the happy path; kept to maintain the cursor-contract.
+            // Function.init() can throw SqlException; close the cursor so its
+            // internal resources don't leak before rethrowing.
             cursor.close();
             throw th;
         }
@@ -355,16 +355,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 isInitialized = true;
             }
 
-            // If we're in the middle of emitting fill rows for absent keys
             if (isEmittingFills) {
                 if (emitNextFillRow()) {
                     return true;
                 }
-                // emitNextFillRow exhausted gap buckets — fall through to main loop
+                // Gap buckets exhausted — fall through to main loop.
             }
 
             while (nextBucketTimestamp < maxTimestamp) {
-                // Try to get the next data row's timestamp
                 long dataTs;
                 if (hasPendingRow) {
                     dataTs = pendingTs;
@@ -377,9 +375,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     dataTs = Long.MAX_VALUE;
                 }
 
-                // Base cursor exhausted and no explicit TO bound
                 if (isBaseCursorExhausted && !hasExplicitTo) {
-                    // Emit fills for remaining absent keys in current bucket
                     if (hasDataForCurrentBucket && keysMap != null) {
                         isEmittingFills = true;
                         keysMapCursor.toTop();
@@ -389,11 +385,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
 
                 if (dataTs == nextBucketTimestamp) {
-                    // Data row at expected bucket
                     hasPendingRow = false;
                     fillRecord.isGapFilling = false;
                     if (keysMap != null) {
-                        // Find this key in keysMap, mark present, update prev
                         hasDataForCurrentBucket = true;
                         MapKey mapKey = keysMap.withKey();
                         keySink.copy(baseRecord, mapKey);
@@ -415,9 +409,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
 
                 if (dataTs > nextBucketTimestamp) {
-                    // Gap — need to emit fill rows before advancing bucket
+                    // Gap — emit fill rows before advancing bucket.
                     if (hasDataForCurrentBucket && keysMap != null) {
-                        // Emit fills for absent keys in the current bucket
                         isEmittingFills = true;
                         keysMapCursor.toTop();
                         if (emitNextFillRow()) {
@@ -441,9 +434,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     fillRecord.isGapFilling = true;
                     fillTimestampFunc.value = nextBucketTimestamp;
                     if (hasSimplePrev) {
-                        // Position prevRecord once per fill emit row (PI-02);
-                        // FillRecord getters below read typed values from
-                        // prevRecord without re-calling recordAt().
+                        // Position prevRecord once; FillRecord getters read from it directly.
                         baseCursor.recordAt(prevRecord, simplePrevRowId);
                     }
                     nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
@@ -517,9 +508,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (!keyPresent[keyIdx]) {
                         fillRecord.isGapFilling = true;
                         fillTimestampFunc.value = nextBucketTimestamp;
-                        // Position prevRecord once per fill emit row (PI-02);
-                        // FillRecord getters below read typed values from
-                        // prevRecord without re-calling recordAt().
+                        // Position prevRecord once; FillRecord getters read from it directly.
                         if (value.getLong(HAS_PREV_SLOT) != 0) {
                             baseCursor.recordAt(prevRecord, value.getLong(PREV_ROWID_SLOT));
                         }

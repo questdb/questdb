@@ -4959,19 +4959,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFromToIsAllowedForKeyedQueries() throws Exception {
-        // Originally testSampleByFromToIsDisallowedForKeyedQueries: nano twin
-        // of SampleByTest#testSampleByFromToIsAllowedForKeyedQueries. This case
-        // used to be a grammar error. Phase 6 landed keyed FROM/TO fast-path
-        // support, and Phase 12 tightened the per-column grammar so a single
-        // non-null constant cannot broadcast. Providing one fill value per
-        // aggregate produces the expected cartesian-product output across the
-        // FROM..TO range.
+        // Nano-timestamp twin of SampleByTest#testSampleByFromToIsAllowedForKeyedQueries.
+        // Keyed SAMPLE BY FROM/TO with one fill value per aggregate must
+        // produce the full cartesian product — one row per (bucket, key) —
+        // under the nano timestamp driver too.
         //
-        // The cartesian product produces 9 buckets x 479 keys (480 rows from
-        // long_sequence minus the s='5' row) = 4311 rows. Assert on the
-        // aggregated shape (one row per bucket with row and key counts) for
-        // readability; the wrapped outer aggregate proves every bucket emits
-        // the full key cross-product under the nano timestamp driver too.
+        // The cross-product produces 9 buckets x 479 keys = 4311 rows, so
+        // assert on an aggregated shape (one row per bucket with row and key
+        // counts) for readability; the wrapped outer aggregate proves every
+        // bucket emits the full key set.
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             assertSql(
@@ -10410,13 +10406,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevAllTypes() throws Exception {
-        // Using assertSql because the fill cursor treats all non-aggregate columns as GROUP BY keys.
-        // Plan 14-02 Task 1 fix (M-2): FillRecord.getBin / getBinLen now have
-        // the FILL_KEY branch, so fill rows for BINARY key columns carry the
-        // key bytes through from keysMapRecord rather than rendering empty.
-        // The BINARY column `m` on fill rows below shows the hex value from
-        // the data row where the same key first appeared, not the empty
-        // string it showed pre-fix.
+        // Using assertSql because the fill cursor treats all non-aggregate
+        // columns as GROUP BY keys. The BINARY column `m` on fill rows below
+        // shows the hex value from the data row where the same key first
+        // appeared — the FILL_KEY branch of FillRecord.getBin / getBinLen
+        // carries the key bytes through from keysMapRecord.
         assertMemoryLeak(() -> {
             execute("create table x as " +
                     "(" +
@@ -12361,12 +12355,10 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueAllKeyTypes() throws Exception {
-        // Plan 14-02 Task 1 fix (M-2): FillRecord.getBin / getBinLen now have
-        // the FILL_KEY branch, so fill rows for keys with a BINARY key column
-        // carry the key bytes through from keysMapRecord rather than rendering
-        // null. The BINARY column `i` on fill rows below shows the hex value
-        // from the data row where the same key first appeared, not the empty
-        // string it showed pre-fix.
+        // BINARY column `i` on fill rows below shows the hex value from the
+        // data row where the same key first appeared — the FILL_KEY branch of
+        // FillRecord.getBin / getBinLen carries the key bytes through from
+        // keysMapRecord.
         assertQuery(
                 """
                         b\th\ti\tj\tl\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk
@@ -13158,10 +13150,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueNotEnough() throws Exception {
-        // Phase 13 Plan 06 (SEED-001 Defect 3): per-column fill values must
-        // cover every non-key aggregate; 5 fill values for 6 aggregates (b is
-        // a symbol key, not an aggregate) raises "not enough fill values" at
-        // the first fill expression. Restores master's assertException form.
+        // Per-column fill values must cover every non-key aggregate; 5 fill
+        // values for 6 aggregates (b is a symbol key, not an aggregate) must
+        // raise "not enough fill values" at the first fill expression.
         assertException(
                 "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0)",
                 "create table x as " +

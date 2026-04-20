@@ -3365,7 +3365,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
 
-            // Parse ALIGN TO CALENDAR WITH OFFSET for fill cursor alignment
             long calendarOffset = 0;
             final ExpressionNode fillOffsetNode = curr.getFillOffset();
             if (fillOffsetNode != null) {
@@ -3383,7 +3382,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Build per-column fill specification
             final RecordMetadata groupByMetadata = groupByFactory.getMetadata();
             final int columnCount = groupByMetadata.getColumnCount();
             final IntList fillModes = new IntList(columnCount);
@@ -3456,12 +3454,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && isPrevKeyword(fillValuesExprs.getQuick(0).token)
                     && fillValuesExprs.getQuick(0).type == ExpressionNode.LITERAL) {
                 // bare FILL(PREV): classify each factory-order column via the
-                // user-fill-idx mapping rather than via isKeyColumn on a factory
-                // index. An entry of -1 means the factory column does not
-                // correspond to a user aggregate slot (it is either a key column
-                // or the timestamp floor), so FILL_KEY applies; a mapping >= 0
-                // marks an aggregate that fills from its own prior value.
-                // propagateTopDownColumns0 reorder is now reorder-safe.
+                // user-fill-idx mapping. An entry of -1 means the factory column
+                // is either a key column or the timestamp floor and gets FILL_KEY;
+                // a mapping >= 0 marks an aggregate that fills from its own prior value.
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
@@ -3479,12 +3474,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // factoryColToUserFillIdx and aggNonKeyCount are already built above
                 // (shared with the bare FILL(PREV) branch).
 
-                // WR-04: track the ExpressionNode that established each column's
-                // fill mode so the chain-rejection error can point at the specific
-                // offending PREV(...) expression rather than always at the first
-                // fill expression. Pre-populate with nulls so every factory-index
-                // slot is readable; the cross-column PREV branch below overwrites
-                // the slot it cares about.
+                // Track the ExpressionNode that established each column's fill mode
+                // so the chain-rejection error can point at the specific offending
+                // PREV(...) expression rather than at the first fill expression.
                 final ObjList<ExpressionNode> perColFillNodes = new ObjList<>(columnCount);
                 for (int i = 0; i < columnCount; i++) {
                     perColFillNodes.add(null);
@@ -3511,7 +3503,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ? fillValuesExprs.getQuick(fillIdx)
                             : (fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null);
                     if (fillExpr != null && isPrevKeyword(fillExpr.token)) {
-                        // Bare PREV in per-column list means self-prev for this slot (D-04 from .planning/phases/12-replace-safety-net-reclassification-with-legacy-fallback-and/12-CONTEXT.md).
+                        // Bare PREV in per-column list means self-prev for this slot.
                         boolean isBarePrev = fillExpr.type == ExpressionNode.LITERAL;
                         boolean isPrevWithLiteralArg = fillExpr.type == ExpressionNode.FUNCTION
                                 && fillExpr.paramCount == 1
@@ -3585,16 +3577,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 }
-                // Defect 3: in per-column mode, the user must provide one fill
-                // value per non-key aggregate column. Only bare FILL(PREV) and
-                // FILL(NULL) broadcast across all aggregates; a single non-null
-                // constant (FILL(0), FILL(42)) and FILL(PREV(colX)) must not
-                // broadcast and must be rejected as under-specified. Rejecting
-                // here matches master's grammar and points at the first fill
-                // expression for context. Bare PREV parses as LITERAL, whereas
-                // PREV(colX) parses as FUNCTION — the broadcast predicate
-                // therefore demands LITERAL for PREV, keeping NULL broadcastable
-                // (NULL only has a LITERAL form).
+                // In per-column mode the user must provide one fill value per
+                // non-key aggregate. Only bare FILL(PREV) and FILL(NULL) broadcast;
+                // a single non-null constant or FILL(PREV(colX)) must be rejected as
+                // under-specified. Bare PREV parses as LITERAL, whereas PREV(colX)
+                // parses as FUNCTION, so the broadcast predicate requires LITERAL for
+                // PREV (NULL only has a LITERAL form).
                 if (fillValuesExprs.size() < aggNonKeyCount) {
                     final ExpressionNode only = fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null;
                     final boolean isBareBroadcastable = only != null
@@ -3604,11 +3592,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw SqlException.$(fillValuesExprs.getQuick(0).position, "not enough fill values");
                     }
                 }
-                // Reject chains: a cross-column PREV whose source column is itself a
-                // cross-column PREV. Runtime-safe but semantically ambiguous; keep the
-                // grammar narrow until a clear use case emerges. WR-04: position
-                // points at the specific offending PREV(...) rather than always at
-                // the first fill expression.
+                // Reject chains: a cross-column PREV whose source is itself a
+                // cross-column PREV. Runtime-safe but semantically ambiguous; keep
+                // the grammar narrow until a clear use case emerges. The error
+                // position points at the specific offending PREV(...).
                 for (int col = 0; col < columnCount; col++) {
                     int mode = fillModes.getQuick(col);
                     if (mode >= 0 && fillModes.getQuick(mode) >= 0) {
@@ -3622,7 +3609,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Collect key column indices (non-timestamp columns with FILL_KEY mode)
             final IntList keyColIndices = new IntList();
             for (int col = 0; col < columnCount; col++) {
                 if (fillModes.getQuick(col) == SampleByFillRecordCursorFactory.FILL_KEY) {
@@ -3630,7 +3616,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Build mapKeyTypes for the keysMap (SYMBOL stored as INT)
+            // SYMBOL columns are stored as INT in the keysMap.
             final ArrayColumnTypes mapKeyTypes = new ArrayColumnTypes();
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
                 int col = keyColIndices.getQuick(i);
@@ -3642,15 +3628,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Build mapValueTypes: fixed 3-LONG header. Per-agg prev value slots
-            // are gone; the fill cursor stores a single chain rowId per key and
-            // reads all typed prev values via baseCursor.recordAt(prevRecord, rowId).
+            // Fixed 3-LONG value header per key: keyIndex, hasPrev, prevRowId.
+            // The cursor reads typed prev values via baseCursor.recordAt(prevRecord, prevRowId).
             final ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
             mapValueTypes.add(ColumnType.LONG); // slot 0: keyIndex
             mapValueTypes.add(ColumnType.LONG); // slot 1: hasPrev
             mapValueTypes.add(ColumnType.LONG); // slot 2: prevRowId
 
-            // Build keySink: RecordSink for key columns only
             RecordSink keySink = null;
             if (keyColIndices.size() > 0) {
                 final ListColumnFilter keyColFilter = new ListColumnFilter();
@@ -3662,16 +3646,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            // Build symbolTableColIndices for MapRecord SYMBOL resolution.
-            // The IntList must cover ALL map columns (value columns first,
-            // then key columns). Value columns are never SYMBOLs, so they
-            // get -1. Key columns get the base cursor column index if SYMBOL.
+            // symbolTableColIndices covers ALL map columns (value columns first,
+            // then key columns). Value columns are never SYMBOLs and get -1;
+            // key columns get the base cursor column index if SYMBOL.
             final IntList symbolTableColIndices = new IntList();
-            // Value slots: keyIndex + hasPrev + aggColumnCount
             for (int i = 0, n = mapValueTypes.getColumnCount(); i < n; i++) {
                 symbolTableColIndices.add(-1);
             }
-            // Key slots
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
                 int col = keyColIndices.getQuick(i);
                 if (ColumnType.tagOf(groupByMetadata.getColumnType(col)) == ColumnType.SYMBOL) {
@@ -3701,12 +3682,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfNew(groupByFactory.getMetadata());
             fillMetadata.setTimestampIndex(timestampIndex);
 
-            // Free any residual non-transferred fill functions. Transferred
-            // slots are already null (see ownership transfer at
-            // fillValues.setQuick(fillIdx, null) in the per-column branch
-            // above); Misc.freeObjList skips nulls. The catch block below
-            // also calls Misc.freeObjList(fillValues), but on the success
-            // path every slot is null by the time this point is reached.
+            // Transferred slots were already nulled by the per-column branch;
+            // this frees any residual non-transferred fill functions. No-op on
+            // the success path when every slot has been transferred.
             Misc.freeObjList(fillValues);
             return new SampleByFillRecordCursorFactory(
                     configuration,

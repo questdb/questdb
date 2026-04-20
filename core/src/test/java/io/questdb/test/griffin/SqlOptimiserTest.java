@@ -4879,27 +4879,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testSampleByFromToParallelSampleByRewriteWithKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
-            final String shouldFail1a = "select ts, avg(x), s from fromto\n" +
+            final String shouldSucceedKeyed = "select ts, avg(x), s from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
 
-            final String shouldFail1b = "select ts, avg(x), s from fromto\n" +
+            final String shouldSucceedKeyedWithOffset = "select ts, avg(x), s from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
 
 
-            final String shouldFail2a = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
+            final String shouldSucceedKeyedExpr = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
 
 
-            final String shouldFail2b = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
+            final String shouldSucceedKeyedExprWithOffset = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
 
-            // These queries now succeed (keyed fill supported on both paths).
-            // They produce unbounded output without TO, so verify compilation
-            // succeeds without materializing results.
-            select(shouldFail1a).close();
-            select(shouldFail1b).close();
-            select(shouldFail2a).close();
-            select(shouldFail2b).close();
+            // Keyed fill on FROM-TO compiles on both paths; results are unbounded without TO,
+            // so only the compile step runs here.
+            select(shouldSucceedKeyed).close();
+            select(shouldSucceedKeyedWithOffset).close();
+            select(shouldSucceedKeyedExpr).close();
+            select(shouldSucceedKeyedExprWithOffset).close();
 
             final String shouldSucceedParallel = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
