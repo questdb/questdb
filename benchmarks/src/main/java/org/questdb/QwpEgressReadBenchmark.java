@@ -96,22 +96,22 @@ public class QwpEgressReadBenchmark {
         System.out.println();
         System.out.println("=== Cold warm-up (runs discarded) ===");
         runQwp(/*warmup=*/ true);
-        runPgWire(/*warmup=*/ true);
-        runHttpExec(/*warmup=*/ true);
+//        runPgWire(/*warmup=*/ true);
+//        runHttpExec(/*warmup=*/ true);
 
         System.out.println();
         System.out.println("=== Measurement ===");
         Result qwp = runQwp(false);
-        Result pg = runPgWire(false);
-        Result http = runHttpExec(false);
+//        Result pg = runPgWire(false);
+//        Result http = runHttpExec(false);
 
         System.out.println();
         System.out.println("=== Comparison ===");
         System.out.printf("%-20s %12s %12s %12s%n", "Protocol", "time(ms)", "rows/sec", "MiB/sec");
         System.out.printf("%-20s %12s %12s %12s%n", "--------", "--------", "--------", "-------");
         printRow("QWP egress (WS)", qwp);
-        printRow("PostgreSQL wire", pg);
-        printRow("HTTP /exec JSON", http);
+//        printRow("PostgreSQL wire", pg);
+//        printRow("HTTP /exec JSON", http);
     }
 
     private static void printRow(String label, Result r) {
@@ -153,7 +153,7 @@ public class QwpEgressReadBenchmark {
         System.out.printf("Ingesting %,d rows over QWP/WebSocket...%n", ROW_COUNT);
         long start = System.nanoTime();
         String[] symbols = {"AAPL", "MSFT", "GOOG", "AMZN", "META", "TSLA", "NVDA", "NFLX"};
-        try (Sender sender = Sender.fromConfig("ws::addr=" + HOST + ":" + HTTP_PORT + ";auto_flush_rows=50000;")) {
+        try (Sender sender = Sender.fromConfig("ws::addr=" + HOST + ":" + HTTP_PORT + ";auto_flush_rows=50000;compression=raw")) {
             for (long i = 1; i <= ROW_COUNT; i++) {
                 // ILP requires all symbol() calls before any non-symbol column setters.
                 sender.table(TABLE_NAME)
@@ -200,7 +200,7 @@ public class QwpEgressReadBenchmark {
         final long[] checksum = {0};
         long start = System.nanoTime();
         try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                "ws::addr=" + HOST + ":" + HTTP_PORT + ";client_id=qwp-egress-bench/1.0;")) {
+                "ws::addr=" + HOST + ":" + HTTP_PORT + ";client_id=qwp-egress-bench/1.0;compression=raw")) {
             client.connect();
             client.execute("SELECT ts, id, price, sym, note FROM " + TABLE_NAME, new QwpColumnBatchHandler() {
                 @Override

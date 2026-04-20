@@ -278,11 +278,12 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
      * ready to append after the address.
      */
     private String pickCompression() {
-        int choice = random.nextInt(4);
+        int choice = random.nextInt(5);
         return switch (choice) {
-            case 0 -> ""; // inherit default (auto)
+            case 0 -> ""; // inherit library default (raw)
             case 1 -> "compression=raw;";
-            case 2 -> "compression=zstd;";
+            case 2 -> "compression=auto;";  // opt into zstd,raw server-picked
+            case 3 -> "compression=zstd;";
             default -> "compression=zstd;compression_level=" + (1 + random.nextInt(9)) + ";";
         };
     }

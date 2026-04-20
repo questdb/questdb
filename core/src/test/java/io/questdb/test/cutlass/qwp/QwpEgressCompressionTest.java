@@ -50,10 +50,10 @@ import org.junit.Test;
  *   <li>Explicit {@code compression_level} values at the ends of the clamp
  *       range ({@code 1} and {@code 22}) still decode correctly. The server
  *       clamps 22 down to 9 internally; the client doesn't need to know.</li>
- *   <li>{@code compression=raw} still works -- regression guard against the
- *       compression machinery accidentally triggering when the header is
- *       absent.</li>
- *   <li>{@code compression=auto} (the default) negotiates zstd and completes
+ *   <li>{@code compression=raw} (the library default) streams without the
+ *       compression machinery engaging -- regression guard that the header is
+ *       genuinely absent and the server-side codec stays at NONE.</li>
+ *   <li>Explicit {@code compression=auto} negotiates zstd and completes
  *       multi-batch streaming correctly.</li>
  *   <li>Compression interoperates with artificial network fragmentation.</li>
  * </ul>
@@ -68,7 +68,11 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testAutoDefaultStreamsMultipleBatches() throws Exception {
+    public void testAutoExplicitlyNegotiatesZstd() throws Exception {
+        // Coverage for the opt-in {@code compression=auto} path: advertises
+        // {@code zstd,raw}, server picks zstd, multi-batch streaming round-trips
+        // correctly. The library default is {@code raw}, so this test passes
+        // the opt-in explicitly.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startQuestDB()) {
                 serverMain.execute("CREATE TABLE many(id LONG, v DOUBLE, ts TIMESTAMP) "
@@ -77,11 +81,70 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
                         "INSERT INTO many SELECT x, CAST(x * 0.5 AS DOUBLE), x::TIMESTAMP FROM long_sequence(20000)");
                 serverMain.awaitTable("many");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=auto;")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
                             QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
                     assertSumMany(client);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDefaultCompressionPreferenceIsRaw() {
+        // Unit-level pin: both construction paths must default to "raw" so no
+        // connection-string-less client secretly negotiates zstd. Regression
+        // guard for the PR 6991 follow-up that flipped the default from "auto".
+        try (QwpQueryClient fromConfig = QwpQueryClient.fromConfig(
+                "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+            Assert.assertEquals("raw", fromConfig.getCompressionPreference());
+        }
+        try (QwpQueryClient plain = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+            Assert.assertEquals("raw", plain.getCompressionPreference());
+        }
+    }
+
+    @Test
+    public void testDefaultConnectionSendsRawBatches() throws Exception {
+        // End-to-end pin: a connection with no {@code compression=} key must
+        // receive batches WITHOUT the FLAG_ZSTD bit set. Reads the flags byte
+        // from each batch's QWP header directly so the assertion survives
+        // any future decoder API changes.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startQuestDB()) {
+                serverMain.execute("CREATE TABLE d(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO d SELECT x, x::TIMESTAMP FROM long_sequence(500)");
+                serverMain.awaitTable("d");
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    final int[] batchesSeen = {0};
+                    client.execute("SELECT * FROM d", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            batchesSeen[0]++;
+                            // QWP header layout: byte[5] is the flags field.
+                            byte flags = io.questdb.client.std.Unsafe.getUnsafe().getByte(
+                                    batch.payloadAddr() + QwpConstants.HEADER_OFFSET_FLAGS);
+                            Assert.assertEquals(
+                                    "default connection must not receive zstd-compressed batches "
+                                            + "[flags=0x" + Integer.toHexString(flags & 0xFF) + "]",
+                                    0,
+                                    flags & QwpConstants.FLAG_ZSTD);
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("unexpected query error [status=" + status + "]: " + message);
+                        }
+                    });
+                    Assert.assertTrue("expected at least one batch", batchesSeen[0] >= 1);
                 }
             }
         });
