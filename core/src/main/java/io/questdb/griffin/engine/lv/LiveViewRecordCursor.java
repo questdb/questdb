@@ -101,6 +101,11 @@ public class LiveViewRecordCursor implements RecordCursor {
                     .put("live view was dropped [name=").put(viewInstance.getDefinition().getViewName()).put(']');
         }
         try {
+            if (viewInstance.isInvalid()) {
+                throw CairoException.nonCritical()
+                        .put("live view is invalid [name=").put(viewInstance.getDefinition().getViewName())
+                        .put(", reason=").put(viewInstance.getInvalidationReason()).put(']');
+            }
             rowCount = viewInstance.getTable().getRowCount();
             currentRow = 0;
             isOpen = true;

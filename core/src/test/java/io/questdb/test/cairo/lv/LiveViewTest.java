@@ -874,6 +874,25 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectFromInvalidatedLiveViewFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndLiveView();
+            execute("TRUNCATE TABLE trades");
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+            Assert.assertTrue(instance.isInvalid());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM live_rn",
+                    -1,
+                    "live view is invalid [name=live_rn, reason=truncate operation]",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
     public void testShowColumnsLiveView() throws Exception {
         createBaseTableAndLiveView();
         assertSql(
