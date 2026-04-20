@@ -3579,13 +3579,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final int targetType = groupByMetadata.getColumnType(col);
                             final int sourceType = groupByMetadata.getColumnType(srcColIdx);
                             final short targetTag = ColumnType.tagOf(targetType);
+                            final short sourceTag = ColumnType.tagOf(sourceType);
+                            // SYMBOL columns carry a per-column symbol table. The fill
+                            // cursor's getInt(target) would return the source column's
+                            // symbol id while getSymbolTable(target) resolves against
+                            // the target column's table, so a client that decodes via
+                            // getInt + getSymbolTable would see inconsistent values.
+                            // Until per-output-column symbol remapping exists, reject
+                            // cross-column PREV whose source or target is a SYMBOL;
+                            // bare FILL(PREV) keeps self-prev semantics and is safe.
+                            if (targetTag == ColumnType.SYMBOL || sourceTag == ColumnType.SYMBOL) {
+                                throw SqlException.$(fillExpr.rhs.position,
+                                                "FILL(PREV(").put(srcAlias).put(")) is not supported on SYMBOL columns; ")
+                                        .put("use bare FILL(PREV) instead");
+                            }
                             final boolean needsExactTypeMatch =
                                     ColumnType.isDecimal(targetType)
                                             || ColumnType.isGeoHash(targetType)
                                             || targetTag == ColumnType.ARRAY;
                             final boolean isTypeCompatible = needsExactTypeMatch
                                     ? targetType == sourceType
-                                    : targetTag == ColumnType.tagOf(sourceType);
+                                    : targetTag == sourceTag;
                             if (!isTypeCompatible) {
                                 throw SqlException.$(fillExpr.rhs.position,
                                                 "FILL(PREV(").put(srcAlias).put(")): source type ")

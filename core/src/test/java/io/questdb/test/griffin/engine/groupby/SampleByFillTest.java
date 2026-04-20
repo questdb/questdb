@@ -1916,32 +1916,24 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillPrevOfSymbolKeyColumn() throws Exception {
+    public void testFillPrevCrossColumnRejectsSymbolSource() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV(k)) where k is a SYMBOL key column. Covers the getSymA
-            // key-mirror path.
-            // Uses assertSql rather than assertQueryNoLeakCheck because the
-            // mirrored-SYMBOL fill row's symbol-table entry is inconsistent
-            // across readers in the current cursor implementation (getSymA
-            // returns "A"/"B" while the symbol-table lookup returns "foo"/"bar").
-            // This is a pre-existing quirk of the symbol-mirror path.
+            // Cross-column FILL(PREV(k)) where both the SYMBOL key column k and
+            // the SYMBOL mirror target column carry per-column symbol tables.
+            // Reading a fill row via getInt(target) + getSymbolTable(target) would
+            // mix the source column's symbol id with the target column's table.
+            // The compiler rejects this at generateFill time; bare FILL(PREV)
+            // still works and preserves self-prev semantics per column.
             execute("CREATE TABLE x (k SYMBOL, val DOUBLE, mirror SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "('A', 10.0, 'foo', '2024-01-01T00:00:00.000000Z')," +
                     "('B', 20.0, 'bar', '2024-01-01T00:00:00.000000Z')," +
                     "('A', 30.0, 'baz', '2024-01-01T02:00:00.000000Z')");
-            assertSql(
-                    """
-                            ts\tk\ts\tm
-                            2024-01-01T00:00:00.000000Z\tA\t10.0\tfoo
-                            2024-01-01T00:00:00.000000Z\tB\t20.0\tbar
-                            2024-01-01T01:00:00.000000Z\tA\t10.0\tA
-                            2024-01-01T01:00:00.000000Z\tB\t20.0\tB
-                            2024-01-01T02:00:00.000000Z\tA\t30.0\tbaz
-                            2024-01-01T02:00:00.000000Z\tB\t20.0\tB
-                            """,
+            assertExceptionNoLeakCheck(
                     "SELECT ts, k, sum(val) AS s, last(mirror) AS m " +
-                            "FROM x SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR"
+                            "FROM x SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR",
+                    83,
+                    "FILL(PREV(k)) is not supported on SYMBOL columns"
             );
         });
     }
