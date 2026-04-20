@@ -43,6 +43,12 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
             return 4;
         }
     };
+    private static final PGConfiguration PG_CONFIG_LIMIT_1 = new DefaultPGConfiguration() {
+        @Override
+        public int getLimit() {
+            return 1;
+        }
+    };
 
     @Test
     public void testCancelHappyPath() throws Exception {
@@ -88,6 +94,33 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
                 expectCairoFailure(() -> registry.cancel(PG_CONFIG.getLimit() + 1, 42), "wrong circuit breaker idx");
                 // sanity: the legitimate idx still works
                 registry.cancel(idx, 42);
+            }
+        });
+    }
+
+    @Test
+    public void testCancelRejectsIdxEqualToSizeAfterDynamicGrowth() throws Exception {
+        // Same off-by-one as testCancelRejectsIdxEqualToSize, but pinned at the dynamic-growth
+        // branch of add(): once all `limit` pre-allocated null slots are occupied, add() grows
+        // circuitBreakers via circuitBreakers.add(cb), extending its logical size past `limit`.
+        // Under the old `size() < idx` check, cancel(size(), ...) passed and getQuick(size())
+        // read past the logical end of the ObjList.
+        assertMemoryLeak(() -> {
+            try (
+                    DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG_LIMIT_1, configuration);
+                    NetworkSqlExecutionCircuitBreaker cb0 = newCircuitBreaker();
+                    NetworkSqlExecutionCircuitBreaker cb1 = newCircuitBreaker()
+            ) {
+                int idx0 = registry.add(cb0); // fills the one pre-allocated slot
+                int idx1 = registry.add(cb1); // forces dynamic growth; circuitBreakers.size() becomes 2
+                Assert.assertEquals(0, idx0);
+                Assert.assertEquals(1, idx1);
+                registry.remove(idx0);        // slot 0 becomes null; slot 1 still holds cb1; size stays 2
+                cb1.setSecret(0xCAFEBABE);
+                // idx == size() must be rejected even after the list has grown past `limit`.
+                expectCairoFailure(() -> registry.cancel(2, 0xCAFEBABE), "wrong circuit breaker idx");
+                // sanity: the legitimate occupied idx still works
+                registry.cancel(idx1, 0xCAFEBABE);
             }
         });
     }
