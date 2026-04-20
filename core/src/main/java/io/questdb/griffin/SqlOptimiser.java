@@ -8328,8 +8328,20 @@ public class SqlOptimiser implements Mutable {
                     nested.addGroupBy(tsFloorFunc);
                 }
 
-                nested.setFillFrom(sampleByFrom);
-                nested.setFillTo(sampleByTo);
+                // Sub-day SAMPLE BY with a TIME ZONE shifts the GROUP BY tsFloor's FROM
+                // argument via to_utc(FROM, tz) (see the tsFloor setup above). The fill
+                // cursor's bucket grid must align with tsFloor's grid, so wrap
+                // setFillFrom/setFillTo with the same to_utc call. Without the wrap,
+                // sub-day fill queries with TIME ZONE + FROM produce buckets at the
+                // wrong UTC instants - a systematic one-timezone-offset shift that
+                // misaligns the fill rows against the GROUP BY output. Day-granular
+                // queries skip the wrap because the UTC local-day anchor and UTC
+                // absolute-day anchor happen to coincide.
+                final boolean hasSubDayTimezoneWrap = isSubDay && sampleByTimezoneName != null;
+                nested.setFillFrom(hasSubDayTimezoneWrap && sampleByFrom != null
+                        ? createToUtcCall(sampleByFrom, sampleByTimezoneName) : sampleByFrom);
+                nested.setFillTo(hasSubDayTimezoneWrap && sampleByTo != null
+                        ? createToUtcCall(sampleByTo, sampleByTimezoneName) : sampleByTo);
                 nested.setFillStride(sampleBy);
                 nested.setFillValues(sampleByFill);
                 // Propagate offset only for non-timezone queries. When a timezone
