@@ -965,12 +965,18 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
 
             capacity = initialCapacity;
-            memory = Vm.getCARWInstance(
+            MemoryARW mem = Vm.getCARWInstance(
                     configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(),
                     MemoryTag.NATIVE_CIRCULAR_BUFFER
             );
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            try {
+                startOffset = mem.appendAddressFor(capacity * RECORD_SIZE) - mem.getPageAddress(0);
+            } catch (Throwable t) {
+                Misc.free(mem);
+                throw t;
+            }
+            memory = mem;
             firstIdx = 0;
             frameSize = 0;
             frameIncludesCurrentValue = rangeHi == 0;
