@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -423,9 +424,26 @@ public class IntermediateTableImporter {
         final PartitionColumnSource[] sources = new PartitionColumnSource[partitionCount];
         final int[] cursors = new int[partitionCount];
         final int[] rgSizes = new int[partitionCount];
+        final int[] lastEvictedRow = new int[partitionCount];
         final boolean[] isDropped = new boolean[partitionCount];
         final int[] pendingDrops = new int[partitionCount];
         int pendingCount = 0;
+
+        // Per-source-column metadata for page eviction. For fixed-width
+        // columns we can evict [base, cursor*elemSize) byte ranges from
+        // each partition's column memory. Var-size columns need an aux
+        // lookup to find the corresponding data offset, handled separately.
+        final int[] srcColElemSize = new int[runSet.srcColumnCount];
+        final boolean[] srcIsVarCol = new boolean[runSet.srcColumnCount];
+        for (int c = 0; c < runSet.srcColumnCount; c++) {
+            final int type = runSet.srcColumnTypes[c];
+            if (ColumnType.isVarSize(type)) {
+                srcIsVarCol[c] = true;
+                srcColElemSize[c] = -1;
+            } else {
+                srcColElemSize[c] = ColumnType.sizeOf(type);
+            }
+        }
 
         try {
             // A writer held for the whole merge lets phaseB drop drained
@@ -449,7 +467,9 @@ public class IntermediateTableImporter {
                             .put("phaseB partition ").put(k).put(" is empty");
                 }
                 rgSizes[k] = (int) rows;
-                sources[k] = new PartitionColumnSource(reader, k, runSet.srcColumnCount);
+                sources[k] = new PartitionColumnSource(
+                        reader, k, runSet.srcColumnCount, runSet.srcColumnTypes
+                );
             }
 
             final SortedStreamMetadata sinkMeta = new RunSetSchemaView(runSet);
@@ -481,6 +501,14 @@ public class IntermediateTableImporter {
             // merge, not steadily throughout it. 8 is the cheaper choice
             // (fewer reader close+reopen cycles).
             final int dropBatch = 8;
+            // Within a partition, issue MADV_DONTNEED on the prefix we have
+            // consumed every evictStride rows. That prefix is never read
+            // again, so evicting it gets the memfd-backed pages out of the
+            // process's address space (kernel may also reclaim the tmpfs
+            // pages under pressure, which is the case that matters for
+            // OOM safety). 8192 rows amortizes the syscall cost; smaller
+            // would waste syscalls, larger would let residency grow.
+            final int evictStride = 8192;
             long delivered = 0;
             while (heapSize > 0) {
                 final int k = heapIdx[1];
@@ -491,6 +519,18 @@ public class IntermediateTableImporter {
                 delivered++;
                 cursors[k]++;
                 if (cursors[k] < rgSizes[k]) {
+                    // Periodic page eviction on the consumed prefix of
+                    // partition k, keeping one evictStride-row margin so
+                    // in-flight page-fault readahead is preserved.
+                    if (cursors[k] - lastEvictedRow[k] >= evictStride) {
+                        final int evictTo = cursors[k] - evictStride;
+                        sources[k].evictConsumedPages(
+                                lastEvictedRow[k], evictTo,
+                                srcColElemSize, srcIsVarCol,
+                                runSet.sortTsColIdx
+                        );
+                        lastEvictedRow[k] = evictTo;
+                    }
                     final long nextTs = sources[k].getSortTs(cursors[k], runSet.sortTsColIdx);
                     heapSize = BulkSortedParquetWriter.heapPush(heapTs, heapIdx, heapSize, nextTs, k);
                 } else {
@@ -503,6 +543,14 @@ public class IntermediateTableImporter {
                                 pendingDrops, pendingCount, runSet
                         );
                         pendingCount = 0;
+                        // After reader reopen, all sources[] were replaced.
+                        // Reset eviction cursor for surviving partitions
+                        // because the underlying addresses have changed.
+                        for (int pk = 0; pk < partitionCount; pk++) {
+                            if (!isDropped[pk]) {
+                                lastEvictedRow[pk] = cursors[pk];
+                            }
+                        }
                     }
                 }
             }
@@ -598,7 +646,7 @@ public class IntermediateTableImporter {
                         .put(", newIdx=").put(newIdx).put(']');
             }
             sources[k] = new PartitionColumnSource(
-                    freshReader, newIdx, runSet.srcColumnCount
+                    freshReader, newIdx, runSet.srcColumnCount, runSet.srcColumnTypes
             );
             newIdx++;
         }
@@ -834,12 +882,19 @@ public class IntermediateTableImporter {
         private final int partitionIndex;
         private final TableReader reader;
         private final int srcColumnCount;
+        private final int[] srcColumnTypes;
         private final int columnBase;
 
-        PartitionColumnSource(TableReader reader, int partitionIndex, int srcColumnCount) {
+        PartitionColumnSource(
+                TableReader reader,
+                int partitionIndex,
+                int srcColumnCount,
+                int[] srcColumnTypes
+        ) {
             this.reader = reader;
             this.partitionIndex = partitionIndex;
             this.srcColumnCount = srcColumnCount;
+            this.srcColumnTypes = srcColumnTypes;
             this.columnBase = reader.getColumnBase(partitionIndex);
         }
 
@@ -875,6 +930,44 @@ public class IntermediateTableImporter {
             return mem == null ? 0 : mem.size();
         }
 
+        /**
+         * Issue {@code MADV_DONTNEED} on the byte range covering rows
+         * {@code [fromRow, toRow)} for each source column and for the
+         * {@code __sort_ts} column. The rows must already have been
+         * consumed by the merge — calling this on rows the heap still
+         * references would trigger an extra page-in on next access.
+         * <p>
+         * Fixed-width columns are evicted by straight row-stride: bytes
+         * {@code [fromRow * elemSize, toRow * elemSize)} of the primary
+         * data file are released. Variable-size columns (VARCHAR, BINARY,
+         * STRING) use the per-type {@link ColumnTypeDriver} to translate
+         * row indices into data-file byte offsets, so the payload bytes
+         * as well as the aux file's row-strided prefix are released.
+         * Addresses from {@code MemoryR.addressOf(0)} are page-aligned
+         * (mmap base), so {@code madvise} accepts them directly. The
+         * kernel rounds lengths down to a page multiple, so an
+         * unaligned tail simply stays resident for one more batch.
+         */
+        void evictConsumedPages(
+                int fromRow, int toRow,
+                int[] srcColElemSize, boolean[] srcIsVarCol,
+                int sortTsColIdx
+        ) {
+            if (toRow <= fromRow) {
+                return;
+            }
+            // __sort_ts is consumed in strict cursor order; no more reads.
+            evictColumn(sortTsColIdx, fromRow, toRow, Long.BYTES);
+
+            for (int c = 0; c < srcColumnCount; c++) {
+                if (srcIsVarCol[c]) {
+                    evictVarColumn(c, fromRow, toRow);
+                } else {
+                    evictColumn(c, fromRow, toRow, srcColElemSize[c]);
+                }
+            }
+        }
+
         long getSortTs(int row, int sortTsColIdx) {
             final int primaryIdx = TableReader.getPrimaryColumnIndex(columnBase, sortTsColIdx);
             final io.questdb.cairo.vm.api.MemoryR mem = reader.getColumn(primaryIdx);
@@ -887,6 +980,92 @@ public class IntermediateTableImporter {
                         .put("PartitionColumnSource column index out of range [idx=")
                         .put(columnIndex).put(", src=").put(srcColumnCount).put(']');
             }
+        }
+
+        private void evictVarColumn(int srcColumnIndex, int fromRow, int toRow) {
+            checkSrc(srcColumnIndex);
+            if (toRow <= fromRow) {
+                return;
+            }
+            final int type = srcColumnTypes[srcColumnIndex];
+            final ColumnTypeDriver driver = ColumnType.getDriver(type);
+            final int primaryIdx = TableReader.getPrimaryColumnIndex(columnBase, srcColumnIndex);
+            final io.questdb.cairo.vm.api.MemoryR dataMem = reader.getColumn(primaryIdx);
+            final io.questdb.cairo.vm.api.MemoryR auxMem = reader.getColumn(primaryIdx + 1);
+            if (dataMem == null || auxMem == null) {
+                return;
+            }
+            final long dataBase = dataMem.addressOf(0);
+            final long auxBase = auxMem.addressOf(0);
+            if (dataBase == 0 || auxBase == 0) {
+                return;
+            }
+            // Snapshot the data-file byte offsets for fromRow and toRow
+            // BEFORE we evict any aux pages — the driver reads aux entries
+            // to compute these offsets and evicting them first would
+            // trigger a page-in on the very pages we are about to release.
+            final long dataFromByte = fromRow > 0
+                    ? driver.getDataVectorSizeAt(auxBase, fromRow - 1)
+                    : 0L;
+            final long dataToByte = driver.getDataVectorSizeAt(auxBase, toRow - 1);
+
+            final long pageSize = Files.PAGE_SIZE;
+            // Data file: evict [dataFromByte, dataToByte), page-aligned.
+            if (dataToByte > dataFromByte) {
+                final long alignedStart = (dataFromByte + pageSize - 1) & ~(pageSize - 1);
+                if (alignedStart < dataToByte) {
+                    Files.madvise(
+                            dataBase + alignedStart,
+                            dataToByte - alignedStart,
+                            Files.POSIX_MADV_DONTNEED
+                    );
+                }
+            }
+            // Aux file: evict the row-strided prefix we have consumed.
+            final long auxFromByte = driver.getAuxVectorSize(fromRow);
+            final long auxToByte = driver.getAuxVectorSize(toRow);
+            if (auxToByte > auxFromByte) {
+                final long alignedStart = (auxFromByte + pageSize - 1) & ~(pageSize - 1);
+                if (alignedStart < auxToByte) {
+                    Files.madvise(
+                            auxBase + alignedStart,
+                            auxToByte - alignedStart,
+                            Files.POSIX_MADV_DONTNEED
+                    );
+                }
+            }
+        }
+
+        private void evictColumn(int columnIndex, int fromRow, int toRow, int elemSize) {
+            if (elemSize <= 0) {
+                return;
+            }
+            final int primaryIdx = TableReader.getPrimaryColumnIndex(columnBase, columnIndex);
+            final io.questdb.cairo.vm.api.MemoryR mem = reader.getColumn(primaryIdx);
+            if (mem == null) {
+                return;
+            }
+            final long base = mem.addressOf(0);
+            if (base == 0) {
+                return;
+            }
+            final long fromByte = (long) fromRow * elemSize;
+            final long toByte = (long) toRow * elemSize;
+            final long len = toByte - fromByte;
+            if (len <= 0) {
+                return;
+            }
+            // Round start up to the next page boundary so we don't evict
+            // the tail of the last not-yet-consumed page in the previous
+            // batch. madvise rounds length down, so the tail of the
+            // current batch's last page stays resident — fine; the next
+            // call will sweep it.
+            final long pageSize = Files.PAGE_SIZE;
+            final long alignedStart = (fromByte + pageSize - 1) & ~(pageSize - 1);
+            if (alignedStart >= toByte) {
+                return;
+            }
+            Files.madvise(base + alignedStart, toByte - alignedStart, Files.POSIX_MADV_DONTNEED);
         }
     }
 
