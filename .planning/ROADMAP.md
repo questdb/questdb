@@ -252,10 +252,10 @@ Plans:
 **Goal:** Close the actionable Moderate-severity findings from `/review-pr 6946` (M-1, M-2, M-3, M-4, M-7, M-8, M-9, Mn-13) with surgical fixes in `SqlCodeGenerator`, `SampleByFillRecordCursorFactory` (FillRecord inner class), `SqlOptimiser`, and `SortedRecordCursorFactory`. Land per-type FILL(PREV) regression coverage (D-14), rename a ghost test (D-16), distinguish Decimal zero vs NULL (D-17), restore direct factory-type assertions in `RecordCursorMemoryUsageTest` (D-18), and append two `## Trade-offs` bullets to PR #6946's body for M-5 (O(K keys x B buckets) memory envelope) and M-6 (3-pass scan multiplier).
 **Requirements**: Code review findings against PR #6946. No new requirement IDs; strengthens existing OPT-01/02, FILL-02, KEY-01..05, XPREV-01, PTSF-01..06, COR-01..04 via regression coverage.
 **Depends on:** Phase 13
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 - [x] 14-01-PLAN.md - Codegen cluster: M-1 reorder-safe bare FILL(PREV) classification + M-3 broadcast tightening + M-9 cross-column full-type match + Mn-13 success-path fillValues cleanup, plus regression tests and D-16 ghost-test rename + D-17 decimal zero-vs-null (Wave 1)
 - [x] 14-02-PLAN.md - Cursor cluster: M-2 FILL_KEY + cross-column-PREV-to-key branches for getArray/getBin/getBinLen + M-8 FillRecord.getInterval + audit close-out, plus 10 per-type FILL(PREV) tests and 2 keyed ARRAY/BINARY tests (Wave 2)
-- [ ] 14-03-PLAN.md - Optimiser: M-4 TIME ZONE + FROM fill-range UTC wrap via createToUtcCall, plus 3 regression tests (empty-base, sparse, dense) (Wave 2)
+- [x] 14-03-PLAN.md - Optimiser: M-4 TIME ZONE + FROM fill-range UTC wrap via createToUtcCall, plus 3 regression tests (empty-base, sparse, dense) (Wave 2)
 - [ ] 14-04-PLAN.md - Pre-existing defensive fix: M-7 SortedRecordCursorFactory constructor double-free + regression test via sqlSortKeyMaxPages=-1, D-18 RCM direct factory-type assertion restore, D-19/D-20 PR #6946 body Trade-offs append (checkpoint:decision for wording approval) (Wave 3 - last commit of phase)

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 14-02-PLAN.md
-last_updated: "2026-04-20T14:46:49.118Z"
+stopped_at: Completed 14-03-PLAN.md
+last_updated: "2026-04-20T15:12:50.206Z"
 last_activity: 2026-04-20
 progress:
   total_phases: 14
   completed_phases: 12
   total_plans: 24
-  completed_plans: 22
-  percent: 92
+  completed_plans: 23
+  percent: 96
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 14 (fix-issues-from-moderate-list-for-m5-and-m6-just-mention-in-) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-04-20
 
@@ -68,6 +68,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P06 | ~75 min | 2 tasks | 4 files |
 | Phase 14 P01 | 23min | 3 tasks | 4 files |
 | Phase 14 P02 | 39min | 3 tasks | 4 files |
+| Phase 14 P03 | 20min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -134,6 +135,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 14]: FillRecord.getInterval added between getInt and getLong with Interval.NULL as default sentinel; FillRecord Javadoc documents getRecord/getRowId/getUpdateRowId as intentionally-unoverridden plumbing; closes M-8 INTERVAL crash
 - [Phase 14]: D-14 per-type FILL(PREV) tests land 11 @Test methods; INTERVAL test uses interval(lo, hi) inline key because INTERVAL is non-persistable and has no first(INTERVAL) aggregate; BINARY non-keyed test dropped (no first(BINARY)), coverage via keyed cursor-walk instead
 - [Phase 14]: Pre-existing testSampleFillPrevAllTypes and testSampleFillValueAllKeyTypes (SampleByTest + SampleByNanoTimestampTest) expected outputs updated to reflect corrected post-M-2 BINARY rendering on fill rows (key bytes carried, not empty); inline comments updated accordingly
+- [Phase 14]: rewriteSampleBy wraps setFillFrom/setFillTo with createToUtcCall when isSubDay AND sampleByTimezoneName is present; hasSubDayTimezoneWrap boolean captures the guard once and drives both wraps, keeping lockstep with the tsFloor FROM wrap at :8308
+- [Phase 14]: Inline ternary wrap instead of a new helper method; mirrors the inline style of the other three createToUtcCall call sites (tsFloor at :8308 and FROM/TO fallback at :8462/:8465); no cursor-side change per D-09
+- [Phase 14]: M-4 regression tests: Europe/London TIME ZONE during June 2024 (BST UTC+1); SQL clause order is SAMPLE BY <unit> FROM ... TO ... FILL(...) ALIGN TO CALENDAR TIME ZONE '...' (TIME ZONE last); assertQueryNoLeakCheck uses (..., false, false) to match SAMPLE BY FILL factory contract
 
 ### Roadmap Evolution
 
@@ -158,6 +162,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-20T14:46:49.115Z
-Stopped at: Completed 14-02-PLAN.md
+Last session: 2026-04-20T15:12:50.203Z
+Stopped at: Completed 14-03-PLAN.md
 Resume file: None
