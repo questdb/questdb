@@ -917,7 +917,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(),
-                                "Index value file does not exist"
+                                "Index key file does not exist"
                         );
                     }
                 }

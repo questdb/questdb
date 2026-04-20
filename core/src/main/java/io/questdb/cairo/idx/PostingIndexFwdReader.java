@@ -148,15 +148,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            // On pool return, keep only blockBuffer (~2 KB upper bound, size
-            // fixed by the block encoding format) and release every buffer
-            // whose size scales with data — covering caches (alp/float/
-            // decodeWorkspace/fsstDecompBuf). Retaining data-scaled buffers
-            // would pin memory proportional to historical peak, multiplied
-            // across pool slots × partitions × concurrent table readers.
-            // Inter-cursor cache reuse is near-zero anyway (different blocks
-            // on reacquire), so the savings would be only one malloc amortized
-            // over a full scan — not worth the worst-case retention.
             if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 closeCoveringResources();
@@ -509,6 +500,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long strideAddr = genAddr + siSize + strideOff;
             int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
+            assert mode == PostingIndexUtils.STRIDE_MODE_FLAT || mode == PostingIndexUtils.STRIDE_MODE_DELTA;
 
             if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
                 int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
@@ -530,7 +522,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 int effectiveStart = startCount;
                 int effectiveCount = count;
                 if (minValue > 0 && bitWidth > 0 && count > 1) {
-                    int lo = startCount, hi = endCount - 1;
+                    int lo = startCount, hi = endCount;
                     while (lo < hi) {
                         int mid = (lo + hi) >>> 1;
                         long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
@@ -545,20 +537,20 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 }
 
                 if (maxValue < Long.MAX_VALUE && effectiveCount > 1) {
-                    int lo = effectiveStart, hi = effectiveStart + effectiveCount - 1;
+                    int lo = effectiveStart, hi = effectiveStart + effectiveCount;
                     while (lo < hi) {
-                        int mid = (lo + hi + 1) >>> 1;
+                        int mid = (lo + hi) >>> 1;
                         long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
                         if (val > maxValue) {
-                            hi = mid - 1;
+                            hi = mid;
                         } else {
-                            lo = mid;
+                            lo = mid + 1;
                         }
                     }
-                    effectiveCount = lo - effectiveStart + 1;
+                    effectiveCount = lo - effectiveStart;
                 }
 
-                if (effectiveCount <= 0) {
+                if (effectiveCount == 0) {
                     clearBlockState();
                     return;
                 }
@@ -818,6 +810,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             resetCoveringState();
 
             if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
+                this.requestedKey = -1;
                 currentGen = genCount;
                 return;
             }

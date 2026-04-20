@@ -137,13 +137,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            // On pool return, keep only blockBuffer (~2 KB upper bound, size
-            // fixed by the block encoding format) and release every buffer
-            // whose size scales with data — covering caches (alp/float/
-            // decodeWorkspace/fsstDecompBuf) and the EF rank directory.
-            // Retaining data-scaled buffers would pin memory proportional to
-            // historical peak, multiplied across pool slots × partitions ×
-            // concurrent table readers.
             if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 closeCoveringResources();
@@ -479,6 +472,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long strideAddr = genAddr + siSize + strideOff;
             int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
+            assert mode == PostingIndexUtils.STRIDE_MODE_FLAT || mode == PostingIndexUtils.STRIDE_MODE_DELTA;
 
             if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
                 int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
@@ -502,7 +496,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 int effectiveStart = startCount;
                 int effectiveEnd = endCount;
                 if (minValue > 0 && bitWidth > 0 && count > 1) {
-                    int lo = startCount, hi = endCount - 1;
+                    int lo = startCount, hi = endCount;
                     while (lo < hi) {
                         int mid = (lo + hi) >>> 1;
                         long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
@@ -515,21 +509,21 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     effectiveStart = lo;
                 }
                 if (maxValue < Long.MAX_VALUE && effectiveStart < effectiveEnd) {
-                    int lo = effectiveStart, hi = effectiveEnd - 1;
+                    int lo = effectiveStart, hi = effectiveEnd;
                     while (lo < hi) {
-                        int mid = (lo + hi + 1) >>> 1;
+                        int mid = (lo + hi) >>> 1;
                         long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
                         if (val > maxValue) {
-                            hi = mid - 1;
+                            hi = mid;
                         } else {
-                            lo = mid;
+                            lo = mid + 1;
                         }
                     }
-                    effectiveEnd = lo + 1;
+                    effectiveEnd = lo;
                 }
                 int effectiveCount = effectiveEnd - effectiveStart;
 
-                if (effectiveCount <= 0) {
+                if (effectiveCount == 0) {
                     this.encodedBlockCount = 0;
                     this.currentBlock = -1;
                     this.blockBufferPos = -1;
@@ -844,6 +838,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             resetCoveringState();
 
             if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
+                this.requestedKey = -1;
                 currentGen = -1;
                 return;
             }
