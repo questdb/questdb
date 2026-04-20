@@ -58,6 +58,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // QWP version negotiation headers
     public static final Utf8String HEADER_X_QWP_ACCEPT_ENCODING = new Utf8String("X-QWP-Accept-Encoding");
     public static final Utf8String HEADER_X_QWP_CLIENT_ID = new Utf8String("X-QWP-Client-Id");
+    public static final Utf8String HEADER_X_QWP_MAX_BATCH_ROWS = new Utf8String("X-QWP-Max-Batch-Rows");
     public static final Utf8String HEADER_X_QWP_MAX_VERSION = new Utf8String("X-QWP-Max-Version");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");

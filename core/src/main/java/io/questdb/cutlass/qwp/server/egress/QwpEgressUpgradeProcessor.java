@@ -27,12 +27,13 @@ package io.questdb.cutlass.qwp.server.egress;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -119,10 +120,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
     private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
     private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     /**
-     * Phase 1 batch caps. Size-based cap is indirectly enforced by the rawSocket
-     * send buffer capacity (rejections become QUERY_ERROR).
+     * Phase 1 batch cap. Size-based cap is indirectly enforced by the rawSocket
+     * send buffer capacity (rejections become QUERY_ERROR). Larger batches
+     * amortise per-batch overhead (schema-reference emit, WS header, send
+     * syscall, client queue hand-off) across more rows, which is the dominant
+     * per-byte throughput lever once the per-row emit cost has been
+     * columnarised. Client cap is 1_048_576 so there is ample headroom for
+     * future raises if wider schemas benefit.
+     * <p>
+     * Exposed as public only so batch-boundary tests can pin their assertions
+     * against the live value; bumping this constant won't silently turn tests
+     * into no-ops.
      */
-    private static final int MAX_ROWS_PER_BATCH = 4096;
+    public static final int MAX_ROWS_PER_BATCH = 16_384;
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
@@ -254,6 +264,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
         state.setCompression(negotiatedCodec, negotiatedLevel);
+        // Optional client preference for per-batch row cap. Absent or malformed
+        // header falls back to the server's hard cap. Values outside [1, MAX]
+        // are clamped rather than rejected so one buggy client doesn't break
+        // the handshake -- the server-authoritative cap is always applied.
+        Utf8Sequence maxBatchRowsHeader = requestHeader.getHeader(
+                QwpWebSocketHttpProcessor.HEADER_X_QWP_MAX_BATCH_ROWS);
+        int effectiveMaxBatchRows = MAX_ROWS_PER_BATCH;
+        if (maxBatchRowsHeader != null) {
+            int clientRequested = Numbers.parseNonNegativeIntQuiet(maxBatchRowsHeader);
+            if (clientRequested > 0) {
+                effectiveMaxBatchRows = Math.min(clientRequested, MAX_ROWS_PER_BATCH);
+            }
+        }
+        state.setMaxBatchRows(effectiveMaxBatchRows);
 
         int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeader);
@@ -747,73 +771,100 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             );
             sqlCtx.initNow();
 
-            // Cache hit: a prior query on any connection handled by this processor
-            // already compiled the same SQL text. Reuse the factory and skip the
-            // whole compile pipeline (lex + parse + plan + factory-build is the
-            // dominant latency component for simple queries). Cache poll removes
-            // the entry so two concurrent queries with the same SQL can't share
-            // a single factory instance -- the second falls through to compile.
-            factory = selectCache.poll(decoder.sql);
-            if (factory == null) {
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    CompiledQuery cq = compiler.compile(decoder.sql, sqlCtx);
-                    short type = cq.getType();
-                    // Non-SELECT (DDL / INSERT / UPDATE / parse-time-executed) -- route to the
-                    // synchronous exec path which awaits the operation and replies with an
-                    // EXEC_DONE carrying the op type + rows affected. Non-SELECTs are never
-                    // cached: they mutate state and can't be reused as plans.
-                    if (!isStreamingType(type, cq)) {
-                        executeNonSelect(context, state, sqlCtx, cq, requestId);
+            // Retry-once loop: a factory returned by the compile cache may have a
+            // stale TableReader reference if the table was dropped+recreated after
+            // the factory was compiled (matching by SQL text alone; tableId and
+            // metadataVersion don't survive). Detected by
+            // {@link TableReferenceOutOfDateException} on cursor open. We drop the
+            // stale factory and recompile. Two consecutive occurrences means the
+            // table changed mid-recompile -- rare and probably indicates an abusive
+            // DDL pattern; propagate as a normal error.
+            int attempts = 0;
+            while (true) {
+                attempts++;
+                try {
+                    // Cache lookup only on first attempt. Retry always recompiles.
+                    if (attempts == 1) {
+                        factory = selectCache.poll(decoder.sql);
+                    }
+                    if (factory == null) {
+                        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                            CompiledQuery cq = compiler.compile(decoder.sql, sqlCtx);
+                            short type = cq.getType();
+                            // Non-SELECT (DDL / INSERT / UPDATE / parse-time-executed) -- route to the
+                            // synchronous exec path which awaits the operation and replies with an
+                            // EXEC_DONE carrying the op type + rows affected. Non-SELECTs are never
+                            // cached: they mutate state and can't be reused as plans.
+                            if (!isStreamingType(type, cq)) {
+                                executeNonSelect(context, state, sqlCtx, cq, requestId);
+                                return;
+                            }
+                            factory = cq.getRecordCursorFactory();
+                        }
+                    }
+                    RecordMetadata metadata = factory.getMetadata();
+                    int columnCount = metadata.getColumnCount();
+                    ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
+                    for (int i = 0; i < columnCount; i++) {
+                        columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
+                    }
+                    int schemaId = state.findOrAllocateSchemaId(columnDefs);
+                    if (schemaId == QwpEgressProcessorState.SCHEMA_ID_EXHAUSTED) {
+                        // The connection has registered DEFAULT_MAX_SCHEMAS_PER_CONNECTION distinct
+                        // schemas already; this query's shape is new and would need a fresh id the
+                        // client would reject. Surface a controlled error and free the factory so
+                        // the connection stays usable for queries against schemas already cached.
+                        Misc.free(factory);
+                        factory = null;
+                        sendQueryError(context, state, requestId, QwpEgressMsgKind.STATUS_LIMIT_EXCEEDED,
+                                "connection schema cache exhausted ("
+                                        + QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
+                                        + " distinct schemas); reconnect to reset");
                         return;
                     }
-                    factory = cq.getRecordCursorFactory();
+                    boolean schemaAlreadyKnown = state.wasLastSchemaIdReuse();
+                    // Prefer the PageFrameCursor fast path when the factory supports it: it
+                    // hands us flat column addresses per frame and lets the SYMBOL fast path
+                    // resolve dict keys via PageFrameMemoryRecord.getInt. Factories that don't
+                    // support it (filtered/joined/grouped queries) keep the existing
+                    // RecordCursor path without change.
+                    if (factory.supportsPageFrameCursor()) {
+                        int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
+                                ? PartitionFrameCursorFactory.ORDER_DESC
+                                : PartitionFrameCursorFactory.ORDER_ASC;
+                        pageFrameCursor = factory.getPageFrameCursor(sqlCtx, order);
+                    }
+                    if (pageFrameCursor != null) {
+                        // Streaming mode asks the cursor to release page cache pages
+                        // after reading, so a 10M-row scan doesn't evict the server's
+                        // working set. Same hint used by the parquet exporter.
+                        pageFrameCursor.setStreamingMode(true);
+                        state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
+                                columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
+                    } else {
+                        cursor = factory.getCursor(sqlCtx);
+                        state.beginStreaming(requestId, factory, cursor,
+                                columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
+                    }
+                    streamingHandedOff = true;     // ownership of factory + cursor passed to state
+                    break; // setup completed; fall through to streamResults outside the loop
+                } catch (TableReferenceOutOfDateException e) {
+                    // Free any partially-acquired resources from this attempt. After
+                    // beginStreaming{,PageFrame} they'd be owned by state, but the
+                    // exception fires BEFORE that (on getCursor / getPageFrameCursor),
+                    // so we still own them here.
+                    pageFrameCursor = Misc.free(pageFrameCursor);
+                    cursor = Misc.free(cursor);
+                    factory = Misc.free(factory);
+                    if (attempts >= 2) {
+                        // Fresh compile also raced with a DDL -- unusual, propagate.
+                        throw e;
+                    }
+                    LOG.info().$("Egress cached factory stale, recompiling [fd=").$(context.getFd())
+                            .$(", requestId=").$(requestId)
+                            .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 }
             }
-            RecordMetadata metadata = factory.getMetadata();
-            int columnCount = metadata.getColumnCount();
-            ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
-            }
-            int schemaId = state.findOrAllocateSchemaId(columnDefs);
-            if (schemaId == QwpEgressProcessorState.SCHEMA_ID_EXHAUSTED) {
-                // The connection has registered DEFAULT_MAX_SCHEMAS_PER_CONNECTION distinct
-                // schemas already; this query's shape is new and would need a fresh id the
-                // client would reject. Surface a controlled error and free the factory so
-                // the connection stays usable for queries against schemas already cached.
-                Misc.free(factory);
-                factory = null;
-                sendQueryError(context, state, requestId, QwpEgressMsgKind.STATUS_LIMIT_EXCEEDED,
-                        "connection schema cache exhausted ("
-                                + QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
-                                + " distinct schemas); reconnect to reset");
-                return;
-            }
-            boolean schemaAlreadyKnown = state.wasLastSchemaIdReuse();
-            // Prefer the PageFrameCursor fast path when the factory supports it: it
-            // hands us flat column addresses per frame and lets the SYMBOL fast path
-            // resolve dict keys via PageFrameMemoryRecord.getInt. Factories that don't
-            // support it (filtered/joined/grouped queries) keep the existing
-            // RecordCursor path without change.
-            if (factory.supportsPageFrameCursor()) {
-                int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
-                        ? PartitionFrameCursorFactory.ORDER_DESC
-                        : PartitionFrameCursorFactory.ORDER_ASC;
-                pageFrameCursor = factory.getPageFrameCursor(sqlCtx, order);
-            }
-            if (pageFrameCursor != null) {
-                // Streaming mode asks the cursor to release page cache pages
-                // after reading, so a 10M-row scan doesn't evict the server's
-                // working set. Same hint used by the parquet exporter.
-                pageFrameCursor.setStreamingMode(true);
-                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
-                        columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
-            } else {
-                cursor = factory.getCursor(sqlCtx);
-                state.beginStreaming(requestId, factory, cursor,
-                        columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
-            }
-            streamingHandedOff = true;     // ownership of factory + cursor passed to state
             // Streaming may complete here (cursor short and fast), or throw PeerIsSlowToReadException
             // (we'll be re-entered via resumeSend) or another exception (handled below).
             streamResults(context, state);
@@ -1294,21 +1345,37 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             // Passing the symbol-table source lets the batch buffer pick up native
             // SymbolTables for SYMBOL columns, taking the getInt-based fast path.
             batchBuffer.beginBatch(columnDefs, state.getStreamingSymbolTableSource(), state.getConnSymbolDict());
+            // Effective cap = server MAX clamped against any client preference
+            // set during the handshake. Read once per batch so a later config
+            // change (e.g. a hypothetical PER-QUERY knob) would not partially
+            // apply within the inner loop.
+            final int batchCap = state.getMaxBatchRows();
             int rowsThisBatch = 0;
             if (pageFrame) {
-                Record record;
-                while (rowsThisBatch < MAX_ROWS_PER_BATCH
-                        && (record = state.advancePageFrameRow()) != null) {
-                    batchBuffer.appendRow(record);
-                    rowsThisBatch++;
+                // Columnar fast path: walk frames and hand each slice to the batch
+                // buffer as a (frame, lo, hi) triple. For NATIVE-format frames the
+                // buffer copies column-at-a-time via direct page addresses; for
+                // Parquet frames and column types without a columnar fast path it
+                // falls back to per-row through the bound page-frame record.
+                PageFrame frame;
+                while (rowsThisBatch < batchCap
+                        && (frame = state.advanceToPageFrame()) != null) {
+                    long lo = state.getStreamingPageFrameRow();
+                    long rowsAvailable = state.getStreamingPageFrameRowHi() - lo;
+                    int rowsBudget = batchCap - rowsThisBatch;
+                    long hi = lo + Math.min(rowsBudget, rowsAvailable);
+                    batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, hi);
+                    int rowsFromSlice = (int) (hi - lo);
+                    state.consumePageFrameRows(rowsFromSlice);
+                    rowsThisBatch += rowsFromSlice;
                 }
             } else {
-                while (rowsThisBatch < MAX_ROWS_PER_BATCH && cursor.hasNext()) {
+                while (rowsThisBatch < batchCap && cursor.hasNext()) {
                     batchBuffer.appendRow(cursor.getRecord());
                     rowsThisBatch++;
                 }
             }
-            boolean cursorExhausted = rowsThisBatch < MAX_ROWS_PER_BATCH;
+            boolean cursorExhausted = rowsThisBatch < batchCap;
             boolean writeFullSchema = !state.isStreamingFullSchemaSent();
             // Empty trailing batch (cursor exhausted between full-batch boundary and this iteration)
             // and we've already sent at least one batch with the schema -- skip straight to RESULT_END.

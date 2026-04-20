@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.codec;
 
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -187,6 +188,16 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
+     * Sets bit {@code rowIdx} in the null bitmap. Caller must have already
+     * called {@link #ensureNullBitmapCapacity} to cover at least rowIdx.
+     */
+    private void setNullBit(int rowIdx) {
+        long byteAddr = nullBitmapAddr + (rowIdx >>> 3);
+        byte cur = Unsafe.getUnsafe().getByte(byteAddr);
+        Unsafe.getUnsafe().putByte(byteAddr, (byte) (cur | (1 << (rowIdx & 7))));
+    }
+
+    /**
      * STRING/VARCHAR: record the end-offset of the value just written. Offsets are stored
      * at {@code 4 * (nonNullCount + 1)} in {@link #stringOffsetsAddr}; offset[0] is the
      * implicit zero (written at emit time to keep parsing simple).
@@ -245,6 +256,197 @@ final class QwpColumnScratch implements QuietCloseable {
         Unsafe.getUnsafe().putByte(valuesAddr + valuesPos, v);
         valuesPos += 1;
         markNonNullAndAdvanceRow();
+    }
+
+    /**
+     * BOOLEAN column bulk append: reads {@code n} raw bytes from
+     * {@code srcAddr} (QuestDB native layout: 1 byte per row, 0 or 1) and
+     * bit-packs them into {@code valuesAddr} starting at the current
+     * {@code nonNullCount}. BOOLEAN has no null representation so rowCount /
+     * nonNullCount advance by {@code n}.
+     */
+    void appendColumnBoolean(long srcAddr, int n) {
+        int startBit = nonNullCount;
+        int bytesNeeded = (startBit + n + 7) >>> 3;
+        ensureValuesCapacity(bytesNeeded);
+        for (int i = 0; i < n; i++) {
+            int bitIdx = startBit + i;
+            long byteAddr = valuesAddr + (bitIdx >>> 3);
+            if ((bitIdx & 7) == 0) {
+                // First bit in a new byte: zero it before OR-ing. Matches the
+                // single-row appendBool convention.
+                Unsafe.getUnsafe().putByte(byteAddr, (byte) 0);
+            }
+            if (Unsafe.getUnsafe().getByte(srcAddr + i) != 0) {
+                byte cur = Unsafe.getUnsafe().getByte(byteAddr);
+                Unsafe.getUnsafe().putByte(byteAddr, (byte) (cur | (1 << (bitIdx & 7))));
+            }
+        }
+        nonNullCount += n;
+        rowCount += n;
+    }
+
+    /**
+     * DOUBLE / FLOAT-as-double column bulk append: reads {@code n} 8-byte
+     * values from {@code srcAddr} (QuestDB stores DOUBLE NULL as NaN). Values
+     * that are NaN go into the null bitmap; non-null values are packed dense
+     * into {@code valuesAddr}. Uses {@code v != v} for the NaN test so every
+     * NaN bit-pattern is treated as null (spec 11.5).
+     */
+    void appendColumnDouble8(long srcAddr, int n) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 8);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            double v = Unsafe.getUnsafe().getDouble(srcAddr + i * 8L);
+            if (v != v) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.getUnsafe().putDouble(dst, v);
+                dst += 8;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 8;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
+     * No-null fixed-width column bulk append: BYTE / SHORT / CHAR columns
+     * have no sentinel and never contribute to the null bitmap, so we copy
+     * the whole block into {@code valuesAddr} in one {@code memcpy}.
+     */
+    void appendColumnFixedNoNull(long srcAddr, int n, int typeSize) {
+        int bytes = n * typeSize;
+        ensureValuesCapacity(valuesPos + bytes);
+        Vect.memcpy(valuesAddr + valuesPos, srcAddr, bytes);
+        valuesPos += bytes;
+        nonNullCount += n;
+        rowCount += n;
+    }
+
+    /**
+     * FLOAT column bulk append: reads {@code n} 4-byte floats from
+     * {@code srcAddr}. QuestDB stores FLOAT NULL as NaN. NaN values go into
+     * the null bitmap; non-null values pack dense into {@code valuesAddr}.
+     */
+    void appendColumnFloat4(long srcAddr, int n) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 4);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            float v = Unsafe.getUnsafe().getFloat(srcAddr + i * 4L);
+            if (v != v) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.getUnsafe().putFloat(dst, v);
+                dst += 4;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 4;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
+     * INT / IPv4 column bulk append: reads {@code n} 4-byte values from
+     * {@code srcAddr}. Values equal to {@code sentinel} go into the null
+     * bitmap (INT: {@link Numbers#INT_NULL}; IPv4: {@link Numbers#IPv4_NULL},
+     * i.e. 0).
+     */
+    void appendColumnInt4WithSentinel(long srcAddr, int n, int sentinel) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 4);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            int v = Unsafe.getUnsafe().getInt(srcAddr + i * 4L);
+            if (v == sentinel) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.getUnsafe().putInt(dst, v);
+                dst += 4;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 4;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
+     * LONG-family column bulk append: LONG, DATE, TIMESTAMP, TIMESTAMP_NANOS,
+     * DECIMAL64. All use {@link Numbers#LONG_NULL} (= {@link Long#MIN_VALUE})
+     * as the null sentinel. Dense non-null values land in {@code valuesAddr};
+     * null positions are marked in the null bitmap.
+     */
+    void appendColumnLong8WithSentinel(long srcAddr, int n, long sentinel) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 8);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            long v = Unsafe.getUnsafe().getLong(srcAddr + i * 8L);
+            if (v == sentinel) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.getUnsafe().putLong(dst, v);
+                dst += 8;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 8;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
+     * SYMBOL column bulk append: reads {@code n} 4-byte native symbol keys
+     * from {@code srcAddr}. Each non-null key is translated into a
+     * connection-scoped dict id via the per-column {@link #connKeyToConnId}
+     * map; on first sight it is inserted into {@code dict} and the new id
+     * cached. Null keys ({@link SymbolTable#VALUE_IS_NULL}) go into the null
+     * bitmap.
+     */
+    void appendColumnSymbolKeys(long srcAddr, int n, SymbolTable st, QwpEgressConnSymbolDict dict) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        IntIntHashMap k2c = connKeyToConnId;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            int key = Unsafe.getUnsafe().getInt(srcAddr + i * 4L);
+            if (key == SymbolTable.VALUE_IS_NULL) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                int mapIdx = k2c.keyIndex(key);
+                int connId;
+                if (mapIdx < 0) {
+                    connId = k2c.valueAt(mapIdx);
+                } else {
+                    connId = dict.addEntry(st.valueOf(key));
+                    k2c.putAt(mapIdx, key, connId);
+                }
+                int slot = nonNullCount + nonNullWritten;
+                ensureSymbolIdsCapacity(4 * (slot + 1));
+                Unsafe.getUnsafe().putInt(symbolIdsAddr + 4L * slot, connId);
+                nonNullWritten++;
+            }
+        }
+        nonNullCount += nonNullWritten;
+        rowCount += n;
     }
 
     void appendChar(char v) {

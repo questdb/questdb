@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -309,7 +310,10 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                 serverMain.execute(
                         "CREATE TABLE multi(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
                 );
-                final int N = 10_000;
+                // Use MAX_ROWS_PER_BATCH + a full-batch-worth extra so the test
+                // always produces at least two batches regardless of the server's
+                // current cap.
+                final int N = QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH + QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH / 2;
                 serverMain.execute(String.format("""
                         INSERT INTO multi
                         SELECT CAST((x - 1) * 100_000L AS TIMESTAMP)

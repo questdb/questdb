@@ -26,6 +26,9 @@ package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -98,6 +101,157 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
+     * Bulk-appends {@code (hi - lo)} rows of the given {@code frame}, driving the
+     * column emit in column-major order when the frame is in NATIVE format. Each
+     * supported column type reads its page memory directly from
+     * {@link PageFrame#getPageAddress} and hands a bulk-append call to the
+     * corresponding column scratch; types without a columnar fast path fall
+     * back to per-row iteration over {@code record}, touching only the columns
+     * that need it.
+     * <p>
+     * The parquet-format fallback iterates rows through {@code record} /
+     * {@link #appendRow}, preserving correctness without the columnar speedup.
+     * Replace with a parquet-specific columnar decoder as a follow-up.
+     */
+    public void appendPageFrame(PageFrame frame, PageFrameMemoryRecord record, long lo, long hi) {
+        final int rows = (int) (hi - lo);
+        if (rows <= 0) {
+            return;
+        }
+        if (frame.getFormat() != PartitionFormat.NATIVE) {
+            // Parquet frame: no contiguous column addresses we can memcpy from.
+            // Fall back to per-row using the existing single-row path. Row count
+            // advances via appendRow itself.
+            for (long r = lo; r < hi; r++) {
+                record.setRowIndex(r);
+                appendRow(record);
+            }
+            return;
+        }
+        final int n = columnCount;
+        final QwpColumnScratch[] scs = scratchesArr;
+        final byte[] wts = wireTypesArr;
+        final SymbolTable[] sts = symbolTablesArr;
+        for (int ci = 0; ci < n; ci++) {
+            final QwpColumnScratch scratch = scs[ci];
+            final byte wt = wts[ci];
+            // Column-top check moved INSIDE each fixed-width case. For VARCHAR /
+            // STRING / BINARY, {@code getPageAddress} returning 0 does NOT mean
+            // column top -- it can also mean all values in this frame are
+            // inline-stored in the aux vector with no overflow to the data
+            // vector. Those types take the per-row fallback which uses
+            // {@code record.getX} to distinguish correctly.
+            switch (wt) {
+                case QwpConstants.TYPE_LONG:
+                case QwpConstants.TYPE_DATE:
+                case QwpConstants.TYPE_TIMESTAMP:
+                case QwpConstants.TYPE_TIMESTAMP_NANOS:
+                case QwpConstants.TYPE_DECIMAL64: {
+                    long base = frame.getPageAddress(ci);
+                    if (base == 0) {
+                        fillNulls(scratch, rows);
+                    } else {
+                        scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows, Numbers.LONG_NULL);
+                    }
+                    break;
+                }
+                case QwpConstants.TYPE_DOUBLE: {
+                    long base = frame.getPageAddress(ci);
+                    if (base == 0) {
+                        fillNulls(scratch, rows);
+                    } else {
+                        scratch.appendColumnDouble8(base + lo * 8L, rows);
+                    }
+                    break;
+                }
+                case QwpConstants.TYPE_INT: {
+                    long base = frame.getPageAddress(ci);
+                    if (base == 0) {
+                        fillNulls(scratch, rows);
+                    } else {
+                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.INT_NULL);
+                    }
+                    break;
+                }
+                case QwpConstants.TYPE_IPV4: {
+                    // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
+                    long base = frame.getPageAddress(ci);
+                    if (base == 0) {
+                        fillNulls(scratch, rows);
+                    } else {
+                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.IPv4_NULL);
+                    }
+                    break;
+                }
+                case QwpConstants.TYPE_FLOAT: {
+                    long base = frame.getPageAddress(ci);
+                    if (base == 0) {
+                        fillNulls(scratch, rows);
+                    } else {
+                        scratch.appendColumnFloat4(base + lo * 4L, rows);
+                    }
+                    break;
+                }
+                case QwpConstants.TYPE_SHORT:
+                case QwpConstants.TYPE_CHAR: {
+                    long base = frame.getPageAddress(ci);
+                    if (base == 0) {
+                        fillNulls(scratch, rows);
+                    } else {
+                        scratch.appendColumnFixedNoNull(base + lo * 2L, rows, 2);
+                    }
+                    break;
+                }
+                case QwpConstants.TYPE_BYTE: {
+                    long base = frame.getPageAddress(ci);
+                    if (base == 0) {
+                        fillNulls(scratch, rows);
+                    } else {
+                        scratch.appendColumnFixedNoNull(base + lo, rows, 1);
+                    }
+                    break;
+                }
+                case QwpConstants.TYPE_BOOLEAN: {
+                    long base = frame.getPageAddress(ci);
+                    if (base == 0) {
+                        fillNulls(scratch, rows);
+                    } else {
+                        scratch.appendColumnBoolean(base + lo, rows);
+                    }
+                    break;
+                }
+                case QwpConstants.TYPE_SYMBOL: {
+                    SymbolTable st = sts[ci];
+                    long base = frame.getPageAddress(ci);
+                    if (base == 0) {
+                        fillNulls(scratch, rows);
+                    } else if (st != null) {
+                        scratch.appendColumnSymbolKeys(base + lo * 4L, rows, st, connDict);
+                    } else {
+                        // No per-column symbol table (synthetic records): per-row fallback
+                        // through record.getSymA + bytes-keyed dedup in the conn dict.
+                        perColumnRowLoop(record, lo, hi, ci);
+                    }
+                    break;
+                }
+                default:
+                    // VARCHAR, STRING, BINARY, UUID, LONG256, DECIMAL128/256, GEOHASH,
+                    // ARRAYS: columnar path not implemented yet -- fall back to per-row
+                    // for this one column. Other columns on this frame still took the
+                    // columnar path above.
+                    perColumnRowLoop(record, lo, hi, ci);
+            }
+        }
+        rowCount += rows;
+    }
+
+    private static void fillNulls(QwpColumnScratch scratch, int n) {
+        for (int i = 0; i < n; i++) {
+            scratch.appendNull();
+        }
+    }
+
+    /**
      * Appends one row's worth of values from the given record.
      */
     public void appendRow(Record record) {
@@ -111,174 +265,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         final QwpEgressColumnDef[] defs = defsArr;
         final SymbolTable[] sts = symbolTablesArr;
         for (int ci = 0; ci < n; ci++) {
-            final QwpColumnScratch scratch = scs[ci];
-            switch (wts[ci]) {
-                case QwpConstants.TYPE_BOOLEAN:
-                    scratch.appendBool(record.getBool(ci));
-                    break;
-                case QwpConstants.TYPE_BYTE:
-                    scratch.appendByte(record.getByte(ci));
-                    break;
-                case QwpConstants.TYPE_SHORT:
-                    scratch.appendShort(record.getShort(ci));
-                    break;
-                case QwpConstants.TYPE_CHAR:
-                    scratch.appendChar(record.getChar(ci));
-                    break;
-                case QwpConstants.TYPE_INT:
-                    scratch.appendIntOrNull(record.getInt(ci));
-                    break;
-                case QwpConstants.TYPE_IPV4:
-                    // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
-                    // The wire reader still cannot represent the literal address 0.0.0.0
-                    // as non-null - that's a QuestDB-level limitation inherited by the
-                    // wire format.
-                    scratch.appendIPv4OrNull(record.getInt(ci));
-                    break;
-                case QwpConstants.TYPE_LONG:
-                    scratch.appendLongOrNull(record.getLong(ci));
-                    break;
-                case QwpConstants.TYPE_DATE:
-                    scratch.appendLongOrNull(record.getDate(ci));
-                    break;
-                case QwpConstants.TYPE_TIMESTAMP:
-                case QwpConstants.TYPE_TIMESTAMP_NANOS:
-                    scratch.appendLongOrNull(record.getTimestamp(ci));
-                    break;
-                case QwpConstants.TYPE_FLOAT:
-                    // QuestDB FLOAT NULL == NaN. Spec sec 11.5 documents that NaN values
-                    // (including a "legitimate" NaN such as 0/0) round-trip as NULL.
-                    scratch.appendFloatOrNull(record.getFloat(ci));
-                    break;
-                case QwpConstants.TYPE_DOUBLE:
-                    // Same NaN-as-NULL convention as FLOAT (spec sec 11.5).
-                    scratch.appendDoubleOrNull(record.getDouble(ci));
-                    break;
-                case QwpConstants.TYPE_STRING: {
-                    CharSequence cs = record.getStrA(ci);
-                    if (cs == null) scratch.appendNull();
-                    else scratch.appendString(cs);
-                    break;
-                }
-                case QwpConstants.TYPE_VARCHAR: {
-                    Utf8Sequence us = record.getVarcharA(ci);
-                    if (us == null) scratch.appendNull();
-                    else scratch.appendVarchar(us);
-                    break;
-                }
-                case QwpConstants.TYPE_BINARY: {
-                    io.questdb.std.BinarySequence bin = record.getBin(ci);
-                    if (bin == null) {
-                        scratch.appendNull();
-                    } else {
-                        long len = bin.length();
-                        // Per-row BINARY length is encoded as the offset delta in a uint32 array,
-                        // so individual values cannot exceed Integer.MAX_VALUE bytes. The total
-                        // batch is also bounded by the 16 MiB QwpConstants.DEFAULT_MAX_BATCH_SIZE.
-                        if (len < 0 || len > Integer.MAX_VALUE) {
-                            throw CairoException.nonCritical()
-                                    .put("QWP egress: BINARY value too large [len=").put(len).put(']');
-                        }
-                        scratch.appendBinary(bin);
-                    }
-                    break;
-                }
-                case QwpConstants.TYPE_SYMBOL: {
-                    SymbolTable st = sts[ci];
-                    if (st != null) {
-                        int key = record.getInt(ci);
-                        if (key == SymbolTable.VALUE_IS_NULL) {
-                            scratch.appendNull();
-                        } else {
-                            IntIntHashMap k2c = scratch.connKeyToConnId;
-                            int mapIdx = k2c.keyIndex(key);
-                            int connId;
-                            if (mapIdx < 0) {
-                                connId = k2c.valueAt(mapIdx);
-                            } else {
-                                // First sight of this native key on this connection. Encode the
-                                // UTF-8 bytes once into the shared connection dict and remember
-                                // the assigned conn-id. Subsequent rows hit the cached branch.
-                                connId = connDict.addEntry(st.valueOf(key));
-                                k2c.putAt(mapIdx, key, connId);
-                            }
-                            scratch.appendSymbolConnId(connId);
-                        }
-                    } else {
-                        // No SymbolTable exposed by the cursor -- rare path (synthetic records).
-                        // Fall back to getSymA + bytes-keyed dedup via the connection dict. This
-                        // ships each value once per occurrence (no dedup) to keep the common path
-                        // above branch-free.
-                        CharSequence cs = record.getSymA(ci);
-                        if (cs == null) {
-                            scratch.appendNull();
-                        } else {
-                            int connId = connDict.addEntry(cs);
-                            scratch.appendSymbolConnId(connId);
-                        }
-                    }
-                    break;
-                }
-                case QwpConstants.TYPE_UUID: {
-                    long lo = record.getLong128Lo(ci);
-                    long hi = record.getLong128Hi(ci);
-                    if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) scratch.appendNull();
-                    else scratch.appendUuid(lo, hi);
-                    break;
-                }
-                case QwpConstants.TYPE_LONG256: {
-                    Long256 l256 = record.getLong256A(ci);
-                    if (l256 == null || (l256.getLong0() == Numbers.LONG_NULL
-                            && l256.getLong1() == Numbers.LONG_NULL
-                            && l256.getLong2() == Numbers.LONG_NULL
-                            && l256.getLong3() == Numbers.LONG_NULL)) {
-                        scratch.appendNull();
-                    } else {
-                        scratch.appendLong256(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3());
-                    }
-                    break;
-                }
-                case QwpConstants.TYPE_GEOHASH: {
-                    int precBits = defs[ci].getPrecisionBits();
-                    long bits = readGeoBits(record, ci, precBits);
-                    if (bits == -1L) scratch.appendNull();
-                    else scratch.appendGeohash(bits, (precBits + 7) >>> 3);
-                    break;
-                }
-                case QwpConstants.TYPE_DECIMAL64:
-                    scratch.appendLongOrNull(record.getDecimal64(ci));
-                    break;
-                case QwpConstants.TYPE_DECIMAL128: {
-                    record.getDecimal128(ci, scratch.decimal128Sink);
-                    if (scratch.decimal128Sink.isNull()) scratch.appendNull();
-                    else scratch.appendDecimal128(scratch.decimal128Sink.getLow(), scratch.decimal128Sink.getHigh());
-                    break;
-                }
-                case QwpConstants.TYPE_DECIMAL256: {
-                    record.getDecimal256(ci, scratch.decimal256Sink);
-                    if (scratch.decimal256Sink.isNull()) scratch.appendNull();
-                    else scratch.appendDecimal256(
-                            scratch.decimal256Sink.getLl(),
-                            scratch.decimal256Sink.getLh(),
-                            scratch.decimal256Sink.getHl(),
-                            scratch.decimal256Sink.getHh());
-                    break;
-                }
-                case QwpConstants.TYPE_DOUBLE_ARRAY:
-                case QwpConstants.TYPE_LONG_ARRAY: {
-                    ArrayView av = record.getArray(ci, qts[ci]);
-                    if (av == null || av.isNull()) {
-                        scratch.appendNull();
-                    } else {
-                        appendArrayBytesDirect(scratch, av, wts[ci]);
-                    }
-                    break;
-                }
-                default:
-                    throw CairoException.nonCritical()
-                            .put("QWP egress append: unsupported wire type [code=")
-                            .put(wts[ci] & 0xFF).put(']');
-            }
+            appendCell(record, ci, scs[ci], wts[ci], qts[ci], defs[ci], sts[ci]);
         }
         rowCount++;
     }
@@ -440,6 +427,200 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     public void resetForNewQuery() {
         for (int i = 0, n = scratches.size(); i < n; i++) {
             scratches.getQuick(i).resetForNewQuery();
+        }
+    }
+
+    /**
+     * Appends a single cell (one row, one column) to {@code scratch}. Factored
+     * out of {@link #appendRow} so the per-row path and the per-column fallback
+     * inside {@link #appendPageFrame} share the switch body. The JIT inlines
+     * this into both callers.
+     */
+    private void appendCell(Record record, int ci, QwpColumnScratch scratch, byte wt, int qt,
+                            QwpEgressColumnDef def, SymbolTable st) {
+        switch (wt) {
+            case QwpConstants.TYPE_BOOLEAN:
+                scratch.appendBool(record.getBool(ci));
+                break;
+            case QwpConstants.TYPE_BYTE:
+                scratch.appendByte(record.getByte(ci));
+                break;
+            case QwpConstants.TYPE_SHORT:
+                scratch.appendShort(record.getShort(ci));
+                break;
+            case QwpConstants.TYPE_CHAR:
+                scratch.appendChar(record.getChar(ci));
+                break;
+            case QwpConstants.TYPE_INT:
+                scratch.appendIntOrNull(record.getInt(ci));
+                break;
+            case QwpConstants.TYPE_IPV4:
+                // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
+                // The wire reader still cannot represent the literal address 0.0.0.0
+                // as non-null - that's a QuestDB-level limitation inherited by the
+                // wire format.
+                scratch.appendIPv4OrNull(record.getInt(ci));
+                break;
+            case QwpConstants.TYPE_LONG:
+                scratch.appendLongOrNull(record.getLong(ci));
+                break;
+            case QwpConstants.TYPE_DATE:
+                scratch.appendLongOrNull(record.getDate(ci));
+                break;
+            case QwpConstants.TYPE_TIMESTAMP:
+            case QwpConstants.TYPE_TIMESTAMP_NANOS:
+                scratch.appendLongOrNull(record.getTimestamp(ci));
+                break;
+            case QwpConstants.TYPE_FLOAT:
+                // QuestDB FLOAT NULL == NaN. Spec sec 11.5 documents that NaN values
+                // (including a "legitimate" NaN such as 0/0) round-trip as NULL.
+                scratch.appendFloatOrNull(record.getFloat(ci));
+                break;
+            case QwpConstants.TYPE_DOUBLE:
+                // Same NaN-as-NULL convention as FLOAT (spec sec 11.5).
+                scratch.appendDoubleOrNull(record.getDouble(ci));
+                break;
+            case QwpConstants.TYPE_STRING: {
+                CharSequence cs = record.getStrA(ci);
+                if (cs == null) scratch.appendNull();
+                else scratch.appendString(cs);
+                break;
+            }
+            case QwpConstants.TYPE_VARCHAR: {
+                Utf8Sequence us = record.getVarcharA(ci);
+                if (us == null) scratch.appendNull();
+                else scratch.appendVarchar(us);
+                break;
+            }
+            case QwpConstants.TYPE_BINARY: {
+                io.questdb.std.BinarySequence bin = record.getBin(ci);
+                if (bin == null) {
+                    scratch.appendNull();
+                } else {
+                    long len = bin.length();
+                    // Per-row BINARY length is encoded as the offset delta in a uint32 array,
+                    // so individual values cannot exceed Integer.MAX_VALUE bytes. The total
+                    // batch is also bounded by the 16 MiB QwpConstants.DEFAULT_MAX_BATCH_SIZE.
+                    if (len < 0 || len > Integer.MAX_VALUE) {
+                        throw CairoException.nonCritical()
+                                .put("QWP egress: BINARY value too large [len=").put(len).put(']');
+                    }
+                    scratch.appendBinary(bin);
+                }
+                break;
+            }
+            case QwpConstants.TYPE_SYMBOL: {
+                if (st != null) {
+                    int key = record.getInt(ci);
+                    if (key == SymbolTable.VALUE_IS_NULL) {
+                        scratch.appendNull();
+                    } else {
+                        IntIntHashMap k2c = scratch.connKeyToConnId;
+                        int mapIdx = k2c.keyIndex(key);
+                        int connId;
+                        if (mapIdx < 0) {
+                            connId = k2c.valueAt(mapIdx);
+                        } else {
+                            // First sight of this native key on this connection. Encode the
+                            // UTF-8 bytes once into the shared connection dict and remember
+                            // the assigned conn-id. Subsequent rows hit the cached branch.
+                            connId = connDict.addEntry(st.valueOf(key));
+                            k2c.putAt(mapIdx, key, connId);
+                        }
+                        scratch.appendSymbolConnId(connId);
+                    }
+                } else {
+                    // No SymbolTable exposed by the cursor -- rare path (synthetic records).
+                    // Fall back to getSymA + bytes-keyed dedup via the connection dict. This
+                    // ships each value once per occurrence (no dedup) to keep the common path
+                    // above branch-free.
+                    CharSequence cs = record.getSymA(ci);
+                    if (cs == null) {
+                        scratch.appendNull();
+                    } else {
+                        int connId = connDict.addEntry(cs);
+                        scratch.appendSymbolConnId(connId);
+                    }
+                }
+                break;
+            }
+            case QwpConstants.TYPE_UUID: {
+                long lo = record.getLong128Lo(ci);
+                long hi = record.getLong128Hi(ci);
+                if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) scratch.appendNull();
+                else scratch.appendUuid(lo, hi);
+                break;
+            }
+            case QwpConstants.TYPE_LONG256: {
+                Long256 l256 = record.getLong256A(ci);
+                if (l256 == null || (l256.getLong0() == Numbers.LONG_NULL
+                        && l256.getLong1() == Numbers.LONG_NULL
+                        && l256.getLong2() == Numbers.LONG_NULL
+                        && l256.getLong3() == Numbers.LONG_NULL)) {
+                    scratch.appendNull();
+                } else {
+                    scratch.appendLong256(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3());
+                }
+                break;
+            }
+            case QwpConstants.TYPE_GEOHASH: {
+                int precBits = def.getPrecisionBits();
+                long bits = readGeoBits(record, ci, precBits);
+                if (bits == -1L) scratch.appendNull();
+                else scratch.appendGeohash(bits, (precBits + 7) >>> 3);
+                break;
+            }
+            case QwpConstants.TYPE_DECIMAL64:
+                scratch.appendLongOrNull(record.getDecimal64(ci));
+                break;
+            case QwpConstants.TYPE_DECIMAL128: {
+                record.getDecimal128(ci, scratch.decimal128Sink);
+                if (scratch.decimal128Sink.isNull()) scratch.appendNull();
+                else scratch.appendDecimal128(scratch.decimal128Sink.getLow(), scratch.decimal128Sink.getHigh());
+                break;
+            }
+            case QwpConstants.TYPE_DECIMAL256: {
+                record.getDecimal256(ci, scratch.decimal256Sink);
+                if (scratch.decimal256Sink.isNull()) scratch.appendNull();
+                else scratch.appendDecimal256(
+                        scratch.decimal256Sink.getLl(),
+                        scratch.decimal256Sink.getLh(),
+                        scratch.decimal256Sink.getHl(),
+                        scratch.decimal256Sink.getHh());
+                break;
+            }
+            case QwpConstants.TYPE_DOUBLE_ARRAY:
+            case QwpConstants.TYPE_LONG_ARRAY: {
+                ArrayView av = record.getArray(ci, qt);
+                if (av == null || av.isNull()) {
+                    scratch.appendNull();
+                } else {
+                    appendArrayBytesDirect(scratch, av, wt);
+                }
+                break;
+            }
+            default:
+                throw CairoException.nonCritical()
+                        .put("QWP egress append: unsupported wire type [code=")
+                        .put(wt & 0xFF).put(']');
+        }
+    }
+
+    /**
+     * Per-column fallback used by {@link #appendPageFrame} for wire types that
+     * don't have a columnar fast path yet (VARCHAR, STRING, BINARY, UUID, etc.).
+     * Walks rows in {@code [lo, hi)} and writes only column {@code ci}; other
+     * columns of the same frame are handled by the columnar dispatch.
+     */
+    private void perColumnRowLoop(PageFrameMemoryRecord record, long lo, long hi, int ci) {
+        final QwpColumnScratch scratch = scratchesArr[ci];
+        final byte wt = wireTypesArr[ci];
+        final int qt = qdbTypesArr[ci];
+        final QwpEgressColumnDef def = defsArr[ci];
+        final SymbolTable st = symbolTablesArr[ci];
+        for (long r = lo; r < hi; r++) {
+            record.setRowIndex(r);
+            appendCell(record, ci, scratch, wt, qt, def, st);
         }
     }
 

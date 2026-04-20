@@ -302,8 +302,10 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
     @Test
     public void testEmptyTable() throws Exception {
         // An empty table still makes the processor call getPageFrameCursor -- the
-        // cursor just returns null on the first next(). advancePageFrameRow should
-        // surface null without tripping on an uninitialised record state.
+        // cursor just returns null on the first next(). The columnar slice
+        // advance must surface null without tripping on an uninitialised record
+        // state, and streaming must wrap up with a single empty RESULT_BATCH
+        // followed by RESULT_END.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute("CREATE TABLE empty_t(x LONG, v VARCHAR, ts TIMESTAMP) "

@@ -123,7 +123,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         dbPath.parent().$();
         // Pinned seeds make the fuzz deterministic across runs -- swap for new
         // constants if/when a CI run surfaces a previously-unseen failure.
-        random = TestUtils.generateRandom(LOG,2121554702200L, 1776652855068L);
+        random = TestUtils.generateRandom(LOG);
     }
 
     @Test
@@ -165,6 +165,120 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testSelectAlterSequenceFuzz() throws Exception {
+        // Fuzz sequences of SELECT / ALTER TABLE ADD COLUMN against the same
+        // table, mixing five SELECT shapes in random order with occasional
+        // schema evolutions. Each operation draws from:
+        // <ul>
+        //   <li>plain scan (PageFrameCursor)</li>
+        //   <li>id-range predicate (PageFrameCursor + filter)</li>
+        //   <li>interval predicate on designated ts (PageFrameCursor +
+        //       partition skip)</li>
+        //   <li>projection reorder (PageFrameCursor)</li>
+        //   <li>GROUP BY (RecordCursor path -- factory does NOT support
+        //       PageFrameCursor)</li>
+        //   <li>ALTER TABLE ADD COLUMN (stamps new tableId, invalidates the
+        //       server's compile cache; next SELECT with the same SQL text
+        //       must detect stale factory and recompile)</li>
+        // </ul>
+        // Every SELECT is checked against the expected row count. Runs 25 ops
+        // without network fragmentation and without per-ALTER UPDATEs (added
+        // columns are left NULL; the row-count assertions don't care about
+        // their values). Fragmentation coverage is already exhaustive in
+        // {@code QwpEgressFragmentationFuzzTest}, and skipping UPDATE saves
+        // the WAL-apply wait that dominated the earlier version of this test.
+        // Randomise everything the assertions can still predict:
+        // * rowCount -- [50, 1000]. Exercises sub-batch, batch-boundary,
+        //   and multi-batch slice paths within one run.
+        // * spacingMicros -- spacing between row timestamps. Controls how
+        //   many DAY partitions the table spreads over and therefore how
+        //   much partition skip fires on interval predicates.
+        // * opCount -- [15, 40]. Covers short and long sequences.
+        // * alterProbability -- [15%, 40%]. Varies stale-cache pressure.
+        // * filter thresholds (id range, interval bounds) -- per-call inside
+        //   runSelectShape.
+        final int rowCount = 50 + random.nextInt(951);
+        final long spacingMicros = pickSpacingMicros();
+        final int opCount = 15 + random.nextInt(26);
+        final int structuralProbPermil = 150 + random.nextInt(251);
+        final int maxLiveAddedColumns = 2 + random.nextInt(5);
+        LOG.info().$("=== select/alter sequence fuzz: rowCount=").$(rowCount)
+                .$(", spacingMicros=").$(spacingMicros)
+                .$(", opCount=").$(opCount)
+                .$(", structuralProbPermil=").$(structuralProbPermil)
+                .$(", maxLiveAddedColumns=").$(maxLiveAddedColumns).$();
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain server = startWithEnvVariables()) {
+                server.execute("CREATE TABLE fz_seq(id LONG, v DOUBLE, cat SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // Stable population: rowCount rows, id 1..rowCount, cat cycles 4
+                // symbols so GROUP BY result count stays deterministic, ts spaced
+                // spacingMicros apart to control partition span.
+                server.execute("INSERT INTO fz_seq SELECT x, x * 1.5, "
+                        + "CASE WHEN x % 4 = 0 THEN 'a' WHEN x % 4 = 1 THEN 'b' "
+                        + "WHEN x % 4 = 2 THEN 'c' ELSE 'd' END, "
+                        + "CAST((x - 1) * " + spacingMicros + "L AS TIMESTAMP) FROM long_sequence("
+                        + rowCount + ")");
+                server.awaitTable("fz_seq");
+
+                // Live added-column names. DROP picks from here (and removes);
+                // ADD appends using a monotonic counter so dropped names are never
+                // recycled. Names are never referenced by the SELECT shapes -- they
+                // exist solely to trigger the tableId bumps that exercise the
+                // stale-cache retry path. That avoids the hairy case where a cached
+                // SELECT text references a column that was subsequently dropped
+                // (would fail compilation on the retry, not a server bug).
+                java.util.List<String> liveAdded = new java.util.ArrayList<>();
+                int nextColumnId = 0;
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";" + pickCompression())) {
+                    client.connect();
+
+                    // Seed the cache with the SELECTs we'll later rerun, so the first
+                    // structural op actually invalidates something.
+                    runSelectShape(client, 0, rowCount, spacingMicros);
+
+                    for (int op = 0; op < opCount; op++) {
+                        int pick = random.nextInt(1000);
+                        boolean structural = pick < structuralProbPermil;
+                        if (structural) {
+                            boolean canAdd = liveAdded.size() < maxLiveAddedColumns;
+                            boolean canDrop = !liveAdded.isEmpty();
+                            // Choose ADD vs DROP when both are possible; otherwise pick
+                            // whichever is legal. Favour ADD 60/40 to keep the schema
+                            // evolving outward on average.
+                            boolean doAdd = (canAdd && !canDrop) || (canAdd && random.nextInt(10) < 6);
+                            if (doAdd) {
+                                String newCol = "extra_" + nextColumnId++;
+                                server.execute("ALTER TABLE fz_seq ADD COLUMN " + newCol + " VARCHAR");
+                                server.awaitTable("fz_seq");
+                                liveAdded.add(newCol);
+                                LOG.info().$("[op=").$(op).$("] ALTER ADD ").$(newCol).$();
+                            } else if (canDrop) {
+                                // Pick a random live added column to drop.
+                                int idx = random.nextInt(liveAdded.size());
+                                String victim = liveAdded.remove(idx);
+                                server.execute("ALTER TABLE fz_seq DROP COLUMN " + victim);
+                                server.awaitTable("fz_seq");
+                                LOG.info().$("[op=").$(op).$("] ALTER DROP ").$(victim).$();
+                            } else {
+                                // Neither add nor drop possible (cap hit and nothing to drop).
+                                // Fall through to SELECT so the op isn't wasted.
+                                int shape = random.nextInt(6);
+                                runSelectShape(client, shape, rowCount, spacingMicros);
+                            }
+                        } else {
+                            int shape = random.nextInt(6);
+                            runSelectShape(client, shape, rowCount, spacingMicros);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWideTables() throws Exception {
         // 10-16 columns stresses the batch buffer's per-column state arrays and
         // the schema block encoder.
@@ -179,6 +293,137 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
                 }
             }
         });
+    }
+
+    /**
+     * Runs one of six SELECT shapes against the stable {@code fz_seq} table and
+     * asserts the returned row count. Shapes span both cursor paths:
+     * PageFrameCursor (plain / predicate / interval / projection / star) and
+     * RecordCursor (GROUP BY). Filter thresholds and projection sets are
+     * randomised per call so repeat invocations of the same shape don't
+     * trivially hit the same cached factory every time.
+     * <p>
+     * Shape 5 uses {@code SELECT *}, which is deliberately unaffected by ADD /
+     * DROP COLUMN: the stable SQL text keeps hitting the cache, but each
+     * stale-factory retry recompiles against the current metadata, so the
+     * column set expands / shrinks seamlessly. Row count stays the same across
+     * schema evolutions, which is what we assert.
+     */
+    private void runSelectShape(QwpQueryClient client, int shape, int totalRows, long spacingMicros) {
+        switch (shape) {
+            case 0: // plain full scan, PageFrameCursor
+                assertRowCount(client, "SELECT id FROM fz_seq", totalRows);
+                return;
+            case 1: {
+                // id-range predicate with a random threshold. Threshold chosen
+                // inside [1, totalRows-1] so the expected count is deterministic
+                // and strictly positive.
+                int threshold = 1 + random.nextInt(Math.max(1, totalRows - 1));
+                int expected = totalRows - threshold;
+                assertRowCount(client,
+                        "SELECT id, v FROM fz_seq WHERE id > " + threshold,
+                        expected);
+                return;
+            }
+            case 2: // GROUP BY -- RecordCursor path
+                // cat cycles 4 symbols, so the result set has min(4, totalRows)
+                // rows. totalRows >= 50 in the caller, so always 4.
+                assertRowCount(client, "SELECT cat, COUNT(*) c FROM fz_seq", 4);
+                return;
+            case 3: {
+                // Interval on designated timestamp -- PageFrameCursor with
+                // partition skip. Pick a random sub-range [loRow, hiRow)
+                // within [1, totalRows+1] covering at least a few rows, then
+                // translate to ts bounds using the populated spacing.
+                int loRow = 1 + random.nextInt(Math.max(1, totalRows - 2));
+                int span = 1 + random.nextInt(Math.max(1, totalRows - loRow));
+                int hiRow = loRow + span;
+                // Row x has ts = (x - 1) * spacingMicros. Interval
+                // [(loRow - 1) * spacing, (hiRow - 1) * spacing) captures
+                // x in [loRow, hiRow - 1]: span rows.
+                long tsLo = (long) (loRow - 1) * spacingMicros;
+                long tsHi = (long) (hiRow - 1) * spacingMicros;
+                assertRowCount(client,
+                        "SELECT id FROM fz_seq "
+                                + "WHERE ts >= CAST(" + tsLo + "L AS TIMESTAMP) "
+                                + "AND ts < CAST(" + tsHi + "L AS TIMESTAMP)",
+                        span);
+                return;
+            }
+            case 4: {
+                // Random projection of the stable base columns (id, v, cat, ts).
+                // Never references {@code extra_*} columns because those come and
+                // go under ALTER; we want this shape to remain cacheable and
+                // correct regardless of structural ops.
+                String[] base = {"id", "v", "cat", "ts"};
+                int pickCount = 1 + random.nextInt(base.length);
+                String[] shuffled = base.clone();
+                for (int i = shuffled.length - 1; i > 0; i--) {
+                    int j = random.nextInt(i + 1);
+                    String tmp = shuffled[i];
+                    shuffled[i] = shuffled[j];
+                    shuffled[j] = tmp;
+                }
+                StringBuilder sql = new StringBuilder("SELECT ");
+                for (int i = 0; i < pickCount; i++) {
+                    if (i > 0) sql.append(", ");
+                    sql.append(shuffled[i]);
+                }
+                sql.append(" FROM fz_seq ORDER BY id");
+                assertRowCount(client, sql.toString(), totalRows);
+                return;
+            }
+            case 5:
+                // SELECT * -- stable SQL text, but the expanded column set
+                // follows ADD / DROP automatically. Every ALTER invalidates the
+                // cached factory; the recompile picks up the new column list
+                // without the test needing to know it. Row count stays constant.
+                assertRowCount(client, "SELECT * FROM fz_seq", totalRows);
+                return;
+            default:
+                throw new IllegalStateException("unknown shape: " + shape);
+        }
+    }
+
+    /**
+     * Row-timestamp spacing for the sequence fuzz. Picks from a small set
+     * of values that stress different partition densities for the
+     * designated-ts interval predicate: sub-partition (all rows in one
+     * partition), near-boundary (a few partitions), and sparse (many
+     * partitions). Bounded so row counts up to the fuzz max (~1000) never
+     * produce more than a handful of daily partitions.
+     */
+    private long pickSpacingMicros() {
+        // Spacing options in microseconds. 1 hour, 6 hours, ~14 minutes, ~1 hour.
+        // 864_000_000 = 14.4 min (100 rows/day); 3_600_000_000 = 1 h (24 rows/day);
+        // 21_600_000_000 = 6 h (4 rows/day, max partitions for 1000 rows = 250).
+        long[] choices = {
+                300_000_000L,       // 5 min -- dense, mostly 1 partition
+                864_000_000L,       // 14.4 min -- 100 rows per partition
+                3_600_000_000L,     // 1 h -- 24 rows per partition
+                21_600_000_000L,    // 6 h -- 4 rows per partition
+        };
+        return choices[random.nextInt(choices.length)];
+    }
+
+    private static void assertRowCount(QwpQueryClient client, String sql, long expected) {
+        final long[] seen = {0};
+        client.execute(sql, new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                seen[0] += batch.getRowCount();
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail("query failed [" + sql + "]: " + message);
+            }
+        });
+        Assert.assertEquals("row count [" + sql + "]", expected, seen[0]);
     }
 
     private static String allDataCols(int colCount) {

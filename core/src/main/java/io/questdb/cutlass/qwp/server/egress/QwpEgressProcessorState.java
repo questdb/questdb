@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -40,7 +39,6 @@ import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -134,6 +132,13 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // schema emits SCHEMA_MODE_REFERENCE instead of re-transmitting the full
     // schema the client already has.
     private boolean lastSchemaIdWasReuse;
+    // Effective per-batch row cap for this connection: the minimum of the
+    // server's hard cap ({@code QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH})
+    // and any client-requested limit sent via {@code X-QWP-Max-Batch-Rows} at
+    // handshake time. Defaults to the server's cap when no header is sent.
+    // Set once per handshake from {@link #setMaxBatchRows}; read on every
+    // iteration of the streamResults emit loop.
+    private int maxBatchRows;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
     private int nextSchemaId;
     // Page-frame iteration scaffolding. Allocated lazily on first page-frame query and
@@ -168,7 +173,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private volatile boolean streamingActive;
     private long streamingBatchSeq;
     // Set by {@link #onStreamingBatchSent} and consumed by
-    // {@link #consumeBatchSeqCommit} at the top of {@link QwpEgressUpgradeProcessor#sendResultBatch}.
+    // {@link #consumeBatchSeqCommit} at the top of
+    // {@link QwpEgressUpgradeProcessor}'s {@code sendResultBatch}.
     // Encodes the invariant "seq was incremented before the send committed bytes
     // to the response sink". Violating it (e.g. by calling sendResultBatch without
     // first calling onStreamingBatchSent) produces duplicate seq=N batches if the
@@ -212,6 +218,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // the query started - used to key PageFrameAddressCache entries. row/rowHi track
     // the iteration position inside the current frame; when row == rowHi we advance
     // to the next frame or finish.
+    // The currently-loaded page frame. Kept around across batch boundaries so
+    // callers can emit column-at-a-time over the slice [streamingPageFrameRow,
+    // streamingPageFrameRowHi). Cleared on {@link #endStreaming}.
+    private PageFrame streamingCurrentPageFrame;
     private PageFrameCursor streamingPageFrameCursor;
     private int streamingPageFrameIndex;
     private long streamingPageFrameRow;
@@ -234,8 +244,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * put the factory back into the compile cache. Must be a stable String (not a
      * reference into a reusable decoder sink) because it lives across
      * {@code PeerIsSlowToReadException} parks where the decoder buffer may be
-     * repurposed before the re-entered {@link QwpEgressUpgradeProcessor#streamResults}
-     * reaches the cache-put site.
+     * repurposed before the re-entered {@code streamResults} in
+     * {@link QwpEgressUpgradeProcessor} reaches the cache-put site.
      */
     private String streamingSqlText;
     private boolean wsHandshakeSent;
@@ -276,34 +286,33 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
-     * Advances the page-frame iteration by one row. When the current frame is
-     * exhausted, pulls the next {@link PageFrame} from the cursor and rebinds
-     * the memory record to it. Returns the {@link Record} pointing at the next
-     * row, or {@code null} when no more rows are available.
+     * Advances to a page frame that has rows available. Returns the current
+     * frame if it still has unconsumed rows, or pulls the next frame from the
+     * cursor and returns it. Returns {@code null} when the cursor is drained.
      * <p>
-     * Row indices passed to {@link PageFrameMemoryRecord#setRowIndex} are
-     * frame-local (0..frameRowCount). {@link FwdTableReaderPageFrameCursor}
-     * already offsets the page addresses by the frame's partition-lo so the
-     * record's getLong/getVarchar read from position 0 inside the frame.
+     * After a non-null return, callers may read {@link #getStreamingPageFrameRow}
+     * / {@link #getStreamingPageFrameRowHi} for the unconsumed-row range and
+     * call {@link #consumePageFrameRows} after emitting rows from that slice.
      * <p>
-     * Only valid when streaming was started via {@link #beginStreamingPageFrame}.
+     * Used by the columnar emit path in
+     * {@link io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer#appendPageFrame}.
      */
-    public Record advancePageFrameRow() {
-        // Loop (not recurse) over consecutive empty frames so a pathological cursor
-        // that emits many zero-row frames in a row cannot blow the Java stack.
+    public PageFrame advanceToPageFrame() {
+        // Skip zero-row frames (iteratively, to keep the stack bounded).
         while (streamingPageFrameRow >= streamingPageFrameRowHi) {
             PageFrame frame = streamingPageFrameCursor.next();
             if (frame == null) {
+                streamingCurrentPageFrame = null;
                 return null;
             }
             pageFrameAddressCache.add(streamingPageFrameIndex, frame);
             pageFrameMemoryPool.navigateTo(streamingPageFrameIndex, pageFrameMemoryRecord);
+            streamingCurrentPageFrame = frame;
             streamingPageFrameRow = 0;
             streamingPageFrameRowHi = frame.getPartitionHi() - frame.getPartitionLo();
             streamingPageFrameIndex++;
         }
-        pageFrameMemoryRecord.setRowIndex(streamingPageFrameRow++);
-        return pageFrameMemoryRecord;
+        return streamingCurrentPageFrame;
     }
 
     public void beginStreaming(
@@ -431,6 +440,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         fd = -1;
         securityContext = null;
         negotiatedVersion = QwpConstants.VERSION_1;
+        maxBatchRows = 0;  // reset to "unset"; will be set per-connection in onHeadersReady
         nextSchemaId = 0;
         // Fingerprint cache is connection-scoped and must be cleared with the
         // id counter. Reusing it across connections would let a stale entry
@@ -492,6 +502,16 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
+     * Called by the columnar emit path after it processes a slice of the
+     * current page frame. Advances the in-frame row cursor; the next call to
+     * {@link #advanceToPageFrame} returns the same frame if rows remain, or
+     * pulls the next frame when the cursor is exhausted.
+     */
+    public void consumePageFrameRows(int rows) {
+        streamingPageFrameRow += rows;
+    }
+
+    /**
      * Subtracts the bytes actually sent in the just-completed batch from
      * {@code creditRemaining}. No-op when the stream is not credit-limited.
      */
@@ -537,6 +557,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingPageFrameIndex = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
+        streamingCurrentPageFrame = null;
         streamingSqlText = null;
     }
 
@@ -627,6 +648,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return recvBufferLen;
     }
 
+    /**
+     * Effective per-batch row cap for this connection, already clamped to the
+     * server's hard maximum. Read by {@link QwpEgressUpgradeProcessor}'s
+     * {@code streamResults} loop to size each batch.
+     */
+    public int getMaxBatchRows() {
+        return maxBatchRows;
+    }
+
     public SecurityContext getSecurityContext() {
         return securityContext;
     }
@@ -653,6 +683,23 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public long getStreamingRowsEmitted() {
         return streamingRowsEmitted;
+    }
+
+    /**
+     * {@link PageFrameMemoryRecord} bound to the current page frame. Useful
+     * for the per-column fallback inside the columnar emit when a column type
+     * doesn't have a bulk-append fast path.
+     */
+    public PageFrameMemoryRecord getStreamingPageFrameMemoryRecord() {
+        return pageFrameMemoryRecord;
+    }
+
+    public long getStreamingPageFrameRow() {
+        return streamingPageFrameRow;
+    }
+
+    public long getStreamingPageFrameRowHi() {
+        return streamingPageFrameRowHi;
     }
 
     public int getStreamingSchemaId() {
@@ -782,6 +829,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public void setHandshakeFlushPending(boolean pending) {
         this.handshakeFlushPending = pending;
+    }
+
+    /**
+     * Called from {@code onHeadersReady} with the client's parsed
+     * {@code X-QWP-Max-Batch-Rows} preference, already clamped to the server's
+     * hard cap. See {@link #getMaxBatchRows}.
+     */
+    public void setMaxBatchRows(int rows) {
+        this.maxBatchRows = rows;
     }
 
     public void setNegotiatedVersion(byte negotiatedVersion) {

@@ -28,6 +28,7 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -53,11 +54,12 @@ import org.junit.Test;
 public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
 
     /**
-     * Fairly large -- above the default 4096-row batch size so we exercise
-     * schema-reference mode and multi-batch delta accumulation. Still small
-     * enough to keep each test under a second.
+     * Row count sized off the live server cap so the test reliably spans
+     * multiple batches. With the current cap of 16_384 this produces three
+     * batches; a future cap bump still leaves at least two. Kept as a multiple
+     * of 4 so the per-bucket even-distribution assertion doesn't need reshuffling.
      */
-    private static final int MULTI_BATCH_ROWS = 12_000;
+    private static final int MULTI_BATCH_ROWS = 2 * QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH + 4;
 
     @Before
     public void setUp() {
@@ -262,9 +264,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
                 serverMain.execute("CREATE TABLE longsym(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 200 chars 'x' repeated -- distinct from any tiny test value.
-                StringBuilder sb = new StringBuilder(200);
-                for (int i = 0; i < 200; i++) sb.append('x');
-                String longValue = sb.toString();
+                String longValue = "x".repeat(200);
                 serverMain.execute(
                         "INSERT INTO longsym VALUES ('" + longValue + "', 1::TIMESTAMP), "
                                 + "('short', 2::TIMESTAMP), ('" + longValue + "', 3::TIMESTAMP)"
