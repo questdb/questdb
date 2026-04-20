@@ -8149,35 +8149,13 @@ public class SqlOptimiser implements Mutable {
                     timestampColumn = e.toImmutable();
                 }
 
-                if (maybeKeyed.size() > 0 &&
-                        ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
-                    boolean isKeyed = false;
-
-                    final CharSequence tableName = nested.getTableName();
-                    // down-sampling of sub-queries will yield a null table name
-                    if (tableName == null) {
-                        return replaceAndTransferDependents(originalSbModel, model);
-                    }
-                    for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
-                        final ExpressionNode expr = maybeKeyed.getQuick(i);
-                        switch (expr.type) {
-                            case LITERAL:
-                                if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token)
-                                        && !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
-                                    isKeyed = true;
-                                }
-                                break;
-                            case OPERATION:
-                                isKeyed = true;
-                                break;
-                            case FUNCTION:
-                                if (!functionParser.getFunctionFactoryCache().isGroupBy(expr.token)) {
-                                    isKeyed = true;
-                                }
-                                break;
-                        }
-                    }
-
+                if (maybeKeyed.size() > 0
+                        && nested.getTableName() == null
+                        && ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
+                    // Down-sampling of sub-queries yields a null table name; the nested
+                    // rewrite happens through replaceAndTransferDependents and the outer
+                    // SAMPLE BY code path is not applicable here.
+                    return replaceAndTransferDependents(originalSbModel, model);
                 }
 
                 // These lists collect timestamp copies that we remove from the group-by model.

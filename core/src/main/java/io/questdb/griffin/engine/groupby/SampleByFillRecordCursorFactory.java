@@ -81,6 +81,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     public static final int FILL_CONSTANT = -1;
     public static final int FILL_KEY = -3;
     public static final int FILL_PREV_SELF = -2;
+    public static final int HAS_PREV_SLOT = 1;
+    public static final int KEY_INDEX_SLOT = 0;
+    public static final int PREV_ROWID_SLOT = 2;
+    // Key columns in the MapRecord start at KEY_POS_OFFSET; slots below it are
+    // the fixed-width value header (KEY_INDEX, HAS_PREV, PREV_ROWID).
+    public static final int KEY_POS_OFFSET = PREV_ROWID_SLOT + 1;
 
     private final RecordCursorFactory base;
     private final ObjList<Function> constantFills;
@@ -94,6 +100,19 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final int timestampIndex;
     private final int timestampType;
     private final Function toFunc;
+
+    /**
+     * Populates {@code mapValueTypes} with the fixed-width value header that the
+     * cursor expects on every key entry: three LONG slots in KEY_INDEX_SLOT,
+     * HAS_PREV_SLOT, PREV_ROWID_SLOT order. Callers that build the keys map
+     * externally (e.g., {@code generateFill}) must invoke this helper so the
+     * cursor's slot indices remain authoritative.
+     */
+    public static void populateMapValueTypes(ArrayColumnTypes mapValueTypes) {
+        mapValueTypes.add(ColumnType.LONG); // slot KEY_INDEX_SLOT
+        mapValueTypes.add(ColumnType.LONG); // slot HAS_PREV_SLOT
+        mapValueTypes.add(ColumnType.LONG); // slot PREV_ROWID_SLOT
+    }
 
     public SampleByFillRecordCursorFactory(
             CairoConfiguration configuration,
@@ -205,7 +224,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             sink.attr("range").val('(').val(fromFunc).val(',').val(toFunc).val(')');
         }
         sink.attr("stride").val('\'').val(samplingInterval).val(samplingIntervalUnit).val('\'');
-        if (hasPrevFill) {
+        if (hasPrevFill && hasAnyConstantSlot()) {
+            // At least one aggregate is filled via PREV and at least one is
+            // filled via a constant (NULL or non-null). "prev" alone would
+            // misrepresent the per-column behavior.
+            sink.attr("fill").val("mixed");
+        } else if (hasPrevFill) {
             sink.attr("fill").val("prev");
         } else if (hasAnyConstantFill()) {
             sink.attr("fill").val("value");
@@ -247,11 +271,23 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         return false;
     }
 
-    private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
-        private static final int HAS_PREV_SLOT = 1;
-        private static final int KEY_INDEX_SLOT = 0;
-        private static final int PREV_ROWID_SLOT = 2;
+    private boolean hasAnyConstantSlot() {
+        // Returns true when any non-timestamp, non-key column is classified as
+        // FILL_CONSTANT (NULL or a concrete value). Used by toPlan to detect
+        // heterogeneous fill modes: a "value"/"null" slot alongside a PREV
+        // slot warrants the "mixed" label instead of "prev".
+        for (int i = 0, n = fillModes.size(); i < n; i++) {
+            if (i == timestampIndex) {
+                continue;
+            }
+            if (fillModes.getQuick(i) == FILL_CONSTANT) {
+                return true;
+            }
+        }
+        return false;
+    }
 
+    private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
         private final long calendarOffset;
         private final int columnCount;
         private final ObjList<Function> constantFills;
@@ -260,7 +296,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final FillTimestampConstant fillTimestampFunc;
         private final Function fromFunc;
         private final boolean hasPrevFill;
-        private final IntList keyColIndices;
         private final int keyPosOffset;
         private final RecordSink keySink;
         private final Map keysMap;
@@ -275,6 +310,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean hasDataForCurrentBucket;
         private boolean hasExplicitTo;
         private boolean hasPendingRow;
+        private boolean hasPrevForCurrentGap;
         private boolean hasSimplePrev;
         private boolean isBaseCursorExhausted;
         private boolean isEmittingFills;
@@ -319,13 +355,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.hasPrevFill = hasPrevFill;
             this.keySink = keySink;
             this.keysMap = keysMap;
-            this.keyColIndices = keyColIndices;
             this.symbolTableColIndices = symbolTableColIndices;
 
-            // keyPosOffset accounts for the fixed 3-LONG value header in the MapRecord:
-            // slot 0 = KEY_INDEX, slot 1 = HAS_PREV, slot 2 = PREV_ROWID. Key columns
-            // follow at index 3 in the MapRecord column space.
-            this.keyPosOffset = 3;
+            // Key columns in the MapRecord follow the fixed-width value header;
+            // slots below KEY_POS_OFFSET are KEY_INDEX_SLOT, HAS_PREV_SLOT,
+            // PREV_ROWID_SLOT. See populateMapValueTypes for the authoritative
+            // header layout.
+            this.keyPosOffset = KEY_POS_OFFSET;
             this.outputColToKeyPos = new int[columnCount];
             Arrays.fill(outputColToKeyPos, -1);
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
@@ -433,7 +469,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // Non-keyed gap
                     fillRecord.isGapFilling = true;
                     fillTimestampFunc.value = nextBucketTimestamp;
-                    if (hasSimplePrev) {
+                    hasPrevForCurrentGap = hasSimplePrev;
+                    if (hasPrevForCurrentGap) {
                         // Position prevRecord once; FillRecord getters read from it directly.
                         baseCursor.recordAt(prevRecord, simplePrevRowId);
                     }
@@ -508,8 +545,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (!keyPresent[keyIdx]) {
                         fillRecord.isGapFilling = true;
                         fillTimestampFunc.value = nextBucketTimestamp;
-                        // Position prevRecord once; FillRecord getters read from it directly.
-                        if (value.getLong(HAS_PREV_SLOT) != 0) {
+                        // Cache the HAS_PREV flag once per fill row so the 30+
+                        // FillRecord getters avoid re-materialising the MapValue
+                        // via keysMapRecord.getValue() on every per-column read.
+                        hasPrevForCurrentGap = value.getLong(HAS_PREV_SLOT) != 0;
+                        if (hasPrevForCurrentGap) {
+                            // Position prevRecord once; FillRecord getters read from it directly.
                             baseCursor.recordAt(prevRecord, value.getLong(PREV_ROWID_SLOT));
                         }
                         return true;
@@ -542,10 +583,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private boolean hasKeyPrev() {
-            if (keysMap != null) {
-                return keysMapRecord.getValue().getLong(HAS_PREV_SLOT) != 0;
-            }
-            return hasSimplePrev;
+            // Both keyed and non-keyed emission paths cache the PREV availability
+            // into hasPrevForCurrentGap right before each fill row is emitted
+            // (see emitNextFillRow and the non-keyed gap branch in hasNext).
+            return hasPrevForCurrentGap;
         }
 
         private void initialize() {

@@ -35,7 +35,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -54,6 +56,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         super(metadata);
         this.sortColumnFilter = sortColumnFilter;
         RecordTreeChain chain = null;
+        ObjList<DirectIntList> rankMaps = null;
         try {
             chain = new RecordTreeChain(
                     metadata,
@@ -71,12 +74,17 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             // on any constructor-throw path and frees it through its own
             // error handling.
             this.base = base;
-            this.cursor = new SortedRecordCursor(chain, comparator, SortKeyEncoder.createRankMaps(metadata, sortColumnFilter));
+            // Hoist rankMaps into a named local so the catch can free the
+            // (native-memory-owning) list if the cursor ctor below throws after
+            // createRankMaps succeeds. On success, ownership passes to the cursor.
+            rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
+            this.cursor = new SortedRecordCursor(chain, comparator, rankMaps);
         } catch (Throwable th) {
             // Null the field so _close() does not double-free the caller-owned
             // base factory if the assignment above completed before the throw.
             this.base = null;
             Misc.free(chain);
+            Misc.freeObjList(rankMaps);
             close();
             throw th;
         }

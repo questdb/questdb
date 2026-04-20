@@ -1779,7 +1779,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     """
                             Sample By Fill
                               stride: '1h'
-                              fill: prev
+                              fill: mixed
                                 Sort
                                   keys: [ts]
                                     Async Group By workers: 1
@@ -2801,6 +2801,178 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 || msg.contains("Maximum number of pages") || msg.contains("limit")
                                 || msg.contains("overflow") || msg.contains("breached"))
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testRoutingAlignToFirstObservationStaysOnLegacyPath() throws Exception {
+        assertMemoryLeak(() -> {
+            // ALIGN TO FIRST OBSERVATION forces the legacy cursor path because
+            // the fast-path bucket grid depends on timestamp_floor_utc's
+            // calendar alignment, which is incompatible with observation-anchored
+            // buckets. The plan must show "Sample By" without the "Fill" suffix.
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertPlanNoLeakCheck(
+                    "SELECT first(val) FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION",
+                    """
+                            Sample By
+                              fill: null
+                              values: [first(val)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testRoutingFillLinearStaysOnInterpolatePath() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(LINEAR) needs forward-looking interpolation that the streaming
+            // fast path cannot provide; SqlOptimiser.hasLinearFill disables the
+            // rewrite. The plan must show "Sample By" without the "Fill" suffix.
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertPlanNoLeakCheck(
+                    "SELECT first(val) FROM x SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR",
+                    """
+                            Sample By
+                              fill: linear
+                              values: [first(val)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testRoutingFromBindVariableStaysOnLegacyPath() throws Exception {
+        assertMemoryLeak(() -> {
+            // A bind variable as the FROM lower bound disables the rewriteSampleBy
+            // gate in SqlOptimiser (sampleByFrom.type == BIND_VARIABLE). The query
+            // must execute on the legacy cursor path and produce correct rows.
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            bindVariableService.clear();
+            // 2024-01-01T00:00:00Z expressed as microseconds since epoch.
+            bindVariableService.setTimestamp("lowerBound", 1_704_067_200_000_000L);
+            // The query's correct output is the same regardless of which cursor
+            // path executes it. If a future refactor routed bind-var FROM through
+            // the fast path and broke it, this test would catch the regression.
+            assertQueryNoLeakCheck(
+                    """
+                            first\tts
+                            1.0\t2024-01-01T00:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z
+                            3.0\t2024-01-01T02:00:00.000000Z
+                            """,
+                    "SELECT first(val), ts FROM x SAMPLE BY 1h FROM :lowerBound TO '2024-01-01T03:00:00.000000Z' FILL(NULL)",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillKeyedEmptyTableNoFromTo() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keyed SAMPLE BY FILL on an empty table with neither FROM nor TO
+            // emits zero rows; pass 1 discovers no keys and the initialize
+            // short-circuit at keyCount==0 must terminate cleanly.
+            execute("CREATE TABLE x (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQueryNoLeakCheck(
+                    "sym\tsum\tts\n",
+                    "SELECT sym, sum(val), ts FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillThreeWayMixedModes() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV, 42.0, NULL) exercises three distinct fill modes on
+            // three aggregates in a single query. Each gap bucket must carry
+            // the previous value for agg1, the constant 42.0 for agg2, and
+            // NULL for agg3. The plan must report "fill: mixed".
+            execute("CREATE TABLE x (a DOUBLE, b DOUBLE, c DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, 10.0, 100.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(2.0, 20.0, 200.0, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            first\tfirst1\tfirst2\tts
+                            1.0\t10.0\t100.0\t2024-01-01T00:00:00.000000Z
+                            1.0\t42.0\tnull\t2024-01-01T01:00:00.000000Z
+                            2.0\t20.0\t200.0\t2024-01-01T02:00:00.000000Z
+                            """,
+                    "SELECT first(a), first(b), first(c), ts FROM x SAMPLE BY 1h FILL(PREV, 42.0, NULL) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT first(a), first(b), first(c), ts FROM x SAMPLE BY 1h FILL(PREV, 42.0, NULL) ALIGN TO CALENDAR",
+                    """
+                            Sample By Fill
+                              stride: '1h'
+                              fill: mixed
+                                Sort
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(a),first(b),first(c)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFillWithOffsetAndTimezoneAcrossDst() throws Exception {
+        assertMemoryLeak(() -> {
+            // Sub-day stride with ALIGN TO CALENDAR + TIME ZONE + WITH OFFSET
+            // across Europe/Riga's DST fall-back (2021-10-31 04:00 local clocks
+            // go back to 03:00 local). The offset shifts the bucket grid, the
+            // timezone adjusts wall-clock buckets, and the fill cursor must
+            // produce the expected fill rows without double-applying the offset.
+            execute("CREATE TABLE z (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO z VALUES " +
+                    "(1.0, '2021-10-31T00:00:00.000000Z')," +
+                    "(5.0, '2021-10-31T04:00:00.000000Z')");
+            // Buckets are 1h aligned to Riga calendar with a 30-minute offset.
+            // Data exists at 00:00Z and 04:00Z; the gap buckets between them
+            // are filled with NULL. The query must terminate (no infinite loop
+            // under DST fall-back) and return a monotonic, non-overlapping
+            // bucket sequence.
+            try (
+                    RecordCursorFactory factory = select(
+                            "SELECT ts, sum(val) FROM z SAMPLE BY 1h FILL(NULL) " +
+                                    "ALIGN TO CALENDAR TIME ZONE 'Europe/Riga' WITH OFFSET '00:30'"
+                    );
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                long prevTs = Long.MIN_VALUE;
+                int rowCount = 0;
+                while (cursor.hasNext()) {
+                    final Record record = cursor.getRecord();
+                    final long ts = record.getTimestamp(0);
+                    Assert.assertTrue("bucket sequence not monotonic at row " + rowCount, ts > prevTs);
+                    prevTs = ts;
+                    rowCount++;
+                    // Bounded sanity: even with DST fall-back the output cannot
+                    // exceed a handful of buckets in this narrow data range.
+                    Assert.assertTrue("runaway fill emission at row " + rowCount, rowCount < 32);
+                }
+                // At least one row must be emitted (the real data bucket for
+                // 00:00Z) and one NULL fill bucket between the two data points.
+                Assert.assertTrue("expected multiple buckets, got " + rowCount, rowCount >= 2);
             }
         });
     }

@@ -3474,6 +3474,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // factoryColToUserFillIdx and aggNonKeyCount are already built above
                 // (shared with the bare FILL(PREV) branch).
 
+                // Decide broadcast vs per-column up front so the classification loop
+                // runs with consistent state. The user must provide one fill value
+                // per non-key aggregate unless the single value is broadcastable
+                // (bare PREV or NULL). A single non-null constant or PREV(colX)
+                // with missing slots must be rejected as under-specified. Bare PREV
+                // parses as LITERAL, PREV(colX) as FUNCTION, so the broadcast
+                // predicate requires LITERAL for PREV; NULL only has a LITERAL form.
+                final boolean isBroadcastMode;
+                if (fillValuesExprs.size() < aggNonKeyCount) {
+                    final ExpressionNode only = fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null;
+                    // If the single value is a PREV expression with arguments, validate
+                    // its syntax first so the user sees the precise grammar error instead
+                    // of the count-mismatch fallback. The per-column loop enforces the
+                    // same rule for each slot in non-broadcast mode.
+                    if (only != null && isPrevKeyword(only.token) && only.type != ExpressionNode.LITERAL) {
+                        final boolean isPrevWithLiteralArg = only.type == ExpressionNode.FUNCTION
+                                && only.paramCount == 1
+                                && only.rhs != null
+                                && only.rhs.type == ExpressionNode.LITERAL;
+                        if (!isPrevWithLiteralArg) {
+                            throw SqlException.$(only.position, "PREV argument must be a single column name");
+                        }
+                    }
+                    final boolean isBareBroadcastable = only != null
+                            && ((isPrevKeyword(only.token) && only.type == ExpressionNode.LITERAL)
+                            || isNullKeyword(only.token));
+                    if (!isBareBroadcastable) {
+                        throw SqlException.$(fillValuesExprs.getQuick(0).position, "not enough fill values");
+                    }
+                    isBroadcastMode = true;
+                } else {
+                    isBroadcastMode = false;
+                }
+
                 // Track the ExpressionNode that established each column's fill mode
                 // so the chain-rejection error can point at the specific offending
                 // PREV(...) expression rather than at the first fill expression.
@@ -3499,9 +3533,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         constantFillFuncs.add(NullConstant.NULL);
                         continue;
                     }
-                    ExpressionNode fillExpr = fillIdx >= 0 && fillIdx < fillValuesExprs.size()
-                            ? fillValuesExprs.getQuick(fillIdx)
-                            : (fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null);
+                    // In broadcast mode the pre-loop check above validated a single
+                    // broadcastable value (NULL or bare PREV); in per-column mode
+                    // aggNonKeyCount <= fillValuesExprs.size() guarantees fillIdx
+                    // is in range.
+                    final ExpressionNode fillExpr = fillValuesExprs.getQuick(isBroadcastMode ? 0 : fillIdx);
                     if (fillExpr != null && isPrevKeyword(fillExpr.token)) {
                         // Bare PREV in per-column list means self-prev for this slot.
                         boolean isBarePrev = fillExpr.type == ExpressionNode.LITERAL;
@@ -3564,32 +3600,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
                         }
                         constantFillFuncs.add(NullConstant.NULL);
-                    } else if (fillExpr == null || isNullKeyword(fillExpr.token)) {
+                    } else if (isNullKeyword(fillExpr.token)) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                         constantFillFuncs.add(NullConstant.NULL);
                     } else {
+                        // Reaching this branch implies isBroadcastMode == false,
+                        // because every broadcastable fill value (NULL or bare PREV)
+                        // is handled by one of the branches above. Therefore
+                        // fillIdx < fillValues.size() is guaranteed here.
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        if (fillIdx >= 0 && fillIdx < fillValues.size()) {
-                            constantFillFuncs.add(fillValues.getQuick(fillIdx));
-                            fillValues.setQuick(fillIdx, null); // transfer ownership
-                        } else {
-                            constantFillFuncs.add(NullConstant.NULL);
-                        }
-                    }
-                }
-                // In per-column mode the user must provide one fill value per
-                // non-key aggregate. Only bare FILL(PREV) and FILL(NULL) broadcast;
-                // a single non-null constant or FILL(PREV(colX)) must be rejected as
-                // under-specified. Bare PREV parses as LITERAL, whereas PREV(colX)
-                // parses as FUNCTION, so the broadcast predicate requires LITERAL for
-                // PREV (NULL only has a LITERAL form).
-                if (fillValuesExprs.size() < aggNonKeyCount) {
-                    final ExpressionNode only = fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null;
-                    final boolean isBareBroadcastable = only != null
-                            && ((isPrevKeyword(only.token) && only.type == ExpressionNode.LITERAL)
-                                    || isNullKeyword(only.token));
-                    if (!isBareBroadcastable) {
-                        throw SqlException.$(fillValuesExprs.getQuick(0).position, "not enough fill values");
+                        constantFillFuncs.add(fillValues.getQuick(fillIdx));
+                        fillValues.setQuick(fillIdx, null); // transfer ownership
                     }
                 }
                 // Reject chains: a cross-column PREV whose source is itself a
@@ -3628,12 +3649,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Fixed 3-LONG value header per key: keyIndex, hasPrev, prevRowId.
             // The cursor reads typed prev values via baseCursor.recordAt(prevRecord, prevRowId).
+            // populateMapValueTypes owns the fixed-width value header layout so the
+            // keys map's slot indices stay in sync with the cursor's constants.
             final ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
-            mapValueTypes.add(ColumnType.LONG); // slot 0: keyIndex
-            mapValueTypes.add(ColumnType.LONG); // slot 1: hasPrev
-            mapValueTypes.add(ColumnType.LONG); // slot 2: prevRowId
+            SampleByFillRecordCursorFactory.populateMapValueTypes(mapValueTypes);
 
             RecordSink keySink = null;
             if (keyColIndices.size() > 0) {
