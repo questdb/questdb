@@ -75,15 +75,15 @@ import io.questdb.std.str.Path;
  */
 public class ExternalSortedParquetImporter {
 
+    public static final int DEFAULT_PAGE_SIZE = 4_096;
+    // Default run-path prefix used when a caller does not supply one. Two
+    // concurrent imports against the same FilesFacade MUST pass distinct
+    // prefixes to avoid colliding on "run_<i>.parquet".
+    public static final String DEFAULT_RUN_PATH_PREFIX = "run_";
     private static final Log LOG = LogFactory.getLog(ExternalSortedParquetImporter.class);
     // Each run holds exactly one source row group worth of data in a single
     // output row group, so the streaming writer flushes everything in one shot.
     private static final long RUN_DATA_PAGE_SIZE = 0L; // default
-    // The run-path namespace is a compile-time constant. Concurrent imports
-    // against the same FilesFacade would collide on "run_<i>.parquet"; a
-    // follow-up should plumb a caller-supplied prefix through phaseA. Not
-    // hit today since there is one caller per import.
-    private static final String RUN_PATH_PREFIX = "run_";
     private static final String RUN_PATH_SUFFIX = ".parquet";
 
     /**
@@ -111,6 +111,80 @@ public class ExternalSortedParquetImporter {
             CharSequence tsColumnName,
             int tsColumnType
     ) {
+        return phaseA(
+                srcFf, runFf, srcPath, tsColumnName, tsColumnType, 1L,
+                DEFAULT_RUN_PATH_PREFIX
+        );
+    }
+
+    /**
+     * Phase A with explicit scale for the source timestamp column.
+     * <p>
+     * When the source is a LONG column in non-microsecond units (epoch seconds,
+     * milliseconds, nanoseconds-as-long, etc.) the caller supplies a positive
+     * {@code tsScaleMultiplier} such that {@code sourceValue * multiplier}
+     * yields the destination-microseconds value. Typical values:
+     * <ul>
+     *   <li>1 — source already in microseconds (or a DATE column intentionally
+     *       re-interpreted as us)</li>
+     *   <li>1_000 — source in milliseconds (e.g. DATE with intended
+     *       TIMESTAMP output)</li>
+     *   <li>1_000_000 — source in seconds (e.g. hits.EventTime)</li>
+     * </ul>
+     * Sort order is preserved under positive monotonic scaling. Sub-microsecond
+     * inputs (nanoseconds) require division and are not supported by this
+     * method — handle those with an upstream conversion pass.
+     *
+     * @param tsScaleMultiplier positive long, or 1 for no scaling.
+     */
+    public static ObjList<RunHandle> phaseA(
+            FilesFacade srcFf,
+            FilesFacade runFf,
+            CharSequence srcPath,
+            CharSequence tsColumnName,
+            int tsColumnType,
+            long tsScaleMultiplier
+    ) {
+        return phaseA(
+                srcFf, runFf, srcPath, tsColumnName, tsColumnType,
+                tsScaleMultiplier, DEFAULT_RUN_PATH_PREFIX
+        );
+    }
+
+    /**
+     * Phase A with all knobs exposed. The {@code runPathPrefix} is prepended
+     * to each run's filename: a run for source RG {@code k} is written at
+     * {@code runPathPrefix + k + ".parquet"}. Two concurrent importers sharing
+     * a single {@link FilesFacade} (e.g. two calls targeting the same
+     * {@code MemFdFilesFacade.INSTANCE}) MUST supply distinct prefixes to
+     * avoid collisions.
+     * <p>
+     * The prefix is not validated for path separators or shell-unsafe
+     * characters — callers are expected to use simple identifiers such as
+     * {@code "import42_run_"} or a UUID-derived string.
+     */
+    public static ObjList<RunHandle> phaseA(
+            FilesFacade srcFf,
+            FilesFacade runFf,
+            CharSequence srcPath,
+            CharSequence tsColumnName,
+            int tsColumnType,
+            long tsScaleMultiplier,
+            CharSequence runPathPrefix
+    ) {
+        if (tsScaleMultiplier <= 0) {
+            throw CairoException.nonCritical()
+                    .put("phaseA tsScaleMultiplier must be positive [got=")
+                    .put(tsScaleMultiplier).put(']');
+        }
+        if (runPathPrefix == null || runPathPrefix.length() == 0) {
+            throw CairoException.nonCritical()
+                    .put("phaseA runPathPrefix must be non-empty");
+        }
+        // Defensive copy: if the caller passes a mutable CharSequence they
+        // reuse across imports, our later string concatenations would see the
+        // mutated value. Snapshot up front.
+        final String prefix = runPathPrefix.toString();
         final int memoryTag = MemoryTag.NATIVE_IMPORT;
         final ObjList<RunHandle> runs = new ObjList<>();
 
@@ -145,12 +219,16 @@ public class ExternalSortedParquetImporter {
             }
 
             final int srcTsColType = meta.getColumnType(tsColumnIndex);
-            if (!ColumnType.isTimestamp(srcTsColType)) {
-                // TIMESTAMP source only for now. LONG and DATE handling is a
-                // planned follow-up; the stats-decoding path for those types
-                // already exists in BulkSortedParquetWriter.
+            final int srcTsTag = ColumnType.tagOf(srcTsColType);
+            if (srcTsTag != ColumnType.TIMESTAMP
+                    && srcTsTag != ColumnType.LONG
+                    && srcTsTag != ColumnType.DATE) {
+                // We need an 8-byte integer we can read as int64 and sort.
+                // Float/double timestamps and narrower int types are out of
+                // scope; surface a clear rejection rather than silently
+                // misinterpret bytes.
                 throw CairoException.nonCritical()
-                        .put("phaseA currently requires TIMESTAMP source type [column=")
+                        .put("phaseA requires TIMESTAMP, LONG, or DATE source ts column [column=")
                         .put(tsColumnName)
                         .put(", type=").put(ColumnType.nameOf(srcTsColType))
                         .put(']');
@@ -173,11 +251,11 @@ public class ExternalSortedParquetImporter {
 
             for (int rg = 0; rg < rowGroupCount; rg++) {
                 final int rgRows = meta.getRowGroupSize(rg);
-                final String runPath = RUN_PATH_PREFIX + rg + RUN_PATH_SUFFIX;
+                final String runPath = prefix + rg + RUN_PATH_SUFFIX;
                 final RunHandle run = sortAndWriteRun(
                         runFf, decoder, columns, meta,
                         rg, rgRows, tsColumnIndex, effectiveTsType,
-                        runPath, columnCount, memoryTag
+                        runPath, columnCount, memoryTag, tsScaleMultiplier
                 );
                 runs.add(run);
             }
@@ -242,6 +320,39 @@ public class ExternalSortedParquetImporter {
             CharSequence tsColumnName,
             SortedRowSink sink
     ) {
+        phaseB(runFf, runs, tsColumnName, sink, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Phase B with an optional window hint. IMPORTANT: true page-level
+     * streaming is currently disabled because QuestDB's native
+     * {@code PartitionDecoder} silently corrupts VARCHAR columns when asked
+     * to decode a sub-range of a row group that was written by QuestDB's
+     * streaming parquet writer (as phaseA produces). Passing any
+     * {@code pageSize} smaller than the run's row count would therefore
+     * produce garbled output for any run containing VARCHAR. Until that
+     * upstream decoder bug is fixed, {@code pageSize} is retained as an
+     * API-level hint but the implementation always decodes each run's
+     * full row group in one call.
+     * <p>
+     * When the decoder bug is resolved, this method can restore real
+     * window-based streaming; see git history for the reference
+     * implementation that was reverted after the bug was caught.
+     *
+     * @param pageSize retained for forward compatibility; ignored today.
+     */
+    public static void phaseB(
+            FilesFacade runFf,
+            ObjList<RunHandle> runs,
+            CharSequence tsColumnName,
+            SortedRowSink sink,
+            int pageSize
+    ) {
+        if (pageSize <= 0) {
+            throw CairoException.nonCritical()
+                    .put("phaseB pageSize must be positive [got=")
+                    .put(pageSize).put(']');
+        }
         final int memoryTag = MemoryTag.NATIVE_IMPORT;
         final int runCount = runs.size();
         if (runCount == 0) {
@@ -311,6 +422,12 @@ public class ExternalSortedParquetImporter {
                 columns.add(meta0.getColumnType(c));
             }
 
+            // Whole-run decode. See class/method javadoc on phaseB(pageSize)
+            // for why we do not page-stream: upstream PartitionDecoder
+            // corrupts VARCHAR on sub-range decode of QuestDB-streaming-
+            // writer-produced parquets. The pageSize parameter is ignored.
+            final int[] cursors = new int[runCount];
+
             long totalRows = 0;
             for (int k = 0; k < runCount; k++) {
                 final int rgRows = decoders[k].metadata().getRowGroupSize(0);
@@ -336,7 +453,6 @@ public class ExternalSortedParquetImporter {
             final long[] heapTs = new long[runCount + 1];
             final int[] heapIdx = new int[runCount + 1];
             int heapSize = 0;
-            final int[] cursors = new int[runCount];
             for (int k = 0; k < runCount; k++) {
                 if (rgSizes[k] > 0) {
                     final long ts = Unsafe.getUnsafe().getLong(tsPtrs[k]);
@@ -344,7 +460,7 @@ public class ExternalSortedParquetImporter {
                 }
             }
 
-            // 5. Merge loop. Pop the head, feed the sink, advance the cursor.
+            // 5. Merge loop. Pop the head, feed the sink, advance cursors.
             long delivered = 0;
             while (heapSize > 0) {
                 final int k = heapIdx[1];
@@ -529,7 +645,8 @@ public class ExternalSortedParquetImporter {
             int effectiveTsType,
             String runPath,
             int columnCount,
-            int memoryTag
+            int memoryTag,
+            long tsScaleMultiplier
     ) {
         if (rgRows <= 0) {
             throw CairoException.nonCritical()
@@ -582,8 +699,15 @@ public class ExternalSortedParquetImporter {
             }
             Vect.sortLongIndexAscInPlace(sortArray, rgRows);
 
-            final long runMinTs = Unsafe.getUnsafe().getLong(sortArray);
-            final long runMaxTs = Unsafe.getUnsafe().getLong(sortArray + (long) (rgRows - 1) * 16L);
+            // Raw min/max come from the sort index. Apply the ts scale
+            // multiplier so RunHandle reports the same units as the output
+            // parquet ts column — phaseB uses these only for logging today,
+            // but any future caller expecting ts-like values should see the
+            // scaled values.
+            final long rawMinTs = Unsafe.getUnsafe().getLong(sortArray);
+            final long rawMaxTs = Unsafe.getUnsafe().getLong(sortArray + (long) (rgRows - 1) * 16L);
+            final long runMinTs = rawMinTs * tsScaleMultiplier;
+            final long runMaxTs = rawMaxTs * tsScaleMultiplier;
 
             // 3. Allocate output chunk buffers (one chunk == one output RG).
             for (int c = 0; c < columnCount; c++) {
@@ -620,6 +744,11 @@ public class ExternalSortedParquetImporter {
                         final int elemSize = colSizes[c];
                         final long srcPtr = srcBuf.getChunkDataPtr(c) + (long) origRow * elemSize;
                         final long dstPtr = outDataAddrs[c] + (long) outPos * elemSize;
+                        if (c == tsColumnIndex && tsScaleMultiplier != 1L && elemSize == 8) {
+                            final long raw = Unsafe.getUnsafe().getLong(srcPtr);
+                            Unsafe.getUnsafe().putLong(dstPtr, raw * tsScaleMultiplier);
+                            continue;
+                        }
                         switch (elemSize) {
                             case 1 -> Unsafe.getUnsafe().putByte(dstPtr, Unsafe.getUnsafe().getByte(srcPtr));
                             case 2 -> Unsafe.getUnsafe().putShort(dstPtr, Unsafe.getUnsafe().getShort(srcPtr));
