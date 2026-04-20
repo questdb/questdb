@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 14-03-PLAN.md
-last_updated: "2026-04-20T15:12:50.206Z"
+status: verifying
+stopped_at: Completed 14-04-PLAN.md — Phase 14 ready for verification
+last_updated: "2026-04-20T15:52:27.131Z"
 last_activity: 2026-04-20
 progress:
   total_phases: 14
-  completed_phases: 12
+  completed_phases: 13
   total_plans: 24
-  completed_plans: 23
-  percent: 96
+  completed_plans: 24
+  percent: 100
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 
 Phase: 14 (fix-issues-from-moderate-list-for-m5-and-m6-just-mention-in-) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-20
 
 Progress: [##########] 100%
@@ -69,6 +69,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 14 P01 | 23min | 3 tasks | 4 files |
 | Phase 14 P02 | 39min | 3 tasks | 4 files |
 | Phase 14 P03 | 20min | 2 tasks | 2 files |
+| Phase 14-fix-issues-from-moderate-list-for-m5-and-m6-just-mention-in- P04 | 35min | 4 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -138,6 +139,10 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 14]: rewriteSampleBy wraps setFillFrom/setFillTo with createToUtcCall when isSubDay AND sampleByTimezoneName is present; hasSubDayTimezoneWrap boolean captures the guard once and drives both wraps, keeping lockstep with the tsFloor FROM wrap at :8308
 - [Phase 14]: Inline ternary wrap instead of a new helper method; mirrors the inline style of the other three createToUtcCall call sites (tsFloor at :8308 and FROM/TO fallback at :8462/:8465); no cursor-side change per D-09
 - [Phase 14]: M-4 regression tests: Europe/London TIME ZONE during June 2024 (BST UTC+1); SQL clause order is SAMPLE BY <unit> FROM ... TO ... FILL(...) ALIGN TO CALENDAR TIME ZONE '...' (TIME ZONE last); assertQueryNoLeakCheck uses (..., false, false) to match SAMPLE BY FILL factory contract
+- [Phase 14]: Plan 04 M-7 ownership fix: assign this.base inside try after RecordTreeChain succeeds AND null this.base in catch before cascaded close() — two-step edit; either step alone is incomplete (step 1 alone still double-frees on a late throw from SortKeyEncoder.createRankMaps; step 2 alone won't compile with final modifier)
+- [Phase 14]: Plan 04 D-18 chain-walk helper: testSampleByCursorReleasesMemoryOnClose walks factory.getBaseFactory() with self-loop guard (next == cur) until expectedClass.isInstance match; one helper edit covers all three FILL CALENDAR tests; FIRST OBSERVATION tests and non-FILL CALENDAR test unaffected because their expected class is on the first step of the chain
+- [Phase 14]: Plan 04 D-20: PR #6946 ## Trade-offs section gained 2 bullets (M-5 O(unique_keys × buckets) memory envelope, M-6 3-pass scan multiplier); appended after existing 4 bullets per D-19 policy; user approved verbatim at checkpoint; gh pr edit 6946 verified via grep on both bullet substrings
+- [Phase 14]: Plan 04 notable flag: M-7 regression test passes pre-fix under idempotent close() — most QuestDB factory classes clear internal pointer state after first free, so latent pre-fix double-free rarely produces observable assertMemoryLeak imbalance; test still locks clean exception-propagation contract + catch-block sequence + canonical config-override-driven throw pattern
 
 ### Roadmap Evolution
 
@@ -162,6 +167,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-20T15:12:50.203Z
-Stopped at: Completed 14-03-PLAN.md
+Last session: 2026-04-20T15:52:07.980Z
+Stopped at: Completed 14-04-PLAN.md — Phase 14 ready for verification
 Resume file: None
