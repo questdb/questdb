@@ -31,17 +31,11 @@ import io.questdb.std.str.Utf8Sequence;
 
 public interface CoveringRowCursor extends RowCursor {
 
-    default ArrayView getCoveredArray(int includeIdx, int columnType) {
-        return null;
-    }
+    ArrayView getCoveredArray(int includeIdx, int columnType);
 
-    default BinarySequence getCoveredBin(int includeIdx) {
-        return null;
-    }
+    BinarySequence getCoveredBin(int includeIdx);
 
-    default long getCoveredBinLen(int includeIdx) {
-        return -1;
-    }
+    long getCoveredBinLen(int includeIdx);
 
     byte getCoveredByte(int includeIdx);
 

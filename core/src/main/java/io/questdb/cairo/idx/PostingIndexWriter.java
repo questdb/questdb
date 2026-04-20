@@ -1853,7 +1853,14 @@ public class PostingIndexWriter implements IndexWriter {
         // Enables O(1) key lookup without binary search or CSR build.
         int keyRange = maxKey - minKey + 1;
         int prefixSumSize = (keyRange + 2) * Integer.BYTES;
-        long totalGenSize = headerSize + encodedOffset + prefixSumSize;
+        // Per-gen SBBF lets readers skip this gen on key misses without touching
+        // any other part of the gen. Sized for the gen's active key set at the
+        // configured FPP, then suffixed with a 4B numBlocks footer so the reader
+        // can locate it from the tail without consulting the gen dir.
+        int sbbfSize = SplitBlockBloomFilter.computeSize(activeKeyCount, PostingIndexUtils.SPARSE_SBBF_DEFAULT_FPP);
+        int sbbfNumBlocks = sbbfSize >> SplitBlockBloomFilter.BLOCK_SIZE_SHIFT;
+        long totalGenSize = headerSize + encodedOffset + prefixSumSize
+                + sbbfSize + PostingIndexUtils.SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE;
         valueMem.jumpTo(genOffset + totalGenSize);
         long prefixSumAddr = valueMem.addressOf(genOffset + headerSize + encodedOffset);
         Unsafe.getUnsafe().setMemory(prefixSumAddr, prefixSumSize, (byte) 0);
@@ -1868,6 +1875,14 @@ public class PostingIndexWriter implements IndexWriter {
                     Unsafe.getUnsafe().getInt(prefixSumAddr + (long) i * Integer.BYTES)
                             + Unsafe.getUnsafe().getInt(prefixSumAddr + (long) (i - 1) * Integer.BYTES));
         }
+
+        long sbbfAddr = prefixSumAddr + prefixSumSize;
+        Unsafe.getUnsafe().setMemory(sbbfAddr, sbbfSize, (byte) 0);
+        for (int i = 0; i < activeKeyCount; i++) {
+            long hash = SplitBlockBloomFilter.hashKey(activeKeyIds[i]);
+            SplitBlockBloomFilter.insert(sbbfAddr, sbbfSize, hash);
+        }
+        Unsafe.getUnsafe().putInt(sbbfAddr + sbbfSize, sbbfNumBlocks);
 
         valueMemSize = genOffset + totalGenSize;
 

@@ -198,6 +198,8 @@ public final class PostingIndexUtils {
     public static final int PAGE_SIZE = 4096;
     public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 1144
     public static final byte SIGNATURE = (byte) 0xfb;
+    public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;
+    public static final int SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE = Integer.BYTES;
     public static final int STRIDE_IDX_BYTES = Long.BYTES;
     // Stride block mode constants — see class javadoc for when each mode wins
     public static final byte STRIDE_MODE_DELTA = 0;

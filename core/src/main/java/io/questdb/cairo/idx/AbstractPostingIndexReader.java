@@ -128,11 +128,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return columnTxn;
     }
 
-    @TestOnly
-    public int getGenLookupTier() {
-        return genLookup.getTier();
-    }
-
     @Override
     public long getKeyBaseAddress() {
         return keyMem.addressOf(0);
@@ -253,8 +248,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     @TestOnly
-    public void setGenLookupMemoryBudget(long budget) {
-        genLookup.setMemoryBudget(budget);
+    public void setGenLookupCacheBudget(long budget) {
+        genLookup.setCacheMemoryBudget(budget);
     }
 
     private static int denseIndexFromWriter(RecordMetadata metadata, int writerIdx) {
@@ -437,7 +432,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                         break;
                     }
 
-                    genLookup.invalidateLookupIndex();
+                    genLookup.invalidateCache();
 
                     this.activePageOffset = tryPage;
                     this.keyFileSequence = seqStart;
@@ -486,12 +481,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return (long) (count + 1) * (longOffsets ? Long.BYTES : Integer.BYTES);
     }
 
-    protected void ensureGenLookup() {
-        if (genCount == 0 || keyCount == 0) {
-            return;
-        }
-        genLookup.buildLookupIfNeeded(valueMem, keyCount, genCount);
-    }
 
     protected void ensureSidecarOpen(int c) {
         MemoryMR mem = sidecarMems.getQuick(c);
@@ -1260,6 +1249,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 colPointBlockAddrs = new long[coverCount];
             }
             long blockAddr = keyBlockAddrs[includeIdx];
+            // Defense: a 0 blockAddr means cacheSidecarKeyAddrs bailed for this
+            // column. Returning false here forces the caller's point-read fallback
+            // (which is itself guarded against blockAddr == 0).
+            if (blockAddr == 0) {
+                return false;
+            }
             if (colCacheBlockAddrs[includeIdx] == blockAddr) {
                 return true;
             }

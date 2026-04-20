@@ -3,7 +3,11 @@ package org.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.BitpackUtils;
@@ -203,7 +207,8 @@ public class PostingIndexBenchmarkSuite {
         long sum = 0;
         try (Path path = new Path().of(s.dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                    s.config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    s.config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0,
+                    s.coverMetadata, s.cvr, 0)) {
                 for (int key : s.readKeys) {
                     try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
                         if ("covering".equals(s.mode) && cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
@@ -361,19 +366,18 @@ public class PostingIndexBenchmarkSuite {
 
     private static void doCovBaselineRead(CairoConfiguration config, String dir, int[] keys,
                                           long colAddr, CoverType ct) {
-        long sum = 0;
         try (Path path = new Path().of(dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                 for (int key : keys) {
                     try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
                         while (cursor.hasNext()) {
                             long rowId = cursor.next();
-                            sum += switch (ct) {
-                                case DOUBLE -> (long) Unsafe.getUnsafe().getDouble(colAddr + rowId * 8);
-                                case FLOAT -> (long) Unsafe.getUnsafe().getFloat(colAddr + rowId * 4);
+                            switch (ct) {
+                                case DOUBLE -> Unsafe.getUnsafe().getDouble(colAddr + rowId * 8);
+                                case FLOAT -> Unsafe.getUnsafe().getFloat(colAddr + rowId * 4);
                                 case LONG -> Unsafe.getUnsafe().getLong(colAddr + rowId * 8);
                                 case INT -> Unsafe.getUnsafe().getInt(colAddr + rowId * 4);
-                            };
+                            }
                         }
                     }
                 }
@@ -382,7 +386,6 @@ public class PostingIndexBenchmarkSuite {
     }
 
     private static void doCovCoveringRead(CairoConfiguration config, String dir, int[] keys, CoverType ct) {
-        long sum = 0;
         try (Path path = new Path().of(dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                 for (int key : keys) {
@@ -390,15 +393,15 @@ public class PostingIndexBenchmarkSuite {
                         if (cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
                             while (crc.hasNext()) {
                                 crc.next();
-                                sum += switch (ct) {
-                                    case DOUBLE -> (long) crc.getCoveredDouble(0);
-                                    case FLOAT -> (long) crc.getCoveredFloat(0);
+                                switch (ct) {
+                                    case DOUBLE -> crc.getCoveredDouble(0);
+                                    case FLOAT -> crc.getCoveredFloat(0);
                                     case LONG -> crc.getCoveredLong(0);
                                     case INT -> crc.getCoveredInt(0);
-                                };
+                                }
                             }
                         } else {
-                            while (cursor.hasNext()) sum += cursor.next();
+                            while (cursor.hasNext()) cursor.next();
                         }
                     }
                 }
@@ -976,6 +979,7 @@ public class PostingIndexBenchmarkSuite {
     @BenchmarkMode(Mode.AverageTime)
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
     public static class SidecarState {
+        static final int COVER_WRITER_IDX = 2;
         static final int KEYS = 500;
         static final int READ_KEYS = 200;
         static final int VPK = 2_000;
@@ -985,6 +989,8 @@ public class PostingIndexBenchmarkSuite {
         @Param({"DOUBLE", "FLOAT", "LONG", "INT", "DECIMAL64", "DECIMAL32", "SHORT"})
         String columnType;
         CairoConfiguration config;
+        GenericRecordMetadata coverMetadata;
+        ColumnVersionReader cvr;
         String dir;
         @Param({"baseline", "covering"})
         String mode;
@@ -1036,6 +1042,14 @@ public class PostingIndexBenchmarkSuite {
             dir = tmpDir + File.separator + "suite_cov_" + columnType + "_" + mode + "_" + System.nanoTime();
             new File(dir).mkdirs();
 
+            coverMetadata = new GenericRecordMetadata();
+            for (int i = 0; i <= COVER_WRITER_IDX; i++) {
+                int t = (i == COVER_WRITER_IDX) ? colType : ColumnType.LONG;
+                coverMetadata.add(new TableColumnMetadata(
+                        "c" + i, t, IndexType.NONE, 0, false, null, i, false));
+            }
+            cvr = new ColumnVersionReader();
+
             colAddr = Unsafe.malloc((long) ROWS * colSize, MemoryTag.NATIVE_DEFAULT);
             Random rng = new Random(42);
             for (int i = 0; i < ROWS; i++) {
@@ -1079,6 +1093,7 @@ public class PostingIndexBenchmarkSuite {
 
         @TearDown(Level.Trial)
         public void tearDown() {
+            Misc.free(cvr);
             Unsafe.free(colAddr, (long) ROWS * colSize, MemoryTag.NATIVE_DEFAULT);
             deleteDir(dir);
         }

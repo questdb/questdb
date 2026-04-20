@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -106,11 +107,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     }
 
     private class Cursor extends AbstractCoveringCursor {
+        private final LongList builderEntries = new LongList();
         private long blockBufferAddr = 0;
         private int blockBufferCapacity = 0;
         private int blockBufferEnd;
         private int blockBufferPos;
         private boolean bufferRangeChecked;
+        private int cacheReplayEnd;
+        private int cacheReplayPos;
+        private long cacheVersionAtOf;
         private int constantDeltaRemaining;
         private long constantDeltaStep;
         private long constantDeltaValue;
@@ -132,15 +137,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long flatDataOffset;
         private int flatRemaining;
         private int flatStartIdx;
+        private boolean isCacheReplayMode;
         private boolean isEFMode;
         private boolean isFlatMode;
         private boolean isPooled;
-        private int lookupEnd;
-        private int lookupPos;
         private long maxValue;
         private long minValue;
         private long next;
         private long packedDataOffset;
+        private int sparseGenLoadedIdx;
         private long srcBitWidthsOffset;
         private long srcFirstValuesOffset;
         private long srcMinDeltasOffset;
@@ -240,18 +245,13 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         private boolean advanceToNextRelevantGen() {
-            int lookupTier = genLookup.getTier();
-
-            if (lookupTier == PostingGenLookup.TIER_PER_KEY) {
-                return advanceWithPerKeyLookup();
-            } else if (lookupTier == PostingGenLookup.TIER_SBBF) {
-                return advanceWithSbbfLookup();
-            } else {
-                return advanceWithLinearScan();
+            if (cursorReloadGeneration != reloadGeneration) {
+                return false;
             }
-        }
-
-        private boolean advanceWithLinearScan() {
+            // Bail if cache was invalidated mid-iteration — replay pos would be stale.
+            if (isCacheReplayMode && cacheVersionAtOf != genLookup.getCacheVersion()) {
+                return false;
+            }
             currentGen++;
             while (currentGen < genCount) {
                 int gkc = genLookup.getGenKeyCount(currentGen);
@@ -259,83 +259,42 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     loadDenseGenerationCached(currentGen);
                     return true;
                 }
-
-                if (requestedKey < genLookup.getGenMinKey(currentGen) ||
-                        requestedKey > genLookup.getGenMaxKey(currentGen)) {
-                    currentGen++;
-                    continue;
-                }
-
-                loadSparseGenByPrefixSum(currentGen);
-                if (totalValueCount > 0 || encodedBlockCount > 0 || isFlatMode || isEFMode) {
-                    return true;
-                }
-                currentGen++;
-            }
-            return false;
-        }
-
-        private boolean advanceWithPerKeyLookup() {
-            if (lookupPos < lookupEnd) {
-                int nextSparseGen = genLookup.getGenIndex(lookupPos);
-
-                currentGen++;
-                while (currentGen < nextSparseGen) {
-                    if (genLookup.getGenKeyCount(currentGen) >= 0) {
-                        loadDenseGenerationCached(currentGen);
-                        return true;
+                if (isCacheReplayMode) {
+                    if (cacheReplayPos >= cacheReplayEnd) {
+                        currentGen++;
+                        continue;
                     }
-                    currentGen++;
-                }
-
-                int posInGen = genLookup.getPosInGen(lookupPos);
-                lookupPos++;
-                currentGen = nextSparseGen;
-                loadSparseGenDirect(currentGen, posInGen);
-                return true;
-            }
-
-            currentGen++;
-            while (currentGen < genCount) {
-                if (genLookup.getGenKeyCount(currentGen) >= 0) {
-                    loadDenseGenerationCached(currentGen);
+                    long entry = genLookup.cacheEntryAt(cacheReplayPos);
+                    int hitGen = PostingGenLookup.unpackCacheGen(entry);
+                    if (currentGen < hitGen) {
+                        currentGen++;
+                        continue;
+                    }
+                    cacheReplayPos++;
+                    loadSparseGenDirect(currentGen, PostingGenLookup.unpackCachePosInGen(entry));
                     return true;
                 }
-                currentGen++;
-            }
-            return false;
-        }
-
-        private boolean advanceWithSbbfLookup() {
-            currentGen++;
-            while (currentGen < genCount) {
-                int gkc = genLookup.getGenKeyCount(currentGen);
-                if (gkc >= 0) {
-                    // Dense gen
-                    loadDenseGenerationCached(currentGen);
-                    return true;
-                }
-
-                // Sparse gen: check min/max bounds first
-                if (requestedKey < genLookup.getGenMinKey(currentGen) ||
-                        requestedKey > genLookup.getGenMaxKey(currentGen)) {
+                if (requestedKey < genLookup.getGenMinKey(currentGen)
+                        || requestedKey > genLookup.getGenMaxKey(currentGen)) {
                     currentGen++;
                     continue;
                 }
-
-                // SBBF probe
-                if (genLookup.notContainKey(currentGen, requestedKey)) {
+                if (genLookup.notContainKey(valueMem, currentGen, requestedKey)) {
                     currentGen++;
                     continue;
                 }
-
-                // SBBF says "maybe" — fall back to binary search within this gen
                 loadSparseGenByPrefixSum(currentGen);
                 if (totalValueCount > 0 || encodedBlockCount > 0 || isFlatMode || isEFMode) {
+                    builderEntries.add(PostingGenLookup.packCacheEntry(currentGen, sparseGenLoadedIdx));
                     return true;
                 }
-                // False positive — key not actually in this gen
                 currentGen++;
+            }
+            // Reached the end naturally. Commit accumulated entries iff we built them
+            // ourselves (not replaying) and no reload invalidated the snapshot.
+            if (!isCacheReplayMode && requestedKey >= 0
+                    && cursorReloadGeneration == reloadGeneration) {
+                genLookup.putCacheEntries(requestedKey, builderEntries);
             }
             return false;
         }
@@ -656,7 +615,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen));
+            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
             int k = requestedKey - minKey;
             int start = Unsafe.getUnsafe().getInt(prefixSumAddr + (long) k * Integer.BYTES);
             int end = Unsafe.getUnsafe().getInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES);
@@ -668,6 +627,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
 
             this.isFlatMode = false;
+            this.sparseGenLoadedIdx = start;
 
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
@@ -846,6 +806,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.cursorReloadGeneration = reloadGeneration;
             clearBlockState();
             resetCoveringState();
+            builderEntries.clear();
+            isCacheReplayMode = false;
+            cacheReplayPos = 0;
+            cacheReplayEnd = 0;
 
             if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
                 this.requestedKey = -1;
@@ -857,28 +821,23 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.minValue = minValue;
             this.maxValue = maxValue;
 
-            // Fast path: sealed single-generation index with dense gen 0.
-            // Load directly without tier lookup or advance machinery.
-            // Set currentGen = genCount so advanceToNextRelevantGen() (called
-            // when blocks are exhausted) returns false immediately.
+            // Fast path: sealed single-generation dense index. No advance machinery
+            // needed; cache offers no win because there is no SBBF skip to amortize
+            // and dense gens never read prefix sums.
             if (genCount == 1 && genLookup.getGenKeyCount(0) >= 0) {
                 this.currentGen = genCount;
-                this.lookupPos = 0;
-                this.lookupEnd = 0;
                 loadDenseGenerationCached(0);
                 return;
             }
 
-            ensureGenLookup();
+            this.currentGen = -1;
 
-            this.currentGen = -1; // will be advanced by first advanceToNextRelevantGen()
-
-            if (genLookup.isPerKeyMode() && key < genLookup.getKeyCount()) {
-                this.lookupPos = genLookup.getEntryStart(key);
-                this.lookupEnd = genLookup.getEntryEnd(key);
-            } else {
-                this.lookupPos = 0;
-                this.lookupEnd = 0;
+            long packedSlot = genLookup.cacheLookup(key);
+            if (packedSlot != PostingGenLookup.CACHE_NOT_PRESENT) {
+                isCacheReplayMode = true;
+                cacheReplayPos = PostingGenLookup.unpackEntryStart(packedSlot);
+                cacheReplayEnd = cacheReplayPos + PostingGenLookup.unpackEntryCount(packedSlot);
+                cacheVersionAtOf = genLookup.getCacheVersion();
             }
 
             advanceToNextRelevantGen();

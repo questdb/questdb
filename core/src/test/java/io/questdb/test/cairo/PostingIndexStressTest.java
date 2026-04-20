@@ -62,11 +62,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
     private static final int BP_BATCH = PostingIndexUtils.BLOCK_CAPACITY; // 64
 
-    // PostingGenLookup tier constants (mirrored here since PostingGenLookup is package-private)
-    private static final int TIER_NONE = 0;
-    private static final int TIER_PER_KEY = 1;
-    private static final int TIER_SBBF = 2;
-
     // ===================================================================
     // Fuzz: randomized workloads verified against in-memory oracle
     // ===================================================================
@@ -3117,9 +3112,11 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     // ===================================================================
 
     @Test
-    public void testTier1PerKeyLookupBwd() throws Exception {
+    public void testManySparseGensBwd() throws Exception {
         assertMemoryLeak(() -> {
-            // Same setup as testTier1PerKeyLookupFwd but reads with BwdReader.
+            // Many sparse gens, each containing only a small subset of keys.
+            // Exercises both the SBBF skip path and (after the second cursor)
+            // the lazy cache replay path. BwdReader variant.
             int activeKeyCount = 10;
             int totalKeySpace = 1000;
             int genCount = 50;
@@ -3175,14 +3172,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Open reader INSIDE the writer scope (before seal) so sparse gens exist
                     try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                             configuration, path.trimTo(plen), "tier1_bwd", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
-                        // Force lookup build
+                        // Warm the lazy cache by running one cursor end-to-end.
                         try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
                             while (firstCursor.hasNext()) {
                                 firstCursor.next();
                             }
                         }
-                        Assert.assertEquals("Tier 1 should be used",
-                                TIER_PER_KEY, reader.getGenLookupTier());
 
                         for (int k = 0; k < totalKeySpace; k++) {
                             LongList expected = oracle.getQuick(k);
@@ -3209,11 +3204,11 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTier1PerKeyLookupFwd() throws Exception {
+    public void testManySparseGensFwd() throws Exception {
         assertMemoryLeak(() -> {
-            // Write data for 10 active keys spread across 50 sparse generations.
-            // Each key appears in only 2-3 of the 50 gens.
-            // With the default 256MB budget, Tier 1 (per-key) will be used.
+            // 10 active keys spread across 50 sparse generations. Each key
+            // appears in only 2-3 of the 50 gens. Verifies that the SBBF
+            // skip path and lazy cache replay produce identical results.
             int activeKeyCount = 10;
             int totalKeySpace = 1000;
             int genCount = 50;
@@ -3270,14 +3265,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Open reader INSIDE the writer scope (before seal) so sparse gens exist
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), "tier1_fwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        // Force lookup build by reading a cursor
+                        // Warm the lazy cache by running one cursor end-to-end.
                         try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
                             while (firstCursor.hasNext()) {
                                 firstCursor.next();
                             }
                         }
-                        Assert.assertEquals("Tier 1 should be used",
-                                TIER_PER_KEY, reader.getGenLookupTier());
 
                         for (int k = 0; k < totalKeySpace; k++) {
                             LongList expected = oracle.getQuick(k);
@@ -3305,10 +3298,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTier2SbbfLookup() throws Exception {
+    public void testSbbfOnlyDisabledCache() throws Exception {
         assertMemoryLeak(() -> {
-            // Write data across 20 sparse generations. Set a tiny memory budget
-            // to force Tier 2 (SBBF) instead of Tier 1.
+            // 20 sparse generations, ~30 keys per gen. Disables the lazy cache
+            // so every cursor goes through the in-band SBBF probe + prefix-sum
+            // path. Verifies that the SBBF correctly skips misses and the
+            // prefix-sum confirms hits across all keys.
             int keyCount = 100;
             int genCount = 20;
 
@@ -3342,20 +3337,16 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     // Open readers INSIDE the writer scope (before seal) so sparse gens exist
 
-                    // Verify forward reader with Tier 2 (SBBF)
+                    // Forward reader with cache disabled — exercises SBBF-only path
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        // Set a small budget: too small for Tier 1 (per-key) but enough for Tier 2 (SBBF)
-                        reader.setGenLookupMemoryBudget(1024);
+                        reader.setGenLookupCacheBudget(0);
 
-                        // Force lookup rebuild by reading a cursor
                         try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
                             while (firstCursor.hasNext()) {
                                 firstCursor.next();
                             }
                         }
-                        Assert.assertEquals("Tier 2 (SBBF) should be used",
-                                TIER_SBBF, reader.getGenLookupTier());
 
                         // Verify correctness for all keys
                         for (int k = 0; k < keyCount; k++) {
@@ -3374,18 +3365,17 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                     }
 
-                    // Also verify backward reader with Tier 2
+                    // Also verify backward reader with cache disabled
                     try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                             configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
-                        reader.setGenLookupMemoryBudget(1024);
+                        reader.setGenLookupCacheBudget(0);
 
                         try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
                             while (firstCursor.hasNext()) {
                                 firstCursor.next();
                             }
                         }
-                        Assert.assertEquals("Bwd Tier 2 (SBBF) should be used",
-                                TIER_SBBF, reader.getGenLookupTier());
+
 
                         for (int k = 0; k < keyCount; k++) {
                             LongList expected = oracle.getQuick(k);
@@ -3407,11 +3397,11 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTier3FallbackLookup() throws Exception {
+    public void testTinyDatasetSbbfOnlyDisabledCache() throws Exception {
         assertMemoryLeak(() -> {
-            // Write data with only 2 sparse generations and small data.
-            // Set budget=0 so Tier 1 is rejected, and genCount <= 2 so Tier 2 is rejected.
-            // This forces Tier 3 (NONE, binary search fallback).
+            // Two-gen layout, 5 keys. Cache disabled — tests the SBBF probe
+            // and prefix-sum read on a minimal data set where most paths are
+            // single-iteration and easy to debug.
             int keyCount = 5;
 
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -3449,19 +3439,17 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     writer.commit();
                 }
 
-                // Verify forward reader with Tier 3 (NONE)
+                // Forward reader with cache disabled
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "tier3_none", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    // Set budget=0 to reject Tier 1, genCount=2 rejects Tier 2
-                    reader.setGenLookupMemoryBudget(0);
+                    reader.setGenLookupCacheBudget(0);
 
                     try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
                         while (firstCursor.hasNext()) {
                             firstCursor.next();
                         }
                     }
-                    Assert.assertEquals("Tier 3 (NONE) should be used",
-                            TIER_NONE, reader.getGenLookupTier());
+
 
                     for (int k = 0; k < keyCount; k++) {
                         LongList expected = oracle.getQuick(k);
@@ -3479,18 +3467,17 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     }
                 }
 
-                // Also verify backward reader with Tier 3
+                // Backward reader with cache disabled
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                         configuration, path.trimTo(plen), "tier3_none", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
-                    reader.setGenLookupMemoryBudget(0);
+                    reader.setGenLookupCacheBudget(0);
 
                     try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
                         while (firstCursor.hasNext()) {
                             firstCursor.next();
                         }
                     }
-                    Assert.assertEquals("Bwd Tier 3 (NONE) should be used",
-                            TIER_NONE, reader.getGenLookupTier());
+
 
                     for (int k = 0; k < keyCount; k++) {
                         LongList expected = oracle.getQuick(k);
