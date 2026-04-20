@@ -94,22 +94,22 @@ public class QwpEgressReadBenchmarkWide {
         System.out.println();
         System.out.println("=== Cold warm-up (runs discarded) ===");
         runQwp(/*warmup=*/ true);
-        runPgWire(/*warmup=*/ true);
-        runHttpExec(/*warmup=*/ true);
+//        runPgWire(/*warmup=*/ true);
+//        runHttpExec(/*warmup=*/ true);
 
         System.out.println();
         System.out.println("=== Measurement ===");
         Result qwp = runQwp(false);
-        Result pg = runPgWire(false);
-        Result http = runHttpExec(false);
+//        Result pg = runPgWire(false);
+//        Result http = runHttpExec(false);
 
         System.out.println();
         System.out.println("=== Comparison ===");
         System.out.printf("%-20s %12s %12s %12s%n", "Protocol", "time(ms)", "rows/sec", "MiB/sec");
         System.out.printf("%-20s %12s %12s %12s%n", "--------", "--------", "--------", "-------");
         printRow("QWP egress (WS)", qwp);
-        printRow("PostgreSQL wire", pg);
-        printRow("HTTP /exec JSON", http);
+//        printRow("PostgreSQL wire", pg);
+//        printRow("HTTP /exec JSON", http);
     }
 
     private static String[] buildSymbolPool(String prefix) {

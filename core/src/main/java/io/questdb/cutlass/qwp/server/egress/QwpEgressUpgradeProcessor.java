@@ -63,7 +63,10 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.ConcurrentAssociativeCache;
 import io.questdb.std.Misc;
+import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -120,10 +123,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
      * send buffer capacity (rejections become QUERY_ERROR).
      */
     private static final int MAX_ROWS_PER_BATCH = 4096;
+    private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final int recvBufferSize;
+    /**
+     * Server-wide cache of compiled {@link RecordCursorFactory} keyed by SQL text.
+     * Shared across every connection handled by this processor, so repeat queries
+     * with the same text skip the compile + plan + factory-build pipeline. Mirrors
+     * the {@code HttpServer.selectCache} pattern (same cache shape, separate
+     * instance -- engine-level unification is a follow-up exercise).
+     */
+    private final AssociativeCache<RecordCursorFactory> selectCache;
     private final int sharedWorkerCount;
 
     public QwpEgressUpgradeProcessor(
@@ -136,6 +148,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                 .getForceRecvFragmentationChunkSize();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.sharedWorkerCount = sharedWorkerCount;
+        this.selectCache = httpConfiguration.isQueryCacheEnabled()
+                ? new ConcurrentAssociativeCache<>(httpConfiguration.getConcurrentCacheConfiguration())
+                : NO_OP_SELECT_CACHE;
     }
 
     // Exposed for unit tests in a different package that verify the error ->
@@ -431,6 +446,30 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         rawSocket.send(wsHeaderSize + qwpSize);
     }
 
+    /**
+     * Detaches the streaming factory from {@code state} and puts it into the
+     * compile cache keyed by the query's SQL text. Idempotent: safe to call
+     * even when the factory was already detached (no-op), or when the SQL
+     * text is null (drops the factory via {@link Misc#free}). Called on the
+     * successful-completion paths only -- error/cancel paths continue to free
+     * the factory via the normal {@link QwpEgressProcessorState#endStreaming}
+     * route so a cursor that threw never seeds the cache with a poisoned factory.
+     */
+    private void cacheStreamingFactoryIfAvailable(QwpEgressProcessorState state) {
+        RecordCursorFactory factory = state.detachStreamingFactory();
+        if (factory == null) {
+            return;
+        }
+        CharSequence sqlText = state.getStreamingSqlText();
+        if (sqlText == null) {
+            // Factory was detached but we have no SQL key to cache against.
+            // Shouldn't happen in the normal flow; belt-and-braces free.
+            Misc.free(factory);
+            return;
+        }
+        selectCache.put(sqlText, factory);
+    }
+
     private void dispatchEgressMessage(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
@@ -708,47 +747,73 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             );
             sqlCtx.initNow();
 
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery cq = compiler.compile(decoder.sql, sqlCtx);
-                short type = cq.getType();
-                // Non-SELECT (DDL / INSERT / UPDATE / parse-time-executed) -- route to the
-                // synchronous exec path which awaits the operation and replies with an
-                // EXEC_DONE carrying the op type + rows affected.
-                if (!isStreamingType(type, cq)) {
-                    executeNonSelect(context, state, sqlCtx, cq, requestId);
-                    return;
+            // Cache hit: a prior query on any connection handled by this processor
+            // already compiled the same SQL text. Reuse the factory and skip the
+            // whole compile pipeline (lex + parse + plan + factory-build is the
+            // dominant latency component for simple queries). Cache poll removes
+            // the entry so two concurrent queries with the same SQL can't share
+            // a single factory instance -- the second falls through to compile.
+            factory = selectCache.poll(decoder.sql);
+            if (factory == null) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    CompiledQuery cq = compiler.compile(decoder.sql, sqlCtx);
+                    short type = cq.getType();
+                    // Non-SELECT (DDL / INSERT / UPDATE / parse-time-executed) -- route to the
+                    // synchronous exec path which awaits the operation and replies with an
+                    // EXEC_DONE carrying the op type + rows affected. Non-SELECTs are never
+                    // cached: they mutate state and can't be reused as plans.
+                    if (!isStreamingType(type, cq)) {
+                        executeNonSelect(context, state, sqlCtx, cq, requestId);
+                        return;
+                    }
+                    factory = cq.getRecordCursorFactory();
                 }
-                factory = cq.getRecordCursorFactory();
-                RecordMetadata metadata = factory.getMetadata();
-                int columnCount = metadata.getColumnCount();
-                ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
-                for (int i = 0; i < columnCount; i++) {
-                    columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
-                }
-                int schemaId = state.allocateSchemaId();
-                // Prefer the PageFrameCursor fast path when the factory supports it: it
-                // hands us flat column addresses per frame and lets the SYMBOL fast path
-                // resolve dict keys via PageFrameMemoryRecord.getInt. Factories that don't
-                // support it (filtered/joined/grouped queries) keep the existing
-                // RecordCursor path without change.
-                if (factory.supportsPageFrameCursor()) {
-                    int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
-                            ? PartitionFrameCursorFactory.ORDER_DESC
-                            : PartitionFrameCursorFactory.ORDER_ASC;
-                    pageFrameCursor = factory.getPageFrameCursor(sqlCtx, order);
-                }
-                if (pageFrameCursor != null) {
-                    // Streaming mode asks the cursor to release page cache pages
-                    // after reading, so a 10M-row scan doesn't evict the server's
-                    // working set. Same hint used by the parquet exporter.
-                    pageFrameCursor.setStreamingMode(true);
-                    state.beginStreamingPageFrame(requestId, factory, pageFrameCursor, columnCount, schemaId, decoder.initialCredit);
-                } else {
-                    cursor = factory.getCursor(sqlCtx);
-                    state.beginStreaming(requestId, factory, cursor, columnCount, schemaId, decoder.initialCredit);
-                }
-                streamingHandedOff = true;     // ownership of factory + cursor passed to state
             }
+            RecordMetadata metadata = factory.getMetadata();
+            int columnCount = metadata.getColumnCount();
+            ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
+            }
+            int schemaId = state.findOrAllocateSchemaId(columnDefs);
+            if (schemaId == QwpEgressProcessorState.SCHEMA_ID_EXHAUSTED) {
+                // The connection has registered DEFAULT_MAX_SCHEMAS_PER_CONNECTION distinct
+                // schemas already; this query's shape is new and would need a fresh id the
+                // client would reject. Surface a controlled error and free the factory so
+                // the connection stays usable for queries against schemas already cached.
+                Misc.free(factory);
+                factory = null;
+                sendQueryError(context, state, requestId, QwpEgressMsgKind.STATUS_LIMIT_EXCEEDED,
+                        "connection schema cache exhausted ("
+                                + QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
+                                + " distinct schemas); reconnect to reset");
+                return;
+            }
+            boolean schemaAlreadyKnown = state.wasLastSchemaIdReuse();
+            // Prefer the PageFrameCursor fast path when the factory supports it: it
+            // hands us flat column addresses per frame and lets the SYMBOL fast path
+            // resolve dict keys via PageFrameMemoryRecord.getInt. Factories that don't
+            // support it (filtered/joined/grouped queries) keep the existing
+            // RecordCursor path without change.
+            if (factory.supportsPageFrameCursor()) {
+                int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
+                        ? PartitionFrameCursorFactory.ORDER_DESC
+                        : PartitionFrameCursorFactory.ORDER_ASC;
+                pageFrameCursor = factory.getPageFrameCursor(sqlCtx, order);
+            }
+            if (pageFrameCursor != null) {
+                // Streaming mode asks the cursor to release page cache pages
+                // after reading, so a 10M-row scan doesn't evict the server's
+                // working set. Same hint used by the parquet exporter.
+                pageFrameCursor.setStreamingMode(true);
+                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
+                        columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
+            } else {
+                cursor = factory.getCursor(sqlCtx);
+                state.beginStreaming(requestId, factory, cursor,
+                        columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
+            }
+            streamingHandedOff = true;     // ownership of factory + cursor passed to state
             // Streaming may complete here (cursor short and fast), or throw PeerIsSlowToReadException
             // (we'll be re-entered via resumeSend) or another exception (handled below).
             streamResults(context, state);
@@ -1040,6 +1105,131 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         return qwpSize;
     }
 
+    /**
+     * Composes RESULT_BATCH immediately followed by RESULT_END into the rawSocket
+     * buffer and ships both frames in a single {@link HttpRawSocket#send(int)}
+     * call. Used on the cursor-exhausted branch of {@link #streamResults} so a
+     * short query ends in one syscall / one TCP segment rather than two.
+     * <p>
+     * Falls back to two sends when the batch is too large to fit both frames
+     * in the send buffer. The worst-case RESULT_END footprint is small
+     * (~41 bytes incl. reservation) so the fallback only triggers for batches
+     * that already fill the buffer to within tens of bytes of capacity.
+     * <p>
+     * Returns the RESULT_BATCH payload size (not including RESULT_END), for the
+     * caller's credit-bookkeeping debit.
+     */
+    private int sendResultBatchAndEnd(
+            HttpConnectionContext context,
+            QwpEgressProcessorState state,
+            long requestId,
+            long batchSeq,
+            QwpResultBatchBuffer batchBuffer,
+            long schemaId,
+            boolean writeFullSchema,
+            long totalRows
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        state.consumeBatchSeqCommit();
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufAddr = rawSocket.getBufferAddress();
+        int bufSize = rawSocket.getBufferSize();
+        if (bufSize < QwpEgressFrameWriter.WS_HEADER_RESERVATION + QwpConstants.HEADER_SIZE + 32) {
+            throw HttpException.instance("egress send buffer too small");
+        }
+        // Build RESULT_BATCH into [WS_HEADER_RESERVATION .. qwp1End), identical
+        // shape to sendResultBatch. Deliberately duplicated because the shared
+        // structure would need a multi-parameter callback to vary the final
+        // framing step, which is harder to follow than the copy.
+        long qwp1Start = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
+        long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
+                qwp1Start, state.getNegotiatedVersion(),
+                (byte) (QwpConstants.FLAG_DELTA_SYMBOL_DICT | QwpConstants.FLAG_GORILLA),
+                1, 0 /* payload len patched */);
+        long preludeEnd = QwpEgressFrameWriter.writeResultBatchPrelude(bodyStart, requestId, batchSeq);
+        long bufLimit = bufAddr + bufSize;
+        int deltaSize = batchBuffer.emitDeltaSection(preludeEnd, bufLimit);
+        if (deltaSize < 0) {
+            throw HttpException.instance("egress: batch too large for send buffer");
+        }
+        int tableBlockSize = batchBuffer.emitTableBlock(preludeEnd + deltaSize, bufLimit, schemaId, writeFullSchema);
+        if (tableBlockSize < 0) {
+            throw HttpException.instance("egress: batch too large for send buffer");
+        }
+        long qwp1End = preludeEnd + deltaSize + tableBlockSize;
+
+        if (state.getCompressionCodec() == QwpConstants.COMPRESSION_ZSTD) {
+            int bodyLen = (int) (qwp1End - preludeEnd);
+            if (bodyLen > 0) {
+                int scratchCap = bodyLen + (bodyLen >> 8) + 128;
+                long scratch = state.zstdCompressScratch(scratchCap);
+                long compLen = Zstd.compress(state.zstdCCtx(), preludeEnd, bodyLen, scratch, scratchCap);
+                if (compLen > 0 && compLen < bodyLen) {
+                    Vect.memcpy(preludeEnd, scratch, compLen);
+                    qwp1End = preludeEnd + compLen;
+                    long flagsAddr = qwp1Start + QwpConstants.HEADER_OFFSET_FLAGS;
+                    byte flags = Unsafe.getUnsafe().getByte(flagsAddr);
+                    Unsafe.getUnsafe().putByte(flagsAddr, (byte) (flags | QwpConstants.FLAG_ZSTD));
+                } else if (compLen < 0) {
+                    LOG.error().$("zstd compress error [fd=").$(context.getFd())
+                            .$(", code=").$(compLen).I$();
+                }
+            }
+        }
+
+        int qwp1Size = (int) (qwp1End - qwp1Start);
+        QwpEgressFrameWriter.patchPayloadLength(qwp1Start, qwp1Size - QwpConstants.HEADER_SIZE);
+        int ws1HeaderSize = WebSocketFrameWriter.headerSize(qwp1Size, false);
+        int frame1Size = ws1HeaderSize + qwp1Size;
+
+        // Worst-case RESULT_END footprint: WS reservation (10) + QWP header (12)
+        // + msg_kind (1) + requestId (8) + finalSeq varint (<= 10) + totalRows
+        // varint (<= 10) = 51 bytes. Checking upfront avoids a half-built second
+        // frame that we'd have to rewind.
+        final int resultEndWorstCase = QwpEgressFrameWriter.WS_HEADER_RESERVATION
+                + QwpConstants.HEADER_SIZE + 1 + 8 + 10 + 10;
+        if (frame1Size + resultEndWorstCase > bufSize) {
+            // Batch fills the buffer: cannot coalesce. Fall back to two sends,
+            // matching the pre-coalesce shape.
+            if (qwp1Start - ws1HeaderSize != bufAddr) {
+                Unsafe.getUnsafe().copyMemory(qwp1Start, bufAddr + ws1HeaderSize, qwp1Size);
+            }
+            WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwp1Size);
+            rawSocket.send(frame1Size);
+            state.endStreaming();
+            sendResultEnd(context, state, requestId, batchSeq, totalRows);
+            return qwp1Size;
+        }
+
+        // Shift RESULT_BATCH so it abuts offset 0 and write its WS header.
+        if (qwp1Start - ws1HeaderSize != bufAddr) {
+            Unsafe.getUnsafe().copyMemory(qwp1Start, bufAddr + ws1HeaderSize, qwp1Size);
+        }
+        WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwp1Size);
+
+        // Compose RESULT_END right after frame1. Reserve WS_HEADER_RESERVATION
+        // bytes of slack for its WS header, write the QWP payload, then shift
+        // left to abut frame1's tail once we know the real WS header size.
+        long qwp2Start = bufAddr + frame1Size + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
+        long body2Start = QwpEgressFrameWriter.writeMessageHeader(
+                qwp2Start, state.getNegotiatedVersion(), (byte) 0, 0, 0 /* payload len patched */);
+        long body2End = QwpEgressFrameWriter.writeResultEnd(body2Start, requestId, batchSeq, totalRows);
+        int qwp2Size = (int) (body2End - qwp2Start);
+        QwpEgressFrameWriter.patchPayloadLength(qwp2Start, qwp2Size - QwpConstants.HEADER_SIZE);
+        int ws2HeaderSize = WebSocketFrameWriter.headerSize(qwp2Size, false);
+        long frame2Start = bufAddr + frame1Size;
+        if (qwp2Start != frame2Start + ws2HeaderSize) {
+            Unsafe.getUnsafe().copyMemory(qwp2Start, frame2Start + ws2HeaderSize, qwp2Size);
+        }
+        WebSocketFrameWriter.writeBinaryFrameHeader(frame2Start, qwp2Size);
+
+        // Release cursor/factory BEFORE the kernel gets the bytes. Otherwise the
+        // client can observe RESULT_END and issue a DROP TABLE while we still
+        // hold the TableReader. See the matching notes on the two-send paths.
+        state.endStreaming();
+        rawSocket.send(frame1Size + ws2HeaderSize + qwp2Size);
+        return qwp1Size;
+    }
+
     private void sendResultEnd(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
@@ -1125,9 +1315,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             if (rowsThisBatch == 0 && state.isStreamingFullSchemaSent()) {
                 long finalSeq = state.getStreamingBatchSeq() == 0 ? 0 : state.getStreamingBatchSeq() - 1;
                 long totalRows = state.getStreamingRowsEmitted();
-                // Release the cursor/factory (and therefore the TableReader) BEFORE handing
-                // RESULT_END bytes to the kernel. Otherwise the client can observe RESULT_END
-                // and issue a DROP TABLE while this thread is still between send() and endStreaming().
+                // Detach factory + SQL text BEFORE endStreaming so endStreaming
+                // doesn't free the factory -- we put it back into the compile
+                // cache for reuse instead. Cache-before-send so PeerIsSlowToReadException
+                // (framework parks and resumes) doesn't strand the factory outside
+                // the cache, and connection drops still drain via selectCache.close().
+                cacheStreamingFactoryIfAvailable(state);
                 state.endStreaming();
                 sendResultEnd(context, state, requestId, finalSeq, totalRows);
                 return;
@@ -1140,19 +1333,29 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             // the same seq number, producing two batches labelled seq=N with different rows.
             long currentSeq = state.getStreamingBatchSeq();
             state.onStreamingBatchSent(rowsThisBatch);
+            if (cursorExhausted) {
+                // Last batch on this cursor. Compose RESULT_BATCH + RESULT_END into
+                // the send buffer and hand both frames to the kernel in a single
+                // rawSocket.send() call. Small queries pay one syscall and one TCP
+                // segment instead of two, which is the bulk of the latency floor
+                // on localhost round-trips.
+                long totalRows = state.getStreamingRowsEmitted();
+                // Cache the factory for the next query with this SQL text. Must
+                // happen before sendResultBatchAndEnd because that method calls
+                // state.endStreaming() internally; after it runs, state no longer
+                // has the factory reference.
+                cacheStreamingFactoryIfAvailable(state);
+                int qwpBytes = sendResultBatchAndEnd(context, state, requestId, currentSeq,
+                        batchBuffer, schemaId, writeFullSchema, totalRows);
+                // Credit bookkeeping: debit only the RESULT_BATCH payload. RESULT_END
+                // is a control frame and not subject to flow control.
+                state.consumeStreamingCredit(qwpBytes);
+                return;
+            }
             int qwpBytes = sendResultBatch(context, state, requestId, currentSeq, batchBuffer, schemaId, writeFullSchema);
             // Credit bookkeeping: debit by the bytes we just committed to the wire.
             // No-op when the stream isn't credit-limited (initialCredit==0).
             state.consumeStreamingCredit(qwpBytes);
-            if (cursorExhausted) {
-                long totalRows = state.getStreamingRowsEmitted();
-                // Release the cursor/factory (and therefore the TableReader) BEFORE handing
-                // RESULT_END bytes to the kernel. See the matching comment above in the
-                // empty-trailing-batch branch.
-                state.endStreaming();
-                sendResultEnd(context, state, requestId, currentSeq, totalRows);
-                return;
-            }
         }
     }
 }

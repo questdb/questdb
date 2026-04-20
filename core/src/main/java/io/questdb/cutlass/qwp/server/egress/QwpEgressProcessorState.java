@@ -42,12 +42,17 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8SequenceIntHashMap;
 import io.questdb.std.Zstd;
+import io.questdb.std.str.Utf8StringSink;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Per-connection state for QWP egress (query results) processing.
@@ -58,6 +63,14 @@ import io.questdb.std.Zstd;
  * reused across queries on the same connection.
  */
 public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware {
+
+    /**
+     * Returned by {@link #findOrAllocateSchemaId} when the per-connection
+     * schema id cap (see {@link QwpConstants#DEFAULT_MAX_SCHEMAS_PER_CONNECTION})
+     * has been hit with a new schema shape. Existing shapes keep returning their
+     * cached id even in this state; only net-new schemas are refused.
+     */
+    public static final int SCHEMA_ID_EXHAUSTED = -1;
 
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
@@ -74,6 +87,29 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // DDL operations. Subscribed to the engine's message bus on first use;
     // cleared between queries (the sequence object itself is reused).
     private final SCSequence eventSubSequence = new SCSequence();
+    // Reused scratch sink that accumulates the binary fingerprint bytes for
+    // one schema. Cleared at the start of each findOrAllocateSchemaId call.
+    private final Utf8StringSink schemaFingerprintScratch = new Utf8StringSink();
+    // Connection-scoped schema content -> schema id map. Queries with the same
+    // column shape reuse the same id on the wire, so the client's schemaRegistry
+    // only grows by *distinct* schemas rather than by query count. Keyed on the
+    // binary fingerprint built in {@link #buildSchemaFingerprint}; the cap
+    // (DEFAULT_MAX_SCHEMAS_PER_CONNECTION) matches the client decoder's
+    // hard rejection threshold so the two stay in lockstep.
+    private final Utf8SequenceIntHashMap schemaFingerprintToId = new Utf8SequenceIntHashMap();
+    /**
+     * Remaining send-ahead credit in bytes, under byte-based flow control.
+     * <p>
+     * {@code AtomicLong} rather than {@code volatile long}: {@link #addStreamingCredit}
+     * performs a saturating add and {@link #consumeStreamingCredit} performs a
+     * subtract, both read-modify-write sequences. Today's single-op-per-fd
+     * dispatcher serialises the two callers (CREDIT handler on the read side,
+     * streamResults on the write side), so a plain volatile would happen to be
+     * safe; the Phase-2 plan to register READ + WRITE on the same fd during
+     * streaming turns both sites into true data races. The atomic makes the
+     * fix durable regardless of which dispatcher variant is active.
+     */
+    private final AtomicLong streamingCreditRemaining = new AtomicLong();
     // Compression negotiated at handshake time. codec == COMPRESSION_NONE (default)
     // sends RESULT_BATCH bytes raw; COMPRESSION_ZSTD compresses the region after
     // the prelude with the zstd level the client requested (clamped server-side).
@@ -91,6 +127,13 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * fragmented send buffer.
      */
     private boolean handshakeFlushPending;
+    // Side-channel return from {@link #findOrAllocateSchemaId}: true when the
+    // just-returned id came from the dedup cache (schema shape seen before on
+    // this connection), false when the id is freshly allocated. Callers forward
+    // the flag to beginStreaming{,PageFrame} so the first batch of a reused
+    // schema emits SCHEMA_MODE_REFERENCE instead of re-transmitting the full
+    // schema the client already has.
+    private boolean lastSchemaIdWasReuse;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
     private int nextSchemaId;
     // Page-frame iteration scaffolding. Allocated lazily on first page-frame query and
@@ -154,13 +197,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     private long streamingCreditInitial;
     /**
-     * {@code volatile}: see the note on {@link #streamingActive}. Cross-worker
-     * access is coupled to {@link #streamingCreditSuspended}; the CREDIT handler
-     * only writes here and the streamResults writer only reads/decrements, so
-     * no atomic RMW is required under today's single-op-per-fd dispatcher.
-     */
-    private volatile long streamingCreditRemaining;
-    /**
      * True when {@code streamResults} returned early because credit is exhausted.
      * The state is still "active"; an inbound CREDIT frame will replenish the
      * budget and re-enter {@code streamResults} to continue.
@@ -192,6 +228,16 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     private long streamingRowsEmitted;
     private int streamingSchemaId;
+    /**
+     * Immutable copy of the SQL text that produced the current streaming factory.
+     * Captured at {@code beginStreaming*} time and used on the success path to
+     * put the factory back into the compile cache. Must be a stable String (not a
+     * reference into a reusable decoder sink) because it lives across
+     * {@code PeerIsSlowToReadException} parks where the decoder buffer may be
+     * repurposed before the re-entered {@link QwpEgressUpgradeProcessor#streamResults}
+     * reaches the cache-put site.
+     */
+    private String streamingSqlText;
     private boolean wsHandshakeSent;
     // Native ZSTD_CCtx handle (pointer from Zstd.createCCtx). 0 means not yet
     // allocated. Lives across queries on the same connection because the
@@ -214,8 +260,19 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * overflow on pathological clients.
      */
     public void addStreamingCredit(long bytes) {
-        long sum = streamingCreditRemaining + bytes;
-        streamingCreditRemaining = sum < streamingCreditRemaining ? Long.MAX_VALUE : sum;
+        // CAS loop so the saturating add stays atomic against a concurrent
+        // consumeStreamingCredit from the streamResults path. {@code bytes} is
+        // non-negative by protocol (CREDIT frame's additional_bytes varint);
+        // {@code sum < prev} therefore only fires on signed overflow, in which
+        // case we clamp to Long.MAX_VALUE.
+        while (true) {
+            long prev = streamingCreditRemaining.get();
+            long sum = prev + bytes;
+            long next = sum < prev ? Long.MAX_VALUE : sum;
+            if (streamingCreditRemaining.compareAndSet(prev, next)) {
+                return;
+            }
+        }
     }
 
     /**
@@ -249,20 +306,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return pageFrameMemoryRecord;
     }
 
-    /**
-     * Returns the next unused schema id on this connection and advances the counter.
-     */
-    public int allocateSchemaId() {
-        return nextSchemaId++;
-    }
-
     public void beginStreaming(
             long requestId,
             RecordCursorFactory factory,
             RecordCursor cursor,
             int columnCount,
             int schemaId,
-            long initialCredit
+            boolean schemaAlreadyKnown,
+            long initialCredit,
+            CharSequence sqlText
     ) {
         // Defence in depth: if a caller forgets to check isStreamingActive(), free the
         // previous factory/cursor before overwriting. The primary gate lives in
@@ -280,10 +332,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingBatchSeqCommitted = false;
         this.streamingCancelRequested = false;
         this.streamingCreditInitial = initialCredit;
-        this.streamingCreditRemaining = initialCredit;
+        this.streamingCreditRemaining.set(initialCredit);
         this.streamingCreditSuspended = false;
-        this.streamingFullSchemaSent = false;
+        // Reused schema id: client already has the schema registered under this
+        // id from an earlier query, so the first batch we send must advertise
+        // SCHEMA_MODE_REFERENCE. Prime the flag so onStreamingBatchSent's
+        // "write-full-on-first-batch" branch skips straight to reference mode.
+        this.streamingFullSchemaSent = schemaAlreadyKnown;
         this.streamingRowsEmitted = 0;
+        this.streamingSqlText = sqlText != null ? Chars.toString(sqlText) : null;
         this.streamingActive = true;
         // Native symbol keys are per-cursor: clear the per-column native-key -> conn-id
         // caches so a stale mapping from the previous query can't resurface as a
@@ -305,7 +362,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             PageFrameCursor pageFrameCursor,
             int columnCount,
             int schemaId,
-            long initialCredit
+            boolean schemaAlreadyKnown,
+            long initialCredit,
+            CharSequence sqlText
     ) {
         if (streamingActive) {
             endStreaming();
@@ -331,13 +390,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingBatchSeqCommitted = false;
         this.streamingCancelRequested = false;
         this.streamingCreditInitial = initialCredit;
-        this.streamingCreditRemaining = initialCredit;
+        this.streamingCreditRemaining.set(initialCredit);
         this.streamingCreditSuspended = false;
-        this.streamingFullSchemaSent = false;
+        // See beginStreaming: reused schema id must not re-emit the full schema.
+        this.streamingFullSchemaSent = schemaAlreadyKnown;
         this.streamingRowsEmitted = 0;
         this.streamingPageFrameIndex = 0;
         this.streamingPageFrameRow = 0;
         this.streamingPageFrameRowHi = 0;
+        this.streamingSqlText = sqlText != null ? Chars.toString(sqlText) : null;
         this.streamingActive = true;
         batchBuffer.resetForNewQuery();
     }
@@ -371,6 +432,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         securityContext = null;
         negotiatedVersion = QwpConstants.VERSION_1;
         nextSchemaId = 0;
+        // Fingerprint cache is connection-scoped and must be cleared with the
+        // id counter. Reusing it across connections would let a stale entry
+        // return an id the client no longer has registered.
+        schemaFingerprintToId.clear();
+        schemaFingerprintScratch.clear();
+        lastSchemaIdWasReuse = false;
         batchBuffer.reset();
         bindVariableService.clear();
         // Connection dropped/reset -- client cannot reuse the delta dict on a
@@ -430,8 +497,23 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public void consumeStreamingCredit(long bytes) {
         if (streamingCreditInitial > 0) {
-            streamingCreditRemaining -= bytes;
+            streamingCreditRemaining.addAndGet(-bytes);
         }
+    }
+
+    /**
+     * Removes the current streaming factory reference from this state and
+     * returns it. {@link #endStreaming} will no longer free it -- ownership
+     * transfers to the caller, typically to put the factory back into the
+     * compile cache for reuse.
+     * <p>
+     * Returns {@code null} if streaming isn't active or the factory has
+     * already been detached; callers should null-check before caching.
+     */
+    public RecordCursorFactory detachStreamingFactory() {
+        RecordCursorFactory detached = streamingFactory;
+        streamingFactory = null;
+        return detached;
     }
 
     /**
@@ -449,12 +531,46 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingBatchSeqCommitted = false;
         streamingCancelRequested = false;
         streamingCreditInitial = 0;
-        streamingCreditRemaining = 0;
+        streamingCreditRemaining.set(0);
         streamingCreditSuspended = false;
         streamingFullSchemaSent = false;
         streamingPageFrameIndex = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
+        streamingSqlText = null;
+    }
+
+    /**
+     * Returns a schema id for the given result-set column shape, allocating a new
+     * one (and caching the fingerprint) if this shape has not been seen before on
+     * this connection. After the call, {@link #wasLastSchemaIdReuse} reports whether
+     * the returned id came from the cache.
+     * <p>
+     * Returns {@link #SCHEMA_ID_EXHAUSTED} when the shape is new AND the per-connection
+     * id counter has reached {@link QwpConstants#DEFAULT_MAX_SCHEMAS_PER_CONNECTION}
+     * (the client's hard rejection threshold). The caller must convert that into a
+     * QUERY_ERROR rather than proceeding with streaming. Existing shapes keep
+     * returning their cached id even in the exhausted state -- there is no reason
+     * to refuse a query the client is already prepared to receive.
+     */
+    public int findOrAllocateSchemaId(ObjList<QwpEgressColumnDef> columnDefs) {
+        schemaFingerprintScratch.clear();
+        buildSchemaFingerprint(schemaFingerprintScratch, columnDefs);
+        int keyIndex = schemaFingerprintToId.keyIndex(schemaFingerprintScratch);
+        if (keyIndex < 0) {
+            lastSchemaIdWasReuse = true;
+            return schemaFingerprintToId.valueAtQuick(keyIndex);
+        }
+        if (nextSchemaId >= QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION) {
+            lastSchemaIdWasReuse = false;
+            return SCHEMA_ID_EXHAUSTED;
+        }
+        int id = nextSchemaId++;
+        // putAt copies the probe's bytes into a freshly allocated Utf8String --
+        // one heap allocation per *unique* schema on the connection, not per query.
+        schemaFingerprintToId.putAt(keyIndex, schemaFingerprintScratch, id);
+        lastSchemaIdWasReuse = false;
+        return id;
     }
 
     public QwpResultBatchBuffer getBatchBuffer() {
@@ -524,7 +640,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     public long getStreamingCreditRemaining() {
-        return streamingCreditRemaining;
+        return streamingCreditRemaining.get();
     }
 
     public RecordCursor getStreamingCursor() {
@@ -541,6 +657,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public int getStreamingSchemaId() {
         return streamingSchemaId;
+    }
+
+    /**
+     * Returns the stable SQL text string captured when the current streaming
+     * query started, or {@code null} if streaming isn't active. Callers use
+     * this as the cache key when putting the factory back for reuse.
+     */
+    public String getStreamingSqlText() {
+        return streamingSqlText;
     }
 
     /**
@@ -676,6 +801,16 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
+     * Reports whether the most recent {@link #findOrAllocateSchemaId} call
+     * reused a cached id (true) or allocated a fresh one (false). Callers
+     * forward this into {@link #beginStreaming} / {@link #beginStreamingPageFrame}
+     * so the first batch of a reused schema ships in SCHEMA_MODE_REFERENCE.
+     */
+    public boolean wasLastSchemaIdReuse() {
+        return lastSchemaIdWasReuse;
+    }
+
+    /**
      * Returns the native {@code ZSTD_CCtx} pointer, allocating it on first use.
      * Caller must already know compression is active (codec != COMPRESSION_NONE)
      * -- no null check is performed. Returns 0 if native allocation fails, which
@@ -710,5 +845,43 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             zstdCompressScratchCapacity = cap;
         }
         return zstdCompressScratchAddr;
+    }
+
+    /**
+     * Serialises the result-set column shape into {@code sink} as a dense
+     * binary fingerprint. The exact byte layout is opaque -- the only contract
+     * is that two schemas with identical ordered (name, questdbColumnType)
+     * tuples produce the same bytes and different schemas produce different
+     * bytes (collisions must be unreachable, not just unlikely, because a
+     * collision would silently map one schema's wire id to another's layout).
+     * <p>
+     * Fingerprint layout: {@code col_count (4B LE) | [ type (4B LE) | name_len
+     * (4B LE) | name_utf8 ]*}. Column names are capped at
+     * {@link QwpConstants#MAX_COLUMN_NAME_LENGTH} upstream, so the name_len
+     * field could be narrower -- 4 bytes leaves headroom without changing cost.
+     */
+    private static void buildSchemaFingerprint(Utf8StringSink sink, ObjList<QwpEgressColumnDef> columnDefs) {
+        int columnCount = columnDefs.size();
+        putIntLe(sink, columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            QwpEgressColumnDef def = columnDefs.getQuick(i);
+            putIntLe(sink, def.getQuestdbColumnType());
+            byte[] nameUtf8 = def.getNameUtf8();
+            putIntLe(sink, nameUtf8.length);
+            // putAny (not put) because the name bytes are arbitrary UTF-8 -- put(byte)
+            // asserts non-ASCII, which would abort on typical ASCII column names.
+            for (int j = 0, n = nameUtf8.length; j < n; j++) {
+                sink.putAny(nameUtf8[j]);
+            }
+        }
+    }
+
+    private static void putIntLe(Utf8StringSink sink, int value) {
+        // Same reason as above: some bytes of the int are always going to land in
+        // the ASCII range, so we cannot use the assert-non-ASCII put(byte) path.
+        sink.putAny((byte) (value & 0xFF));
+        sink.putAny((byte) ((value >>> 8) & 0xFF));
+        sink.putAny((byte) ((value >>> 16) & 0xFF));
+        sink.putAny((byte) ((value >>> 24) & 0xFF));
     }
 }

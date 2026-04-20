@@ -211,7 +211,7 @@ public final class QwpConstants {
      * Note: QuestDB stores IPv4 NULL as the bit pattern 0 (i.e. 0.0.0.0), so the address
      * 0.0.0.0 cannot be represented as non-null in QuestDB regardless of the wire type.
      */
-    public static final byte TYPE_IPv4 = 0x18;
+    public static final byte TYPE_IPV4 = 0x18;
     /**
      * Column type: LONG (int64, little-endian).
      */
@@ -305,7 +305,7 @@ public final class QwpConstants {
             case TYPE_SHORT -> "SHORT";
             case TYPE_CHAR -> "CHAR";
             case TYPE_BINARY -> "BINARY";
-            case TYPE_IPv4 -> "IPv4";
+            case TYPE_IPV4 -> "IPv4";
             case TYPE_INT -> "INT";
             case TYPE_LONG -> "LONG";
             case TYPE_FLOAT -> "FLOAT";

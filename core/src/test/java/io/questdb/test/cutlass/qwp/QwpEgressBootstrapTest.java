@@ -420,11 +420,11 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                 // Simulate a streaming-active state without actual native resources by
                 // calling beginStreaming with null factory/cursor. The defensive endStreaming
                 // inside beginStreaming is idempotent for null.
-                state.beginStreaming(1L, null, null, 0, 0, 0L);
+                state.beginStreaming(1L, null, null, 0, 0, false, 0L, null);
                 Assert.assertTrue(state.isStreamingActive());
                 // A second beginStreaming must not double-free (endStreaming handles nulls)
                 // and must transition to the new requestId cleanly.
-                state.beginStreaming(2L, null, null, 0, 0, 0L);
+                state.beginStreaming(2L, null, null, 0, 0, false, 0L, null);
                 Assert.assertTrue(state.isStreamingActive());
                 state.endStreaming();
                 Assert.assertFalse(state.isStreamingActive());
@@ -626,25 +626,25 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testFromConfigRejectsBadSchema() {
         try {
-            QwpQueryClient.fromConfig("http::addr=localhost:9000;");
+            QwpQueryClient.fromConfig("http::addr=localhost:9000;").close();
             Assert.fail("expected unsupported-schema error");
         } catch (IllegalArgumentException e) {
             Assert.assertTrue(e.getMessage(), e.getMessage().contains("unsupported schema"));
         }
         try {
-            QwpQueryClient.fromConfig("ws::");
+            QwpQueryClient.fromConfig("ws::").close();
             Assert.fail("expected missing-addr error");
         } catch (IllegalArgumentException e) {
             Assert.assertTrue(e.getMessage(), e.getMessage().contains("addr"));
         }
         try {
-            QwpQueryClient.fromConfig("ws::addr=h:9000;buffer_pool_size=0;");
+            QwpQueryClient.fromConfig("ws::addr=h:9000;buffer_pool_size=0;").close();
             Assert.fail("expected bad pool-size error");
         } catch (IllegalArgumentException e) {
             Assert.assertTrue(e.getMessage(), e.getMessage().contains("buffer_pool_size"));
         }
         try {
-            QwpQueryClient.fromConfig("wss::addr=h:9000;");
+            QwpQueryClient.fromConfig("wss::addr=h:9000;").close();
             Assert.fail("expected wss-not-supported error");
         } catch (IllegalArgumentException e) {
             Assert.assertTrue(e.getMessage(), e.getMessage().contains("wss"));

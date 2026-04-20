@@ -65,7 +65,7 @@ public final class QwpColumnTypeMapper {
             case ColumnType.SHORT -> QwpConstants.TYPE_SHORT;
             case ColumnType.CHAR -> QwpConstants.TYPE_CHAR;
             case ColumnType.INT -> QwpConstants.TYPE_INT;
-            case ColumnType.IPv4 -> QwpConstants.TYPE_IPv4;
+            case ColumnType.IPv4 -> QwpConstants.TYPE_IPV4;
             case ColumnType.LONG -> QwpConstants.TYPE_LONG;
             case ColumnType.DATE -> QwpConstants.TYPE_DATE;
             case ColumnType.FLOAT -> QwpConstants.TYPE_FLOAT;

@@ -56,16 +56,6 @@ public class QwpBitWriter {
     }
 
     /**
-     * Aligns the writer to the next byte boundary by padding with zeros.
-     * If already byte-aligned, this is a no-op.
-     */
-    public void alignToByte() {
-        if (bitsInBuffer > 0) {
-            flush();
-        }
-    }
-
-    /**
      * Finishes writing and returns the number of bytes written since reset.
      */
     public int finish() {
@@ -156,41 +146,6 @@ public class QwpBitWriter {
                 bitsInBuffer -= 8;
             }
         }
-    }
-
-    /**
-     * Writes a complete byte, ensuring byte alignment first.
-     */
-    public void writeByte(int value) {
-        alignToByte();
-        if (currentAddress >= endAddress) {
-            throw new AssertionError("QwpBitWriter buffer overflow");
-        }
-        Unsafe.getUnsafe().putByte(currentAddress++, (byte) value);
-    }
-
-    /**
-     * Writes a complete 32-bit integer in little-endian order, ensuring byte alignment first.
-     */
-    public void writeInt(int value) {
-        alignToByte();
-        if (currentAddress + 4 > endAddress) {
-            throw new AssertionError("QwpBitWriter buffer overflow");
-        }
-        Unsafe.getUnsafe().putInt(currentAddress, value);
-        currentAddress += 4;
-    }
-
-    /**
-     * Writes a complete 64-bit long in little-endian order, ensuring byte alignment first.
-     */
-    public void writeLong(long value) {
-        alignToByte();
-        if (currentAddress + 8 > endAddress) {
-            throw new AssertionError("QwpBitWriter buffer overflow");
-        }
-        Unsafe.getUnsafe().putLong(currentAddress, value);
-        currentAddress += 8;
     }
 
     /**

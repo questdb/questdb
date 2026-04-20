@@ -128,7 +128,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_INT:
                     scratch.appendIntOrNull(record.getInt(ci));
                     break;
-                case QwpConstants.TYPE_IPv4:
+                case QwpConstants.TYPE_IPV4:
                     // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
                     // The wire reader still cannot represent the literal address 0.0.0.0
                     // as non-null - that's a QuestDB-level limitation inherited by the
