@@ -37,14 +37,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.validationException;
 
-public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
+public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata {
     protected final CairoConfiguration configuration;
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;

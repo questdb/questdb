@@ -44,6 +44,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -2811,6 +2812,41 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetActivePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            // Find the last (active) partition timestamp
+            long activePartitionTimestamp;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                activePartitionTimestamp = writer.getTxWriter().getMaxTimestamp();
+
+                // switchNativePartitionWithParquet on the active partition should return SWITCH_SKIPPED
+                // without throwing an exception
+                Assert.assertEquals(TableWriter.SWITCH_SKIPPED, writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1));
+
+                // Partition should remain native (not converted)
+                TxWriter txWriter = writer.getTxWriter();
+                int partitionIndex = txWriter.getPartitionIndex(
+                        txWriter.getLogicalPartitionTimestamp(activePartitionTimestamp)
+                );
+                Assert.assertFalse("Active partition should not be converted to parquet",
+                        txWriter.isPartitionParquet(partitionIndex));
+            }
+        });
+    }
+
+    @Test
     public void testTableDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -3086,7 +3122,6 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         }
     }
-
 
     private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
         TableWriter.Row r = w.newRow(timestamp - increment * 4);

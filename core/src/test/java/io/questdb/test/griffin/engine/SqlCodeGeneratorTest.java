@@ -40,6 +40,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -9174,6 +9176,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 Assert.assertTrue(cursor.hasNext());
                 // First row: 2022-01-15T12:00:00 - 1h = 2022-01-15T11:00:00 = 1642244400000000 microseconds
                 Assert.assertEquals(100.0, record.getDouble(1), 0.001);
+            }
+        });
+    }
+
+    @Test
+    public void testVirtualColumnRejectsNonTimestampModelTimestampIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final String query = "SELECT x + 1 AS ts FROM long_sequence(1)";
+                final ExecutionModel executionModel = compiler.generateExecutionModel(query, sqlExecutionContext);
+                Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
+
+                final IQueryModel model = (IQueryModel) executionModel;
+                model.setTimestampColumnIndex(0);
+
+                RecordCursorFactory factory = null;
+                try {
+                    factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false);
+                    Assert.fail("expected timestamp validation to reject non-TIMESTAMP column");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is required but not provided");
+                    Assert.assertEquals(9, e.getPosition());
+                } finally {
+                    Misc.free(factory);
+                }
             }
         });
     }

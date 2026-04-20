@@ -80,7 +80,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short DROP_PARQUET_ENCODING = SET_PARQUET_ENCODING + 1; // 27
     private static final long BIT_DEDUP_KEY = 0x04L;
     private static final long INDEX_TYPE_MASK = 0x03L;
-    private final static Log LOG = LogFactory.getLog(AlterOperation.class);
+    private static final Log LOG = LogFactory.getLog(AlterOperation.class);
     private final ObjList<CharSequence> authColumnNames = new ObjList<>();
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
@@ -121,102 +121,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             if (queryRegistry != null) {
                 queryId = queryRegistry.register(sqlText, sqlExecutionContext);
             }
-            switch (command) {
-                case ADD_COLUMN:
-                    applyAddColumn(svc);
-                    break;
-                case DROP_COLUMN:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    applyDropColumn(svc);
-                    break;
-                case RENAME_COLUMN:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    applyRenameColumn(svc);
-                    break;
-                case DROP_PARTITION:
-                    applyDropPartition(svc);
-                    break;
-                case CONVERT_PARTITION_TO_PARQUET:
-                    applyConvertPartition(svc, true);
-                    break;
-                case CONVERT_PARTITION_TO_NATIVE:
-                    applyConvertPartition(svc, false);
-                    break;
-                case DETACH_PARTITION:
-                    applyDetachPartition(svc);
-                    break;
-                case ATTACH_PARTITION:
-                    applyAttachPartition(svc);
-                    break;
-                case FORCE_DROP_PARTITION:
-                    applyDropPartitionForce(svc);
-                    break;
-                case ADD_INDEX:
-                    applyAddIndex(svc);
-                    break;
-                case DROP_INDEX:
-                    applyDropIndex(svc);
-                    break;
-                case ADD_SYMBOL_CACHE:
-                    applySetSymbolCache(svc, true);
-                    break;
-                case REMOVE_SYMBOL_CACHE:
-                    applySetSymbolCache(svc, false);
-                    break;
-                case SET_PARAM_MAX_UNCOMMITTED_ROWS:
-                    applyParamUncommittedRows(svc);
-                    break;
-                case SET_PARAM_COMMIT_LAG:
-                    applyParamO3MaxLag(svc);
-                    break;
-                case SET_TTL:
-                    applyTtl(svc);
-                    break;
-                case RENAME_TABLE:
-                    applyRenameTable(svc);
-                    break;
-                case SQUASH_PARTITIONS:
-                    squashPartitions(svc);
-                    break;
-                case SET_DEDUP_ENABLE:
-                    keepMatViewsValid = enableDeduplication(svc);
-                    break;
-                case SET_DEDUP_DISABLE:
-                    svc.disableDeduplication();
-                    break;
-                case CHANGE_COLUMN_TYPE:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    changeColumnType(svc);
-                    break;
-                case CHANGE_SYMBOL_CAPACITY:
-                    changeSymbolCapacity(svc);
-                    break;
-                case SET_MAT_VIEW_REFRESH_LIMIT:
-                    setMatViewRefreshLimit(svc);
-                    break;
-                case SET_MAT_VIEW_REFRESH_TIMER:
-                    // legacy operation, kept for compat purposes
-                    setMatViewRefreshTimer(svc);
-                    break;
-                case SET_MAT_VIEW_REFRESH:
-                    setMatViewRefresh(svc);
-                    break;
-                case SET_PARQUET_ENCODING:
-                    setParquetEncoding(svc);
-                    break;
-                default:
-                    LOG.error()
-                            .$("invalid alter table command [code=").$(command)
-                            .$(" ,table=").$(svc.getTableToken())
-                            .I$();
-                    throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
-            }
+            doApply(svc, contextAllowsAnyStructureChanges);
         } catch (EntryUnavailableException ex) {
             throw ex;
         } catch (CairoException e) {
@@ -397,6 +302,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case ATTACH_PARTITION -> "attach partition operation";
             default -> null;
         };
+    }
+
+    public AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
     }
 
     public AlterOperation of(
@@ -746,6 +655,105 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.changeSymbolCapacity(columnName, newCapacity, securityContext);
     }
 
+    private void doApply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
+        switch (command) {
+            case ADD_COLUMN:
+                applyAddColumn(svc);
+                break;
+            case DROP_COLUMN:
+                if (!contextAllowsAnyStructureChanges) {
+                    throw AlterTableContextException.INSTANCE;
+                }
+                applyDropColumn(svc);
+                break;
+            case RENAME_COLUMN:
+                if (!contextAllowsAnyStructureChanges) {
+                    throw AlterTableContextException.INSTANCE;
+                }
+                applyRenameColumn(svc);
+                break;
+            case DROP_PARTITION:
+                applyDropPartition(svc);
+                break;
+            case CONVERT_PARTITION_TO_PARQUET:
+                applyConvertPartition(svc, true);
+                break;
+            case CONVERT_PARTITION_TO_NATIVE:
+                applyConvertPartition(svc, false);
+                break;
+            case DETACH_PARTITION:
+                applyDetachPartition(svc);
+                break;
+            case ATTACH_PARTITION:
+                applyAttachPartition(svc);
+                break;
+            case FORCE_DROP_PARTITION:
+                applyDropPartitionForce(svc);
+                break;
+            case ADD_INDEX:
+                applyAddIndex(svc);
+                break;
+            case DROP_INDEX:
+                applyDropIndex(svc);
+                break;
+            case ADD_SYMBOL_CACHE:
+                applySetSymbolCache(svc, true);
+                break;
+            case REMOVE_SYMBOL_CACHE:
+                applySetSymbolCache(svc, false);
+                break;
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS:
+                applyParamUncommittedRows(svc);
+                break;
+            case SET_PARAM_COMMIT_LAG:
+                applyParamO3MaxLag(svc);
+                break;
+            case SET_TTL:
+                applyTtl(svc);
+                break;
+            case RENAME_TABLE:
+                applyRenameTable(svc);
+                break;
+            case SQUASH_PARTITIONS:
+                squashPartitions(svc);
+                break;
+            case SET_DEDUP_ENABLE:
+                keepMatViewsValid = enableDeduplication(svc);
+                break;
+            case SET_DEDUP_DISABLE:
+                svc.disableDeduplication();
+                break;
+            case CHANGE_COLUMN_TYPE:
+                if (!contextAllowsAnyStructureChanges) {
+                    throw AlterTableContextException.INSTANCE;
+                }
+                changeColumnType(svc);
+                break;
+            case CHANGE_SYMBOL_CAPACITY:
+                changeSymbolCapacity(svc);
+                break;
+            case SET_MAT_VIEW_REFRESH_LIMIT:
+                setMatViewRefreshLimit(svc);
+                break;
+            case SET_MAT_VIEW_REFRESH_TIMER:
+                // legacy operation, kept for compat purposes
+                setMatViewRefreshTimer(svc);
+                break;
+            case SET_MAT_VIEW_REFRESH:
+                setMatViewRefresh(svc);
+                break;
+            case SET_PARQUET_ENCODING:
+                setParquetEncoding(svc);
+                break;
+            default:
+                LOG.error()
+                        .$("invalid alter table command [code=").$(command)
+                        .$(" ,table=").$(svc.getTableToken())
+                        .I$();
+                throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
+        }
+    }
+
     private boolean enableDeduplication(MetadataService svc) {
         assert extraInfo.size() > 0;
         return svc.enableDeduplicationWithUpsertKeys(extraInfo);
@@ -762,10 +770,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private CairoEngine getCairoEngine() {
         assert sqlExecutionContext != null;
         return sqlExecutionContext.getCairoEngine();
-    }
-
-    private AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
-        return new AlterOperation(extraInfo, extraStrInfo);
     }
 
     private void removeColumn(MetadataService svc, CharSequence columnName) {

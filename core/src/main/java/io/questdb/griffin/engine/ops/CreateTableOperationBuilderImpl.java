@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
+import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
@@ -44,10 +45,9 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
 
 public class CreateTableOperationBuilderImpl implements CreateTableOperationBuilder, Mutable {
     private static final IntList castGroups = new IntList();
@@ -62,6 +62,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
+    private Sinkable ttlToSinkOverride;
     // transient field, unoptimized AS SELECT model, used in toSink()
     private IQueryModel selectModel;
     private CharSequence selectText;
@@ -172,6 +173,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         maxUncommittedRows = 0;
         o3MaxLag = -1;
         partitionByExpr = null;
+        ttlToSinkOverride = null;
         tableNameExpr = null;
         timestampExpr = null;
         selectText = null;
@@ -248,6 +250,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return walEnabled;
     }
 
+    void ttlToSink(CharSink<?> sink) {
+        if (ttlToSinkOverride != null) {
+            ttlToSinkOverride.toSink(sink);
+        } else {
+            ShowCreateTableRecordCursorFactory.ttlToSink(ttlHoursOrMonths, sink);
+        }
+    }
+
     public void setBatchO3MaxLag(long batchO3MaxLag) {
         this.batchO3MaxLag = batchO3MaxLag;
     }
@@ -278,6 +288,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setPartitionByExpr(ExpressionNode partitionByExpr) {
         this.partitionByExpr = partitionByExpr;
+    }
+
+    public void setTtlToSinkOverride(Sinkable ttlToSinkOverride) {
+        this.ttlToSinkOverride = ttlToSinkOverride;
     }
 
     @Override
@@ -389,11 +403,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
         if (partitionByExpr != null) {
             sink.putAscii(" partition by ").put(partitionByExpr.token);
+            ttlToSink(sink);
             if (walEnabled) {
                 sink.putAscii(" wal");
             }
         }
-        ttlToSink(ttlHoursOrMonths, sink);
         if (volumeAlias != null) {
             sink.putAscii(" in volume '").put(volumeAlias).putAscii('\'');
         }

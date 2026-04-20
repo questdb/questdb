@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.std.IntList;
 import io.questdb.cairo.view.ViewDefinition;
+import org.jetbrains.annotations.NotNull;
 
 public interface TableStructure {
 
@@ -113,4 +114,7 @@ public interface TableStructure {
     }
 
     boolean isWalEnabled();
+
+    default void onCreated(@NotNull CairoEngine engine, @NotNull TableToken tableToken) {
+    }
 }
