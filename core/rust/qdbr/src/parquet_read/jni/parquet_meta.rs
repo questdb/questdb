@@ -571,8 +571,10 @@ mod tests {
 
     #[test]
     fn decode_first_and_last_timestamps_in_row_group_0() {
-        let (parquet_bytes, parquet_meta_bytes, parquet_meta_file_size) = build_parquet_and_parquet_meta_without_ts_stats(1, 100);
-        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
+        let (parquet_bytes, parquet_meta_bytes, parquet_meta_file_size) =
+            build_parquet_and_parquet_meta_without_ts_stats(1, 100);
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
         assert_eq!(decode_ts(&parquet_bytes, &reader, 0, 0, 0, 1).unwrap(), 0);
         assert_eq!(
             decode_ts(&parquet_bytes, &reader, 0, 0, 99, 100).unwrap(),
@@ -582,15 +584,19 @@ mod tests {
 
     #[test]
     fn decode_crosses_row_group_boundary() {
-        let (parquet_bytes, parquet_meta_bytes, parquet_meta_file_size) = build_parquet_and_parquet_meta_without_ts_stats(2, 50);
-        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
+        let (parquet_bytes, parquet_meta_bytes, parquet_meta_file_size) =
+            build_parquet_and_parquet_meta_without_ts_stats(2, 50);
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
         assert_eq!(decode_ts(&parquet_bytes, &reader, 1, 0, 0, 1).unwrap(), 50);
     }
 
     #[test]
     fn out_of_range_indices_error() {
-        let (parquet_bytes, parquet_meta_bytes, parquet_meta_file_size) = build_parquet_and_parquet_meta_without_ts_stats(1, 10);
-        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
+        let (parquet_bytes, parquet_meta_bytes, parquet_meta_file_size) =
+            build_parquet_and_parquet_meta_without_ts_stats(1, 10);
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
         assert!(decode_ts(&parquet_bytes, &reader, 1, 0, 0, 1).is_err());
         assert!(decode_ts(&parquet_bytes, &reader, 0, 99, 0, 1).is_err());
     }

@@ -64,7 +64,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetad
         );
         return err.into_cairo_exception().throw::<i64>(&mut env);
     }
-    match generate_parquet_meta(allocator, parquet_fd, parquet_file_size as u64, parquet_meta_fd) {
+    match generate_parquet_meta(
+        allocator,
+        parquet_fd,
+        parquet_file_size as u64,
+        parquet_meta_fd,
+    ) {
         Ok(parquet_meta_file_size) => parquet_meta_file_size as i64,
         Err(mut err) => {
             err.add_context("error in ParquetMetadataWriter.generate");
@@ -159,7 +164,8 @@ fn generate_parquet_meta(
     let parquet_meta_file_size = parquet_meta_bytes.len() as u64;
 
     // Write the _pm file. ManuallyDrop ensures the fd is never closed by Rust.
-    let mut parquet_meta_file = ManuallyDrop::new(unsafe { File::from_raw_fd_i32(parquet_meta_fd) });
+    let mut parquet_meta_file =
+        ManuallyDrop::new(unsafe { File::from_raw_fd_i32(parquet_meta_fd) });
     parquet_meta_file
         .write_all(&parquet_meta_bytes)
         .map_err(ParquetError::from)
@@ -258,4 +264,3 @@ fn read_parquet_footer_length(file: &mut File, file_size: u64) -> ParquetResult<
     file.read_exact(&mut buf).map_err(ParquetError::from)?;
     Ok(u32::from_le_bytes(buf))
 }
-
