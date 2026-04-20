@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.RowCursor;
 
 class EarliestByValueIndexedRowCursor implements RowCursor {
-    private long next;
+    private long next = -1;
 
     @Override
     public boolean hasNext() {

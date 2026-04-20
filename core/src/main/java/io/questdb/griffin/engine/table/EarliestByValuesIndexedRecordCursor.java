@@ -133,7 +133,11 @@ class EarliestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor 
         if (keyCount < 0) {
             keyCount = symbolKeys.size();
             if (deferredSymbolKeys != null) {
-                keyCount += deferredSymbolKeys.size();
+                for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
+                    if (!symbolKeys.contains(deferredSymbolKeys.get(i))) {
+                        keyCount++;
+                    }
+                }
             }
         }
 
@@ -162,6 +166,7 @@ class EarliestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor 
             }
         }
 
+        rows.sortAsUnsigned();
         index = 0;
     }
 

@@ -147,6 +147,10 @@ public class ParallelEarliestByTest extends AbstractTest {
         executeVanilla(this::testEarliestByWithin);
     }
 
+    static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(code);
+    }
+
     private static void execute(
             @Nullable WorkerPool pool,
             EarliestByRunnable runnable,
@@ -257,7 +261,7 @@ public class ParallelEarliestByTest extends AbstractTest {
                 "select" +
                 " rnd_double(0)*100 a," +
                 " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000)::" + timestampType.getTypeName() + " k" +
+                " timestamp_sequence(0, 100_000_000_000)::" + timestampType.getTypeName() + " k" +
                 " from" +
                 " long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
@@ -282,7 +286,7 @@ public class ParallelEarliestByTest extends AbstractTest {
         final String ddl = "create table x as " +
                 "(" +
                 "select" +
-                " timestamp_sequence(0, 100000000000)::" + timestampType.getTypeName() + " k," +
+                " timestamp_sequence(0, 100_000_000_000)::" + timestampType.getTypeName() + " k," +
                 " rnd_double(0)*100 a1," +
                 " rnd_double(0)*100 a2," +
                 " rnd_double(0)*100 a3," +
@@ -312,7 +316,7 @@ public class ParallelEarliestByTest extends AbstractTest {
                 "select" +
                 " rnd_double(0)*100 a," +
                 " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000)::" + timestampType.getTypeName() + " k" +
+                " timestamp_sequence(0, 100_000_000_000)::" + timestampType.getTypeName() + " k" +
                 " from" +
                 " long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
@@ -340,7 +344,7 @@ public class ParallelEarliestByTest extends AbstractTest {
         final String ddl = "create table x as " +
                 "(" +
                 "select" +
-                " timestamp_sequence(0, 100000000)::" + timestampType.getTypeName() + " ts," +
+                " timestamp_sequence(0, 100_000_000)::" + timestampType.getTypeName() + " ts," +
                 " rnd_symbol('a','b','c') sym," +
                 " rnd_double(0)*100 lon," +
                 " rnd_double(0)*100 lat," +
@@ -352,10 +356,6 @@ public class ParallelEarliestByTest extends AbstractTest {
         final String query = "select * from x where geo within(#gk1gj8, #mbx5c0) earliest on ts partition by sym";
 
         assertQuery(compiler, sqlExecutionContext, expected, ddl, ddl2, query);
-    }
-
-    static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(code);
     }
 
     @FunctionalInterface

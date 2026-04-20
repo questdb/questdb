@@ -122,9 +122,9 @@ public class EarliestByTask implements QuietCloseable, Mutable {
                         prefixesCount
                 );
             }
-            doneLatch.countDown();
             return true;
         } finally {
+            doneLatch.countDown();
             frameMemoryPool.close();
         }
     }
