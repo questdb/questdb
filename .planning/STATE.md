@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 14-01-PLAN.md
-last_updated: "2026-04-20T13:57:28.867Z"
+stopped_at: Completed 14-02-PLAN.md
+last_updated: "2026-04-20T14:46:49.118Z"
 last_activity: 2026-04-20
 progress:
   total_phases: 14
   completed_phases: 12
   total_plans: 24
-  completed_plans: 21
-  percent: 88
+  completed_plans: 22
+  percent: 92
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 14 (fix-issues-from-moderate-list-for-m5-and-m6-just-mention-in-) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-04-20
 
@@ -67,6 +67,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 13 P05 | ~65 min | 2 tasks | 2 files |
 | Phase 13-migrate-fill-prev-snapshots-from-materialized-values-to-rowi P06 | ~75 min | 2 tasks | 4 files |
 | Phase 14 P01 | 23min | 3 tasks | 4 files |
+| Phase 14 P02 | 39min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -129,6 +130,10 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 14]: Tighten FILL under-spec broadcast predicate to isBareBroadcastable: PREV requires ExpressionNode.LITERAL type; NULL keyword stays broadcastable; PREV(colX) FUNCTION-typed no longer broadcasts
 - [Phase 14]: Cross-column PREV type check uses needsExactTypeMatch flag: full-int equality for DECIMAL (ColumnType.isDecimal covers tag range DECIMAL8..DECIMAL), GEOHASH (ColumnType.isGeoHash), and ARRAY (tag); other types keep tag-level equality
 - [Phase 14]: D-16 ghost-test renamed with aggregated-shape assertion: wrap inner FILL(42,42,42) query in SELECT ts, count(*) rows, count_distinct(x) keys FROM (...) GROUP BY ts ORDER BY ts to get a readable 9-row expectation instead of a 4311-row literal
+- [Phase 14]: FillRecord.getArray/getBin/getBinLen extended to full 4-branch dispatch (FILL_KEY + cross-column-PREV-to-key + FILL_PREV_SELF/cross-col-PREV + FILL_CONSTANT + default null); closes M-2 silent key drop on ARRAY/BINARY key columns
+- [Phase 14]: FillRecord.getInterval added between getInt and getLong with Interval.NULL as default sentinel; FillRecord Javadoc documents getRecord/getRowId/getUpdateRowId as intentionally-unoverridden plumbing; closes M-8 INTERVAL crash
+- [Phase 14]: D-14 per-type FILL(PREV) tests land 11 @Test methods; INTERVAL test uses interval(lo, hi) inline key because INTERVAL is non-persistable and has no first(INTERVAL) aggregate; BINARY non-keyed test dropped (no first(BINARY)), coverage via keyed cursor-walk instead
+- [Phase 14]: Pre-existing testSampleFillPrevAllTypes and testSampleFillValueAllKeyTypes (SampleByTest + SampleByNanoTimestampTest) expected outputs updated to reflect corrected post-M-2 BINARY rendering on fill rows (key bytes carried, not empty); inline comments updated accordingly
 
 ### Roadmap Evolution
 
@@ -153,6 +158,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-20T13:57:28.865Z
-Stopped at: Completed 14-01-PLAN.md
+Last session: 2026-04-20T14:46:49.115Z
+Stopped at: Completed 14-02-PLAN.md
 Resume file: None
