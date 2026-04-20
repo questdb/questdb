@@ -186,12 +186,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     private volatile long streamingRequestId;
     /**
-     * Set true the moment {@code sendResultEnd} is initiated (whether it succeeds or
-     * throws {@code PeerIsSlowToReadException}). Lets {@code resumeSend} know not to
-     * re-issue the {@code RESULT_END} after flushing the deferred bytes.
-     */
-    private boolean streamingResultEndInitiated;
-    /**
      * Total rows emitted for the in-flight query across all batches. Reported to the
      * client in {@code RESULT_END.total_rows} so application code can verify the
      * server's view of the full result matches the row count it observed.
@@ -460,7 +454,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCreditRemaining = 0;
         streamingCreditSuspended = false;
         streamingFullSchemaSent = false;
-        streamingResultEndInitiated = false;
         streamingPageFrameIndex = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
@@ -606,10 +599,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingPageFrameCursor != null;
     }
 
-    public boolean isStreamingResultEndInitiated() {
-        return streamingResultEndInitiated;
-    }
-
     public boolean isWsHandshakeSent() {
         return wsHandshakeSent;
     }
@@ -628,10 +617,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public void markStreamingCreditSuspended() {
         streamingCreditSuspended = true;
-    }
-
-    public void markStreamingResultEndInitiated() {
-        streamingResultEndInitiated = true;
     }
 
     public void of(long fd, SecurityContext securityContext) {

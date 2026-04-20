@@ -323,16 +323,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
      * Continues a send that was parked on {@code PeerIsSlowToReadException}.
      * <p>
      * Always flushes any deferred bytes first -- even when {@code isStreamingActive()}
-     * is false. The PARKED bytes may belong to a {@code QUERY_ERROR} frame that
-     * {@code handleQueryRequest} or a previous {@code resumeSend} emitted AFTER
-     * calling {@code state.endStreaming()}; if we skipped the flush in that case,
-     * the client would see a stalled socket and never receive the error payload.
+     * is false. The PARKED bytes may belong to a {@code QUERY_ERROR} frame, or the
+     * {@code RESULT_END} frame from a completed query (streamResults releases the
+     * cursor BEFORE sending RESULT_END, so by the time we re-enter here streaming
+     * is already inactive). If we skipped the flush in that case, the client would
+     * see a stalled socket and never receive the final payload.
      * <p>
-     * After the flush succeeds, four follow-on states are possible:
+     * After the flush succeeds, two follow-on states are possible:
      * <ul>
      *   <li>streaming inactive -- nothing to do, return (error/end already flushed).</li>
-     *   <li>streaming active and {@code streamingResultEndInitiated} -- the parked
-     *       bytes were the {@code RESULT_END}; tear down the streaming state.</li>
      *   <li>streaming active and still producing -- re-enter the loop.</li>
      * </ul>
      */
@@ -359,20 +358,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
 
         if (state == null || !state.isStreamingActive()) {
             // Nothing to drive -- the deferred flush above was the last thing
-            // this connection had queued (e.g. a QUERY_ERROR after endStreaming).
+            // this connection had queued: either a QUERY_ERROR after endStreaming,
+            // or the RESULT_END frame (streamResults calls endStreaming before the
+            // final send, so a parked RESULT_END leaves streaming inactive).
             return;
         }
 
-        // 2. If the parked send was the RESULT_END frame, we're done -- the bytes
-        //    have now been flushed by resumeResponseSend above.
-        if (state.isStreamingResultEndInitiated()) {
-            LOG.debug().$("Egress resumeSend completed RESULT_END [fd=").$(context.getFd())
-                    .$(", requestId=").$(state.getStreamingRequestId()).I$();
-            state.endStreaming();
-            return;
-        }
-
-        // 3. Otherwise, continue the streaming loop from the cursor's current position.
+        // 2. Otherwise, continue the streaming loop from the cursor's current position.
         try {
             streamResults(context, state);
         } catch (PeerDisconnectedException e) {
@@ -774,7 +766,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
                     .$(", requestId=").$(requestId)
                     .$(", batchSeq=").$(state.getStreamingBatchSeq())
                     .$(", rowsEmitted=").$(state.getStreamingRowsEmitted())
-                    .$(", phase=").$(state.isStreamingResultEndInitiated() ? "RESULT_END" : "RESULT_BATCH")
                     .I$();
             throw e;
         } catch (Throwable e) {
@@ -1134,9 +1125,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             if (rowsThisBatch == 0 && state.isStreamingFullSchemaSent()) {
                 long finalSeq = state.getStreamingBatchSeq() == 0 ? 0 : state.getStreamingBatchSeq() - 1;
                 long totalRows = state.getStreamingRowsEmitted();
-                state.markStreamingResultEndInitiated();
-                sendResultEnd(context, state, requestId, finalSeq, totalRows);
+                // Release the cursor/factory (and therefore the TableReader) BEFORE handing
+                // RESULT_END bytes to the kernel. Otherwise the client can observe RESULT_END
+                // and issue a DROP TABLE while this thread is still between send() and endStreaming().
                 state.endStreaming();
+                sendResultEnd(context, state, requestId, finalSeq, totalRows);
                 return;
             }
             // Advance the streaming sequence BEFORE the network send. HttpRawSocket.send commits
@@ -1153,9 +1146,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             state.consumeStreamingCredit(qwpBytes);
             if (cursorExhausted) {
                 long totalRows = state.getStreamingRowsEmitted();
-                state.markStreamingResultEndInitiated();
-                sendResultEnd(context, state, requestId, currentSeq, totalRows);
+                // Release the cursor/factory (and therefore the TableReader) BEFORE handing
+                // RESULT_END bytes to the kernel. See the matching comment above in the
+                // empty-trailing-batch branch.
                 state.endStreaming();
+                sendResultEnd(context, state, requestId, currentSeq, totalRows);
                 return;
             }
         }
