@@ -49,6 +49,3 @@ compat/src/test/php/vendor/
 compat/src/test/php/composer.lock
 compat/src/test/golang/gorunner
 compat/src/test/rust/scenarios/target/
-/core/rust/qdb-core/Cargo.lock
-.claude/scheduled_tasks.lock
-.claude/settings.local.json
