@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: "Completed 13-06-PLAN.md (Phase 13 closes: SEED-001 WR-04 + Defect 3 landed; testSampleByFillNeedFix #3 and testSampleFillValueNotEnough restored to master's assertException form)"
-last_updated: "2026-04-19T23:26:04.596Z"
-last_activity: 2026-04-19
+last_updated: "2026-04-20T00:45:19.651Z"
+last_activity: 2026-04-20
 progress:
   total_phases: 13
   completed_phases: 12
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 
 ## Current Position
 
-Phase: 13 (migrate-fill-prev-snapshots-from-materialized-values-to-rowi) — EXECUTING
-Plan: 6 of 6
+Phase: 13
+Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-04-19
+Last activity: 2026-04-20
 
 Progress: [##########] 100%
 
@@ -36,7 +36,7 @@ Progress: [##########] 100%
 
 **Velocity:**
 
-- Total plans completed: 14
+- Total plans completed: 20
 - Total execution time across tracked phases: ~10h
 
 **By Phase:**
@@ -53,6 +53,7 @@ Progress: [##########] 100%
 | 10 | 1 | 16m | 16m |
 | 11 | 1 | ~210m (retroactive estimate) | ~210m |
 | 12 | 4 | - | - |
+| 13 | 6 | - | - |
 
 Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 12 P01 | 12 | 3 tasks | 5 files |
