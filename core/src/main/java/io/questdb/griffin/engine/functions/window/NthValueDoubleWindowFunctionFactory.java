@@ -716,6 +716,12 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
+        @Override
         public void computeNext(Record record) {
             // Map value slot layout: 0=loIdx, 1=startOffset, 2=count (capped at bufferSize).
             partitionByRecord.of(record);
