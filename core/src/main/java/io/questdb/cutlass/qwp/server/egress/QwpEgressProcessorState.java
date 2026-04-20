@@ -42,9 +42,12 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Zstd;
 
 /**
  * Per-connection state for QWP egress (query results) processing.
@@ -71,7 +74,23 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // DDL operations. Subscribed to the engine's message bus on first use;
     // cleared between queries (the sequence object itself is reused).
     private final SCSequence eventSubSequence = new SCSequence();
+    // Compression negotiated at handshake time. codec == COMPRESSION_NONE (default)
+    // sends RESULT_BATCH bytes raw; COMPRESSION_ZSTD compresses the region after
+    // the prelude with the zstd level the client requested (clamped server-side).
+    // The native CCtx handle is allocated lazily on the first batch we compress
+    // and reused across every batch on the connection; freed in close().
+    private byte compressionCodec = QwpConstants.COMPRESSION_NONE;
+    private byte compressionLevel;
     private long fd = -1;
+    /**
+     * True between {@code onHeadersReady} (which writes the 101 response bytes
+     * into the raw-socket buffer) and {@code resumeSend}'s flush + protocol
+     * switch. While true, {@code onRequestComplete} / {@code resumeSend} are
+     * responsible for committing the bytes and calling {@code switchProtocol}.
+     * Handles the case where {@code rawSocket.send} parks mid-write on a
+     * fragmented send buffer.
+     */
+    private boolean handshakeFlushPending;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
     private int nextSchemaId;
     // Page-frame iteration scaffolding. Allocated lazily on first page-frame query and
@@ -81,6 +100,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private PageFrameAddressCache pageFrameAddressCache;
     private PageFrameMemoryPool pageFrameMemoryPool;
     private PageFrameMemoryRecord pageFrameMemoryRecord;
+    /**
+     * Byte count of the WebSocket 101 handshake response written by
+     * {@code onHeadersReady} but not yet committed. {@code onRequestComplete}
+     * issues the {@code rawSocket.send(pendingHandshakeBytes)} -- PISR from
+     * that path is legal (unlike in {@code onHeadersReady}) and lets the
+     * framework park + resume the remainder properly.
+     */
+    private int pendingHandshakeBytes;
     private int recvBufferLen;
     private SecurityContext securityContext;
     /**
@@ -107,23 +134,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     private boolean streamingCancelRequested;
     private int streamingColumnCount;
-    /**
-     * True between {@code onHeadersReady} (which writes the 101 response bytes
-     * into the raw-socket buffer) and {@code resumeSend}'s flush + protocol
-     * switch. While true, {@code onRequestComplete} / {@code resumeSend} are
-     * responsible for committing the bytes and calling {@code switchProtocol}.
-     * Handles the case where {@code rawSocket.send} parks mid-write on a
-     * fragmented send buffer.
-     */
-    private boolean handshakeFlushPending;
-    /**
-     * Byte count of the WebSocket 101 handshake response written by
-     * {@code onHeadersReady} but not yet committed. {@code onRequestComplete}
-     * issues the {@code rawSocket.send(pendingHandshakeBytes)} -- PISR from
-     * that path is legal (unlike in {@code onHeadersReady}) and lets the
-     * framework park + resume the remainder properly.
-     */
-    private int pendingHandshakeBytes;
     /**
      * Credit-flow state for the in-flight query.
      * <p>
@@ -169,9 +179,29 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private long streamingRowsEmitted;
     private int streamingSchemaId;
     private boolean wsHandshakeSent;
+    // Native ZSTD_CCtx handle (pointer from Zstd.createCCtx). 0 means not yet
+    // allocated. Lives across queries on the same connection because the
+    // compression codec + level are fixed at handshake time.
+    private long zstdCCtx;
+    // Growable native scratch buffer that holds compressed bytes between the
+    // call to Zstd.compress and the memcpy back into the rawSocket buffer. The
+    // uncompressed payload stays in the rawSocket buffer; only the compressed
+    // output lands here. Sized on demand in zstdCompressScratch().
+    private long zstdCompressScratchAddr;
+    private int zstdCompressScratchCapacity;
 
     public QwpEgressProcessorState(io.questdb.cairo.CairoConfiguration cairoConfiguration) {
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
+    }
+
+    /**
+     * Adds the given number of bytes to the remaining credit. Called from the
+     * CREDIT frame handler. Saturates at {@code Long.MAX_VALUE} to avoid
+     * overflow on pathological clients.
+     */
+    public void addStreamingCredit(long bytes) {
+        long sum = streamingCreditRemaining + bytes;
+        streamingCreditRemaining = sum < streamingCreditRemaining ? Long.MAX_VALUE : sum;
     }
 
     /**
@@ -334,6 +364,18 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         // Connection dropped/reset -- client cannot reuse the delta dict on a
         // new connection so we discard it too. On a clean close() this is idempotent.
         connSymbolDict.clear();
+        // Compression is renegotiated on every handshake, so drop the CCtx
+        // now even if the next connection happens to pick the same level.
+        compressionCodec = QwpConstants.COMPRESSION_NONE;
+        compressionLevel = 0;
+        if (zstdCCtx != 0) {
+            Zstd.freeCCtx(zstdCCtx);
+            zstdCCtx = 0;
+        }
+    }
+
+    public void clearStreamingCreditSuspended() {
+        streamingCreditSuspended = false;
     }
 
     @Override
@@ -344,6 +386,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         pageFrameMemoryRecord = Misc.free(pageFrameMemoryRecord);
         pageFrameMemoryPool = Misc.free(pageFrameMemoryPool);
         pageFrameAddressCache = Misc.free(pageFrameAddressCache);
+        if (zstdCCtx != 0) {
+            Zstd.freeCCtx(zstdCCtx);
+            zstdCCtx = 0;
+        }
+        if (zstdCompressScratchAddr != 0) {
+            Unsafe.free(zstdCompressScratchAddr, zstdCompressScratchCapacity, MemoryTag.NATIVE_DEFAULT);
+            zstdCompressScratchAddr = 0;
+            zstdCompressScratchCapacity = 0;
+        }
     }
 
     /**
@@ -359,6 +410,16 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
                             + "[seq=" + streamingBatchSeq + ']');
         }
         streamingBatchSeqCommitted = false;
+    }
+
+    /**
+     * Subtracts the bytes actually sent in the just-completed batch from
+     * {@code creditRemaining}. No-op when the stream is not credit-limited.
+     */
+    public void consumeStreamingCredit(long bytes) {
+        if (streamingCreditInitial > 0) {
+            streamingCreditRemaining -= bytes;
+        }
     }
 
     /**
@@ -398,6 +459,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * appends new entries to it directly from its SYMBOL appendRow branch and
      * emits the per-batch slice from {@code emitDeltaSection}.
      */
+    public byte getCompressionCodec() {
+        return compressionCodec;
+    }
+
+    public byte getCompressionLevel() {
+        return compressionLevel;
+    }
+
     public QwpEgressConnSymbolDict getConnSymbolDict() {
         return connSymbolDict;
     }
@@ -423,6 +492,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return negotiatedVersion;
     }
 
+    public int getPendingHandshakeBytes() {
+        return pendingHandshakeBytes;
+    }
+
     public int getRecvBufferLen() {
         return recvBufferLen;
     }
@@ -437,6 +510,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public int getStreamingColumnCount() {
         return streamingColumnCount;
+    }
+
+    public long getStreamingCreditRemaining() {
+        return streamingCreditRemaining;
     }
 
     public RecordCursor getStreamingCursor() {
@@ -464,6 +541,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingPageFrameCursor != null ? streamingPageFrameCursor : streamingCursor;
     }
 
+    public boolean isHandshakeFlushPending() {
+        return handshakeFlushPending;
+    }
+
     public boolean isStreamingActive() {
         return streamingActive;
     }
@@ -483,10 +564,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public boolean isStreamingCreditLimited() {
         return streamingCreditInitial > 0;
-    }
-
-    public long getStreamingCreditRemaining() {
-        return streamingCreditRemaining;
     }
 
     /**
@@ -517,22 +594,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return wsHandshakeSent;
     }
 
-    public boolean isHandshakeFlushPending() {
-        return handshakeFlushPending;
-    }
-
-    public void setHandshakeFlushPending(boolean pending) {
-        this.handshakeFlushPending = pending;
-    }
-
-    public int getPendingHandshakeBytes() {
-        return pendingHandshakeBytes;
-    }
-
-    public void setPendingHandshakeBytes(int bytes) {
-        this.pendingHandshakeBytes = bytes;
-    }
-
     /**
      * Records that a CANCEL frame was received for the current streaming query.
      * Idempotent -- multiple CANCELs coalesce into a single abort path.
@@ -542,35 +603,11 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
-     * Adds the given number of bytes to the remaining credit. Called from the
-     * CREDIT frame handler. Saturates at {@code Long.MAX_VALUE} to avoid
-     * overflow on pathological clients.
-     */
-    public void addStreamingCredit(long bytes) {
-        long sum = streamingCreditRemaining + bytes;
-        streamingCreditRemaining = sum < streamingCreditRemaining ? Long.MAX_VALUE : sum;
-    }
-
-    /**
-     * Subtracts the bytes actually sent in the just-completed batch from
-     * {@code creditRemaining}. No-op when the stream is not credit-limited.
-     */
-    public void consumeStreamingCredit(long bytes) {
-        if (streamingCreditInitial > 0) {
-            streamingCreditRemaining -= bytes;
-        }
-    }
-
-    /**
      * Marks the streaming loop as credit-suspended. {@code streamResults} returns
      * early; the next CREDIT frame (or cancel) re-enters it.
      */
     public void markStreamingCreditSuspended() {
         streamingCreditSuspended = true;
-    }
-
-    public void clearStreamingCreditSuspended() {
-        streamingCreditSuspended = false;
     }
 
     public void markStreamingResultEndInitiated() {
@@ -605,8 +642,26 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingBatchSeqCommitted = true;
     }
 
+    /**
+     * Records the compression codec + level chosen at handshake time. Called once
+     * per connection from {@code onHeadersReady}; the CCtx is allocated lazily on
+     * the first batch that actually needs to compress.
+     */
+    public void setCompression(byte codec, byte level) {
+        this.compressionCodec = codec;
+        this.compressionLevel = level;
+    }
+
+    public void setHandshakeFlushPending(boolean pending) {
+        this.handshakeFlushPending = pending;
+    }
+
     public void setNegotiatedVersion(byte negotiatedVersion) {
         this.negotiatedVersion = negotiatedVersion;
+    }
+
+    public void setPendingHandshakeBytes(int bytes) {
+        this.pendingHandshakeBytes = bytes;
     }
 
     public void setRecvBufferLen(int recvBufferLen) {
@@ -615,5 +670,37 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public void setWsHandshakeSent(boolean wsHandshakeSent) {
         this.wsHandshakeSent = wsHandshakeSent;
+    }
+
+    /**
+     * Returns the native {@code ZSTD_CCtx} pointer, allocating it on first use.
+     * Caller must already know compression is active (codec != COMPRESSION_NONE)
+     * -- no null check is performed. Returns 0 if native allocation fails, which
+     * {@code sendResultBatch} treats as "fall back to raw this batch".
+     */
+    public long zstdCCtx() {
+        if (zstdCCtx == 0) {
+            zstdCCtx = Zstd.createCCtx(compressionLevel);
+        }
+        return zstdCCtx;
+    }
+
+    /**
+     * Grows (or allocates) the compression scratch buffer to at least
+     * {@code minCapacity} bytes and returns its native address. The buffer is
+     * owned by this state and freed in {@link #clear()} / {@link #close()}.
+     */
+    public long zstdCompressScratch(int minCapacity) {
+        if (zstdCompressScratchCapacity < minCapacity) {
+            if (zstdCompressScratchAddr != 0) {
+                Unsafe.free(zstdCompressScratchAddr, zstdCompressScratchCapacity, MemoryTag.NATIVE_DEFAULT);
+            }
+            // Round up to next 4 KiB so small growths don't thrash when batch
+            // sizes drift slightly between queries.
+            int cap = (minCapacity + 4095) & ~4095;
+            zstdCompressScratchAddr = Unsafe.malloc(cap, MemoryTag.NATIVE_DEFAULT);
+            zstdCompressScratchCapacity = cap;
+        }
+        return zstdCompressScratchAddr;
     }
 }

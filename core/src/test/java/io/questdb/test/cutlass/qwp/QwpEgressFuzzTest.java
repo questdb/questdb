@@ -24,11 +24,11 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
-import io.questdb.PropertyKey;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
@@ -123,7 +123,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         dbPath.parent().$();
         // Pinned seeds make the fuzz deterministic across runs -- swap for new
         // constants if/when a CI run surfaces a previously-unseen failure.
-        random = TestUtils.generateRandom(LOG, 485786647934791L, 1776628971981L);
+        random = TestUtils.generateRandom(LOG);
     }
 
     @Test
@@ -136,7 +136,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain server = startFragmented(chunk)) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";" + pickCompression())) {
                     client.connect();
                     for (int q = 0; q < 12; q++) {
                         runOneCase(server, client, "fuzz_back_" + q, 1 + random.nextInt(4));
@@ -155,7 +155,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
             try (TestServerMain server = startFragmented(chunk)) {
                 for (int i = 0; i < 15; i++) {
                     try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                            "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                            "ws::addr=127.0.0.1:" + HTTP_PORT + ";" + pickCompression())) {
                         client.connect();
                         runOneCase(server, client, "fuzz_iter_" + i, 1 + random.nextInt(6));
                     }
@@ -173,7 +173,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain server = startFragmented(chunk)) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";" + pickCompression())) {
                     client.connect();
                     runOneCase(server, client, "fuzz_wide", 10 + random.nextInt(7));
                 }
@@ -222,23 +222,6 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         return choices[rnd.nextInt(choices.length)];
     }
 
-    /**
-     * Random send+recv fragmentation chunk size. Lower bound 10 exercises the
-     * park-resume path on every WS frame (handshake included, since the
-     * onRequestComplete/resumeSend split handles partial handshake writes);
-     * upper bound keeps small-result iterations fast.
-     */
-    private int pickChunk() {
-        return 1 + random.nextInt(500);
-    }
-
-    private TestServerMain startFragmented(int chunk) {
-        return startWithEnvVariables(
-                PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(chunk),
-                PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(chunk)
-        );
-    }
-
     private static String randomAsciiString(Rnd rnd, int len) {
         StringBuilder sb = new StringBuilder(len);
         for (int i = 0; i < len; i++) {
@@ -264,6 +247,42 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
             sb.append(')');
         }
         return sb.toString();
+    }
+
+    /**
+     * Random send+recv fragmentation chunk size. Lower bound 10 exercises the
+     * park-resume path on every WS frame (handshake included, since the
+     * onRequestComplete/resumeSend split handles partial handshake writes);
+     * upper bound keeps small-result iterations fast.
+     */
+    private int pickChunk() {
+        return 1 + random.nextInt(500);
+    }
+
+    /**
+     * Random compression settings for the fuzz client. Mixes raw, zstd at
+     * varied levels, and the {@code auto} default so every path gets hit
+     * across iterations:
+     * <ul>
+     *   <li>no key / auto -- exercises the default negotiation (server picks
+     *       zstd when advertised) without explicitly pinning a level.</li>
+     *   <li>raw -- skips compression entirely; regression guard against the
+     *       compression machinery triggering when the header is absent.</li>
+     *   <li>zstd with a random level in [1, 9] -- the server-side clamp
+     *       range. Higher than 9 is pointless here because the server would
+     *       clamp it anyway.</li>
+     * </ul>
+     * Returns a connection-string fragment like {@code "compression=zstd;compression_level=3;"}
+     * ready to append after the address.
+     */
+    private String pickCompression() {
+        int choice = random.nextInt(4);
+        return switch (choice) {
+            case 0 -> ""; // inherit default (auto)
+            case 1 -> "compression=raw;";
+            case 2 -> "compression=zstd;";
+            default -> "compression=zstd;compression_level=" + (1 + random.nextInt(9)) + ";";
+        };
     }
 
     private QueryPlan planQuery(String table, int colCount, int rowCount, int caseIdx) {
@@ -384,6 +403,13 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         });
 
         server.execute("DROP TABLE " + table);
+    }
+
+    private TestServerMain startFragmented(int chunk) {
+        return startWithEnvVariables(
+                PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(chunk),
+                PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(chunk)
+        );
     }
 
     /**

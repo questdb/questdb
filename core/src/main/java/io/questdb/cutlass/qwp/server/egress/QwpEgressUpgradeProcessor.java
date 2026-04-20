@@ -67,6 +67,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.Zstd;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -207,8 +209,21 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         Utf8Sequence wsKey = QwpWebSocketHttpProcessor.getWebSocketKey(requestHeader);
 
         int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
+        // Pick the compression codec now so the response size reflects the
+        // optional X-QWP-Content-Encoding header. The negotiator returns
+        // RESULT_NONE when the header is absent or no supported codec is
+        // listed, which leaves the wire raw and omits the response header.
+        Utf8Sequence acceptEncoding = requestHeader.getHeader(
+                QwpWebSocketHttpProcessor.HEADER_X_QWP_ACCEPT_ENCODING);
+        long negotiatedCompression = QwpEgressCompressionNegotiator.negotiate(acceptEncoding);
+        byte negotiatedCodec = QwpEgressCompressionNegotiator.codec(negotiatedCompression);
+        byte negotiatedLevel = QwpEgressCompressionNegotiator.level(negotiatedCompression);
+        String contentEncodingHeader = QwpEgressCompressionNegotiator.responseHeaderValue(
+                negotiatedCodec, negotiatedLevel);
+
         String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
-        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, negotiatedVersion);
+        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
+                acceptKey, negotiatedVersion, contentEncodingHeader);
         if (requiredHandshakeSize > bufferSize) {
             throw HttpException.instance("egress 101 handshake response does not fit send buffer [required=")
                     .put(requiredHandshakeSize).put(", available=").put(bufferSize).put(']');
@@ -223,8 +238,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         }
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
+        state.setCompression(negotiatedCodec, negotiatedLevel);
 
-        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion);
+        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(
+                bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeader);
         // The HttpRequestProcessor contract forbids PeerIsSlowToReadException
         // from onHeadersReady, so we defer the raw-socket send to
         // onRequestComplete where PISR propagates cleanly into the framework's
@@ -987,6 +1004,41 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             throw HttpException.instance("egress: batch too large for send buffer");
         }
         long qwpEnd = preludeEnd + deltaSize + tableBlockSize;
+
+        // Optional zstd compression of the post-prelude body. The prelude stays
+        // raw so the client I/O thread can peek msg_kind + requestId + batchSeq
+        // for routing without paying the decompress cost. FLAG_ZSTD is only set
+        // when compression actually shrinks the body; tiny batches that expand
+        // under zstd's header overhead ship raw to stay within the send buffer
+        // and avoid waste.
+        if (state.getCompressionCodec() == QwpConstants.COMPRESSION_ZSTD) {
+            int bodyLen = (int) (qwpEnd - preludeEnd);
+            if (bodyLen > 0) {
+                // zstd's compressed-size bound is srcLen + (srcLen >> 8) + 64;
+                // pad to 128 for safety across libzstd versions.
+                int scratchCap = bodyLen + (bodyLen >> 8) + 128;
+                long scratch = state.zstdCompressScratch(scratchCap);
+                long compLen = Zstd.compress(state.zstdCCtx(), preludeEnd, bodyLen, scratch, scratchCap);
+                if (compLen > 0 && compLen < bodyLen) {
+                    Vect.memcpy(preludeEnd, scratch, compLen);
+                    qwpEnd = preludeEnd + compLen;
+                    // Patch FLAG_ZSTD into the header's flags byte. writeMessageHeader
+                    // already wrote FLAG_DELTA_SYMBOL_DICT | FLAG_GORILLA; we OR in
+                    // the zstd bit without re-serialising the whole header.
+                    long flagsAddr = qwpStart + QwpConstants.HEADER_OFFSET_FLAGS;
+                    byte flags = Unsafe.getUnsafe().getByte(flagsAddr);
+                    Unsafe.getUnsafe().putByte(flagsAddr, (byte) (flags | QwpConstants.FLAG_ZSTD));
+                } else if (compLen < 0) {
+                    LOG.error().$("zstd compress error [fd=").$(context.getFd())
+                            .$(", code=").$(compLen).I$();
+                    // Fall through and ship the batch raw; the flag stays off.
+                }
+                // When compLen >= bodyLen the batch is shipped raw. No memcpy
+                // needed because preludeEnd..qwpEnd still holds the original
+                // uncompressed bytes (compress wrote only into the scratch).
+            }
+        }
+
         int qwpSize = (int) (qwpEnd - qwpStart);
         int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
         QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);

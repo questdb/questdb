@@ -346,7 +346,7 @@ public class QwpEgressReadBenchmarkWide {
         final long[] checksum = {0};
         long start = System.nanoTime();
         try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                "ws::addr=" + HOST + ":" + HTTP_PORT + ";client_id=qwp-egress-bench/1.0;")) {
+                "ws::addr=" + HOST + ":" + HTTP_PORT + ";client_id=qwp-egress-bench/1.0;compression=raw;")) {
             client.connect();
             client.execute(
                     "SELECT ts, id, price, sym, note,"

@@ -33,6 +33,14 @@ package io.questdb.cutlass.qwp.protocol;
  */
 public final class QwpConstants {
 
+    public static final byte COMPRESSION_NONE = 0;
+    public static final byte COMPRESSION_ZSTD = 1;
+    // Server-side clamp for the level requested by the client via
+    // X-QWP-Accept-Encoding: zstd;level=N. zstd levels 10 and above drop to
+    // <20 MB/s compress speed, which lets a slow/malicious client pin a
+    // worker thread for seconds per batch.
+    public static final int COMPRESSION_ZSTD_MAX_LEVEL = 9;
+    public static final int COMPRESSION_ZSTD_MIN_LEVEL = 1;
     /**
      * Default maximum batch size in bytes (16 MB).
      */
@@ -59,6 +67,14 @@ public final class QwpConstants {
      * Flag bit: Gorilla timestamp encoding enabled.
      */
     public static final byte FLAG_GORILLA = 0x04;
+    /**
+     * Flag bit: the region starting at {@code delta_symbol_dict} (or the first
+     * table block if no delta dict is present) is zstd-compressed. The prelude
+     * remains uncompressed so the I/O thread can dispatch on msg_kind / batch_seq
+     * without paying the decompress cost. Set only on {@code RESULT_BATCH} frames
+     * and only after the handshake negotiated {@code zstd}.
+     */
+    public static final byte FLAG_ZSTD = 0x10;
     /**
      * Offset of flags byte in header.
      */
@@ -132,6 +148,11 @@ public final class QwpConstants {
      */
     public static final byte STATUS_WRITE_ERROR = 0x09;
     /**
+     * Column type: BINARY (length-prefixed opaque bytes).
+     * Wire format: identical to VARCHAR — (N+1) x uint32 offsets + concatenated bytes.
+     */
+    public static final byte TYPE_BINARY = 0x17;
+    /**
      * Column type: BOOLEAN (1 bit per value, packed).
      */
     public static final byte TYPE_BOOLEAN = 0x01;
@@ -144,23 +165,9 @@ public final class QwpConstants {
      */
     public static final byte TYPE_CHAR = 0x16;
     /**
-     * Column type: BINARY (length-prefixed opaque bytes).
-     * Wire format: identical to VARCHAR — (N+1) x uint32 offsets + concatenated bytes.
-     */
-    public static final byte TYPE_BINARY = 0x17;
-    /**
-     * Column type: IPv4 (32-bit address). Wire format: 4 bytes LE, identical to INT.
-     * NULL is signalled via the standard null bitmap; the int payload for non-null rows
-     * is the address bits (network byte order on the wire? No — little-endian like INT).
-     * Note: QuestDB stores IPv4 NULL as the bit pattern 0 (i.e. 0.0.0.0), so the address
-     * 0.0.0.0 cannot be represented as non-null in QuestDB regardless of the wire type.
-     */
-    public static final byte TYPE_IPv4 = 0x18;
-    /**
      * Column type: DATE (int64 milliseconds since epoch).
      */
     public static final byte TYPE_DATE = 0x0B;
-
     /**
      * Column type: DECIMAL128 (16 bytes, 38 digits precision).
      * Wire format: [scale (1B in schema)] + [little-endian unscaled value (16B)]
@@ -171,7 +178,6 @@ public final class QwpConstants {
      * Wire format: [scale (1B in schema)] + [little-endian unscaled value (32B)]
      */
     public static final byte TYPE_DECIMAL256 = 0x15;
-
     /**
      * Column type: DECIMAL64 (8 bytes, 18 digits precision).
      * Wire format: [scale (1B in schema)] + [little-endian unscaled value (8B)]
@@ -198,6 +204,14 @@ public final class QwpConstants {
      * Column type: INT (int32, little-endian).
      */
     public static final byte TYPE_INT = 0x04;
+    /**
+     * Column type: IPv4 (32-bit address). Wire format: 4 bytes LE, identical to INT.
+     * NULL is signalled via the standard null bitmap; the int payload for non-null rows
+     * is the address bits (network byte order on the wire? No — little-endian like INT).
+     * Note: QuestDB stores IPv4 NULL as the bit pattern 0 (i.e. 0.0.0.0), so the address
+     * 0.0.0.0 cannot be represented as non-null in QuestDB regardless of the wire type.
+     */
+    public static final byte TYPE_IPv4 = 0x18;
     /**
      * Column type: LONG (int64, little-endian).
      */

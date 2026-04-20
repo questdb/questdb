@@ -55,6 +55,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // Header names (case-insensitive)
     public static final Utf8String HEADER_UPGRADE = new Utf8String("Upgrade");
     // QWP version negotiation headers
+    public static final Utf8String HEADER_X_QWP_ACCEPT_ENCODING = new Utf8String("X-QWP-Accept-Encoding");
     public static final Utf8String HEADER_X_QWP_CLIENT_ID = new Utf8String("X-QWP-Client-Id");
     public static final Utf8String HEADER_X_QWP_MAX_VERSION = new Utf8String("X-QWP-Max-Version");
     // Header values
@@ -77,6 +78,8 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     private static final String ERROR_ORIGIN_HEADER_NOT_ALLOWED = "Origin header not allowed on QWP WebSocket";
     private static final String ERROR_UNSUPPORTED_WEBSOCKET_VERSION = "Unsupported WebSocket version (must be 13)";
     private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] RESPONSE_CONTENT_ENCODING_PREFIX =
+            "\r\nX-QWP-Content-Encoding: ".getBytes(StandardCharsets.US_ASCII);
     // Response template
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
@@ -212,9 +215,22 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @return the total response size in bytes
      */
     public static int responseSize(String acceptKey, int qwpVersion) {
-        return RESPONSE_PREFIX.length + acceptKey.length()
+        return responseSize(acceptKey, qwpVersion, null);
+    }
+
+    /**
+     * Same as {@link #responseSize(String, int)} but accounts for an optional
+     * {@code X-QWP-Content-Encoding} header that echoes the compression codec
+     * the server chose during negotiation. Pass {@code null} for no header.
+     */
+    public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding) {
+        int size = RESPONSE_PREFIX.length + acceptKey.length()
                 + RESPONSE_AFTER_ACCEPT.length + digitCount(qwpVersion)
                 + RESPONSE_SUFFIX.length;
+        if (contentEncoding != null) {
+            size += RESPONSE_CONTENT_ENCODING_PREFIX.length + contentEncoding.length();
+        }
+        return size;
     }
 
     /**
@@ -279,6 +295,15 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @return the number of bytes written
      */
     public static int writeResponse(long buf, String acceptKey, int qwpVersion) {
+        return writeResponse(buf, acceptKey, qwpVersion, null);
+    }
+
+    /**
+     * Same as {@link #writeResponse(long, String, int)} but appends an optional
+     * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
+     * codec (e.g. {@code zstd;level=3}). Pass {@code null} for no header.
+     */
+    public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding) {
         int offset = 0;
 
         // Write prefix
@@ -299,6 +324,20 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         byte[] versionBytes = Integer.toString(qwpVersion).getBytes(StandardCharsets.US_ASCII);
         for (byte b : versionBytes) {
             Unsafe.getUnsafe().putByte(buf + offset++, b);
+        }
+
+        // Optional X-QWP-Content-Encoding header. Emitted only when the
+        // handshake negotiated a compression codec; omitted entirely when the
+        // wire stays raw so clients that ignore the header see the same bytes
+        // as before.
+        if (contentEncoding != null) {
+            for (byte b : RESPONSE_CONTENT_ENCODING_PREFIX) {
+                Unsafe.getUnsafe().putByte(buf + offset++, b);
+            }
+            byte[] encBytes = contentEncoding.getBytes(StandardCharsets.US_ASCII);
+            for (byte b : encBytes) {
+                Unsafe.getUnsafe().putByte(buf + offset++, b);
+            }
         }
 
         // Write suffix
