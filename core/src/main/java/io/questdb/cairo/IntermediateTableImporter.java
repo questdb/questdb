@@ -419,14 +419,22 @@ public class IntermediateTableImporter {
         final long totalRows = runSet.totalRows;
         boolean isStarted = false;
         TableReader reader = null;
+        TableWriter writer = null;
         final PartitionColumnSource[] sources = new PartitionColumnSource[partitionCount];
         final int[] cursors = new int[partitionCount];
         final int[] rgSizes = new int[partitionCount];
+        final boolean[] isDropped = new boolean[partitionCount];
+        final int[] pendingDrops = new int[partitionCount];
+        int pendingCount = 0;
 
         try {
+            // A writer held for the whole merge lets phaseB drop drained
+            // partitions incrementally without round-tripping through SQL
+            // (which would take the table lock each call). The reader +
+            // writer combination is a standard QuestDB pattern; they
+            // coexist via separate pools.
+            writer = engine.getWriter(runSet.token, "IntermediateTableImporter.phaseB");
             reader = engine.getReader(runSet.token);
-            // Verify reader sees the partition count we expect. Drift here
-            // would indicate a concurrent drop went astray.
             if (reader.getPartitionCount() != partitionCount) {
                 throw CairoException.critical(0)
                         .put("phaseB partition-count mismatch [expected=")
@@ -465,6 +473,12 @@ public class IntermediateTableImporter {
                     .$(", tableName=").$(runSet.tableName)
                     .I$();
 
+            // Flush drained partitions every DROP_BATCH to keep T_INT's
+            // resident memfd footprint bounded. Smaller batches reclaim
+            // memory sooner; larger batches amortize the reader close /
+            // reopen cost. 8 strikes a reasonable balance for 226-partition
+            // hits-scale imports.
+            final int dropBatch = 8;
             long delivered = 0;
             while (heapSize > 0) {
                 final int k = heapIdx[1];
@@ -477,6 +491,17 @@ public class IntermediateTableImporter {
                 if (cursors[k] < rgSizes[k]) {
                     final long nextTs = sources[k].getSortTs(cursors[k], runSet.sortTsColIdx);
                     heapSize = BulkSortedParquetWriter.heapPush(heapTs, heapIdx, heapSize, nextTs, k);
+                } else {
+                    // Partition k just drained its last row. The heap no
+                    // longer references it, so its storage can be reclaimed.
+                    pendingDrops[pendingCount++] = k;
+                    if (pendingCount >= dropBatch) {
+                        reader = flushDrainedPartitions(
+                                engine, writer, reader, sources, isDropped,
+                                pendingDrops, pendingCount, runSet
+                        );
+                        pendingCount = 0;
+                    }
                 }
             }
 
@@ -496,15 +521,93 @@ public class IntermediateTableImporter {
             }
             throw t;
         } finally {
-            // Release the reader BEFORE dropping the table so file handles
-            // don't block partition reclamation.
+            // Release reader + writer BEFORE the DROP TABLE runSet.close()
+            // issues; both hold pool locks that the drop needs.
             if (reader != null) {
                 reader.close();
             }
-            // Drop the intermediate table unconditionally — whether phaseB
-            // completed or tore, we own T_INT's lifecycle here.
+            if (writer != null) {
+                writer.close();
+            }
+            // Drop the (now empty or near-empty) intermediate table
+            // unconditionally — whether phaseB completed or tore, we own
+            // T_INT's lifecycle here.
             runSet.close();
         }
+    }
+
+    /**
+     * Close {@code reader}, drop the partitions listed in {@code pendingDrops}
+     * via {@code writer.removePartition}, reopen the reader, and re-seat the
+     * {@code sources[]} slots for partitions that are still active. Returns
+     * the freshly opened reader — callers must replace their local reference.
+     * <p>
+     * Partition indices in the reader shift when earlier partitions are
+     * dropped. Because {@code runSet.partitionTs} is monotonic in {@code k}
+     * and drops preserve relative order, the surviving partitions' new
+     * indices are a simple dense enumeration of non-dropped {@code k}s.
+     */
+    private static TableReader flushDrainedPartitions(
+            CairoEngine engine,
+            TableWriter writer,
+            TableReader reader,
+            PartitionColumnSource[] sources,
+            boolean[] isDropped,
+            int[] pendingDrops,
+            int pendingCount,
+            RunSet runSet
+    ) {
+        // Reader must be closed before the writer mutates the partition
+        // list; otherwise the reader holds mappings on the files the
+        // writer is about to unlink.
+        reader.close();
+
+        for (int i = 0; i < pendingCount; i++) {
+            final int k = pendingDrops[i];
+            if (isDropped[k]) {
+                continue;
+            }
+            final long ts = runSet.partitionTs[k];
+            final boolean removed = writer.removePartition(ts);
+            if (!removed) {
+                throw CairoException.critical(0)
+                        .put("phaseB failed to drop partition [k=").put(k)
+                        .put(", ts=").put(ts)
+                        .put(", table=").put(runSet.tableName).put(']');
+            }
+            isDropped[k] = true;
+            sources[k] = null;
+        }
+
+        // Reopen the reader and re-seat sources[] for surviving partitions.
+        // The new partition index equals the count of non-dropped original
+        // indices < k, which we derive by a single in-order walk.
+        final TableReader freshReader = engine.getReader(runSet.token);
+        int newIdx = 0;
+        for (int k = 0; k < runSet.partitionTs.length; k++) {
+            if (isDropped[k]) {
+                continue;
+            }
+            final long rows = freshReader.openPartition(newIdx);
+            if (rows <= 0) {
+                freshReader.close();
+                throw CairoException.critical(0)
+                        .put("phaseB surviving partition empty after drop [k=").put(k)
+                        .put(", newIdx=").put(newIdx).put(']');
+            }
+            sources[k] = new PartitionColumnSource(
+                    freshReader, newIdx, runSet.srcColumnCount
+            );
+            newIdx++;
+        }
+        if (newIdx != freshReader.getPartitionCount()) {
+            freshReader.close();
+            throw CairoException.critical(0)
+                    .put("phaseB reader partition count mismatch after drop [tracked=")
+                    .put(newIdx)
+                    .put(", reader=").put(freshReader.getPartitionCount()).put(']');
+        }
+        return freshReader;
     }
 
     private static void copyValueToRow(
