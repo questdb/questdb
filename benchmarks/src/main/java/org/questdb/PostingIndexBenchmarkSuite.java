@@ -10,6 +10,7 @@ import io.questdb.cairo.idx.BitpackUtils;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
+import io.questdb.cairo.idx.PostingIndexNative;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.Record;
@@ -776,7 +777,7 @@ public class PostingIndexBenchmarkSuite {
                 Unsafe.getUnsafe().putLong(valuesAddr + (long) i * Long.BYTES,
                         minValue + (i % (maxOffset + 1)));
             }
-            BitpackUtils.packValues(valuesAddr, TOTAL, minValue, bitWidth, packedAddr);
+            PostingIndexNative.packValuesNativeFallback(valuesAddr, TOTAL, minValue, bitWidth, packedAddr);
             Unsafe.free(valuesAddr, valuesSize, MemoryTag.NATIVE_DEFAULT);
 
             destAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);

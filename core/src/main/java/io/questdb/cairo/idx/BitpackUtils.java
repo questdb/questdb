@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -98,52 +98,6 @@ public final class BitpackUtils {
             path.put('.').put(columnNameTxn);
         }
         return path.$();
-    }
-
-    /**
-     * Packs values into bit-packed format using Unsafe.
-     * Values are stored as offsets from minValue.
-     *
-     * @param valuesAddr source memory address of values to pack
-     * @param count      number of values
-     * @param minValue   minimum value (reference frame)
-     * @param bitWidth   bits per offset
-     * @param destAddr   destination memory address
-     */
-    public static void packValues(long valuesAddr, int count, long minValue, int bitWidth, long destAddr) {
-        long buffer = 0;
-        int bufferBits = 0;
-        int destOffset = 0;
-
-        for (int i = 0; i < count; i++) {
-            long offset = Unsafe.getUnsafe().getLong(valuesAddr + (long) i * Long.BYTES) - minValue;
-            int oldBufferBits = bufferBits;
-            buffer |= (offset << bufferBits);
-            bufferBits += bitWidth;
-
-            // Write complete bytes
-            while (bufferBits >= 8) {
-                Unsafe.getUnsafe().putByte(destAddr + destOffset, (byte) buffer);
-                buffer >>>= 8;
-                bufferBits -= 8;
-                destOffset++;
-            }
-
-            // When oldBufferBits + bitWidth > 64, the shift above lost the high
-            // bits of offset that didn't fit in the 64-bit buffer. The flush loop
-            // correctly wrote the low bits but left an incorrect residual. Replace
-            // the buffer with the actual high bits of the offset.
-            if (oldBufferBits + bitWidth > 64) {
-                int loBitsStored = 64 - oldBufferBits;
-                buffer = offset >>> loBitsStored;
-                bufferBits = bitWidth - loBitsStored;
-            }
-        }
-
-        // Write remaining bits
-        if (bufferBits > 0) {
-            Unsafe.getUnsafe().putByte(destAddr + destOffset, (byte) buffer);
-        }
     }
 
     /**

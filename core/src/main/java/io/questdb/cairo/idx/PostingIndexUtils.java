@@ -694,7 +694,7 @@ public final class PostingIndexUtils {
                         Unsafe.getUnsafe().putLong(residualsAddr + (long) i * Long.BYTES,
                                 Unsafe.getUnsafe().getLong(deltasAddr + (long) (blockStart + 1 + i) * Long.BYTES) - minD);
                     }
-                    BitpackUtils.packValues(residualsAddr, numDeltas, 0, bitWidth, pos);
+                    PostingIndexNative.packValuesNativeFallback(residualsAddr, numDeltas, 0, bitWidth, pos);
                 }
             }
             pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
@@ -927,7 +927,7 @@ public final class PostingIndexUtils {
                         Unsafe.getUnsafe().putLong(residualsAddr + (long) i * Long.BYTES,
                                 Unsafe.getUnsafe().getLong(deltasAddr + (long) (blockStart + 1 + i) * Long.BYTES) - minD);
                     }
-                    BitpackUtils.packValues(residualsAddr, numDeltas, 0, bitWidth, pos);
+                    PostingIndexNative.packValuesNativeFallback(residualsAddr, numDeltas, 0, bitWidth, pos);
                 }
             }
             pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
@@ -1253,7 +1253,7 @@ public final class PostingIndexUtils {
                     Unsafe.getUnsafe().putLong(residualsAddr + (long) i * Long.BYTES,
                             Unsafe.getUnsafe().getLong(deltasAddr + (long) (i + 1) * Long.BYTES) - minD);
                 }
-                BitpackUtils.packValues(residualsAddr, numDeltas, 0, bitWidth, pos);
+                PostingIndexNative.packValuesNativeFallback(residualsAddr, numDeltas, 0, bitWidth, pos);
             }
         }
         pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);

@@ -1070,6 +1070,11 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    public void setCoveredColumnNameTxns(LongList txns) {
+        coveredColumnNameTxns.clear();
+        coveredColumnNameTxns.addAll(txns);
+    }
+
     @Override
     public void setMaxValue(long maxValue) {
         // Write maxValue directly on the active page for writer-only reads.
@@ -1983,11 +1988,6 @@ public class PostingIndexWriter implements IndexWriter {
         return c < coveredColumnNameTxns.size()
                 ? coveredColumnNameTxns.getQuick(c)
                 : COLUMN_NAME_TXN_NONE;
-    }
-
-    public void setCoveredColumnNameTxns(LongList txns) {
-        coveredColumnNameTxns.clear();
-        coveredColumnNameTxns.addAll(txns);
     }
 
     private long getCoveredDataReadAddr(int covIdx, long offset, long needed) {
@@ -3720,7 +3720,7 @@ public class PostingIndexWriter implements IndexWriter {
                         idx++;
                     }
                 }
-                BitpackUtils.packValues(packedResidualsAddr, totalValues, 0, localBitWidth, packedBuf);
+                PostingIndexNative.packValuesNativeFallback(packedResidualsAddr, totalValues, 0, localBitWidth, packedBuf);
             }
 
             sealTarget.putBlockOfBytes(packedBuf, flatDataSize);
