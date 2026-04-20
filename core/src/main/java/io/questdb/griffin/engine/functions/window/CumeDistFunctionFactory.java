@@ -151,9 +151,6 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         private RecordComparator recordComparator;
         private long totalRows;
 
-        public CumeDistFunction() {
-        }
-
         @Override
         public void close() {
             super.close();
@@ -351,7 +348,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
     //
     // pass1 stores rank per row and per-partition state in a Map (lastOffset, rank, count,
     // deferredStartOffset, deferredSize, deferredCapacity). Each partition's deferred output
-    // offsets live in a slice of a single shared MemoryARW — no per-partition Java objects.
+    // offsets live in a slice of a single shared MemoryARW -- no per-partition Java objects.
     // pass2 detects peer-group boundaries per partition, walks the slice and writes the
     // resolved cumulative distribution value, then resets the slice for the next peer group.
     // Slices grow on demand via expandRingBuffer, recycling previously-freed blocks through

@@ -218,7 +218,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             n
                     );
                 }
-                // unbounded preceding and K preceding (K > 0) — no per-partition buffer needed.
+                // unbounded preceding and K preceding (K > 0) -- no per-partition buffer needed.
                 else if (rowsLo == Long.MIN_VALUE) {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG); // count
@@ -308,7 +308,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
                     return new NthValueOverCurrentRowFunction(args.get(0), n);
-                } // between unbounded preceding and K preceding (K > 0) — no buffer needed.
+                } // between unbounded preceding and K preceding (K > 0) -- no buffer needed.
                 else if (rowsLo == Long.MIN_VALUE) {
                     return new NthValueOverRowsFrameUnboundedFunction(args.get(0), rowsHi, n);
                 } // between X preceding and [Y preceding | current row]
@@ -842,7 +842,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     // Handles nth_value() over (partition by x [order by o] rows between unbounded preceding
     // and K preceding), K > 0. Once each partition has seen n rows, the n-th value is locked
     // and emitted whenever the frame first contains at least n rows (count >= n + bufferSize).
-    // No per-partition buffer — O(1) state per partition (count + lockedValue).
+    // No per-partition buffer -- O(1) state per partition (count + lockedValue).
     public static class NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         protected final int bufferSize;

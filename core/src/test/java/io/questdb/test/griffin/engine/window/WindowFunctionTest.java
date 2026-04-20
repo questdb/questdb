@@ -12795,6 +12795,249 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCumeDistEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertQueryNoLeakCheck(
+                    "ts\tcd\n",
+                    "select ts, cume_dist() over (order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tcd\n",
+                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistNullPartitionKey() throws Exception {
+        // NULL partition keys form their own partition per standard SQL.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), " +
+                    "(3, null, 30.0), (4, null, 40.0), (5, null, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t0.5
+                            1970-01-01T00:00:00.000002Z\t1\t1.0
+                            1970-01-01T00:00:00.000003Z\tnull\t0.3333333333333333
+                            1970-01-01T00:00:00.000004Z\tnull\t0.6666666666666666
+                            1970-01-01T00:00:00.000005Z\tnull\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tcd
+                            1970-01-01T00:00:00.000001Z\t1.0
+                            """),
+                    "select ts, cume_dist() over (order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertQueryNoLeakCheck(
+                    "ts\tnv\n",
+                    "select ts, nth_value(val, 2) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tnv\n",
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueNullPartitionKey() throws Exception {
+        // NULL partition keys form their own partition per standard SQL.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), " +
+                    "(3, null, 30.0), (4, null, 40.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\tnull\tnull
+                            1970-01-01T00:00:00.000004Z\tnull\t40.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv1\tnv2
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            """),
+                    "select ts, " +
+                            "nth_value(val, 1) over (order by ts) nv1, " +
+                            "nth_value(val, 2) over (order by ts) nv2 " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv1\tnv2
+                            1970-01-01T00:00:00.000001Z\t1\t10.0\tnull
+                            """),
+                    "select ts, i, " +
+                            "nth_value(val, 1) over (partition by i order by ts) nv1, " +
+                            "nth_value(val, 2) over (partition by i order by ts) nv2 " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertQueryNoLeakCheck(
+                    "ts\tbucket\n",
+                    "select ts, ntile(3) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tbucket\n",
+                    "select ts, i, ntile(3) over (partition by i order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileNullPartitionKey() throws Exception {
+        // NULL partition keys form their own partition per standard SQL.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), " +
+                    "(3, null, 30.0), (4, null, 40.0), (5, null, 50.0), (6, null, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tbucket
+                            1970-01-01T00:00:00.000001Z\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t2
+                            1970-01-01T00:00:00.000003Z\tnull\t1
+                            1970-01-01T00:00:00.000004Z\tnull\t1
+                            1970-01-01T00:00:00.000005Z\tnull\t2
+                            1970-01-01T00:00:00.000006Z\tnull\t2
+                            """),
+                    "select ts, i, ntile(2) over (partition by i order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket
+                            1970-01-01T00:00:00.000001Z\t1
+                            """),
+                    "select ts, ntile(5) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tbucket
+                            1970-01-01T00:00:00.000001Z\t1\t1
+                            """),
+                    "select ts, i, ntile(5) over (partition by i order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testStdDevPopCurrentRowSemantics() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
