@@ -263,6 +263,26 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveViewRejectsIndexBackedFilter() throws Exception {
+        // Indexed SYMBOL equality combined with a residual predicate makes the planner
+        // push the filter into a SymbolIndexFilteredRowCursorFactory. The filter is no
+        // longer visible as a wrapping factory, so the live view incremental path would
+        // miss it. Verify the validator rejects this shape.
+        execute("CREATE TABLE trades (symbol SYMBOL INDEX, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        assertException(
+                "CREATE LIVE VIEW lv_bad AS" +
+                        " SELECT symbol, price, ts, row_number() OVER () AS rn" +
+                        " FROM trades WHERE symbol = 'AAPL' AND price > 100",
+                17,
+                "live view select cannot use index-backed filters yet"
+        );
+        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
+    }
+
+    @Test
     public void testCreateLiveViewRejectsSubquery() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -278,22 +298,7 @@ public class LiveViewTest extends AbstractCairoTest {
         Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
     }
 
-    @Test
-    public void testCreateLiveViewRejectsWhereClause() throws Exception {
-        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
-                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
-        drainWalQueue();
-
-        assertException(
-                "CREATE LIVE VIEW lv_bad AS" +
-                        " SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades WHERE price > 100",
-                17,
-                "live view select cannot use a WHERE clause yet"
-        );
-        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
-    }
-
-    @Test
+@Test
     public void testCreateLiveViewRejectsWindowOrderedByNonTimestamp() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -434,6 +439,59 @@ public class LiveViewTest extends AbstractCairoTest {
         } catch (SqlException e) {
             Assert.assertTrue(e.getMessage().contains("WAL"));
         }
+    }
+
+    @Test
+    public void testLiveViewIncrementalRefreshWithWhereClause() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_filtered AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades WHERE price > 200");
+
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 150.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('GOOG', 2800.0, '2024-01-01T00:00:01.000000Z')," +
+                " ('AAPL', 250.0, '2024-01-01T00:00:02.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t250.0\t2024-01-01T00:00:02.000000Z\t1\n",
+                "SELECT * FROM live_filtered",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // second batch: incremental refresh must also honour the filter, and window state must
+        // carry over so the next qualifying AAPL row is numbered 2.
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:03.000000Z')," +
+                " ('GOOG', 2900.0, '2024-01-01T00:00:04.000000Z')," +
+                " ('AAPL', 300.0, '2024-01-01T00:00:05.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t250.0\t2024-01-01T00:00:02.000000Z\t1\n" +
+                        "GOOG\t2900.0\t2024-01-01T00:00:04.000000Z\t2\n" +
+                        "AAPL\t300.0\t2024-01-01T00:00:05.000000Z\t2\n",
+                "SELECT * FROM live_filtered",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_filtered");
     }
 
     @Test

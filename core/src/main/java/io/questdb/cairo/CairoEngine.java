@@ -2179,19 +2179,41 @@ public class CairoEngine implements Closeable, WriterSource {
 
         // V1 incremental refresh drives window functions manually over rows read directly
         // from WAL segments, so the factory tree must be exactly:
-        //     WindowRecordCursorFactory -> PageFrameRecordCursorFactory
-        // with no filter, join, projection or grouping in between. See LiveViewRefreshJob.
-        for (RecordCursorFactory f = wf.getBaseFactory(); f != null; f = f.getBaseFactory()) {
-            boolean hasFilter = f.getFilter() != null
-                    || (f instanceof PageFrameRecordCursorFactory pfrcf && pfrcf.hasFilter());
-            if (hasFilter) {
-                throw SqlException.$(position, "live view select cannot use a WHERE clause yet");
+        //     WindowRecordCursorFactory -> [FilteredRecordCursorFactory?] -> PageFrameRecordCursorFactory
+        // with no join, projection or grouping in between. See LiveViewRefreshJob.
+        //
+        // A single filter factory (FilteredRecordCursorFactory / AsyncFilteredRecordCursorFactory /
+        // AsyncJitFilteredRecordCursorFactory) may sit between the window and the page frame factory;
+        // the refresh job applies its Function filter row-by-row to WAL segment rows during
+        // incremental refresh. Index-backed filters (filter pushed into the row cursor factory) are
+        // not yet supported because the live view refresh bypasses the indexed row cursor.
+        RecordCursorFactory base = wf.getBaseFactory();
+        if (base.getFilter() != null) {
+            base = base.getBaseFactory();
+            if (base == null) {
+                throw SqlException.$(position, "live view select has a malformed filter factory");
             }
         }
-        RecordCursorFactory base = wf.getBaseFactory();
-        if (!(base instanceof PageFrameRecordCursorFactory) || base.getBaseFactory() != null) {
+        for (RecordCursorFactory f = base.getBaseFactory(); f != null; f = f.getBaseFactory()) {
+            if (f.getFilter() != null) {
+                throw SqlException.$(position, "live view select cannot use nested filter factories yet");
+            }
+        }
+        if (!(base instanceof PageFrameRecordCursorFactory pfrcf) || base.getBaseFactory() != null) {
             throw SqlException.$(position, "live view select must be a simple scan of a single WAL base table; " +
                     "joins, subqueries, GROUP BY, ORDER BY and LIMIT are not supported yet");
+        }
+        if (pfrcf.hasFilter()) {
+            // The planner pushed the filter down into a SymbolIndexFilteredRowCursorFactory
+            // (or a deferred variant). There's no outer FilteredRecordCursorFactory wrapper,
+            // so the filter Function is invisible to the incremental refresh path, which
+            // would then let filtered rows slip through. Triggered by, e.g.,
+            // WHERE <indexed-symbol> = 'X' AND <residual-predicate>.
+            // TODO(live-view): disable indexed-key-column extraction during live view
+            //  compilation (e.g., via a flag on SqlExecutionContext consulted by
+            //  WhereClauseParser.isTrueKeyColumn) so the planner falls back to a plain
+            //  FilteredRecordCursorFactory shape that the incremental path already handles.
+            throw SqlException.$(position, "live view select cannot use index-backed filters yet");
         }
         TableToken scannedToken = base.getTableToken();
         if (scannedToken == null || !scannedToken.equals(baseTableToken)) {

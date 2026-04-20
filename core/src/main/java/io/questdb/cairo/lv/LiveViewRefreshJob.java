@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.RecordCursor;
@@ -81,6 +82,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final IntList columnSizeShifts = new IntList();
     private final CairoEngine engine;
     private final SqlExecutionContextImpl executionContext;
+    private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
     private final LiveViewStateStore stateStore;
@@ -197,9 +199,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long toSeqTxn
     ) throws SqlException {
         WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
-        RecordCursorFactory baseFactory = windowFactory.getBaseFactory();
+        // When the view's SELECT has a WHERE clause, the planner inserts a filter factory
+        // between the window and the page-frame factory. We apply its filter row-by-row
+        // against WAL segment rows so the window functions never observe filtered-out rows.
+        // TODO(live-view): hook in the JIT-compiled filter from AsyncJitFilteredRecordCursorFactory.
+        //  The Java Function path below is always correct but ignores the JIT fast-path on the
+        //  WAL refresh hot loop. Supporting it requires invoking CompiledFilter.call() on the
+        //  single NATIVE WAL page frame and iterating the resulting row-id bitmap.
+        RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
+        final Function filter = filterFactory.getFilter();
+        RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
         TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        RecordMetadata baseMetadata = baseFactory.getMetadata();
+        RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
 
         buildColumnMappings(baseMetadata);
 
@@ -245,7 +256,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     frameCursor.of(baseToken, walNameSink, segmentId, endRow, startRow, endRow, baseMetadata);
                     walRecordCursor.of(frameCursor, baseMetadata);
 
-                    RecordCursor windowCursor = windowFactory.getIncrementalCursor(walRecordCursor, executionContext);
+                    RecordCursor baseCursor = walRecordCursor;
+                    if (filter != null) {
+                        // Re-init bind variables and symbol-table caches against the current segment's
+                        // cursor; symbol keys may differ between segments produced by different WAL writers.
+                        filteringCursor.of(walRecordCursor, filter, executionContext);
+                        baseCursor = filteringCursor;
+                    }
+
+                    RecordCursor windowCursor = windowFactory.getIncrementalCursor(baseCursor, executionContext);
                     try {
                         instance.appendIncremental(windowCursor);
                     } finally {
