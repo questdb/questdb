@@ -56,6 +56,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
@@ -688,6 +689,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
          * (non-keyed); the fill emit path calls baseCursor.recordAt(prevRecord,
          * rowId) once per row, and the getters below read typed values uniformly
          * from prevRecord for every supported type.
+         * <p>
+         * Record methods intentionally NOT overridden: {@code getRecord(int)},
+         * {@code getRowId()}, {@code getUpdateRowId()}. These are plumbing for
+         * nested records, UPDATE row targeting, and filesystem row identifiers,
+         * and are never valid output columns of a SAMPLE BY FILL query. Calling
+         * them during gap-fill produces the default
+         * {@link UnsupportedOperationException}, which is the desired signal if
+         * an upstream change makes one of them reachable.
          */
         private class FillRecord implements Record {
             boolean isGapFilling;
@@ -972,6 +981,19 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     return prevRecord.getInt(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getInt(null);
                 return Numbers.INT_NULL;
+            }
+
+            @Override
+            public Interval getInterval(int col) {
+                if (!isGapFilling) return baseRecord.getInterval(col);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getInterval(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getInterval(outputColToKeyPos[mode]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return prevRecord.getInterval(mode >= 0 ? mode : col);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getInterval(null);
+                return Interval.NULL;
             }
 
             @Override
