@@ -549,6 +549,385 @@ impl SimdEncodable for f32 {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parquet::error::ParquetErrorReason;
+    use crate::parquet_write::schema::column_type_to_parquet_type;
+    use parquet2::compression::CompressionOptions;
+    use parquet2::page::DataPageHeader;
+    use parquet2::schema::types::{ParquetType, PrimitiveType};
+    use parquet2::write::Version;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+
+    fn write_options() -> WriteOptions {
+        WriteOptions {
+            write_statistics: true,
+            version: Version::V2,
+            compression: CompressionOptions::Uncompressed,
+            row_group_size: None,
+            data_page_size: None,
+            raw_array_encoding: false,
+            bloom_filter_fpp: 0.01,
+            min_compression_ratio: 0.0,
+        }
+    }
+
+    fn optional_type_for(tag: ColumnTypeTag) -> PrimitiveType {
+        let column_type = ColumnType::new(tag, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+        match parquet_type {
+            ParquetType::PrimitiveType(pt) => pt,
+            _ => panic!("expected primitive type"),
+        }
+    }
+
+    fn required_type_for(tag: ColumnTypeTag) -> PrimitiveType {
+        let column_type = ColumnType::new(tag, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, true, false).expect("type");
+        match parquet_type {
+            ParquetType::PrimitiveType(pt) => pt,
+            _ => panic!("expected primitive type"),
+        }
+    }
+
+    fn v2_header(page: &Page) -> (i32, i32, i32) {
+        match page {
+            Page::Data(d) => match &d.header {
+                DataPageHeader::V2(h) => (h.num_values, h.num_nulls, h.encoding.0),
+                DataPageHeader::V1(_) => panic!("expected V2 header"),
+            },
+            _ => panic!("expected data page"),
+        }
+    }
+
+    #[test]
+    fn int_slice_to_page_nullable_plain() {
+        use crate::parquet_write::IPv4;
+        // IPv4 null sentinel is 0
+        let data: Vec<IPv4> = vec![IPv4(1), IPv4(0), IPv4(3)];
+        let pt = optional_type_for(ColumnTypeTag::IPv4);
+        let page = int_slice_to_page_nullable::<IPv4, i32, true>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+        assert_eq!(num_nulls, 1);
+    }
+
+    #[test]
+    fn int_slice_to_page_nullable_delta() {
+        use crate::parquet_write::IPv4;
+        let data: Vec<IPv4> = vec![IPv4(1), IPv4(0), IPv4(3)];
+        let pt = optional_type_for(ColumnTypeTag::IPv4);
+        let page = int_slice_to_page_nullable::<IPv4, i32, true>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+        assert_eq!(num_nulls, 1);
+    }
+
+    #[test]
+    fn int_slice_to_page_nullable_unsupported_encoding() {
+        use crate::parquet_write::GeoByte;
+        let data: Vec<GeoByte> = vec![GeoByte(1)];
+        let pt = optional_type_for(ColumnTypeTag::GeoByte);
+        let err = int_slice_to_page_nullable::<GeoByte, i32, false>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::RleDictionary,
+            None,
+        )
+        .expect_err("expected error");
+        assert!(matches!(err.reason(), ParquetErrorReason::Unsupported));
+    }
+
+    #[test]
+    fn int_slice_to_page_nullable_no_stats() {
+        use crate::parquet_write::GeoByte;
+        let data: Vec<GeoByte> = vec![GeoByte(1), GeoByte(2)];
+        let pt = optional_type_for(ColumnTypeTag::GeoByte);
+        let opts = WriteOptions { write_statistics: false, ..write_options() };
+        let page = int_slice_to_page_nullable::<GeoByte, i32, false>(
+            &data,
+            0,
+            opts,
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 2);
+        assert_eq!(num_nulls, 0);
+    }
+
+    #[test]
+    fn int_slice_to_page_notnull_plain() {
+        let data: Vec<i8> = vec![1, 2, 3, 4, 5];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 5);
+    }
+
+    #[test]
+    fn int_slice_to_page_notnull_delta() {
+        let data: Vec<i8> = vec![1, 2, 3];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+    }
+
+    #[test]
+    fn int_slice_to_page_notnull_unsupported_encoding() {
+        let data: Vec<i8> = vec![1];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let err = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::RleDictionary,
+            None,
+        )
+        .expect_err("expected error");
+        assert!(matches!(err.reason(), ParquetErrorReason::Unsupported));
+    }
+
+    #[test]
+    fn int_slice_to_page_notnull_with_bloom_and_stats() {
+        let data: Vec<i8> = vec![1, 2, 3];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let mut bloom = HashSet::new();
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::Plain,
+            Some(&mut bloom),
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+        assert_eq!(bloom.len(), 3);
+    }
+
+    #[test]
+    fn int_slice_to_page_notnull_bloom_no_stats() {
+        let data: Vec<i8> = vec![1, 2];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let opts = WriteOptions { write_statistics: false, ..write_options() };
+        let mut bloom = HashSet::new();
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            opts,
+            pt,
+            Encoding::Plain,
+            Some(&mut bloom),
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 2);
+        assert_eq!(bloom.len(), 2);
+    }
+
+    #[test]
+    fn int_slice_to_page_notnull_no_bloom_no_stats() {
+        let data: Vec<i8> = vec![1, 2];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let opts = WriteOptions { write_statistics: false, ..write_options() };
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            opts,
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 2);
+    }
+
+    #[test]
+    fn int_slice_to_page_notnull_with_column_top() {
+        let data: Vec<i8> = vec![1, 2];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            3,
+            write_options(),
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 5);
+    }
+
+    #[test]
+    fn slice_to_page_simd_plain_i64() {
+        let data: Vec<i64> = vec![1, 2, i64::MIN, 4];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let page = slice_to_page_simd(&data, 0, write_options(), pt, Encoding::Plain, None)
+            .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 4);
+        assert_eq!(num_nulls, 1);
+    }
+
+    #[test]
+    fn slice_to_page_simd_delta_i64() {
+        let data: Vec<i64> = vec![1, 2, i64::MIN, 4];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let page = slice_to_page_simd(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 4);
+        assert_eq!(num_nulls, 1);
+    }
+
+    #[test]
+    fn slice_to_page_simd_delta_i32() {
+        let data: Vec<i32> = vec![1, 2, i32::MIN, 4];
+        let pt = optional_type_for(ColumnTypeTag::Int);
+        let page = slice_to_page_simd(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 4);
+        assert_eq!(num_nulls, 1);
+    }
+
+    #[test]
+    fn slice_to_page_simd_delta_f64_unsupported() {
+        let data: Vec<f64> = vec![1.0];
+        let pt = optional_type_for(ColumnTypeTag::Double);
+        let err = slice_to_page_simd(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect_err("expected error");
+        assert!(matches!(err.reason(), ParquetErrorReason::Unsupported));
+    }
+
+    #[test]
+    fn slice_to_page_simd_unsupported_encoding() {
+        let data: Vec<i64> = vec![1];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let err = slice_to_page_simd(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::RleDictionary,
+            None,
+        )
+        .expect_err("expected error");
+        assert!(matches!(err.reason(), ParquetErrorReason::Unsupported));
+    }
+
+    #[test]
+    fn slice_to_page_simd_no_stats() {
+        let data: Vec<i64> = vec![1, 2, 3];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let opts = WriteOptions { write_statistics: false, ..write_options() };
+        let page = slice_to_page_simd(&data, 0, opts, pt, Encoding::Plain, None).expect("ok");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+        assert_eq!(num_nulls, 0);
+    }
+
+    #[test]
+    fn slice_to_page_simd_f32_round_trip() {
+        // Exercises f32 SimdEncodable impl including min/max.
+        let data: Vec<f32> = vec![1.0, f32::NAN, 3.0, -1.5];
+        let pt = optional_type_for(ColumnTypeTag::Float);
+        let page = slice_to_page_simd(&data, 0, write_options(), pt, Encoding::Plain, None)
+            .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 4);
+        assert_eq!(num_nulls, 1);
+    }
+
+    #[test]
+    fn slice_to_page_simd_with_column_top() {
+        let data: Vec<i64> = vec![1, 2, 3];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let page = slice_to_page_simd(&data, 5, write_options(), pt, Encoding::Plain, None)
+            .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 8);
+        assert_eq!(num_nulls, 5);
+    }
+
+    #[test]
+    fn slice_to_page_simd_all_nulls() {
+        let data: Vec<i64> = vec![i64::MIN; 5];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let page = slice_to_page_simd(&data, 0, write_options(), pt, Encoding::Plain, None)
+            .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 5);
+        assert_eq!(num_nulls, 5);
+    }
+}
+
 /// Generic SIMD-optimized page encoder for nullable columns.
 pub fn slice_to_page_simd<T: SimdEncodable>(
     slice: &[T],

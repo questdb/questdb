@@ -524,6 +524,58 @@ mod tests {
     }
 
     #[test]
+    fn symbol_to_pages_legacy_api() {
+        let (chars, offsets) = serialize_as_symbols(vec!["foo", "bar"]);
+        let keys: Vec<i32> = vec![0, 1, -1, 0];
+        let pages = symbol_to_pages(
+            &keys,
+            &offsets,
+            &chars,
+            0,
+            write_options(),
+            primitive_type(),
+            false,
+            None,
+        )
+        .expect("encode");
+        let pages: Vec<_> = pages.map(|r| r.expect("page")).collect();
+        assert_eq!(pages.len(), 2); // 1 dict + 1 data
+        assert!(matches!(pages[0], Page::Dict(_)));
+    }
+
+    #[test]
+    fn symbol_to_pages_legacy_with_column_top() {
+        let (chars, offsets) = serialize_as_symbols(vec!["foo"]);
+        let keys: Vec<i32> = vec![0, 0];
+        let pages = symbol_to_pages(
+            &keys,
+            &offsets,
+            &chars,
+            3,
+            write_options(),
+            primitive_type(),
+            false,
+            None,
+        )
+        .expect("encode");
+        let pages: Vec<_> = pages.map(|r| r.expect("page")).collect();
+        assert_eq!(pages.len(), 2);
+        // Data page should have 5 rows total (3 top + 2 data)
+        assert_eq!(page_v2_num_values(&pages[1]), 5);
+    }
+
+    #[test]
+    fn symbol_no_stats() {
+        let (chars, offsets) = serialize_as_symbols(vec!["foo"]);
+        let keys: Vec<i32> = vec![0, 0];
+        let col = make_symbol_column(&keys, &chars, &offsets, 0);
+        let opts = WriteOptions { write_statistics: false, ..write_options() };
+        let pages =
+            encode(&[col], 0, keys.len(), &primitive_type(), opts, None).expect("encode");
+        assert_eq!(pages.len(), 2);
+    }
+
+    #[test]
     fn symbol_partition_with_column_top() {
         // Symbol column with column_top = 5: rows 0..5 are nulls, rows 5..10 are
         // data referencing the dict.
