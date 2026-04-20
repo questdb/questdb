@@ -41,6 +41,15 @@ import org.jetbrains.annotations.TestOnly;
 public interface LiveViewStateStore extends QuietCloseable {
 
     /**
+     * Enqueues a force-drain refresh task for the given base table. Used by the
+     * {@code LiveViewTimerJob} to flush rows held back in the LAG window after
+     * the base table has gone idle. Unlike {@link #notifyBaseTableCommit}, this
+     * does not advance the dedup gate, so it coexists with a concurrent WAL
+     * commit for the same base table.
+     */
+    void enqueueForceDrain(TableToken baseTableToken);
+
+    /**
      * Registers a base table so that {@link #notifyBaseTableCommit} stops treating it
      * as uninteresting. Called from the live view registry on view create/reload; the
      * per-table entry is never removed (grow-only, bounded by distinct base tables

@@ -30,17 +30,23 @@ import io.questdb.std.Numbers;
 
 public class LiveViewRefreshTask implements ValueHolder<LiveViewRefreshTask> {
     public TableToken baseTableToken;
+    // When true, the refresh job drains the merge buffer with the watermark set to the
+    // max observed timestamp (instead of {@code maxTs - lag}), emitting rows that would
+    // otherwise stay held back. Posted by {@code LiveViewTimerJob} for idle flush.
+    public boolean forceDrain;
     public long seqTxn = Numbers.LONG_NULL;
 
     @Override
     public void clear() {
         baseTableToken = null;
         seqTxn = Numbers.LONG_NULL;
+        forceDrain = false;
     }
 
     @Override
     public void copyTo(LiveViewRefreshTask dest) {
         dest.baseTableToken = baseTableToken;
         dest.seqTxn = seqTxn;
+        dest.forceDrain = forceDrain;
     }
 }

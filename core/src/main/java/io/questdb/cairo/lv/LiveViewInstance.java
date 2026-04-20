@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.lv;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -66,6 +65,15 @@ public class LiveViewInstance implements QuietCloseable {
     // -1 means the view has not been bootstrapped yet; the next refresh must run a full
     // recompute and capture the base table's seqTxn at the start of the compile.
     private volatile long lastProcessedSeqTxn = -1;
+    // Wall-clock microseconds (micros since epoch) of the last refresh completion. Read
+    // by LiveViewTimerJob to decide whether the view's merge buffer has been idle for
+    // longer than the LAG window and should be force-drained. Updated by the refresh
+    // job while the refresh latch is held, so no volatile is needed.
+    private long lastRefreshTimeUs;
+    // Sorted native-memory staging buffer that holds rows until they age past the LAG
+    // window. Allocated lazily on the first refresh, once the base table's metadata is
+    // known. Accessed only while the refresh latch is held.
+    private MergeBuffer mergeBuffer;
 
     public LiveViewInstance(LiveViewDefinition definition) {
         this.definition = definition;
@@ -84,6 +92,7 @@ public class LiveViewInstance implements QuietCloseable {
                 isClosed = true;
                 Misc.free(table);
                 compiledFactory = Misc.free(compiledFactory);
+                mergeBuffer = Misc.free(mergeBuffer);
             }
         } finally {
             lock.writeLock().unlock();
@@ -102,8 +111,16 @@ public class LiveViewInstance implements QuietCloseable {
         return lastProcessedSeqTxn;
     }
 
+    public long getLastRefreshTimeUs() {
+        return lastRefreshTimeUs;
+    }
+
     public String getInvalidationReason() {
         return invalidationReason;
+    }
+
+    public MergeBuffer getMergeBuffer() {
+        return mergeBuffer;
     }
 
     public InMemoryTable getTable() {
@@ -182,6 +199,21 @@ public class LiveViewInstance implements QuietCloseable {
         this.lastProcessedSeqTxn = seqTxn;
     }
 
+    public void setLastRefreshTimeUs(long lastRefreshTimeUs) {
+        this.lastRefreshTimeUs = lastRefreshTimeUs;
+    }
+
+    /**
+     * Sets the merge buffer used to hold rows within the LAG window. Must be called
+     * while the refresh latch is held. Frees any previously installed buffer.
+     */
+    public void setMergeBuffer(MergeBuffer mergeBuffer) {
+        if (this.mergeBuffer != mergeBuffer) {
+            Misc.free(this.mergeBuffer);
+            this.mergeBuffer = mergeBuffer;
+        }
+    }
+
     /**
      * Non-blocking close: runs only when the view is dropped, the refresh latch is
      * free, and no reader currently holds the read lock. Callers (DROP path, refresh
@@ -211,6 +243,7 @@ public class LiveViewInstance implements QuietCloseable {
                     isClosed = true;
                     Misc.free(table);
                     compiledFactory = Misc.free(compiledFactory);
+                    mergeBuffer = Misc.free(mergeBuffer);
                 }
             } finally {
                 lock.writeLock().unlock();
@@ -257,63 +290,8 @@ public class LiveViewInstance implements QuietCloseable {
 
     private void appendRows(RecordCursor cursor) {
         Record record = cursor.getRecord();
-        int columnCount = table.getColumnCount();
         while (cursor.hasNext()) {
-            for (int i = 0; i < columnCount; i++) {
-                int type = table.getColumnType(i);
-                switch (ColumnType.tagOf(type)) {
-                    case ColumnType.INT:
-                        table.putInt(i, record.getInt(i));
-                        break;
-                    case ColumnType.LONG:
-                        table.putLong(i, record.getLong(i));
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        table.putLong(i, record.getTimestamp(i));
-                        break;
-                    case ColumnType.DATE:
-                        table.putLong(i, record.getDate(i));
-                        break;
-                    case ColumnType.DOUBLE:
-                        table.putDouble(i, record.getDouble(i));
-                        break;
-                    case ColumnType.FLOAT:
-                        table.putFloat(i, record.getFloat(i));
-                        break;
-                    case ColumnType.SHORT:
-                        table.putShort(i, record.getShort(i));
-                        break;
-                    case ColumnType.BYTE:
-                        table.putByte(i, record.getByte(i));
-                        break;
-                    case ColumnType.BOOLEAN:
-                        table.putBool(i, record.getBool(i));
-                        break;
-                    case ColumnType.CHAR:
-                        table.putChar(i, record.getChar(i));
-                        break;
-                    case ColumnType.SYMBOL:
-                        table.putSymbol(i, record.getSymA(i));
-                        break;
-                    case ColumnType.STRING:
-                        table.putStr(i, record.getStrA(i));
-                        break;
-                    case ColumnType.VARCHAR:
-                        table.putVarchar(i, record.getVarcharA(i));
-                        break;
-                    case ColumnType.BINARY:
-                        table.putBin(i, record.getBin(i));
-                        break;
-                    default:
-                        if (ColumnType.isArray(type)) {
-                            table.putArray(i, record.getArray(i, type), type);
-                        } else {
-                            table.putLong(i, record.getLong(i));
-                        }
-                        break;
-                }
-            }
-            table.incrementRowCount();
+            table.appendRow(record);
         }
     }
 }

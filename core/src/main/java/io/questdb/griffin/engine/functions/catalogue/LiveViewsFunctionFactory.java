@@ -32,6 +32,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.MergeBuffer;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -81,9 +82,11 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
     private static class LiveViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_BASE_TABLE_NAME = 1;
+        private static final int COLUMN_BUFFERED_ROW_COUNT = 9;
         private static final int COLUMN_INVALIDATION_REASON = 7;
         private static final int COLUMN_LAG = 2;
         private static final int COLUMN_LAG_UNIT = 3;
+        private static final int COLUMN_LATE_ROW_COUNT = 10;
         private static final int COLUMN_RETENTION = 4;
         private static final int COLUMN_RETENTION_UNIT = 5;
         private static final int COLUMN_VIEW_NAME = 0;
@@ -168,6 +171,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     return switch (col) {
                         case COLUMN_LAG -> definition.getLagValue();
                         case COLUMN_RETENTION -> definition.getRetentionValue();
+                        case COLUMN_BUFFERED_ROW_COUNT -> {
+                            MergeBuffer mb = instance.getMergeBuffer();
+                            yield mb != null ? mb.size() : 0;
+                        }
+                        case COLUMN_LATE_ROW_COUNT -> {
+                            MergeBuffer mb = instance.getMergeBuffer();
+                            yield mb != null ? mb.getLateRowCount() : 0;
+                        }
                         default -> 0;
                     };
                 }
@@ -214,6 +225,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));             // 6
             metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));     // 7
             metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));                // 8
+            metadata.add(new TableColumnMetadata("buffered_row_count", ColumnType.LONG));        // 9
+            metadata.add(new TableColumnMetadata("late_row_count", ColumnType.LONG));            // 10
             METADATA = metadata;
         }
     }

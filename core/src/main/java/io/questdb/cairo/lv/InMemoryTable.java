@@ -26,11 +26,12 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.BinarySequence;
@@ -67,7 +68,7 @@ public class InMemoryTable implements QuietCloseable {
     private int[] columnSizes; // byte size per row (0 for var-length)
     private int[] columnTypes;
     private boolean[] isVarLen;
-    private GenericRecordMetadata metadata;
+    private RecordMetadata metadata;
     private long rowCount;
     private ObjList<ObjList<String>> symbolTables;
     private int timestampColumnIndex = -1;
@@ -99,6 +100,23 @@ public class InMemoryTable implements QuietCloseable {
     }
 
     public void clear() {
+        clearRows();
+        if (symbolTables != null) {
+            for (int i = 0, n = symbolTables.size(); i < n; i++) {
+                ObjList<String> st = symbolTables.getQuick(i);
+                if (st != null) {
+                    st.clear();
+                }
+            }
+        }
+    }
+
+    /**
+     * Clears all row data (fixed and var-size columns) and resets the row count,
+     * but does not touch symbol dictionaries. Use when symbol dictionaries are shared
+     * with another table (see {@link #shareSymbolTablesWith}) and must be kept intact.
+     */
+    public void clearRows() {
         for (int i = 0, n = columns.size(); i < n; i++) {
             columns.getQuick(i).jumpTo(0);
         }
@@ -111,14 +129,6 @@ public class InMemoryTable implements QuietCloseable {
             }
         }
         rowCount = 0;
-        if (symbolTables != null) {
-            for (int i = 0, n = symbolTables.size(); i < n; i++) {
-                ObjList<String> st = symbolTables.getQuick(i);
-                if (st != null) {
-                    st.clear();
-                }
-            }
-        }
     }
 
     /**
@@ -152,7 +162,7 @@ public class InMemoryTable implements QuietCloseable {
         return columns.getQuick(columnIndex).getAppendOffset();
     }
 
-    public GenericRecordMetadata getMetadata() {
+    public RecordMetadata getMetadata() {
         return metadata;
     }
 
@@ -176,7 +186,7 @@ public class InMemoryTable implements QuietCloseable {
         return Unsafe.getUnsafe().getLong(address + row * Long.BYTES);
     }
 
-    public void init(GenericRecordMetadata metadata) {
+    public void init(RecordMetadata metadata) {
         this.metadata = metadata;
         this.columnCount = metadata.getColumnCount();
         this.columnTypes = new int[columnCount];
@@ -221,6 +231,24 @@ public class InMemoryTable implements QuietCloseable {
 
     public boolean isVarLen(int columnIndex) {
         return isVarLen[columnIndex];
+    }
+
+    /**
+     * Replaces this table's per-SYMBOL-column dictionary lists with references to
+     * the other table's, so {@link #putSymbol} in either table interns into the
+     * same {@link ObjList}. Used by {@link MergeBuffer} to keep partition keys
+     * stable across its pending/retained buffer swap: identical string values
+     * always resolve to the same int key.
+     */
+    public void shareSymbolTablesWith(InMemoryTable other) {
+        for (int i = 0; i < columnCount; i++) {
+            if (ColumnType.tagOf(columnTypes[i]) == ColumnType.SYMBOL) {
+                ObjList<String> shared = other.symbolTables.getQuick(i);
+                if (shared != null) {
+                    symbolTables.setQuick(i, shared);
+                }
+            }
+        }
     }
 
     public void putBool(int col, boolean value) {
@@ -313,7 +341,66 @@ public class InMemoryTable implements QuietCloseable {
         return key;
     }
 
-    public void incrementRowCount() {
+    /**
+     * Appends a single row from the given {@link Record} into the columnar store
+     * and increments the row count. The record must cover every column the table
+     * was initialized with.
+     */
+    public void appendRow(Record record) {
+        for (int i = 0; i < columnCount; i++) {
+            int type = columnTypes[i];
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.INT:
+                    putInt(i, record.getInt(i));
+                    break;
+                case ColumnType.LONG:
+                    putLong(i, record.getLong(i));
+                    break;
+                case ColumnType.TIMESTAMP:
+                    putLong(i, record.getTimestamp(i));
+                    break;
+                case ColumnType.DATE:
+                    putLong(i, record.getDate(i));
+                    break;
+                case ColumnType.DOUBLE:
+                    putDouble(i, record.getDouble(i));
+                    break;
+                case ColumnType.FLOAT:
+                    putFloat(i, record.getFloat(i));
+                    break;
+                case ColumnType.SHORT:
+                    putShort(i, record.getShort(i));
+                    break;
+                case ColumnType.BYTE:
+                    putByte(i, record.getByte(i));
+                    break;
+                case ColumnType.BOOLEAN:
+                    putBool(i, record.getBool(i));
+                    break;
+                case ColumnType.CHAR:
+                    putChar(i, record.getChar(i));
+                    break;
+                case ColumnType.SYMBOL:
+                    putSymbol(i, record.getSymA(i));
+                    break;
+                case ColumnType.STRING:
+                    putStr(i, record.getStrA(i));
+                    break;
+                case ColumnType.VARCHAR:
+                    putVarchar(i, record.getVarcharA(i));
+                    break;
+                case ColumnType.BINARY:
+                    putBin(i, record.getBin(i));
+                    break;
+                default:
+                    if (ColumnType.isArray(type)) {
+                        putArray(i, record.getArray(i, type), type);
+                    } else {
+                        throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
+                    }
+                    break;
+            }
+        }
         rowCount++;
     }
 

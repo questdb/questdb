@@ -31,6 +31,7 @@ import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewTimerJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
@@ -540,6 +541,8 @@ public class ServerMain implements Closeable {
             lvWorkerPool.assign(i, liveViewRefreshJob);
             lvWorkerPool.freeOnExit(liveViewRefreshJob);
         }
+        final LiveViewTimerJob liveViewTimerJob = new LiveViewTimerJob(engine);
+        lvWorkerPool.assign(liveViewTimerJob);
     }
 
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {

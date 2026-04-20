@@ -84,6 +84,23 @@ public class LiveViewStateStoreImpl implements LiveViewStateStore {
     }
 
     @Override
+    public void enqueueForceDrain(TableToken baseTableToken) {
+        final AtomicLong lastNotifiedBaseTableTxn = lastNotifiedTxnByTableName.get(baseTableToken.getTableName());
+        if (lastNotifiedBaseTableTxn == null) {
+            // No live view depends on this base table.
+            return;
+        }
+        final LiveViewRefreshTask task = taskHolder.get();
+        task.clear();
+        task.baseTableToken = baseTableToken;
+        // Use the absolute value so the refresh job sees the most recent seqTxn it already
+        // processed; the refresh path will take the idle-flush branch.
+        task.seqTxn = Math.abs(lastNotifiedBaseTableTxn.get());
+        task.forceDrain = true;
+        taskQueue.enqueue(task);
+    }
+
+    @Override
     public void notifyBaseRefreshed(LiveViewRefreshTask task, long seqTxn) {
         final AtomicLong lastNotifiedTxn = lastNotifiedTxnByTableName.get(task.baseTableToken.getTableName());
         if (lastNotifiedTxn == null) {

@@ -1287,15 +1287,21 @@ public class SqlParser {
         builder.setViewName(Chars.toString(GenericLexer.unquote(tok)));
         builder.setViewNamePosition(lexer.lastTokenPosition());
 
-        // optional LAG duration
-        tok = tok(lexer, "'lag' or 'retention' or 'as'");
-        if (isLagKeyword(tok)) {
-            CharSequence lagTok = tok(lexer, "lag duration");
-            int lagPos = lexer.lastTokenPosition();
-            builder.setLagValue(SqlUtil.expectIntervalValue(lagTok, lagPos));
-            builder.setLagUnit(SqlUtil.expectIntervalUnit(lagTok, lagPos));
-            tok = tok(lexer, "'retention' or 'as'");
+        // LAG duration (required, must be > 0)
+        tok = tok(lexer, "'lag'");
+        if (!isLagKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'lag' expected");
         }
+        CharSequence lagTok = tok(lexer, "lag duration");
+        int lagPos = lexer.lastTokenPosition();
+        long lagValue = SqlUtil.expectIntervalValue(lagTok, lagPos);
+        char lagUnit = SqlUtil.expectIntervalUnit(lagTok, lagPos);
+        if (lagValue <= 0) {
+            throw SqlException.$(lagPos, "lag must be positive");
+        }
+        builder.setLagValue(lagValue);
+        builder.setLagUnit(lagUnit);
+        tok = tok(lexer, "'retention' or 'as'");
 
         // optional RETENTION duration
         if (isRetentionKeyword(tok)) {

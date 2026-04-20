@@ -32,6 +32,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -110,6 +111,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(memoryPool);
     }
 
+    /**
+     * Forces a drain of every live view's merge buffer, regardless of whether new
+     * WAL commits have arrived. Each view is processed with {@code forceDrain=true},
+     * so the drain watermark equals the max timestamp currently held in the buffer.
+     * <p>
+     * Used by {@code LiveViewTimerJob} to flush idle buffers and by tests to observe
+     * the full view state without waiting for the LAG window to advance.
+     */
+    public void forceFlushAllViews() {
+        LiveViewRegistry registry = engine.getLiveViewRegistry();
+        registry.getViews(viewInstanceSink);
+        for (int i = 0, n = viewInstanceSink.size(); i < n; i++) {
+            LiveViewInstance instance = viewInstanceSink.getQuick(i);
+            if (instance.isDropped() || instance.isInvalid()) {
+                continue;
+            }
+            refreshInstance(instance, instance.getLastProcessedSeqTxn(), true);
+        }
+    }
+
     @Override
     public boolean run(int workerId, @NotNull Job.RunStatus runStatus) {
         assert this.workerId == workerId;
@@ -117,26 +138,45 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Populates the InMemoryTable from scratch using the compiled factory's base cursor
-     * and the bootstrap window cursor. Window functions are reset to zero and then
-     * re-accumulated during iteration. After this call, window state reflects
-     * all rows currently in the base table.
+     * Rebuilds the InMemoryTable from scratch. Feeds every base-table row through the
+     * merge buffer, drains rows older than the LAG watermark into the bootstrap window
+     * cursor, and writes the result to the InMemoryTable. Rows within the LAG window
+     * remain in the merge buffer for the next incremental refresh to pick up.
+     * <p>
+     * When {@code forceDrain} is true the watermark equals the max timestamp observed,
+     * so every buffered row is emitted — used for idle-timer flushes where we want
+     * to publish everything currently held back.
      */
-    private void bootstrap(LiveViewInstance instance) throws SqlException {
+    private void bootstrap(LiveViewInstance instance, boolean forceDrain) throws SqlException {
         WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
         RecordCursorFactory baseFactory = windowFactory.getBaseFactory();
         windowFactory.resetWindowFunctions();
+
+        MergeBuffer mergeBuffer = ensureMergeBuffer(instance, baseFactory.getMetadata());
+        mergeBuffer.reset();
+
         RecordCursor baseCursor = baseFactory.getCursor(executionContext);
         try {
-            RecordCursor windowCursor = windowFactory.getBootstrapCursor(baseCursor, executionContext);
+            Record record = baseCursor.getRecord();
+            while (baseCursor.hasNext()) {
+                mergeBuffer.addRow(record);
+            }
+        } finally {
+            baseCursor.close();
+        }
+
+        long lagMicros = instance.getDefinition().getLagMicros();
+        long watermark = forceDrain ? mergeBuffer.getMaxTsSeen() : mergeBuffer.getMaxTsSeen() - lagMicros;
+        RecordCursor drainCursor = mergeBuffer.drain(watermark);
+        try {
+            RecordCursor windowCursor = windowFactory.getBootstrapCursor(drainCursor, executionContext);
             try {
                 instance.refresh(windowCursor);
             } finally {
                 windowCursor.close();
             }
         } catch (Throwable t) {
-            // baseCursor may not have been adopted by windowCursor yet
-            Misc.free(baseCursor);
+            Misc.free(drainCursor);
             throw t;
         }
     }
@@ -156,6 +196,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * Computes the drain watermark, drains the merge buffer, and feeds the drained rows
+     * through the window cursor into the InMemoryTable. No-op when the buffer is empty.
+     * When {@code forceDrain} is true, the watermark is the max observed timestamp so
+     * every buffered row is emitted — used for idle-timer flushes.
+     */
+    private void drainAndCommit(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            MergeBuffer mergeBuffer,
+            boolean forceDrain
+    ) throws SqlException {
+        if (mergeBuffer.isEmpty()) {
+            return;
+        }
+        long lagMicros = instance.getDefinition().getLagMicros();
+        long watermark = forceDrain ? mergeBuffer.getMaxTsSeen() : mergeBuffer.getMaxTsSeen() - lagMicros;
+        RecordCursor drainCursor = mergeBuffer.drain(watermark);
+        try {
+            RecordCursor windowCursor = windowFactory.getIncrementalCursor(drainCursor, executionContext);
+            try {
+                instance.appendIncremental(windowCursor);
+            } finally {
+                windowCursor.close();
+            }
+        } catch (Throwable t) {
+            Misc.free(drainCursor);
+            throw t;
+        }
+    }
+
     private RecordCursorFactory ensureCompiledFactory(LiveViewInstance instance) throws SqlException {
         RecordCursorFactory factory = instance.getCompiledFactory();
         if (factory == null) {
@@ -168,6 +239,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return factory;
     }
 
+    private MergeBuffer ensureMergeBuffer(LiveViewInstance instance, RecordMetadata baseMetadata) {
+        MergeBuffer mergeBuffer = instance.getMergeBuffer();
+        if (mergeBuffer == null) {
+            mergeBuffer = new MergeBuffer(baseMetadata);
+            instance.setMergeBuffer(mergeBuffer);
+        }
+        return mergeBuffer;
+    }
+
+    /**
+     * Resets window state and re-bootstraps from the base table. Called when
+     * a non-DATA WAL event (TRUNCATE, SQL, schema change) makes incremental
+     * refresh impossible.
+     */
+    private void fullRecompute(LiveViewInstance instance, boolean forceDrain) throws SqlException {
+        bootstrap(instance, forceDrain);
+    }
+
     private WindowRecordCursorFactory getWindowFactory(LiveViewInstance instance) throws SqlException {
         RecordCursorFactory factory = ensureCompiledFactory(instance);
         return unwrapWindowFactory(factory);
@@ -176,27 +265,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Walks the {@link TransactionLogCursor} from {@code fromSeqTxn} through
      * {@code toSeqTxn}. For each DATA transaction, reads the corresponding WAL segment
-     * rows and appends them to the InMemoryTable via the factory's incremental cursor.
-     * Falls back to a full recompute on any non-DATA event or when WAL segment data
-     * is unavailable (e.g. clean symbol files were never hardlinked by the WAL writer).
+     * rows through the merge buffer; after all segments have been buffered, drains rows
+     * older than the LAG watermark through the window cursor and appends them to the
+     * InMemoryTable. Falls back to a full recompute on any non-DATA event or when WAL
+     * segment data is unavailable (e.g. clean symbol files were never hardlinked by the
+     * WAL writer).
      */
     private void incrementalRefresh(
             LiveViewInstance instance,
             long fromSeqTxn,
-            long toSeqTxn
+            long toSeqTxn,
+            boolean forceDrain
     ) throws SqlException {
         try {
-            incrementalRefresh0(instance, fromSeqTxn, toSeqTxn);
+            incrementalRefresh0(instance, fromSeqTxn, toSeqTxn, forceDrain);
         } catch (CairoException e) {
             LOG.info().$("WAL segment data unavailable, falling back to full recompute [error=").$(e.getMessage()).I$();
-            fullRecompute(instance);
+            fullRecompute(instance, forceDrain);
         }
     }
 
     private void incrementalRefresh0(
             LiveViewInstance instance,
             long fromSeqTxn,
-            long toSeqTxn
+            long toSeqTxn,
+            boolean forceDrain
     ) throws SqlException {
         WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
         // When the view's SELECT has a WHERE clause, the planner inserts a filter factory
@@ -213,6 +306,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
 
         buildColumnMappings(baseMetadata);
+        MergeBuffer mergeBuffer = ensureMergeBuffer(instance, baseMetadata);
 
         WalSegmentPageFrameCursor frameCursor = new WalSegmentPageFrameCursor(
                 engine.getConfiguration(), columnIndexes, columnSizeShifts
@@ -230,7 +324,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     int segmentTxn = txnCursor.getSegmentTxn();
 
                     if (walId <= 0) {
-                        fullRecompute(instance);
+                        fullRecompute(instance, forceDrain);
                         return;
                     }
 
@@ -240,7 +334,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, walEventReader, segmentTxn, txn);
 
                     if (!WalTxnType.isDataType(eventCursor.getType())) {
-                        fullRecompute(instance);
+                        fullRecompute(instance, forceDrain);
                         return;
                     }
 
@@ -256,39 +350,42 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     frameCursor.of(baseToken, walNameSink, segmentId, endRow, startRow, endRow, baseMetadata);
                     walRecordCursor.of(frameCursor, baseMetadata);
 
-                    RecordCursor baseCursor = walRecordCursor;
+                    RecordCursor source = walRecordCursor;
                     if (filter != null) {
                         // Re-init bind variables and symbol-table caches against the current segment's
                         // cursor; symbol keys may differ between segments produced by different WAL writers.
                         filteringCursor.of(walRecordCursor, filter, executionContext);
-                        baseCursor = filteringCursor;
+                        source = filteringCursor;
                     }
 
-                    RecordCursor windowCursor = windowFactory.getIncrementalCursor(baseCursor, executionContext);
-                    try {
-                        instance.appendIncremental(windowCursor);
-                    } finally {
-                        windowCursor.close();
+                    Record record = source.getRecord();
+                    while (source.hasNext()) {
+                        mergeBuffer.addRow(record);
                     }
                 }
             }
         } finally {
             Misc.free(frameCursor);
         }
+
+        drainAndCommit(instance, windowFactory, mergeBuffer, forceDrain);
     }
 
     private boolean processNotifications() {
         boolean didWork = false;
         while (stateStore.tryDequeueRefreshTask(refreshTask)) {
-            refreshViewsForBaseTable(refreshTask.baseTableToken, refreshTask.seqTxn);
-            // Reopen the dedup gate and re-enqueue if a newer commit landed while we were busy.
-            stateStore.notifyBaseRefreshed(refreshTask, refreshTask.seqTxn);
+            refreshViewsForBaseTable(refreshTask.baseTableToken, refreshTask.seqTxn, refreshTask.forceDrain);
+            if (!refreshTask.forceDrain) {
+                // Reopen the dedup gate and re-enqueue if a newer commit landed while we were busy.
+                // Force-drain tasks don't touch the gate - they run alongside normal WAL-driven refreshes.
+                stateStore.notifyBaseRefreshed(refreshTask, refreshTask.seqTxn);
+            }
             didWork = true;
         }
         return didWork;
     }
 
-    private void refreshInstance(LiveViewInstance instance, long seqTxn) {
+    private void refreshInstance(LiveViewInstance instance, long seqTxn, boolean forceDrain) {
         if (!instance.tryLockForRefresh()) {
             return;
         }
@@ -299,14 +396,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             try {
                 long lastSeqTxn = instance.getLastProcessedSeqTxn();
                 if (lastSeqTxn < 0) {
-                    bootstrap(instance);
-                } else {
-                    incrementalRefresh(instance, lastSeqTxn, seqTxn);
+                    bootstrap(instance, forceDrain);
+                } else if (seqTxn > lastSeqTxn) {
+                    incrementalRefresh(instance, lastSeqTxn, seqTxn, forceDrain);
+                } else if (forceDrain) {
+                    // Idle flush: no new WAL transactions, just drain whatever the merge
+                    // buffer is still holding through the window cursor.
+                    WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
+                    MergeBuffer mergeBuffer = instance.getMergeBuffer();
+                    if (mergeBuffer != null) {
+                        drainAndCommit(instance, windowFactory, mergeBuffer, true);
+                    }
                 }
-                instance.setLastProcessedSeqTxn(seqTxn);
+                if (seqTxn > lastSeqTxn) {
+                    instance.setLastProcessedSeqTxn(seqTxn);
+                }
+                instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
             } catch (Throwable t) {
-                LOG.error().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
-                        .$(", error=").$(t.getMessage())
+                LOG.critical().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
+                        .$(", error=").$(t)
                         .I$();
             }
         } finally {
@@ -315,7 +423,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private void refreshViewsForBaseTable(TableToken baseTableToken, long seqTxn) {
+    private void refreshViewsForBaseTable(TableToken baseTableToken, long seqTxn, boolean forceDrain) {
         LiveViewRegistry registry = engine.getLiveViewRegistry();
         registry.getViewsForBaseTable(baseTableToken.getTableName(), viewInstanceSink);
 
@@ -324,19 +432,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (instance.isDropped() || instance.isInvalid()) {
                 continue;
             }
-            if (seqTxn > instance.getLastProcessedSeqTxn()) {
-                refreshInstance(instance, seqTxn);
+            if (seqTxn > instance.getLastProcessedSeqTxn() || forceDrain) {
+                refreshInstance(instance, seqTxn, forceDrain);
             }
         }
-    }
-
-    /**
-     * Resets window state and re-bootstraps from the base table. Called when
-     * a non-DATA WAL event (TRUNCATE, SQL, schema change) makes incremental
-     * refresh impossible.
-     */
-    private void fullRecompute(LiveViewInstance instance) throws SqlException {
-        bootstrap(instance);
     }
 
     private static WindowRecordCursorFactory unwrapWindowFactory(RecordCursorFactory factory) {

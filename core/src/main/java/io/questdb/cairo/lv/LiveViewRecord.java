@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.lv;
+package io.questdb.cairo.lv;
 
 import io.questdb.cairo.BinaryTypeDriver;
 import io.questdb.cairo.ColumnType;
@@ -31,7 +31,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
-import io.questdb.cairo.lv.InMemoryTable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.DirectByteSequenceView;
@@ -51,10 +50,10 @@ public class LiveViewRecord implements Record {
     private final DirectByteSequenceView binView = new DirectByteSequenceView();
     private final DirectString csViewA = new DirectString();
     private final DirectString csViewB = new DirectString();
-    private final InMemoryTable table;
     private final Utf8SplitString utf8ViewA = new Utf8SplitString();
     private final Utf8SplitString utf8ViewB = new Utf8SplitString();
     private long row;
+    private InMemoryTable table;
 
     public LiveViewRecord(InMemoryTable table) {
         this.table = table;
@@ -195,6 +194,10 @@ public class LiveViewRecord implements Record {
 
     public void setRow(long row) {
         this.row = row;
+    }
+
+    public void setTable(InMemoryTable table) {
+        this.table = table;
     }
 
     private CharSequence getStr0(int col, DirectString view) {
