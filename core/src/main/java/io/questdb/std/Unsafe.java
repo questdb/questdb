@@ -295,6 +295,22 @@ public final class Unsafe {
         UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
     }
 
+    /**
+     * Charges {@code size} bytes of externally-sourced allocation (i.e., memory
+     * obtained via a syscall other than {@link sun.misc.Unsafe#allocateMemory})
+     * against the global RSS limit and records it under {@code memoryTag}.
+     * Throws {@link CairoException} with the OOM flag set if the global RSS
+     * limit would be exceeded. On successful return, the caller must arrange
+     * for a matching call to {@link #recordMemAlloc}{@code (-size, memoryTag)}
+     * when the allocation is released.
+     */
+    public static void chargeExternalRss(long size, int memoryTag) {
+        assert size >= 0 : "size must be non-negative";
+        assert memoryTag >= MemoryTag.NATIVE_DEFAULT : "tag must be in the NATIVE range";
+        checkAllocLimit(size, memoryTag);
+        recordMemAlloc(size, memoryTag);
+    }
+
     private static long AccessibleObject_override_fieldOffset() {
         if (isJava8Or11()) {
             return getFieldOffset(AccessibleObject.class, "override");

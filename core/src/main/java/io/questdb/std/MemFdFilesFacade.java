@@ -101,11 +101,19 @@ public class MemFdFilesFacade implements FilesFacade {
      */
     public synchronized void clear() {
         ObjList<CharSequence> keys = pathRegistry.keys();
+        long creditBytes = 0;
         for (int i = 0, n = keys.size(); i < n; i++) {
             long val = pathRegistry.get(keys.get(i));
             if (val != DIRECTORY_MARKER) {
+                long sz = Files.length((int) val);
+                if (sz > 0) {
+                    creditBytes += sz;
+                }
                 Files.close0((int) val);
             }
+        }
+        if (creditBytes > 0) {
+            Unsafe.recordMemAlloc(-creditBytes, MemoryTag.NATIVE_MEMFD_STORAGE);
         }
         pathRegistry.clear();
         childFdToPath.clear();
@@ -129,19 +137,30 @@ public class MemFdFilesFacade implements FilesFacade {
         synchronized (this) {
             // Remove any existing entry so we start fresh.
             closePrimary(path);
+            if (size > 0 && capacityBytes > 0 && usedBytes.get() + size > capacityBytes) {
+                return -1;
+            }
+            // Charge the requested backing storage against the global RSS limit
+            // before touching the kernel. Throws cleanly with an OOM CairoException
+            // if the limit would be exceeded, leaving no state behind.
+            if (size > 0) {
+                Unsafe.chargeExternalRss(size, MemoryTag.NATIVE_MEMFD_STORAGE);
+            }
             registerAncestors(path);
             int osFd = Files.memfdCreate(name.ptr());
             if (osFd < 0) {
                 LOG.error().$("memfdCreate failed [path=").$(name).$(", errno=").$(Os.errno()).I$();
+                if (size > 0) {
+                    Unsafe.recordMemAlloc(-size, MemoryTag.NATIVE_MEMFD_STORAGE);
+                }
                 return -1;
             }
             pathRegistry.put(path, (long) osFd);
             if (size > 0) {
-                if (capacityBytes > 0 && usedBytes.get() + size > capacityBytes) {
+                if (!Files.truncate(osFd, size)) {
                     closePrimary(path);
                     return -1;
                 }
-                Files.truncate(osFd, size);
                 if (capacityBytes > 0) {
                     usedBytes.addAndGet(size);
                 }
@@ -189,22 +208,31 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        if (capacityBytes > 0) {
-            long currentSize = Files.length(fd);
-            if (currentSize < 0) {
-                currentSize = 0;
-            }
-            long delta = size - currentSize;
-            if (delta > 0 && usedBytes.get() + delta > capacityBytes) {
-                return false;
-            }
-            boolean result = Files.allocate(fd, size);
-            if (result && delta != 0) {
-                usedBytes.addAndGet(delta);
-            }
-            return result;
+        long currentSize = Files.length(fd);
+        if (currentSize < 0) {
+            currentSize = 0;
         }
-        return Files.allocate(fd, size);
+        long delta = size - currentSize;
+        if (delta > 0 && capacityBytes > 0 && usedBytes.get() + delta > capacityBytes) {
+            return false;
+        }
+        if (delta > 0) {
+            Unsafe.chargeExternalRss(delta, MemoryTag.NATIVE_MEMFD_STORAGE);
+        }
+        boolean result = Files.allocate(fd, size);
+        if (!result) {
+            if (delta > 0) {
+                Unsafe.recordMemAlloc(-delta, MemoryTag.NATIVE_MEMFD_STORAGE);
+            }
+            return false;
+        }
+        if (delta < 0) {
+            Unsafe.recordMemAlloc(delta, MemoryTag.NATIVE_MEMFD_STORAGE);
+        }
+        if (capacityBytes > 0 && delta != 0) {
+            usedBytes.addAndGet(delta);
+        }
+        return true;
     }
 
     @Override
@@ -866,22 +894,31 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public boolean truncate(long fd, long size) {
-        if (capacityBytes > 0) {
-            long currentSize = Files.length(fd);
-            if (currentSize < 0) {
-                currentSize = 0;
-            }
-            long delta = size - currentSize;
-            if (delta > 0 && usedBytes.get() + delta > capacityBytes) {
-                return false;
-            }
-            boolean result = Files.truncate(fd, size);
-            if (result && delta != 0) {
-                usedBytes.addAndGet(delta);
-            }
-            return result;
+        long currentSize = Files.length(fd);
+        if (currentSize < 0) {
+            currentSize = 0;
         }
-        return Files.truncate(fd, size);
+        long delta = size - currentSize;
+        if (delta > 0 && capacityBytes > 0 && usedBytes.get() + delta > capacityBytes) {
+            return false;
+        }
+        if (delta > 0) {
+            Unsafe.chargeExternalRss(delta, MemoryTag.NATIVE_MEMFD_STORAGE);
+        }
+        boolean result = Files.truncate(fd, size);
+        if (!result) {
+            if (delta > 0) {
+                Unsafe.recordMemAlloc(-delta, MemoryTag.NATIVE_MEMFD_STORAGE);
+            }
+            return false;
+        }
+        if (delta < 0) {
+            Unsafe.recordMemAlloc(delta, MemoryTag.NATIVE_MEMFD_STORAGE);
+        }
+        if (capacityBytes > 0 && delta != 0) {
+            usedBytes.addAndGet(delta);
+        }
+        return true;
     }
 
     @Override
@@ -949,9 +986,10 @@ public class MemFdFilesFacade implements FilesFacade {
         long primaryOsFd = pathRegistry.valueAt(idx);
         pathRegistry.removeAt(idx);
         if (primaryOsFd != DIRECTORY_MARKER) {
-            if (capacityBytes > 0) {
-                long fileSize = Files.length((int) primaryOsFd);
-                if (fileSize > 0) {
+            long fileSize = Files.length((int) primaryOsFd);
+            if (fileSize > 0) {
+                Unsafe.recordMemAlloc(-fileSize, MemoryTag.NATIVE_MEMFD_STORAGE);
+                if (capacityBytes > 0) {
                     usedBytes.addAndGet(-fileSize);
                 }
             }
