@@ -69,8 +69,10 @@ public class QwpQueryClientCloseTimeoutTest extends AbstractBootstrapTest {
         // only exercising the true branch.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE t(id LONG)");
-                serverMain.execute("INSERT INTO t SELECT x FROM long_sequence(50)");
+                serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO t SELECT x, x::TIMESTAMP FROM long_sequence(50)");
+                serverMain.awaitTable("t");
                 QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";");
                 client.connect();
@@ -94,7 +96,8 @@ public class QwpQueryClientCloseTimeoutTest extends AbstractBootstrapTest {
         // (batch buffers + WebSocket recv buffer) are the deliberate leak
         // that the flag announces.
         try (final TestServerMain serverMain = startWithEnvVariables()) {
-            serverMain.execute("CREATE TABLE t(id LONG)");
+            serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
             QwpQueryClient client = QwpQueryClient.fromConfig(
                     "ws::addr=127.0.0.1:" + HTTP_PORT + ";");
             client.connect();

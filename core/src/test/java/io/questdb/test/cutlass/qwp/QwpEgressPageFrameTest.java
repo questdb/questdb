@@ -104,7 +104,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
                             note VARCHAR,
                             s STRING,
                             sy SYMBOL
-                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
                         """);
                 // 3 partitions (day 1, 2, 3), 500 rows each = 1500 rows total.
                 serverMain.execute("""
@@ -118,6 +118,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
                             CASE WHEN x % 53 = 0 THEN CAST(NULL AS SYMBOL)  ELSE 'sym_'  || (x % 17)::STRING END
                         FROM long_sequence(1500)
                         """);
+                serverMain.awaitTable("allp");
 
                 final int[] rowCount = {0};
                 final int[] batchCount = {0};
@@ -219,8 +220,10 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // mode.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
-                serverMain.execute("CREATE TABLE binp(b BINARY)");
-                serverMain.execute("INSERT INTO binp SELECT rnd_bin(1, 64, 5) FROM long_sequence(800)");
+                serverMain.execute("CREATE TABLE binp(b BINARY, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO binp SELECT rnd_bin(1, 64, 5), x::TIMESTAMP FROM long_sequence(800)");
+                serverMain.awaitTable("binp");
 
                 final int[] rowCount = {0};
                 final long[] totalBytes = {0};
@@ -265,8 +268,10 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // still works end-to-end when the fork chooses it.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
-                serverMain.execute("CREATE TABLE tcnt(x LONG)");
-                serverMain.execute("INSERT INTO tcnt SELECT x FROM long_sequence(500)");
+                serverMain.execute("CREATE TABLE tcnt(x LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO tcnt SELECT x, x::TIMESTAMP FROM long_sequence(500)");
+                serverMain.awaitTable("tcnt");
 
                 final long[] observed = {-1};
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
@@ -301,7 +306,8 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // surface null without tripping on an uninitialised record state.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
-                serverMain.execute("CREATE TABLE empty_t(x LONG, v VARCHAR)");
+                serverMain.execute("CREATE TABLE empty_t(x LONG, v VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 final int[] rowCount = {0};
                 final long[] endRows = {-1};
@@ -340,10 +346,12 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // rows).
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
-                serverMain.execute("CREATE TABLE tf(x LONG, s VARCHAR)");
+                serverMain.execute("CREATE TABLE tf(x LONG, s VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
-                        "INSERT INTO tf SELECT x, 'v_' || x::STRING FROM long_sequence(500)"
+                        "INSERT INTO tf SELECT x, 'v_' || x::STRING, x::TIMESTAMP FROM long_sequence(500)"
                 );
+                serverMain.awaitTable("tf");
 
                 final long[] matchCount = {0};
                 final long[] sum = {0};
@@ -382,12 +390,15 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // NULL to force the null-bitmap encoding on at least one non-first frame.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
-                serverMain.execute("CREATE TABLE longnull(x LONG)");
+                serverMain.execute("CREATE TABLE longnull(x LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
                         INSERT INTO longnull
-                        SELECT CASE WHEN x % 7 = 0 THEN CAST(NULL AS LONG) ELSE x END
+                        SELECT CASE WHEN x % 7 = 0 THEN CAST(NULL AS LONG) ELSE x END,
+                               x::TIMESTAMP
                         FROM long_sequence(1000)
                         """);
+                serverMain.awaitTable("longnull");
 
                 final long[] nonNullSum = {0};
                 final int[] nullCount = {0};
@@ -493,7 +504,8 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // through the row-indexed path with rows in every frame.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
-                serverMain.execute("CREATE TABLE strp(s STRING)");
+                serverMain.execute("CREATE TABLE strp(s STRING, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 800 rows: mix of short ASCII, unicode, and NULL.
                 serverMain.execute("""
                         INSERT INTO strp
@@ -501,9 +513,11 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
                             WHEN x % 11 = 0 THEN CAST(NULL AS STRING)
                             WHEN x % 3  = 0 THEN 'unicode_é_' || x::STRING
                             ELSE                 'ascii_'     || x::STRING
-                        END
+                        END,
+                        x::TIMESTAMP
                         FROM long_sequence(800)
                         """);
+                serverMain.awaitTable("strp");
 
                 final int[] rowCount = {0};
                 final int[] nullCount = {0};
@@ -560,7 +574,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute(
-                        "CREATE TABLE sym_t(ts TIMESTAMP, sy SYMBOL) TIMESTAMP(ts) PARTITION BY DAY"
+                        "CREATE TABLE sym_t(ts TIMESTAMP, sy SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL"
                 );
                 // 2 partitions x 300 rows, 5 unique symbols cycling.
                 serverMain.execute("""
@@ -570,6 +584,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
                             'S' || (x % 5)::STRING
                         FROM long_sequence(600)
                         """);
+                serverMain.awaitTable("sym_t");
 
                 final int[] counts = new int[5];
                 final int[] totalCount = {0};
@@ -628,16 +643,18 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // frame onwards. Post-fix: every row round-trips.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
-                serverMain.execute("CREATE TABLE vcp(v VARCHAR)");
+                serverMain.execute("CREATE TABLE vcp(v VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 500 rows, values long enough to exceed the 9-byte inline threshold
                 // (e.g. "varchar_value_0001" is 18 bytes) so every non-null aux
                 // entry references the data file. Without the fix, the data
                 // pointer drifts past the mapped data page on frames 2+.
                 serverMain.execute("""
                         INSERT INTO vcp
-                        SELECT 'varchar_value_' || lpad(x::STRING, 4, '0')
+                        SELECT 'varchar_value_' || lpad(x::STRING, 4, '0'), x::TIMESTAMP
                         FROM long_sequence(500)
                         """);
+                serverMain.awaitTable("vcp");
 
                 final int[] rowCount = {0};
                 final long[] lenSum = {0};

@@ -70,7 +70,8 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // rejection routed via QUERY_ERROR rather than killing the connection.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE dup(x LONG, y DOUBLE)");
+                serverMain.execute("CREATE TABLE dup(x LONG, y DOUBLE, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
@@ -84,7 +85,7 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
                     // query goes through. Catches state corruption in the
                     // handleQueryRequest error arm.
                     final short[] opType = {-1};
-                    client.execute("INSERT INTO dup VALUES (1, 2.0)", new QwpColumnBatchHandler() {
+                    client.execute("INSERT INTO dup VALUES (1, 2.0, 1::TIMESTAMP)", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             Assert.fail("unexpected batch");
@@ -148,13 +149,14 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // follow-up query to confirm liveness.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE strict(x LONG)");
+                serverMain.execute("CREATE TABLE strict(x LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
                     final String[] errorMsg = {null};
                     final byte[] errorStatus = {0};
-                    client.execute("INSERT INTO strict VALUES ('not_a_long')",
+                    client.execute("INSERT INTO strict VALUES ('not_a_long', 1::TIMESTAMP)",
                             failIfSuccess(errorStatus, errorMsg));
                     Assert.assertNotNull(errorMsg[0]);
                     Assert.assertTrue(
@@ -165,7 +167,7 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
                     );
                     // Connection is still usable for a valid insert after the error.
                     final short[] opType = {-1};
-                    client.execute("INSERT INTO strict VALUES (42)", new QwpColumnBatchHandler() {
+                    client.execute("INSERT INTO strict VALUES (42, 2::TIMESTAMP)", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             Assert.fail("unexpected batch");
@@ -199,9 +201,11 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // must still serve a fresh connection afterwards.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE big(x LONG)");
+                serverMain.execute("CREATE TABLE big(x LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 50k rows guarantees multi-batch streaming (MAX_ROWS_PER_BATCH = 4096).
-                serverMain.execute("INSERT INTO big SELECT x FROM long_sequence(50000)");
+                serverMain.execute("INSERT INTO big SELECT x, x::TIMESTAMP FROM long_sequence(50000)");
+                serverMain.awaitTable("big");
 
                 // Client #1: close mid-stream.
                 try (QwpQueryClient c1 = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
@@ -284,6 +288,8 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // returns zero-rows as a first-class success.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
+                // Non-WAL: UPDATE's rowsAffected on WAL reports WAL-segment count, not
+                // logical rows, which would break the zero-match assertion below.
                 serverMain.execute("CREATE TABLE zu(ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
                 serverMain.execute(
                         "INSERT INTO zu SELECT CAST((x - 1) * 1_000_000L AS TIMESTAMP), x " +

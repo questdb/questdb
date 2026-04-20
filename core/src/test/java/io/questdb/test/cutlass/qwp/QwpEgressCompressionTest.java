@@ -71,9 +71,11 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
     public void testAutoDefaultStreamsMultipleBatches() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startQuestDB()) {
-                serverMain.execute("CREATE TABLE many(id LONG, v DOUBLE)");
+                serverMain.execute("CREATE TABLE many(id LONG, v DOUBLE, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
-                        "INSERT INTO many SELECT x, CAST(x * 0.5 AS DOUBLE) FROM long_sequence(20000)");
+                        "INSERT INTO many SELECT x, CAST(x * 0.5 AS DOUBLE), x::TIMESTAMP FROM long_sequence(20000)");
+                serverMain.awaitTable("many");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
@@ -89,8 +91,10 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
     public void testCompressionRawBypassesZstd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startQuestDB()) {
-                serverMain.execute("CREATE TABLE r(id LONG)");
-                serverMain.execute("INSERT INTO r SELECT x FROM long_sequence(500)");
+                serverMain.execute("CREATE TABLE r(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO r SELECT x, x::TIMESTAMP FROM long_sequence(500)");
+                serverMain.awaitTable("r");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=raw;")) {
                     client.connect();
@@ -109,9 +113,11 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
                     PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "23",
                     PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "23"
             )) {
-                serverMain.execute("CREATE TABLE f(id LONG, s SYMBOL)");
+                serverMain.execute("CREATE TABLE f(id LONG, s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
-                        "INSERT INTO f SELECT x, CAST('s_' || (x % 32) AS SYMBOL) FROM long_sequence(4000)");
+                        "INSERT INTO f SELECT x, CAST('s_' || (x % 32) AS SYMBOL), x::TIMESTAMP FROM long_sequence(4000)");
+                serverMain.awaitTable("f");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
                     client.connect();
@@ -141,9 +147,11 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startQuestDB()) {
                 // Rotating symbols over 10k rows gives a ~50x compressible payload.
-                serverMain.execute("CREATE TABLE z(id LONG, s SYMBOL)");
+                serverMain.execute("CREATE TABLE z(id LONG, s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
-                        "INSERT INTO z SELECT x, CAST('s_' || (x % 8) AS SYMBOL) FROM long_sequence(10000)");
+                        "INSERT INTO z SELECT x, CAST('s_' || (x % 8) AS SYMBOL), x::TIMESTAMP FROM long_sequence(10000)");
+                serverMain.awaitTable("z");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
                     client.connect();
@@ -194,9 +202,11 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
     private void runLevelSmoke(int level) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startQuestDB()) {
-                serverMain.execute("CREATE TABLE L(id LONG, v DOUBLE)");
+                serverMain.execute("CREATE TABLE L(id LONG, v DOUBLE, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
-                        "INSERT INTO L SELECT x, CAST(x * 1.5 AS DOUBLE) FROM long_sequence(2000)");
+                        "INSERT INTO L SELECT x, CAST(x * 1.5 AS DOUBLE), x::TIMESTAMP FROM long_sequence(2000)");
+                serverMain.awaitTable("L");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT
                                 + ";compression=zstd;compression_level=" + level + ";")) {

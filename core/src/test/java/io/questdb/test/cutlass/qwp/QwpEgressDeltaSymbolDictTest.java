@@ -71,16 +71,19 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // symbol rides the wire.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE two_sym(a SYMBOL, b SYMBOL)");
+                serverMain.execute("CREATE TABLE two_sym(a SYMBOL, b SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // a cycles through {X, Y, Z}; b cycles through {Y, Z, W}. Shared {Y, Z}
                 // should only be transmitted once total across both columns.
                 serverMain.execute("""
                         INSERT INTO two_sym
                         SELECT
                             CASE WHEN (x % 3) = 0 THEN 'X' WHEN (x % 3) = 1 THEN 'Y' ELSE 'Z' END,
-                            CASE WHEN (x % 3) = 0 THEN 'Y' WHEN (x % 3) = 1 THEN 'Z' ELSE 'W' END
+                            CASE WHEN (x % 3) = 0 THEN 'Y' WHEN (x % 3) = 1 THEN 'Z' ELSE 'W' END,
+                            x::TIMESTAMP
                         FROM long_sequence(30)
                         """);
+                serverMain.awaitTable("two_sym");
 
                 final int[] countA = new int[4];  // X, Y, Z, W
                 final int[] countB = new int[4];
@@ -132,8 +135,11 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // 'gamma' ships as a new delta entry. All three round-trip correctly.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE inc(s SYMBOL)");
-                serverMain.execute("INSERT INTO inc VALUES ('alpha'), ('beta'), ('alpha')");
+                serverMain.execute("CREATE TABLE inc(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO inc VALUES ('alpha', 1::TIMESTAMP), "
+                        + "('beta', 2::TIMESTAMP), ('alpha', 3::TIMESTAMP)");
+                serverMain.awaitTable("inc");
 
                 final long[] q1TotalBytes = {0};
                 final long[] q1RowCount = {0};
@@ -172,7 +178,8 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
                     });
 
                     // Add a brand-new symbol between queries.
-                    serverMain.execute("INSERT INTO inc VALUES ('gamma'), ('alpha')");
+                    serverMain.execute("INSERT INTO inc VALUES ('gamma', 4::TIMESTAMP), ('alpha', 5::TIMESTAMP)");
+                    serverMain.awaitTable("inc");
 
                     client.execute("SELECT s FROM inc", new QwpColumnBatchHandler() {
                         @Override
@@ -231,8 +238,10 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // must still round-trip correctly (empty delta section, empty dict).
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE nosym(x LONG, y DOUBLE)");
-                serverMain.execute("INSERT INTO nosym SELECT x, x * 1.5 FROM long_sequence(100)");
+                serverMain.execute("CREATE TABLE nosym(x LONG, y DOUBLE, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO nosym SELECT x, x * 1.5, x::TIMESTAMP FROM long_sequence(100)");
+                serverMain.awaitTable("nosym");
 
                 final long[] sum = {0};
                 final int[] rowCount = {0};
@@ -273,15 +282,18 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // symbol dict entries that Q1 shipped.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE recur(s SYMBOL)");
+                serverMain.execute("CREATE TABLE recur(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 60 rows, 3 unique symbols (aa, bbb, cccc) -- guaranteed total
                 // entry-bytes savings (2+3+4 = 9 bytes of dict + 3 varint lengths
                 // = 12 bytes) which dominates the 2-byte empty delta section.
                 serverMain.execute("""
                         INSERT INTO recur
-                        SELECT CASE WHEN (x % 3) = 0 THEN 'aa' WHEN (x % 3) = 1 THEN 'bbb' ELSE 'cccc' END
+                        SELECT CASE WHEN (x % 3) = 0 THEN 'aa' WHEN (x % 3) = 1 THEN 'bbb' ELSE 'cccc' END,
+                               x::TIMESTAMP
                         FROM long_sequence(60)
                         """);
+                serverMain.awaitTable("recur");
 
                 final long[] q1Bytes = {0};
                 final long[] q2Bytes = {0};
@@ -348,11 +360,13 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // with invalid pointer dereferences if it didn't.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE many(s SYMBOL)");
+                serverMain.execute("CREATE TABLE many(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // First 50 rows use 's_000' .. 's_049'.
                 serverMain.execute(
-                        "INSERT INTO many SELECT 's_' || lpad(x::STRING, 3, '0') FROM long_sequence(50)"
+                        "INSERT INTO many SELECT 's_' || lpad(x::STRING, 3, '0'), x::TIMESTAMP FROM long_sequence(50)"
                 );
+                serverMain.awaitTable("many");
 
                 // buckets are 1..100 (s_001..s_100); size 101 so index 100 is valid.
                 final int[] q1Observed = new int[101];
@@ -385,8 +399,9 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
                     // Add rows 50..99 before the second query.
                     serverMain.execute(
                             "INSERT INTO many " +
-                                    "SELECT 's_' || lpad((x + 50)::STRING, 3, '0') FROM long_sequence(50)"
+                                    "SELECT 's_' || lpad((x + 50)::STRING, 3, '0'), (x + 50)::TIMESTAMP FROM long_sequence(50)"
                     );
+                    serverMain.awaitTable("many");
 
                     client.execute("SELECT s FROM many", new QwpColumnBatchHandler() {
                         @Override

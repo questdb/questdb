@@ -123,7 +123,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         dbPath.parent().$();
         // Pinned seeds make the fuzz deterministic across runs -- swap for new
         // constants if/when a CI run surfaces a previously-unseen failure.
-        random = TestUtils.generateRandom(LOG);
+        random = TestUtils.generateRandom(LOG,2121554702200L, 1776652855068L);
     }
 
     @Test
@@ -240,7 +240,9 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         StringBuilder sb = new StringBuilder("INSERT INTO ").append(table).append(" VALUES ");
         for (int r = 0; r < rowCount; r++) {
             if (r > 0) sb.append(", ");
-            sb.append('(').append(r + 1); // id
+            // id, ts, then generated column literals. ts = r * 1000us (1ms per row) keeps
+            // the whole run inside a single partition for all practical row counts.
+            sb.append('(').append(r + 1).append(", CAST(").append((long) r * 1_000L).append(" AS TIMESTAMP)");
             for (int c = 0; c < colCount; c++) {
                 sb.append(", ").append(literals[r][c]);
             }
@@ -350,12 +352,15 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         }
         int rowCount = pickRowCount(random);
 
-        // CREATE TABLE with an explicit row id column to anchor ORDER BY.
-        StringBuilder ddl = new StringBuilder("CREATE TABLE ").append(table).append(" (id LONG");
+        // CREATE TABLE with an explicit row id column to anchor ORDER BY. ts is the
+        // designated timestamp so the table can run as WAL -- matches production shape
+        // and makes DROP go through the WAL apply path instead of the synchronous
+        // reader-lock path.
+        StringBuilder ddl = new StringBuilder("CREATE TABLE ").append(table).append(" (id LONG, ts TIMESTAMP");
         for (int i = 0; i < colCount; i++) {
             ddl.append(", c").append(i).append(' ').append(cols[i].sqlType());
         }
-        ddl.append(')');
+        ddl.append(") TIMESTAMP(ts) PARTITION BY DAY WAL");
         server.execute(ddl.toString());
 
         // Roll random values in Java; remember expected hash + null-ness per cell.
@@ -378,6 +383,10 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         }
 
         server.execute(buildInsert(table, cols, literals, rowCount));
+        // WAL tables commit rows asynchronously; wait for the server-side apply job
+        // to catch up before the SELECT, otherwise we'd race the stream with an
+        // empty table view.
+        server.awaitTable(table);
 
         // Plan a query shape; compute which rows / cols appear + in what order.
         int caseSalt = table.hashCode(); // stable-ish salt so shape rotates per table

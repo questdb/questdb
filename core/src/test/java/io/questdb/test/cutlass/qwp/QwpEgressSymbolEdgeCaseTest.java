@@ -74,8 +74,11 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // path and any accidental attempt to index into an empty dict.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE allnull(s SYMBOL)");
-                serverMain.execute("INSERT INTO allnull VALUES (NULL), (NULL), (NULL), (NULL), (NULL)");
+                serverMain.execute("CREATE TABLE allnull(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO allnull VALUES (NULL, 1::TIMESTAMP), (NULL, 2::TIMESTAMP), "
+                        + "(NULL, 3::TIMESTAMP), (NULL, 4::TIMESTAMP), (NULL, 5::TIMESTAMP)");
+                serverMain.awaitTable("allnull");
 
                 final int[] nullCount = {0};
                 final int[] rowCount = {0};
@@ -116,16 +119,18 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // Catches bugs in the surrogate-pair branch of either encoder.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE emojis(s SYMBOL)");
+                serverMain.execute("CREATE TABLE emojis(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Rocket: U+1F680 (0xF0 0x9F 0x9A 0x80), thumbs up: U+1F44D.
                 serverMain.execute("""
                         INSERT INTO emojis VALUES
-                            ('\uD83D\uDE80'),
-                            ('\uD83D\uDC4D'),
-                            ('\uD83D\uDE80'),
-                            ('plain'),
-                            ('\uD83D\uDC4D')
+                            ('\uD83D\uDE80', 1::TIMESTAMP),
+                            ('\uD83D\uDC4D', 2::TIMESTAMP),
+                            ('\uD83D\uDE80', 3::TIMESTAMP),
+                            ('plain',        4::TIMESTAMP),
+                            ('\uD83D\uDC4D', 5::TIMESTAMP)
                         """);
+                serverMain.awaitTable("emojis");
 
                 // Two unique emojis (4 bytes each) + 'plain' (5 bytes) + 2
                 // repeats of the emojis = 3 unique, 5 total rows.
@@ -177,8 +182,11 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // leaks of connection dict state across connections.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE shared(s SYMBOL)");
-                serverMain.execute("INSERT INTO shared VALUES ('red'), ('green'), ('blue'), ('red')");
+                serverMain.execute("CREATE TABLE shared(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO shared VALUES ('red', 1::TIMESTAMP), ('green', 2::TIMESTAMP), "
+                        + "('blue', 3::TIMESTAMP), ('red', 4::TIMESTAMP)");
+                serverMain.awaitTable("shared");
 
                 final long[] c1Bytes = {0};
                 final long[] c2Bytes = {0};
@@ -251,14 +259,17 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // length varints can be > 1 byte when emitted.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE longsym(s SYMBOL)");
+                serverMain.execute("CREATE TABLE longsym(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 200 chars 'x' repeated -- distinct from any tiny test value.
                 StringBuilder sb = new StringBuilder(200);
                 for (int i = 0; i < 200; i++) sb.append('x');
                 String longValue = sb.toString();
                 serverMain.execute(
-                        "INSERT INTO longsym VALUES ('" + longValue + "'), ('short'), ('" + longValue + "')"
+                        "INSERT INTO longsym VALUES ('" + longValue + "', 1::TIMESTAMP), "
+                                + "('short', 2::TIMESTAMP), ('" + longValue + "', 3::TIMESTAMP)"
                 );
+                serverMain.awaitTable("longsym");
 
                 final int[] longCount = {0};
                 final int[] shortCount = {0};
@@ -310,7 +321,8 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // the delta section read.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE multi(s SYMBOL, x LONG)");
+                serverMain.execute("CREATE TABLE multi(s SYMBOL, x LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 4 unique symbols cycling; all unique values appear in batch 1,
                 // so batches 2 and 3 have empty delta sections.
                 serverMain.execute(String.format("""
@@ -318,9 +330,10 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
                         SELECT CASE WHEN (x %% 4) = 0 THEN 'A'
                                     WHEN (x %% 4) = 1 THEN 'B'
                                     WHEN (x %% 4) = 2 THEN 'C'
-                                    ELSE 'D' END, x
+                                    ELSE 'D' END, x, x::TIMESTAMP
                         FROM long_sequence(%d)
                         """, MULTI_BATCH_ROWS));
+                serverMain.awaitTable("multi");
 
                 final int[] counts = new int[4];  // A, B, C, D
                 final int[] totalRows = {0};
@@ -376,14 +389,17 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // nonNullCount-based emit loop would produce garbage here.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE mix(s SYMBOL)");
+                serverMain.execute("CREATE TABLE mix(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(String.format("""
                         INSERT INTO mix
                         SELECT CASE WHEN x %% 3 = 0 THEN CAST(NULL AS SYMBOL)
                                     WHEN x %% 3 = 1 THEN 'odd'
-                                    ELSE 'even' END
+                                    ELSE 'even' END,
+                               x::TIMESTAMP
                         FROM long_sequence(%d)
                         """, MULTI_BATCH_ROWS));
+                serverMain.awaitTable("mix");
 
                 final int[] nullCount = {0};
                 final int[] oddCount = {0};
@@ -437,8 +453,10 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // byte each). Verifies the tiniest-dict case still works end-to-end.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE uniq(s SYMBOL)");
-                serverMain.execute("INSERT INTO uniq SELECT 'only' FROM long_sequence(1000)");
+                serverMain.execute("CREATE TABLE uniq(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO uniq SELECT 'only', x::TIMESTAMP FROM long_sequence(1000)");
+                serverMain.awaitTable("uniq");
 
                 final int[] count = {0};
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
@@ -482,15 +500,17 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // stringFromUtf8 on the client.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE uni(s SYMBOL)");
+                serverMain.execute("CREATE TABLE uni(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // café (5 bytes: c a f 0xC3 0xA9), 中文 (6 bytes).
                 serverMain.execute("""
                         INSERT INTO uni VALUES
-                            ('café'),
-                            ('中文'),
-                            ('café'),
-                            ('ascii')
+                            ('café',  1::TIMESTAMP),
+                            ('中文',  2::TIMESTAMP),
+                            ('café',  3::TIMESTAMP),
+                            ('ascii', 4::TIMESTAMP)
                         """);
+                serverMain.awaitTable("uni");
 
                 final String[] expected = {"café", "中文", "café", "ascii"};
                 final int[] rowIdx = {0};

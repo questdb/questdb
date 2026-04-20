@@ -70,8 +70,10 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
         // the connection: a follow-up query on the same client must run cleanly.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE q1(id LONG)");
-                serverMain.execute("INSERT INTO q1 VALUES (1), (2), (3)");
+                serverMain.execute("CREATE TABLE q1(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO q1 VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
+                serverMain.awaitTable("q1");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
@@ -129,8 +131,10 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
         // still doesn't break subsequent queries on the same connection.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE small(id LONG)");
-                serverMain.execute("INSERT INTO small SELECT x FROM long_sequence(1000)");
+                serverMain.execute("CREATE TABLE small(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO small SELECT x, x::TIMESTAMP FROM long_sequence(1000)");
+                serverMain.awaitTable("small");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
@@ -207,8 +211,10 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
         // before sending anything.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE mini(x INT)");
-                serverMain.execute("INSERT INTO mini VALUES (1)");
+                serverMain.execute("CREATE TABLE mini(x INT, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO mini VALUES (1, 1::TIMESTAMP)");
+                serverMain.awaitTable("mini");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {

@@ -81,13 +81,14 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 for (int n : new int[]{0, 1, 2, 3, 4, 10}) {
                     String tbl = "bnd_" + n;
-                    serverMain.execute("CREATE TABLE " + tbl + "(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                    serverMain.execute("CREATE TABLE " + tbl + "(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                     if (n > 0) {
                         serverMain.execute(String.format("""
                                 INSERT INTO %s
                                 SELECT CAST((x - 1) * 1_000_000L AS TIMESTAMP)
                                 FROM long_sequence(%d)
                                 """, tbl, n));
+                        serverMain.awaitTable(tbl);
                     }
 
                     final long[] sum = {0};
@@ -183,7 +184,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute(
-                        "CREATE TABLE dts(ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY"
+                        "CREATE TABLE dts(ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL"
                 );
                 final int N = 4000;
                 serverMain.execute(String.format("""
@@ -191,6 +192,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         SELECT CAST((x - 1) * 10_000L AS TIMESTAMP), x
                         FROM long_sequence(%d)
                         """, N));
+                serverMain.awaitTable("dts");
 
                 final long[] lastSeen = {Long.MIN_VALUE};
                 final long[] totalBytes = {0};
@@ -243,7 +245,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute(
-                        "CREATE TABLE mix(ts TIMESTAMP, scrambled TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY"
+                        "CREATE TABLE mix(ts TIMESTAMP, scrambled TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL"
                 );
                 // ts ascending by 1 s; scrambled deliberately jumps around.
                 serverMain.execute("""
@@ -254,6 +256,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                             x
                         FROM long_sequence(300)
                         """);
+                serverMain.awaitTable("mix");
 
                 final int[] rowCount = {0};
                 final long[] tsSum = {0};
@@ -304,7 +307,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute(
-                        "CREATE TABLE multi(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY"
+                        "CREATE TABLE multi(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
                 );
                 final int N = 10_000;
                 serverMain.execute(String.format("""
@@ -312,6 +315,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         SELECT CAST((x - 1) * 100_000L AS TIMESTAMP)
                         FROM long_sequence(%d)
                         """, N));
+                serverMain.awaitTable("multi");
 
                 final long[] lastSeen = {Long.MIN_VALUE};
                 final int[] batches = {0};

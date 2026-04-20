@@ -65,13 +65,15 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
     public void testAlterColumnAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE alt(x LONG)");
+                serverMain.execute("CREATE TABLE alt(x LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
                     short opType = executeDdl(client, "ALTER TABLE alt ADD COLUMN y DOUBLE");
                     Assert.assertEquals(CompiledQuery.ALTER, opType);
-                    // Verify the column is actually there via a SELECT.
+                    serverMain.awaitTable("alt");
+                    // Verify the column is actually there via a SELECT. Schema: x, ts, y.
                     final int[] colCount = {0};
                     client.execute("SELECT * FROM alt", new QwpColumnBatchHandler() {
                         @Override
@@ -88,7 +90,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
                             Assert.fail("unexpected error: " + message);
                         }
                     });
-                    Assert.assertEquals(2, colCount[0]);
+                    Assert.assertEquals(3, colCount[0]);
                 }
             }
         });
@@ -103,10 +105,12 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
                     client.connect();
                     Assert.assertEquals(
                             CompiledQuery.CREATE_TABLE,
-                            executeDdl(client, "CREATE TABLE newt(x LONG, s SYMBOL)")
+                            executeDdl(client, "CREATE TABLE newt(x LONG, s SYMBOL, ts TIMESTAMP) "
+                                    + "TIMESTAMP(ts) PARTITION BY DAY WAL")
                     );
                     // Insert so we know the table is usable.
-                    short opType = executeDdl(client, "INSERT INTO newt VALUES (1, 'a'), (2, 'b')");
+                    short opType = executeDdl(client,
+                            "INSERT INTO newt VALUES (1, 'a', 1::TIMESTAMP), (2, 'b', 2::TIMESTAMP)");
                     Assert.assertEquals(CompiledQuery.INSERT, opType);
                     // Drop it.
                     Assert.assertEquals(
@@ -127,9 +131,11 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
                 try (QwpQueryClient c1 = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     c1.connect();
-                    executeDdl(c1, "CREATE TABLE cross_conn(x LONG)");
-                    executeDdl(c1, "INSERT INTO cross_conn VALUES (100), (200)");
+                    executeDdl(c1, "CREATE TABLE cross_conn(x LONG, ts TIMESTAMP) "
+                            + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    executeDdl(c1, "INSERT INTO cross_conn VALUES (100, 1::TIMESTAMP), (200, 2::TIMESTAMP)");
                 }
+                serverMain.awaitTable("cross_conn");
 
                 final long[] sum = {0};
                 try (QwpQueryClient c2 = QwpQueryClient.fromConfig(
@@ -162,20 +168,22 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
     public void testInsertReportsRowsAffected() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE ins(x LONG, s VARCHAR)");
+                serverMain.execute("CREATE TABLE ins(x LONG, s VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
                     // Single-row insert.
-                    ExecResult r1 = executeExec(client, "INSERT INTO ins VALUES (1, 'a')");
+                    ExecResult r1 = executeExec(client, "INSERT INTO ins VALUES (1, 'a', 1::TIMESTAMP)");
                     Assert.assertEquals(CompiledQuery.INSERT, r1.opType);
                     Assert.assertEquals(1L, r1.rowsAffected);
                     // Three-row multi-row VALUES.
-                    ExecResult r2 = executeExec(client, "INSERT INTO ins VALUES (2, 'b'), (3, 'c'), (4, 'd')");
+                    ExecResult r2 = executeExec(client,
+                            "INSERT INTO ins VALUES (2, 'b', 2::TIMESTAMP), (3, 'c', 3::TIMESTAMP), (4, 'd', 4::TIMESTAMP)");
                     Assert.assertEquals(3L, r2.rowsAffected);
                     // INSERT-AS-SELECT: pulls from long_sequence, inserts 5 rows.
                     ExecResult r3 = executeExec(client,
-                            "INSERT INTO ins SELECT x, 'v_' || x::STRING FROM long_sequence(5)");
+                            "INSERT INTO ins SELECT x, 'v_' || x::STRING, x::TIMESTAMP FROM long_sequence(5)");
                     Assert.assertEquals(CompiledQuery.INSERT_AS_SELECT, r3.opType);
                     Assert.assertEquals(5L, r3.rowsAffected);
                 }
@@ -231,8 +239,10 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
         // EXEC_DONE with op_type set and rowsAffected usually 0.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE pt(x LONG)");
-                serverMain.execute("INSERT INTO pt VALUES (1), (2), (3)");
+                serverMain.execute("CREATE TABLE pt(x LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO pt VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
+                serverMain.awaitTable("pt");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
@@ -243,6 +253,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
                             CompiledQuery.TRUNCATE,
                             executeDdl(client, "TRUNCATE TABLE pt")
                     );
+                    serverMain.awaitTable("pt");
                     // Verify the rows are actually gone.
                     final int[] count = {0};
                     client.execute("SELECT x FROM pt", new QwpColumnBatchHandler() {
@@ -270,8 +281,10 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
     public void testRenameTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE r_old(x LONG)");
-                serverMain.execute("INSERT INTO r_old VALUES (42)");
+                serverMain.execute("CREATE TABLE r_old(x LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO r_old VALUES (42, 1::TIMESTAMP)");
+                serverMain.awaitTable("r_old");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
@@ -279,6 +292,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
                             CompiledQuery.RENAME_TABLE,
                             executeDdl(client, "RENAME TABLE r_old TO r_new")
                     );
+                    serverMain.awaitTable("r_new");
                     final long[] observed = {0};
                     client.execute("SELECT x FROM r_new", new QwpColumnBatchHandler() {
                         @Override
@@ -307,6 +321,11 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
     public void testUpdateReportsRowsAffected() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
+                // Non-WAL: UPDATE's rowsAffected is the synchronous matched-row count
+                // we assert on below. On a WAL table the number instead reflects the
+                // count of WAL segments touched, not logical rows, and the real row
+                // count only materialises after the apply job catches up -- different
+                // enough to warrant skipping the WAL sweep for this one test.
                 serverMain.execute("CREATE TABLE upd(ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
                 serverMain.execute(
                         "INSERT INTO upd SELECT CAST((x - 1) * 1_000_000L AS TIMESTAMP), x " +

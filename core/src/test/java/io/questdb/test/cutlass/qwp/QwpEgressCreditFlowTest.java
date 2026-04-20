@@ -73,8 +73,10 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute(
-                        "CREATE TABLE big AS (SELECT x AS id, CAST(x * 1.5 AS DOUBLE) AS v " +
-                                "FROM long_sequence(500000))");
+                        "CREATE TABLE big AS (SELECT x AS id, CAST(x * 1.5 AS DOUBLE) AS v, " +
+                                "x::TIMESTAMP AS ts " +
+                                "FROM long_sequence(500000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTable("big");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                                 "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
@@ -121,7 +123,9 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute(
-                        "CREATE TABLE tiny AS (SELECT x AS id FROM long_sequence(50000))");
+                        "CREATE TABLE tiny AS (SELECT x AS id, x::TIMESTAMP AS ts FROM long_sequence(50000))"
+                                + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTable("tiny");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                                 "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
@@ -157,7 +161,9 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute(
-                        "CREATE TABLE un AS (SELECT x AS id FROM long_sequence(10000))");
+                        "CREATE TABLE un AS (SELECT x AS id, x::TIMESTAMP AS ts FROM long_sequence(10000))"
+                                + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTable("un");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
@@ -191,8 +197,10 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
         // for the credit fields.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE a(id LONG)");
-                serverMain.execute("INSERT INTO a SELECT x FROM long_sequence(3000)");
+                serverMain.execute("CREATE TABLE a(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO a SELECT x, x::TIMESTAMP FROM long_sequence(3000)");
+                serverMain.awaitTable("a");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                                 "ws::addr=127.0.0.1:" + HTTP_PORT + ";")

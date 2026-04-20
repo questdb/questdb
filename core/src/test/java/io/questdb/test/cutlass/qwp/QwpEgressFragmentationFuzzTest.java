@@ -81,9 +81,11 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
         LOG.info().$("=== fragmentation test: chunk=").$(chunk).$();
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented(chunk)) {
-                serverMain.execute("CREATE TABLE btb(id LONG, v DOUBLE)");
+                serverMain.execute("CREATE TABLE btb(id LONG, v DOUBLE, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
-                        "INSERT INTO btb SELECT x, CAST(x * 2.5 AS DOUBLE) FROM long_sequence(8000)");
+                        "INSERT INTO btb SELECT x, CAST(x * 2.5 AS DOUBLE), x::TIMESTAMP FROM long_sequence(8000)");
+                serverMain.awaitTable("btb");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
@@ -106,7 +108,9 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented(chunk)) {
                 serverMain.execute(
-                        "CREATE TABLE cf AS (SELECT x AS id FROM long_sequence(20000))");
+                        "CREATE TABLE cf AS (SELECT x AS id, x::TIMESTAMP AS ts FROM long_sequence(20000))"
+                                + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTable("cf");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                                 "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
@@ -151,8 +155,10 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
                 serverMain.execute(
                         "CREATE TABLE bigt AS (" +
                                 "SELECT x AS id, CAST(x * 1.5 AS DOUBLE) AS v, " +
-                                "CAST('s_' || (x % 100) AS SYMBOL) AS s " +
-                                "FROM long_sequence(50000))");
+                                "CAST('s_' || (x % 100) AS SYMBOL) AS s, " +
+                                "x::TIMESTAMP AS ts " +
+                                "FROM long_sequence(50000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTable("bigt");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
@@ -173,8 +179,10 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
         // where PISR propagates cleanly into the park-resume path.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented(5)) {
-                serverMain.execute("CREATE TABLE tiny(id LONG)");
-                serverMain.execute("INSERT INTO tiny SELECT x FROM long_sequence(3)");
+                serverMain.execute("CREATE TABLE tiny(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO tiny SELECT x, x::TIMESTAMP FROM long_sequence(3)");
+                serverMain.awaitTable("tiny");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
