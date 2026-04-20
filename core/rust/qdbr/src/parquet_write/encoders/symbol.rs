@@ -570,8 +570,7 @@ mod tests {
         let keys: Vec<i32> = vec![0, 0];
         let col = make_symbol_column(&keys, &chars, &offsets, 0);
         let opts = WriteOptions { write_statistics: false, ..write_options() };
-        let pages =
-            encode(&[col], 0, keys.len(), &primitive_type(), opts, None).expect("encode");
+        let pages = encode(&[col], 0, keys.len(), &primitive_type(), opts, None).expect("encode");
         assert_eq!(pages.len(), 2);
     }
 

@@ -826,9 +826,15 @@ fn encode_simd_with_bloom_filter() {
     let col = make_column_with_top("col", ColumnTypeTag::Long, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Long);
     let bloom = Arc::new(Mutex::new(HashSet::<u64>::new()));
-    let pages =
-        encode_simd::<i64>(&[col], 0, data.len(), &pt, write_options(), Some(bloom.clone()))
-            .expect("encode");
+    let pages = encode_simd::<i64>(
+        &[col],
+        0,
+        data.len(),
+        &pt,
+        write_options(),
+        Some(bloom.clone()),
+    )
+    .expect("encode");
     assert_eq!(pages.len(), 1);
     let set = bloom.lock().expect("lock");
     assert_eq!(set.len(), 4); // 4 non-null values
@@ -895,15 +901,8 @@ fn encode_simd_float_multi_partition() {
     let col0 = make_column_with_top("col", ColumnTypeTag::Float, &data0, 0, 0);
     let col1 = make_column_with_top("col", ColumnTypeTag::Float, &data1, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Float);
-    let pages = encode_simd::<f32>(
-        &[col0, col1],
-        0,
-        data1.len(),
-        &pt,
-        write_options(),
-        None,
-    )
-    .expect("encode");
+    let pages = encode_simd::<f32>(&[col0, col1], 0, data1.len(), &pt, write_options(), None)
+        .expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 5);
@@ -1298,15 +1297,8 @@ fn encode_string_with_nulls_and_column_top() {
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::String);
     let bloom = Arc::new(Mutex::new(HashSet::<u64>::new()));
-    let pages = encode_string(
-        &[col],
-        0,
-        3,
-        &pt,
-        write_options(),
-        Some(bloom.clone()),
-    )
-    .expect("encode");
+    let pages =
+        encode_string(&[col], 0, 3, &pt, write_options(), Some(bloom.clone())).expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 3);
@@ -1342,15 +1334,8 @@ fn encode_varchar_with_nulls_and_column_top() {
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
     let bloom = Arc::new(Mutex::new(HashSet::<u64>::new()));
-    let pages = encode_varchar(
-        &[col],
-        0,
-        4,
-        &pt,
-        write_options(),
-        Some(bloom.clone()),
-    )
-    .expect("encode");
+    let pages =
+        encode_varchar(&[col], 0, 4, &pt, write_options(), Some(bloom.clone())).expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 4);
@@ -1382,8 +1367,7 @@ fn encode_string_no_stats() {
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::String);
     let opts = WriteOptions { write_statistics: false, ..write_options() };
-    let pages =
-        encode_string(&[col], 0, offsets.len(), &pt, opts, None).expect("encode");
+    let pages = encode_string(&[col], 0, offsets.len(), &pt, opts, None).expect("encode");
     assert_eq!(pages.len(), 1);
 }
 
@@ -1410,8 +1394,7 @@ fn encode_binary_no_stats() {
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::Binary);
     let opts = WriteOptions { write_statistics: false, ..write_options() };
-    let pages =
-        encode_binary(&[col], 0, offsets.len(), &pt, opts, None).expect("encode");
+    let pages = encode_binary(&[col], 0, offsets.len(), &pt, opts, None).expect("encode");
     assert_eq!(pages.len(), 1);
 }
 

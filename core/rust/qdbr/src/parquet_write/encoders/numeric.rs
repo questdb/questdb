@@ -549,6 +549,76 @@ impl SimdEncodable for f32 {
     }
 }
 
+/// Generic SIMD-optimized page encoder for nullable columns.
+pub fn slice_to_page_simd<T: SimdEncodable>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+
+    let mut buffer = vec![];
+
+    // For V1, write a 4-byte length prefix placeholder
+    let def_levels_start = if matches!(options.version, parquet2::write::Version::V1) {
+        buffer.extend_from_slice(&[0; 4]);
+        4
+    } else {
+        0
+    };
+
+    let result = T::encode_def_levels(
+        &mut buffer,
+        slice,
+        column_top,
+        options.write_statistics,
+        bloom_hashes,
+    )
+    .map_err(|e| {
+        fmt_err!(
+            Io(std::sync::Arc::new(e)),
+            "failed to encode definition levels"
+        )
+    })?;
+
+    // For V1, write the definition levels length
+    if matches!(options.version, parquet2::write::Version::V1) {
+        let def_levels_len = (buffer.len() - def_levels_start) as i32;
+        buffer[0..4].copy_from_slice(&def_levels_len.to_le_bytes());
+    }
+
+    let definition_levels_byte_length = buffer.len();
+
+    let buffer = T::encode_data(slice, result.null_count, encoding, buffer)?;
+
+    let statistics = if options.write_statistics {
+        Some(build_statistics(
+            Some((column_top + result.null_count) as i64),
+            MaxMin { max: result.max, min: result.min },
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        column_top + result.null_count,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        encoding,
+        false,
+    )
+    .map(Page::Data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -773,15 +843,8 @@ mod tests {
         let data: Vec<i8> = vec![1, 2];
         let pt = required_type_for(ColumnTypeTag::Byte);
         let opts = WriteOptions { write_statistics: false, ..write_options() };
-        let page = int_slice_to_page_notnull::<i8, i32>(
-            &data,
-            0,
-            opts,
-            pt,
-            Encoding::Plain,
-            None,
-        )
-        .expect("encode");
+        let page = int_slice_to_page_notnull::<i8, i32>(&data, 0, opts, pt, Encoding::Plain, None)
+            .expect("encode");
         let (num_values, _, _) = v2_header(&page);
         assert_eq!(num_values, 2);
     }
@@ -870,15 +933,8 @@ mod tests {
     fn slice_to_page_simd_unsupported_encoding() {
         let data: Vec<i64> = vec![1];
         let pt = optional_type_for(ColumnTypeTag::Long);
-        let err = slice_to_page_simd(
-            &data,
-            0,
-            write_options(),
-            pt,
-            Encoding::RleDictionary,
-            None,
-        )
-        .expect_err("expected error");
+        let err = slice_to_page_simd(&data, 0, write_options(), pt, Encoding::RleDictionary, None)
+            .expect_err("expected error");
         assert!(matches!(err.reason(), ParquetErrorReason::Unsupported));
     }
 
@@ -926,74 +982,4 @@ mod tests {
         assert_eq!(num_values, 5);
         assert_eq!(num_nulls, 5);
     }
-}
-
-/// Generic SIMD-optimized page encoder for nullable columns.
-pub fn slice_to_page_simd<T: SimdEncodable>(
-    slice: &[T],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-    bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<Page> {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
-    let num_rows = column_top + slice.len();
-
-    let mut buffer = vec![];
-
-    // For V1, write a 4-byte length prefix placeholder
-    let def_levels_start = if matches!(options.version, parquet2::write::Version::V1) {
-        buffer.extend_from_slice(&[0; 4]);
-        4
-    } else {
-        0
-    };
-
-    let result = T::encode_def_levels(
-        &mut buffer,
-        slice,
-        column_top,
-        options.write_statistics,
-        bloom_hashes,
-    )
-    .map_err(|e| {
-        fmt_err!(
-            Io(std::sync::Arc::new(e)),
-            "failed to encode definition levels"
-        )
-    })?;
-
-    // For V1, write the definition levels length
-    if matches!(options.version, parquet2::write::Version::V1) {
-        let def_levels_len = (buffer.len() - def_levels_start) as i32;
-        buffer[0..4].copy_from_slice(&def_levels_len.to_le_bytes());
-    }
-
-    let definition_levels_byte_length = buffer.len();
-
-    let buffer = T::encode_data(slice, result.null_count, encoding, buffer)?;
-
-    let statistics = if options.write_statistics {
-        Some(build_statistics(
-            Some((column_top + result.null_count) as i64),
-            MaxMin { max: result.max, min: result.min },
-            primitive_type.clone(),
-        ))
-    } else {
-        None
-    };
-
-    build_plain_page(
-        buffer,
-        num_rows,
-        column_top + result.null_count,
-        definition_levels_byte_length,
-        statistics,
-        primitive_type,
-        options,
-        encoding,
-        false,
-    )
-    .map(Page::Data)
 }
