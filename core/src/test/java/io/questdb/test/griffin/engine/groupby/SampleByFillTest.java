@@ -5,6 +5,7 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -2776,6 +2777,68 @@ public class SampleByFillTest extends AbstractCairoTest {
                             "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(0) ALIGN TO CALENDAR",
                     "ts", false, false
             );
+        });
+    }
+
+    @Test
+    public void testSortedRecordCursorFactoryConstructorThrow() throws Exception {
+        // M-7 regression: pin the SortedRecordCursorFactory constructor-throw
+        // ownership contract. sqlSortKeyMaxPages = -1 makes MemoryPages fire a
+        // LimitOverflowException inside `new RecordTreeChain(...)`, which
+        // propagates out of the SortedRecordCursorFactory constructor.
+        //
+        // Post-fix, the constructor assigns this.base only after
+        // RecordTreeChain succeeds; the catch block nulls this.base before
+        // cascading close(). _close() calls Misc.free(base) which becomes a
+        // no-op when base is null, so the caller retains ownership of base on
+        // any constructor-throw path and frees it exactly once through its
+        // own error handling.
+        //
+        // Pre-fix, the constructor assigned this.base before the try block.
+        // Misc.free(base) in the cascaded _close() closed the caller-owned
+        // base factory; the caller's own error-handling path then closed it
+        // again. Most QuestDB factory classes make close() idempotent at the
+        // native-memory level (internal pointer state is cleared after the
+        // first free), so the latent double-free rarely produces observable
+        // native-memory imbalance. This test nevertheless locks in the clean
+        // exception-propagation path and assertMemoryLeak guards against any
+        // future factory whose close() is not idempotent.
+        //
+        // No try/finally restore is needed: AbstractCairoTest.tearDown() runs
+        // QuestDBTestNode.Cairo.tearDown() which calls Overrides.reset() and
+        // clears the property map back to harness defaults. Every setProperty
+        // call in SampleByTest follows this same pattern.
+        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, -1);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (" +
+                    "ts TIMESTAMP, " +
+                    "k SYMBOL, " +
+                    "x DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 'A', 1.0), " +
+                    "('2024-01-01T02:00:00.000000Z', 'B', 2.0)");
+
+            try {
+                // A keyed SAMPLE BY FILL(PREV) routes through the keyed fast
+                // path whose codegen constructs SortedRecordCursorFactory. The
+                // sqlSortKeyMaxPages = -1 override causes RecordTreeChain to
+                // throw during SortedRecordCursorFactory construction.
+                assertSql("", "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
+                fail("expected exception from pathological sqlSortKeyMaxPages");
+            } catch (Throwable th) {
+                // Assert on message content rather than exact class: the
+                // LimitOverflowException may wrap inside a CairoException or
+                // SqlException depending on the surface that catches it.
+                String msg = th.getMessage();
+                Assert.assertTrue(
+                        "exception did not surface the pages limit error: msg=" + msg,
+                        msg != null && (msg.contains("max pages") || msg.contains("maxPages")
+                                || msg.contains("Maximum number of pages") || msg.contains("limit")
+                                || msg.contains("overflow") || msg.contains("breached"))
+                );
+            }
         });
     }
 }
