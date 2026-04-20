@@ -638,7 +638,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             Misc.free(currentRowCursor);
                             currentRowCursor = crc;
                             bwdCursor = null;
-                                    coveringRecord.of(crc);
+                            coveringRecord.of(crc);
                             coveringRecord.setSymbolKey(rawSymbolKey);
                             // Keep fallbackRecord in sync so per-column
                             // delegation from coveringRecord stays valid.
