@@ -387,6 +387,54 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTypeCoveredColumnFallsBackToTableScan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_alter_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 100),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 200),
+                    ('2024-01-01T02:00:00', 'A', 30.5, 300)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_alter_cov WHERE sym = 'A'");
+
+            execute("ALTER TABLE t_alter_cov ALTER COLUMN qty TYPE LONG");
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_alter_cov WHERE sym = 'A'");
+
+            execute("""
+                    INSERT INTO t_alter_cov VALUES
+                    ('2024-01-01T03:00:00', 'A', 40.5, 400)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    40.5\t400
+                    """, "SELECT price, qty FROM t_alter_cov WHERE sym = 'A'");
+        });
+    }
+
+    @Test
     public void testAsyncFilterPageFrameFallback() throws Exception {
         // Test that the page frame cursor fallback (column file reads) works
         // when covering data may not be in sidecar form. Uses WAL table where
@@ -1429,6 +1477,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // End-to-end SQL tests
+    // ===================================================================
+
     @Test
     public void testCoveringIndexLatestOnPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -1463,10 +1515,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_lat WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
         });
     }
-
-    // ===================================================================
-    // End-to-end SQL tests
-    // ===================================================================
 
     @Test
     public void testCoveringIndexNextPartitionNullSymbolWal() throws Exception {
@@ -2004,6 +2052,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // Fallback scenario tests: covering index NOT used
+    // ===================================================================
+
     @Test
     public void testCoveringIndexSidecarSurvivesPartitionSwitchWal() throws Exception {
         // Same partition-switch scenario through WAL.
@@ -2042,10 +2094,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, qty FROM t_switch_wal WHERE sym = 'A'");
         });
     }
-
-    // ===================================================================
-    // Fallback scenario tests: covering index NOT used
-    // ===================================================================
 
     @Test
     public void testCoveringIndexSidecarWrittenOnAlterAddIndex() throws Exception {
@@ -2158,6 +2206,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // DDL edge case tests
+    // ===================================================================
+
     @Test
     public void testCoveringIndexWithResidualFilterInList() throws Exception {
         assertMemoryLeak(() -> {
@@ -2191,10 +2243,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT /*+ no_covering */ price FROM t_resid_in WHERE sym IN ('A', 'B') AND price > 25");
         });
     }
-
-    // ===================================================================
-    // DDL edge case tests
-    // ===================================================================
 
     @Test
     public void testCoveringLatestOnBindVariable() throws Exception {
@@ -2288,6 +2336,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // Type-specific covering column tests
+    // ===================================================================
+
     @Test
     public void testCoveringLatestOnMultiKeyWithSymbol() throws Exception {
         assertMemoryLeak(() -> {
@@ -2314,10 +2366,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT sym, tag, price FROM t_latest_mk_sym WHERE sym IN ('A', 'B') LATEST ON ts PARTITION BY sym");
         });
     }
-
-    // ===================================================================
-    // Type-specific covering column tests
-    // ===================================================================
 
     @Test
     public void testCoveringLatestOnMultiPartition() throws Exception {
@@ -4369,6 +4417,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== Coverage gap tests ====================
+
     @Test
     public void testCoveringQueryVarchar() throws Exception {
         // VARCHAR column in INCLUDE — end-to-end via FallbackRecord (column reads)
@@ -4412,8 +4462,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT ts, name FROM t_cover_varchar WHERE sym = 'A'");
         });
     }
-
-    // ==================== Coverage gap tests ====================
 
     @Test
     public void testCoveringQueryVarcharEmpty() throws Exception {
@@ -5360,6 +5408,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== FSST-compressed covered varchar/string tests ====================
+
     @Test
     public void testDistinctSymExplainPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -5387,8 +5437,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ==================== FSST-compressed covered varchar/string tests ====================
 
     @Test
     public void testDistinctSymFromPostingIndex() throws Exception {
@@ -5603,6 +5651,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== COUNT pushdown tests ====================
+
     @Test
     public void testDistinctWithNoIndexHintFallsBack() throws Exception {
         // no_index hint should prevent PostingIndex distinct
@@ -5634,8 +5684,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT /*+ no_index */ DISTINCT sym FROM t_dist_noidx ORDER BY sym");
         });
     }
-
-    // ==================== COUNT pushdown tests ====================
 
     @Test
     public void testDistinctWithNonIntervalFilterFallsBack() throws Exception {
@@ -5708,6 +5756,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== DISTINCT with WHERE tests ====================
+
     @Test
     public void testDistinctWithTimestampFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -5754,8 +5804,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT DISTINCT sym FROM t_dist_where WHERE ts >= '2024-01-02' ORDER BY sym");
         });
     }
-
-    // ==================== DISTINCT with WHERE tests ====================
 
     @Test
     public void testDistinctWithTimestampRangeNoMatches() throws Exception {
@@ -5816,6 +5864,54 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropCoveredColumnFallsBackToTableScan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_drop_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 100),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 200),
+                    ('2024-01-01T02:00:00', 'A', 30.5, 300)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_drop_cov WHERE sym = 'A'");
+
+            execute("ALTER TABLE t_drop_cov DROP COLUMN qty");
+
+            assertSql("""
+                    price
+                    10.5
+                    30.5
+                    """, "SELECT price FROM t_drop_cov WHERE sym = 'A'");
+
+            execute("""
+                    INSERT INTO t_drop_cov VALUES
+                    ('2024-01-01T03:00:00', 'A', 40.5)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price
+                    10.5
+                    30.5
+                    40.5
+                    """, "SELECT price FROM t_drop_cov WHERE sym = 'A'");
+        });
+    }
+
+    @Test
     public void testDropIndexRemovesCovering() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -5838,6 +5934,57 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertFalse(r.getMetadata().isColumnIndexed(symIdx));
                 assertFalse(r.getMetadata().getColumnMetadata(symIdx).isCovering());
             }
+        });
+    }
+
+    // ==================== additional coverage tests ====================
+
+    @Test
+    public void testDropUnrelatedColumnDoesNotBreakCoveringIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_unrel (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT,
+                        unrelated VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_drop_unrel VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 100, 'x'),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 200, 'y'),
+                    ('2024-01-01T02:00:00', 'A', 30.5, 300, 'z')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_drop_unrel WHERE sym = 'A'");
+
+            execute("ALTER TABLE t_drop_unrel DROP COLUMN unrelated");
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_drop_unrel WHERE sym = 'A'");
+
+            execute("""
+                    INSERT INTO t_drop_unrel VALUES
+                    ('2024-01-01T03:00:00', 'A', 40.5, 400)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    10.5\t100
+                    30.5\t300
+                    40.5\t400
+                    """, "SELECT price, qty FROM t_drop_unrel WHERE sym = 'A'");
         });
     }
 
@@ -5909,8 +6056,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== additional coverage tests ====================
-
     @Test
     public void testFallbackInListWal() throws Exception {
         assertMemoryLeak(() -> {
@@ -5938,6 +6083,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, extra FROM t_in_wal WHERE sym IN ('A', 'B', 'C')");
         });
     }
+
+    // ==================== var-width page frame tests ====================
 
     @Test
     public void testFallbackInListWithNonCoveredColumn() throws Exception {
@@ -6021,8 +6168,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT label, extra FROM t_fb_string WHERE sym = 'X'");
         });
     }
-
-    // ==================== var-width page frame tests ====================
 
     @Test
     public void testFallbackVarcharWithNonCoveredColumn() throws Exception {
@@ -6275,6 +6420,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== end new optimization tests ====================
+
     @Test
     public void testInListWithDuplicateKeys() throws Exception {
         // Gap 11: IN-list with duplicate keys
@@ -6342,8 +6489,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ==================== end new optimization tests ====================
 
     @Test
     public void testIncludeWithNonExistentColumnFails() throws Exception {
@@ -6540,6 +6685,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ---- Wide table and wide INCLUDE edge case tests ----
+
     @Test
     public void testInsertIntoSelectWithPostingIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -6648,8 +6795,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
         });
     }
-
-    // ---- Wide table and wide INCLUDE edge case tests ----
 
     @Test
     public void testLatestByBinaryColumn() throws Exception {
@@ -7007,6 +7152,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== no_covering hint tests ====================
+
     @Test
     public void testLatestOnMultiKeyNonCovering() throws Exception {
         assertMemoryLeak(() -> {
@@ -7102,8 +7249,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== no_covering hint tests ====================
-
     @Test
     public void testMultiPartitionAlterAndQuery() throws Exception {
         // Multiple partitions, ALTER TABLE, then query across all
@@ -7143,6 +7288,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_multi_alter WHERE sym = 'A'");
         });
     }
+
+    // ==================== no_index hint tests ====================
 
     @Test
     public void testMultiVarcharIncludeFsst() throws Exception {
@@ -7243,8 +7390,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ==================== no_index hint tests ====================
 
     @Test
     public void testNoCoveringHint_InList() throws Exception {
@@ -7368,6 +7513,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== residual filter + covering index tests ====================
+
     @Test
     public void testNoIndexHint_ImpliesNoCovering() throws Exception {
         assertMemoryLeak(() -> {
@@ -7460,8 +7607,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT /*+ no_index */ * FROM t_noidx_latest WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
         });
     }
-
-    // ==================== residual filter + covering index tests ====================
 
     @Test
     public void testNoIndexHint_WithFilter() throws Exception {
@@ -7596,6 +7741,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== page frame cursor tests ====================
+
     @Test
     public void testO3WithNullCoveredValues() throws Exception {
         // Gap 18: O3 with NULL values in covered columns
@@ -7687,8 +7834,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT count(*) AS count FROM t_pf_uuid WHERE sym = 'A'");
         });
     }
-
-    // ==================== page frame cursor tests ====================
 
     @Test
     public void testPageFrameBinaryGroupBy() throws Exception {
@@ -8352,6 +8497,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // --- Issue 1: INCLUDE validation on WAL and CREATE TABLE paths ---
+
     @Test
     public void testShowColumnsWithBitmapIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -8422,8 +8569,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SHOW CREATE TABLE t_show");
         });
     }
-
-    // --- Issue 1: INCLUDE validation on WAL and CREATE TABLE paths ---
 
     @Test
     public void testSidecarVersioningAcrossSeals() throws Exception {
@@ -8511,7 +8656,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         int totalRows = 0;
                         for (int key = 0; key < 3; key++) {
                             CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE, new int[]{0});
-    
                             while (cc.hasNext()) {
                                 long rowId = cc.next();
                                 double covered = cc.getCoveredDouble(0);
@@ -8529,6 +8673,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             }
         });
     }
+
+    // --- Issue 2: LATEST BY + residual filter through covering index ---
 
     @Test
     public void testStringPageFrameDataCorrectness() throws Exception {
@@ -8631,7 +8777,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 2: LATEST BY + residual filter through covering index ---
+    // --- Issue 3: Index restart skips already-indexed partitions ---
 
     @Test
     public void testVarcharPageFrameDataCorrectness() throws Exception {
@@ -8660,6 +8806,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // --- Issue 4: Page frame with BINARY covered column (GROUP BY) ---
+
     @Test
     public void testVarcharPageFrameInList() throws Exception {
         assertMemoryLeak(() -> {
@@ -8687,6 +8835,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT name FROM t_vw_in WHERE sym IN ('A', 'B') ORDER BY ts");
         });
     }
+
+    // --- Issue 5: DISTINCT end-to-end ---
 
     @Test
     public void testVarcharPageFrameMultiPartition() throws Exception {
@@ -8723,8 +8873,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 3: Index restart skips already-indexed partitions ---
-
     @Test
     public void testVarcharPageFramePlan() throws Exception {
         // VARCHAR in INCLUDE should use CoveringIndex with page frame path (not row-by-row)
@@ -8755,7 +8903,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 4: Page frame with BINARY covered column (GROUP BY) ---
+    // --- Issue 6: Covered TIMESTAMP values correct through seal + delta compression ---
 
     @Test
     public void testVarcharPageFrameVectorizedGroupBy() throws Exception {
@@ -8797,7 +8945,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 5: DISTINCT end-to-end ---
+    // --- Auto-include designated timestamp in INCLUDE ---
 
     @Test
     public void testVarcharPageFrameWithFilter() throws Exception {
@@ -8882,8 +9030,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 6: Covered TIMESTAMP values correct through seal + delta compression ---
-
     @Test
     public void testWideInclude20Columns() throws Exception {
         assertMemoryLeak(() -> {
@@ -8927,8 +9073,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT c0, c10, c19 FROM t_wide20 WHERE sym IN ('X', 'Y') ORDER BY c0");
         });
     }
-
-    // --- Auto-include designated timestamp in INCLUDE ---
 
     @Test
     public void testWideInclude20ColumnsMultiPartition() throws Exception {
@@ -9442,150 +9586,5 @@ public class CoveringIndexTest extends AbstractCairoTest {
             factory.toPlan(planSink);
             return planSink.getSink().toString();
         }
-    }
-
-    @Test
-    public void testDropUnrelatedColumnDoesNotBreakCoveringIndex() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_drop_unrel (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
-                        price DOUBLE,
-                        qty INT,
-                        unrelated VARCHAR
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_drop_unrel VALUES
-                    ('2024-01-01T00:00:00', 'A', 10.5, 100, 'x'),
-                    ('2024-01-01T01:00:00', 'B', 20.5, 200, 'y'),
-                    ('2024-01-01T02:00:00', 'A', 30.5, 300, 'z')
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """, "SELECT price, qty FROM t_drop_unrel WHERE sym = 'A'");
-
-            execute("ALTER TABLE t_drop_unrel DROP COLUMN unrelated");
-
-            assertSql("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """, "SELECT price, qty FROM t_drop_unrel WHERE sym = 'A'");
-
-            execute("""
-                    INSERT INTO t_drop_unrel VALUES
-                    ('2024-01-01T03:00:00', 'A', 40.5, 400)
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    40.5\t400
-                    """, "SELECT price, qty FROM t_drop_unrel WHERE sym = 'A'");
-        });
-    }
-
-    @Test
-    public void testAlterTypeCoveredColumnFallsBackToTableScan() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_alter_cov (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
-                        price DOUBLE,
-                        qty INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_alter_cov VALUES
-                    ('2024-01-01T00:00:00', 'A', 10.5, 100),
-                    ('2024-01-01T01:00:00', 'B', 20.5, 200),
-                    ('2024-01-01T02:00:00', 'A', 30.5, 300)
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """, "SELECT price, qty FROM t_alter_cov WHERE sym = 'A'");
-
-            execute("ALTER TABLE t_alter_cov ALTER COLUMN qty TYPE LONG");
-
-            assertSql("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """, "SELECT price, qty FROM t_alter_cov WHERE sym = 'A'");
-
-            execute("""
-                    INSERT INTO t_alter_cov VALUES
-                    ('2024-01-01T03:00:00', 'A', 40.5, 400)
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    40.5\t400
-                    """, "SELECT price, qty FROM t_alter_cov WHERE sym = 'A'");
-        });
-    }
-
-    @Test
-    public void testDropCoveredColumnFallsBackToTableScan() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_drop_cov (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
-                        price DOUBLE,
-                        qty INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_drop_cov VALUES
-                    ('2024-01-01T00:00:00', 'A', 10.5, 100),
-                    ('2024-01-01T01:00:00', 'B', 20.5, 200),
-                    ('2024-01-01T02:00:00', 'A', 30.5, 300)
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """, "SELECT price, qty FROM t_drop_cov WHERE sym = 'A'");
-
-            execute("ALTER TABLE t_drop_cov DROP COLUMN qty");
-
-            assertSql("""
-                    price
-                    10.5
-                    30.5
-                    """, "SELECT price FROM t_drop_cov WHERE sym = 'A'");
-
-            execute("""
-                    INSERT INTO t_drop_cov VALUES
-                    ('2024-01-01T03:00:00', 'A', 40.5)
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    price
-                    10.5
-                    30.5
-                    40.5
-                    """, "SELECT price FROM t_drop_cov WHERE sym = 'A'");
-        });
     }
 }
