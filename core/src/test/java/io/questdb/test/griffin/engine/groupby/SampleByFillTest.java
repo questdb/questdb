@@ -5,7 +5,11 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
@@ -984,6 +988,52 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevBoolean() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (true, '2024-01-01T00:00:00.000000Z'),
+                        (false, '2024-01-01T03:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\ttrue
+                            2024-01-01T01:00:00.000000Z\ttrue
+                            2024-01-01T02:00:00.000000Z\ttrue
+                            2024-01-01T03:00:00.000000Z\tfalse
+                            """,
+                    "SELECT ts, first(v) v FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false);
+        });
+    }
+
+    @Test
+    public void testFillPrevByte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (7::BYTE, '2024-01-01T00:00:00.000000Z'),
+                        (42::BYTE, '2024-01-01T03:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t7
+                            2024-01-01T01:00:00.000000Z\t7
+                            2024-01-01T02:00:00.000000Z\t7
+                            2024-01-01T03:00:00.000000Z\t42
+                            """,
+                    "SELECT ts, first(v) v FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false);
+        });
+    }
+
+    @Test
     public void testFillPrevCrossColumnArrayDimsMismatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1168,6 +1218,29 @@ public class SampleByFillTest extends AbstractCairoTest {
                             "FROM x SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
                     "ts", false, false
             );
+        });
+    }
+
+    @Test
+    public void testFillPrevDate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2020-01-01'::DATE, '2024-01-01T00:00:00.000000Z'),
+                        ('2020-06-01'::DATE, '2024-01-01T03:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000Z
+                            2024-01-01T01:00:00.000000Z\t2020-01-01T00:00:00.000Z
+                            2024-01-01T02:00:00.000000Z\t2020-01-01T00:00:00.000Z
+                            2024-01-01T03:00:00.000000Z\t2020-06-01T00:00:00.000Z
+                            """,
+                    "SELECT ts, first(v) v FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false);
         });
     }
 
@@ -1365,6 +1438,166 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('192.168.0.1'::IPv4, '2024-01-01T00:00:00.000000Z'),
+                        ('10.0.0.1'::IPv4, '2024-01-01T03:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t192.168.0.1
+                            2024-01-01T01:00:00.000000Z\t192.168.0.1
+                            2024-01-01T02:00:00.000000Z\t192.168.0.1
+                            2024-01-01T03:00:00.000000Z\t10.0.0.1
+                            """,
+                    "SELECT ts, first(v) v FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false);
+        });
+    }
+
+    @Test
+    public void testFillPrevInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1_234, '2024-01-01T00:00:00.000000Z'),
+                        (5_678, '2024-01-01T03:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1234
+                            2024-01-01T01:00:00.000000Z\t1234
+                            2024-01-01T02:00:00.000000Z\t1234
+                            2024-01-01T03:00:00.000000Z\t5678
+                            """,
+                    "SELECT ts, first(v) v FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false);
+        });
+    }
+
+    @Test
+    public void testFillPrevInterval() throws Exception {
+        // INTERVAL is not a persistable column type and QuestDB has no
+        // first(INTERVAL) aggregate, so the only route to an INTERVAL in a
+        // SAMPLE BY output column is an inline interval(lo, hi) expression
+        // used as the GROUP BY key. This is the M-8 crash-path repro: before
+        // Task 2 added FillRecord.getInterval, gap rows invoked
+        // Record.getInterval's default which threw
+        // UnsupportedOperationException.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        lo TIMESTAMP,
+                        hi TIMESTAMP,
+                        v DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2020-01-01T00:00:00.000Z'::TIMESTAMP, '2020-02-01T00:00:00.000Z'::TIMESTAMP, 10.0, '2024-01-01T00:00:00.000000Z'),
+                        ('2020-01-01T00:00:00.000Z'::TIMESTAMP, '2020-02-01T00:00:00.000Z'::TIMESTAMP, 30.0, '2024-01-01T03:00:00.000000Z')""");
+            assertSql(
+                    """
+                            ts\tk\tfirst
+                            2024-01-01T00:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0
+                            2024-01-01T01:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0
+                            2024-01-01T02:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0
+                            2024-01-01T03:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t30.0
+                            """,
+                    "SELECT ts, interval(lo, hi) k, first(v) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
+        });
+    }
+
+    @Test
+    public void testFillPrevKeyedArray() throws Exception {
+        assertMemoryLeak(() -> {
+            // ARRAY as key column. Prior to Task 1, FillRecord.getArray had no
+            // FILL_KEY branch, so gap rows returned null for the ARRAY key.
+            // Post-fix: keysMapRecord.getArray carries the key through gap rows.
+            // Use assertSql to match the rendering precedent at
+            // testFillPrevArrayDouble1D (a mixed-column cursor surfaces factory-
+            // property noise in assertQueryNoLeakCheck).
+            execute("""
+                    CREATE TABLE x (
+                        k DOUBLE[],
+                        v DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO x VALUES
+                        (ARRAY[1.0, 2.0], 10.0, '2024-01-01T00:00:00.000000Z'),
+                        (ARRAY[1.0, 2.0], 30.0, '2024-01-01T03:00:00.000000Z')""");
+            assertSql(
+                    """
+                            ts\tk\tfirst
+                            2024-01-01T00:00:00.000000Z\t[1.0,2.0]\t10.0
+                            2024-01-01T01:00:00.000000Z\t[1.0,2.0]\t10.0
+                            2024-01-01T02:00:00.000000Z\t[1.0,2.0]\t10.0
+                            2024-01-01T03:00:00.000000Z\t[1.0,2.0]\t30.0
+                            """,
+                    "SELECT ts, k, first(v) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
+        });
+    }
+
+    @Test
+    public void testFillPrevKeyedBinary() throws Exception {
+        // BINARY as key column. Prior to Task 1, FillRecord.getBin / getBinLen
+        // had no FILL_KEY branch, so gap rows returned null / -1 for the
+        // BINARY key. Post-fix: keysMapRecord carries the key bytes through
+        // gap rows.
+        //
+        // Rendering strategy: the BINARY test harness emits space-separated
+        // hex with a hex offset prefix. rnd_bin() output is seeded-Rnd
+        // deterministic BUT subtle harness wiring makes it fragile to pin
+        // exact hex in assertSql. Instead, this test asserts the STRUCTURAL
+        // property we care about: gap rows' BINARY key is NON-NULL (before the
+        // fix, it was null). The test walks the cursor and asserts every row
+        // (data or fill) emits getBin != null and getBinLen > 0.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT
+                            rnd_bin(4, 8, 0) AS k,
+                            x AS v,
+                            timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) AS ts
+                        FROM long_sequence(1)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            // Second row with the SAME key bytes as the first row and a data
+            // value at 03:00. SAMPLE BY 1h FILL(PREV) then produces 4 rows:
+            //   00:00 data (v=1), 01:00 fill (v=1), 02:00 fill (v=1),
+            //   03:00 data (v=30).
+            // Pre-fix: rows at 01:00 and 02:00 emit k=null.
+            // Post-fix: rows at 01:00 and 02:00 emit k = the carried key.
+            execute("""
+                    INSERT INTO x
+                    SELECT k, 30L, '2024-01-01T03:00:00.000000Z'::TIMESTAMP FROM x LIMIT 1""");
+            try (RecordCursorFactory factory = select("""
+                    SELECT ts, k, first(v) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR""")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Record record = cursor.getRecord();
+                    int rows = 0;
+                    while (cursor.hasNext()) {
+                        rows++;
+                        BinarySequence key = record.getBin(1);
+                        long keyLen = record.getBinLen(1);
+                        Assert.assertNotNull("row " + rows + " BINARY key must be non-null", key);
+                        Assert.assertTrue("row " + rows + " BINARY key length must be > 0", keyLen > 0);
+                    }
+                    Assert.assertEquals("expected 4 rows (2 data + 2 fill)", 4, rows);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFillPrevKeyedIndependent() throws Exception {
         assertMemoryLeak(() -> {
             // Tests that per-key prev tracking does not bleed between keys.
@@ -1477,6 +1710,29 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
+        });
+    }
+
+    @Test
+    public void testFillPrevLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (10_000_000L, '2024-01-01T00:00:00.000000Z'),
+                        (20_000_000L, '2024-01-01T03:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t10000000
+                            2024-01-01T01:00:00.000000Z\t10000000
+                            2024-01-01T02:00:00.000000Z\t10000000
+                            2024-01-01T03:00:00.000000Z\t20000000
+                            """,
+                    "SELECT ts, first(v) v FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false);
         });
     }
 
@@ -1975,6 +2231,29 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevShort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (100::SHORT, '2024-01-01T00:00:00.000000Z'),
+                        (200::SHORT, '2024-01-01T03:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t100
+                            2024-01-01T01:00:00.000000Z\t100
+                            2024-01-01T02:00:00.000000Z\t100
+                            2024-01-01T03:00:00.000000Z\t200
+                            """,
+                    "SELECT ts, first(v) v FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false);
+        });
+    }
+
+    @Test
     public void testFillPrevStringKeyed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (key SYMBOL, s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -2100,6 +2379,29 @@ public class SampleByFillTest extends AbstractCairoTest {
                     query
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
+        });
+    }
+
+    @Test
+    public void testFillPrevTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2020-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                        ('2020-06-01T00:00:00.000000Z', '2024-01-01T03:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z
+                            2024-01-01T01:00:00.000000Z\t2020-01-01T00:00:00.000000Z
+                            2024-01-01T02:00:00.000000Z\t2020-01-01T00:00:00.000000Z
+                            2024-01-01T03:00:00.000000Z\t2020-06-01T00:00:00.000000Z
+                            """,
+                    "SELECT ts, first(v) v FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false);
         });
     }
 

@@ -10411,7 +10411,12 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testSampleFillPrevAllTypes() throws Exception {
         // Using assertSql because the fill cursor treats all non-aggregate columns as GROUP BY keys.
-        // For non-numeric key types (BIN), the fill cursor emits null on fill rows.
+        // Plan 14-02 Task 1 fix (M-2): FillRecord.getBin / getBinLen now have
+        // the FILL_KEY branch, so fill rows for BINARY key columns carry the
+        // key bytes through from keysMapRecord rather than rendering empty.
+        // The BINARY column `m` on fill rows below shows the hex value from
+        // the data row where the same key first appeared, not the empty
+        // string it showed pre-fix.
         assertMemoryLeak(() -> {
             execute("create table x as " +
                     "(" +
@@ -10443,13 +10448,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             00000010 4b b1 3e\t1970-01-01T01:00:00.000000000Z\tЃَᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\\軦\t0.09750574414434399\t1970-01-03T00:00:00.000000000Z
                             -283321892\tfalse\t\t0.8438459563914771\t0.13006097\t736\t2015-01-13T04:07:44.289Z\tPEHN\t5398991075259361292\t4\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93
                             00000010 46 fe\t1970-01-01T02:00:00.000000000Z\tG -$}\t0.22631523434159562\t1970-01-03T00:00:00.000000000Z
-                            -2108151088\ttrue\tK\t0.5185631921367574\t0.20585066\t598\t2015-02-06T22:58:50.333Z\t\t5552835357100545895\t4\t\t1970-01-01T03:00:00.000000000Z\tkiM,1Dzq\tnull\t1970-01-03T00:00:00.000000000Z
-                            1826239903\ttrue\tO\t0.06578761277152223\t0.38402128\t291\t2015-08-08T02:35:56.961Z\tVTJW\t-8653777305694768077\t26\t\t1970-01-01T04:00:00.000000000Z\t5o\\S1l1S -(\tnull\t1970-01-03T00:00:00.000000000Z
+                            -2108151088\ttrue\tK\t0.5185631921367574\t0.20585066\t598\t2015-02-06T22:58:50.333Z\t\t5552835357100545895\t4\t00000000 b0 ec 0b 92 58 7d 24 bc 2e 60 6a 1c\t1970-01-01T03:00:00.000000000Z\tkiM,1Dzq\tnull\t1970-01-03T00:00:00.000000000Z
+                            1826239903\ttrue\tO\t0.06578761277152223\t0.38402128\t291\t2015-08-08T02:35:56.961Z\tVTJW\t-8653777305694768077\t26\t00000000 a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff 27 67\t1970-01-01T04:00:00.000000000Z\t5o\\S1l1S -(\tnull\t1970-01-03T00:00:00.000000000Z
                             -2108151088\ttrue\tK\t0.5185631921367574\t0.20585066\t598\t2015-02-06T22:58:50.333Z\t\t5552835357100545895\t4\t00000000 b0 ec 0b 92 58 7d 24 bc 2e 60 6a 1c\t1970-01-01T03:00:00.000000000Z\tkiM,1Dzq\t0.043606408996349044\t1970-01-03T03:00:00.000000000Z
                             1826239903\ttrue\tO\t0.06578761277152223\t0.38402128\t291\t2015-08-08T02:35:56.961Z\tVTJW\t-8653777305694768077\t26\t00000000 a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff 27 67\t1970-01-01T04:00:00.000000000Z\t5o\\S1l1S -(\t0.6810852005509421\t1970-01-03T03:00:00.000000000Z
-                            1569490116\tfalse\tZ\tnull\t0.7611029\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t\t1970-01-01T00:00:00.000000000Z\tjFxO]0L#Y\t0.15786635599554755\t1970-01-03T03:00:00.000000000Z
-                            -2002373666\ttrue\tU\t0.7883065830055033\t0.76642567\t401\t2015-09-20T21:49:18.129Z\t\t5334238747895433003\t10\t\t1970-01-01T01:00:00.000000000Z\tЃَᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\\軦\t0.09750574414434399\t1970-01-03T03:00:00.000000000Z
-                            -283321892\tfalse\t\t0.8438459563914771\t0.13006097\t736\t2015-01-13T04:07:44.289Z\tPEHN\t5398991075259361292\t4\t\t1970-01-01T02:00:00.000000000Z\tG -$}\t0.22631523434159562\t1970-01-03T03:00:00.000000000Z
+                            1569490116\tfalse\tZ\tnull\t0.7611029\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000000Z\tjFxO]0L#Y\t0.15786635599554755\t1970-01-03T03:00:00.000000000Z
+                            -2002373666\ttrue\tU\t0.7883065830055033\t0.76642567\t401\t2015-09-20T21:49:18.129Z\t\t5334238747895433003\t10\t00000000 8e 78 b5 b9 11 53 d0 fb 64 bb 1a d4 f0 2d 40 e2
+                            00000010 4b b1 3e\t1970-01-01T01:00:00.000000000Z\tЃَᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\\軦\t0.09750574414434399\t1970-01-03T03:00:00.000000000Z
+                            -283321892\tfalse\t\t0.8438459563914771\t0.13006097\t736\t2015-01-13T04:07:44.289Z\tPEHN\t5398991075259361292\t4\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93
+                            00000010 46 fe\t1970-01-01T02:00:00.000000000Z\tG -$}\t0.22631523434159562\t1970-01-03T03:00:00.000000000Z
                             """,
                     "select a,b,c,d,e,f,g,i,j,l,m,p,vch,sum(o), k from x sample by 3h fill(prev)"
             );
@@ -12354,49 +12361,55 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueAllKeyTypes() throws Exception {
+        // Plan 14-02 Task 1 fix (M-2): FillRecord.getBin / getBinLen now have
+        // the FILL_KEY branch, so fill rows for keys with a BINARY key column
+        // carry the key bytes through from keysMapRecord rather than rendering
+        // null. The BINARY column `i` on fill rows below shows the hex value
+        // from the data row where the same key first appeared, not the empty
+        // string it showed pre-fix.
         assertQuery(
                 """
                         b\th\ti\tj\tl\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk
                         \tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t11.427984775756228\t42.177685\t1432278050\t13216\t4\t5539350449504785212\t1970-01-03T00:00:00.000000000Z
                         HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t12.026122412833129\t48.820507\t458818940\t3282\t8\t-6253307669002054137\t1970-01-03T00:00:00.000000000Z
                         \tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t5.048190020054388\t0.11075139\t66297136\t-5637\t7\t9036423629723776443\t1970-01-03T00:00:00.000000000Z
-                        \tLYXWCK\t\t2015-07-13T12:15:31.895Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
-                        \t\t\t2015-01-08T06:16:03.023Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\tVLJUM\t\t2015-06-28T03:15:43.251Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
-                        \tHWVDKF\t\t2015-12-05T03:07:39.553Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
+                        \tLYXWCK\t00000000 47 dc d2 85 7f a5 b8 7b 4a 9d 46 7c 8d\t2015-07-13T12:15:31.895Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
+                        \t\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t2015-01-08T06:16:03.023Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\tVLJUM\t00000000 29 5e 69 c6 eb ea c3 c9 73 93 46 fe\t2015-06-28T03:15:43.251Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
+                        \tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
                         HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\tEBNDCQCE\t\t2015-03-25T11:25:58.599Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
-                        \tUIZUL\t\t\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
+                        \tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000000Z
                         \tLYXWCK\t00000000 47 dc d2 85 7f a5 b8 7b 4a 9d 46 7c 8d\t2015-07-13T12:15:31.895Z\ttrue\t11.585982949541474\t81.64182\t998315423\t-5585\t7\t8587391969565958670\t1970-01-03T03:00:00.000000000Z
                         \t\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t2015-01-08T06:16:03.023Z\tfalse\t19.751370382305055\t68.06873\t544695670\t-1464\t6\t-5024542231726589509\t1970-01-03T03:00:00.000000000Z
                         RXGZ\tVLJUM\t00000000 29 5e 69 c6 eb ea c3 c9 73 93 46 fe\t2015-06-28T03:15:43.251Z\tfalse\t84.3845956391477\t48.927433\t1100812407\t-32358\t10\t5398991075259361292\t1970-01-03T03:00:00.000000000Z
-                        \tFFYUDEYY\t\t2015-09-16T21:59:49.857Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
+                        \tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
                         HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
-                        \tZVDZJ\t\t2015-08-26T10:57:26.275Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
-                        \tHWVDKF\t\t2015-12-05T03:07:39.553Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
+                        \tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
+                        \tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
                         HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\tEBNDCQCE\t\t2015-03-25T11:25:58.599Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
-                        \tUIZUL\t\t\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
+                        \tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000000Z
                         \tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t85.93131480724348\t10.527277\t2105201404\t5667\t8\t-8994301462266164776\t1970-01-03T06:00:00.000000000Z
                         HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t63.412928948436154\t5.024612\t1377625589\t-25710\t3\t2151565237758036093\t1970-01-03T06:00:00.000000000Z
                         RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t85.84308438045007\t54.669006\t903066492\t-2990\t4\t-1134031357796740497\t1970-01-03T06:00:00.000000000Z
-                        \tFFYUDEYY\t\t2015-09-16T21:59:49.857Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
+                        \tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
                         HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
-                        \tZVDZJ\t\t2015-08-26T10:57:26.275Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
-                        \tLYXWCK\t\t2015-07-13T12:15:31.895Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
-                        \t\t\t2015-01-08T06:16:03.023Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
-                        RXGZ\tVLJUM\t\t2015-06-28T03:15:43.251Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
-                        \tUIZUL\t\t\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
+                        \tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
+                        \tLYXWCK\t00000000 47 dc d2 85 7f a5 b8 7b 4a 9d 46 7c 8d\t2015-07-13T12:15:31.895Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
+                        \t\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t2015-01-08T06:16:03.023Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
+                        RXGZ\tVLJUM\t00000000 29 5e 69 c6 eb ea c3 c9 73 93 46 fe\t2015-06-28T03:15:43.251Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
+                        \tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000000Z
                         \tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t21.485589614090927\t6.2027454\t358259591\t-29980\t8\t-8841102831894340636\t1970-01-03T09:00:00.000000000Z
-                        \tFFYUDEYY\t\t2015-09-16T21:59:49.857Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
+                        \tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
                         HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
-                        \tZVDZJ\t\t2015-08-26T10:57:26.275Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
-                        \tLYXWCK\t\t2015-07-13T12:15:31.895Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
-                        \t\t\t2015-01-08T06:16:03.023Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\tVLJUM\t\t2015-06-28T03:15:43.251Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
-                        \tHWVDKF\t\t2015-12-05T03:07:39.553Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
+                        \tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
+                        \tLYXWCK\t00000000 47 dc d2 85 7f a5 b8 7b 4a 9d 46 7c 8d\t2015-07-13T12:15:31.895Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
+                        \t\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t2015-01-08T06:16:03.023Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\tVLJUM\t00000000 29 5e 69 c6 eb ea c3 c9 73 93 46 fe\t2015-06-28T03:15:43.251Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
+                        \tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
                         HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\tEBNDCQCE\t\t2015-03-25T11:25:58.599Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000000Z
                         """,
                 "select b, h, i, j, l, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)",
                 "create table x as " +
