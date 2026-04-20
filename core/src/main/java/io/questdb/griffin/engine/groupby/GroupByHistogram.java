@@ -352,8 +352,8 @@ public class GroupByHistogram implements Mutable {
     private void checkBounds(int index) {
         if (index < 0 || index >= countsArrayLength) {
             throw CairoException.nonCritical()
-                .put("index ").put(index)
-                .put(" out of bounds [0, ").put(countsArrayLength).put(')');
+                    .put("index ").put(index)
+                    .put(" out of bounds [0, ").put(countsArrayLength).put(')');
         }
     }
 
@@ -485,8 +485,8 @@ public class GroupByHistogram implements Mutable {
     }
 
     private int countsArrayIndex(final int bucketIndex, final int subBucketIndex) {
-        assert(subBucketIndex < subBucketCount);
-        assert(bucketIndex == 0 || (subBucketIndex >= subBucketHalfCount));
+        assert (subBucketIndex < subBucketCount);
+        assert (bucketIndex == 0 || (subBucketIndex >= subBucketHalfCount));
         int bucketBaseIndex = (bucketIndex + 1) << subBucketHalfCountMagnitude;
         int offsetInBucket = subBucketIndex - subBucketHalfCount;
         return bucketBaseIndex + offsetInBucket;
