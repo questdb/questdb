@@ -3559,14 +3559,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
                 // Defect 3: in per-column mode, the user must provide one fill
-                // value per non-key aggregate column. The single-element form
-                // (bare FILL(PREV) or FILL(NULL)) broadcasts across all
-                // aggregates and is intentionally allowed; the size() > 1 guard
-                // preserves that semantics. Rejecting an under-specified list
-                // here matches master's grammar and points at the first fill
-                // expression for context.
-                if (fillValuesExprs.size() > 1 && fillValuesExprs.size() < aggNonKeyCount) {
-                    throw SqlException.$(fillValuesExprs.getQuick(0).position, "not enough fill values");
+                // value per non-key aggregate column. Only bare FILL(PREV) and
+                // FILL(NULL) broadcast across all aggregates; a single non-null
+                // constant (FILL(0), FILL(42)) must not broadcast and must be
+                // rejected as under-specified. Rejecting here matches master's
+                // grammar and points at the first fill expression for context.
+                if (fillValuesExprs.size() < aggNonKeyCount) {
+                    final ExpressionNode only = fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null;
+                    final boolean isBroadcastable = only != null
+                            && (isPrevKeyword(only.token) || isNullKeyword(only.token));
+                    if (!isBroadcastable) {
+                        throw SqlException.$(fillValuesExprs.getQuick(0).position, "not enough fill values");
+                    }
                 }
                 // Reject chains: a cross-column PREV whose source column is itself a
                 // cross-column PREV. Runtime-safe but semantically ambiguous; keep the

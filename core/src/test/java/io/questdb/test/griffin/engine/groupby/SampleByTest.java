@@ -6973,10 +6973,12 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             // Keyed FROM/TO fill queries are now supported through the fast path.
+            // A single non-null constant no longer broadcasts across multiple
+            // aggregates; provide one fill value per aggregate.
             printSql("""
                     select ts, avg(x), first(x), last(x), x from fromto
                     where s != '5'
-                    sample by 5d from '2017-12-20' to '2018-01-31' fill(42)""");
+                    sample by 5d from '2017-12-20' to '2018-01-31' fill(42, 42, 42)""");
         });
     }
 

@@ -160,6 +160,25 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillInsufficientFillValuesSingleConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            // WR-01: a single non-null constant (FILL(0)) must not broadcast
+            // across multiple aggregates. Only bare FILL(PREV) and FILL(NULL)
+            // broadcast; a lone constant with multi-aggregate is an
+            // under-specified fill list and must raise "not enough fill
+            // values". Previously, the guard skipped the size()==1 case,
+            // silently padding the tail aggregates with null.
+            execute("CREATE TABLE t (ts TIMESTAMP, a DOUBLE, b DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 2)");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, sum(a), sum(b) FROM t SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    51,
+                    "not enough fill values"
+            );
+        });
+    }
+
+    @Test
     public void testFillKeyedDecimal128() throws Exception {
         assertMemoryLeak(() -> {
             // Keyed SAMPLE BY with a DECIMAL128 key column (DECIMAL(25,2) encodes
