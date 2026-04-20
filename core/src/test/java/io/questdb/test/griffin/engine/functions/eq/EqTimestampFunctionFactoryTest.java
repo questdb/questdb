@@ -44,6 +44,113 @@ import org.junit.Test;
 public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testConvertedBothConstantFoldsToBooleanConstant() throws Exception {
+        // Constants of different precision (MICRO on one side, NANO on the other):
+        // factory converts at factory time and folds to a BooleanConstant. No per-row
+        // timestamp calls, no per-row driver.from() conversions.
+        CountingTimestampFunction nanos = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP_NANO,
+                NanosTimestampDriver.floor("2020-01-01T00:00:00.000001000Z"),
+                true,
+                false
+        );
+        CountingTimestampFunction micros = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
+                true,
+                false
+        );
+        ObjList<Function> args = new ObjList<>();
+        args.add(nanos);
+        args.add(micros);
+
+        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertTrue(function.getBool(null));
+
+            for (int i = 0; i < 1_000; i++) {
+                Assert.assertTrue(function.getBool(null));
+            }
+            Assert.assertEquals(1, nanos.getTimestampCalls);
+            Assert.assertEquals(1, micros.getTimestampCalls);
+        }
+    }
+
+    @Test
+    public void testConvertedBothRuntimeConstCachesBoth() throws Exception {
+        // Two runtime-constants of different precisions: both sides are cached in
+        // init() and the left side is converted once, not per row.
+        CountingTimestampFunction micros = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
+                false,
+                true
+        );
+        CountingTimestampFunction nanos = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP_NANO,
+                NanosTimestampDriver.floor("2020-01-01T00:00:00.000001000Z"),
+                false,
+                true
+        );
+        ObjList<Function> args = new ObjList<>();
+        args.add(micros);
+        args.add(nanos);
+
+        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
+            Assert.assertEquals(0, micros.getTimestampCalls);
+            Assert.assertEquals(0, nanos.getTimestampCalls);
+
+            function.init(null, sqlExecutionContext);
+            Assert.assertEquals(1, micros.getTimestampCalls);
+            Assert.assertEquals(1, nanos.getTimestampCalls);
+
+            for (int i = 0; i < 1_000; i++) {
+                Assert.assertTrue(function.getBool(null));
+            }
+            Assert.assertEquals(1, micros.getTimestampCalls);
+            Assert.assertEquals(1, nanos.getTimestampCalls);
+        }
+    }
+
+    @Test
+    public void testConvertedRuntimeConstAndConstantCachesBoth() throws Exception {
+        // Runtime-const on the lower-precision side (MICRO), constant on the
+        // higher-precision side (NANO): factory captures the constant right value at
+        // construction and caches the converted runtime-const left value in init().
+        // No per-row evaluation or conversion occurs.
+        CountingTimestampFunction runtimeConst = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
+                false,
+                true
+        );
+        CountingTimestampFunction constant = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP_NANO,
+                NanosTimestampDriver.floor("2020-01-01T00:00:00.000001000Z"),
+                true,
+                false
+        );
+        ObjList<Function> args = new ObjList<>();
+        args.add(runtimeConst);
+        args.add(constant);
+
+        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
+            Assert.assertEquals(1, constant.getTimestampCalls);
+            Assert.assertEquals(0, runtimeConst.getTimestampCalls);
+
+            function.init(null, sqlExecutionContext);
+            Assert.assertEquals(1, constant.getTimestampCalls);
+            Assert.assertEquals(1, runtimeConst.getTimestampCalls);
+
+            for (int i = 0; i < 1_000; i++) {
+                Assert.assertTrue(function.getBool(null));
+            }
+            Assert.assertEquals(1, constant.getTimestampCalls);
+            Assert.assertEquals(1, runtimeConst.getTimestampCalls);
+        }
+    }
+
+    @Test
     public void testEquals() throws SqlException, NumericException {
         long t1 = MicrosTimestampDriver.floor("2020-12-31T23:59:59.000000Z");
         long t2 = MicrosTimestampDriver.floor("2020-12-31T23:59:59.000001Z");
@@ -119,51 +226,6 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
     }
 
     @Test
-    public void testStringBindTimestampColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp)");
-            execute("insert into x values " +
-                    "('2020-01-01T00:00:00.000001Z'), " +
-                    "('2020-01-01T00:00:00.000002Z')");
-            bindVariableService.clear();
-            bindVariableService.setStr("bind", "2020-01-01T00:00:00.000002Z");
-            assertQueryNoLeakCheck("""
-                            column
-                            false
-                            true
-                            """,
-                    "select ts = :bind from x");
-        });
-    }
-
-    @Test
-    public void testStringBindTimestampNsColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp_ns)");
-            execute("insert into x values " +
-                    "('2020-01-01T00:00:00.000002000Z'), " +
-                    "('2020-01-01T00:00:00.000002123Z'), " +
-                    "('2020-01-01T00:00:00.000002124Z')");
-            bindVariableService.clear();
-            bindVariableService.setStr("bind", "2020-01-01T00:00:00.000002123Z");
-            assertQueryNoLeakCheck("""
-                            column
-                            false
-                            true
-                            false
-                            """,
-                    "select ts = :bind from x");
-            assertQueryNoLeakCheck("""
-                            column
-                            false
-                            true
-                            false
-                            """,
-                    "select :bind = ts from x");
-        });
-    }
-
-    @Test
     public void testLeftRunTimeConstFunc() throws Exception {
         // LeftRunTimeConstFunc: runtime-const on the lower-precision side (MICRO
         // bind variable), column on the higher-precision side (NANO). The factory
@@ -190,6 +252,102 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                             """,
                     "select :bind = ts from x");
         });
+    }
+
+    @Test
+    public void testMatchedBothConstantFoldsToBooleanConstant() throws Exception {
+        // Both sides are constants of matching precision: factory folds to a
+        // BooleanConstant, so getTimestamp is only called at factory time and getBool
+        // performs no timestamp evaluation.
+        CountingTimestampFunction left = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
+                true,
+                false
+        );
+        CountingTimestampFunction right = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
+                true,
+                false
+        );
+        ObjList<Function> args = new ObjList<>();
+        args.add(left);
+        args.add(right);
+
+        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(1, left.getTimestampCalls);
+            Assert.assertEquals(1, right.getTimestampCalls);
+
+            for (int i = 0; i < 1_000; i++) {
+                Assert.assertTrue(function.getBool(null));
+            }
+            Assert.assertEquals(1, left.getTimestampCalls);
+            Assert.assertEquals(1, right.getTimestampCalls);
+        }
+    }
+
+    @Test
+    public void testMatchedBothConstantFoldsToBooleanConstantFalse() throws Exception {
+        // Same folding as above, but values differ so the folded BooleanConstant is
+        // false.
+        CountingTimestampFunction left = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
+                true,
+                false
+        );
+        CountingTimestampFunction right = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"),
+                true,
+                false
+        );
+        ObjList<Function> args = new ObjList<>();
+        args.add(left);
+        args.add(right);
+
+        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertFalse(function.getBool(null));
+        }
+    }
+
+    @Test
+    public void testMatchedBothRuntimeConstCachesBothInInit() throws Exception {
+        // Two runtime-constants of matching precision: both sides are cached in init()
+        // so no per-row timestamp evaluations happen.
+        CountingTimestampFunction left = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
+                false,
+                true
+        );
+        CountingTimestampFunction right = new CountingTimestampFunction(
+                ColumnType.TIMESTAMP,
+                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
+                false,
+                true
+        );
+        ObjList<Function> args = new ObjList<>();
+        args.add(left);
+        args.add(right);
+
+        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
+            Assert.assertEquals(0, left.getTimestampCalls);
+            Assert.assertEquals(0, right.getTimestampCalls);
+
+            function.init(null, sqlExecutionContext);
+            Assert.assertEquals(1, left.getTimestampCalls);
+            Assert.assertEquals(1, right.getTimestampCalls);
+
+            for (int i = 0; i < 1_000; i++) {
+                Assert.assertTrue(function.getBool(null));
+            }
+            Assert.assertEquals(1, left.getTimestampCalls);
+            Assert.assertEquals(1, right.getTimestampCalls);
+        }
     }
 
     @Test
@@ -256,272 +414,6 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             Assert.assertEquals(1, constant.getTimestampCalls);
             Assert.assertEquals(1, runtimeConst.getTimestampCalls);
         }
-    }
-
-    @Test
-    public void testMatchedBothConstantFoldsToBooleanConstant() throws Exception {
-        // Both sides are constants of matching precision: factory folds to a
-        // BooleanConstant, so getTimestamp is only called at factory time and getBool
-        // performs no timestamp evaluation.
-        CountingTimestampFunction left = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP,
-                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
-                true,
-                false
-        );
-        CountingTimestampFunction right = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP,
-                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
-                true,
-                false
-        );
-        ObjList<Function> args = new ObjList<>();
-        args.add(left);
-        args.add(right);
-
-        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
-            Assert.assertTrue(function.isConstant());
-            Assert.assertEquals(1, left.getTimestampCalls);
-            Assert.assertEquals(1, right.getTimestampCalls);
-
-            for (int i = 0; i < 1_000; i++) {
-                Assert.assertTrue(function.getBool(null));
-            }
-            Assert.assertEquals(1, left.getTimestampCalls);
-            Assert.assertEquals(1, right.getTimestampCalls);
-        }
-    }
-
-    @Test
-    public void testMatchedBothConstantFoldsToBooleanConstantFalse() throws Exception {
-        // Same folding as above, but values differ so the folded BooleanConstant is
-        // false.
-        CountingTimestampFunction left = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP,
-                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
-                true,
-                false
-        );
-        CountingTimestampFunction right = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP,
-                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"),
-                true,
-                false
-        );
-        ObjList<Function> args = new ObjList<>();
-        args.add(left);
-        args.add(right);
-
-        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
-            Assert.assertTrue(function.isConstant());
-            Assert.assertFalse(function.getBool(null));
-        }
-    }
-
-    @Test
-    public void testConvertedBothConstantFoldsToBooleanConstant() throws Exception {
-        // Constants of different precision (MICRO on one side, NANO on the other):
-        // factory converts at factory time and folds to a BooleanConstant. No per-row
-        // timestamp calls, no per-row driver.from() conversions.
-        CountingTimestampFunction nanos = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP_NANO,
-                NanosTimestampDriver.floor("2020-01-01T00:00:00.000001000Z"),
-                true,
-                false
-        );
-        CountingTimestampFunction micros = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP,
-                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
-                true,
-                false
-        );
-        ObjList<Function> args = new ObjList<>();
-        args.add(nanos);
-        args.add(micros);
-
-        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
-            Assert.assertTrue(function.isConstant());
-            Assert.assertTrue(function.getBool(null));
-
-            for (int i = 0; i < 1_000; i++) {
-                Assert.assertTrue(function.getBool(null));
-            }
-            Assert.assertEquals(1, nanos.getTimestampCalls);
-            Assert.assertEquals(1, micros.getTimestampCalls);
-        }
-    }
-
-    @Test
-    public void testMatchedBothRuntimeConstCachesBothInInit() throws Exception {
-        // Two runtime-constants of matching precision: both sides are cached in init()
-        // so no per-row timestamp evaluations happen.
-        CountingTimestampFunction left = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP,
-                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
-                false,
-                true
-        );
-        CountingTimestampFunction right = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP,
-                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
-                false,
-                true
-        );
-        ObjList<Function> args = new ObjList<>();
-        args.add(left);
-        args.add(right);
-
-        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
-            Assert.assertEquals(0, left.getTimestampCalls);
-            Assert.assertEquals(0, right.getTimestampCalls);
-
-            function.init(null, sqlExecutionContext);
-            Assert.assertEquals(1, left.getTimestampCalls);
-            Assert.assertEquals(1, right.getTimestampCalls);
-
-            for (int i = 0; i < 1_000; i++) {
-                Assert.assertTrue(function.getBool(null));
-            }
-            Assert.assertEquals(1, left.getTimestampCalls);
-            Assert.assertEquals(1, right.getTimestampCalls);
-        }
-    }
-
-    @Test
-    public void testConvertedRuntimeConstAndConstantCachesBoth() throws Exception {
-        // Runtime-const on the lower-precision side (MICRO), constant on the
-        // higher-precision side (NANO): factory captures the constant right value at
-        // construction and caches the converted runtime-const left value in init().
-        // No per-row evaluation or conversion occurs.
-        CountingTimestampFunction runtimeConst = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP,
-                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
-                false,
-                true
-        );
-        CountingTimestampFunction constant = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP_NANO,
-                NanosTimestampDriver.floor("2020-01-01T00:00:00.000001000Z"),
-                true,
-                false
-        );
-        ObjList<Function> args = new ObjList<>();
-        args.add(runtimeConst);
-        args.add(constant);
-
-        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
-            Assert.assertEquals(1, constant.getTimestampCalls);
-            Assert.assertEquals(0, runtimeConst.getTimestampCalls);
-
-            function.init(null, sqlExecutionContext);
-            Assert.assertEquals(1, constant.getTimestampCalls);
-            Assert.assertEquals(1, runtimeConst.getTimestampCalls);
-
-            for (int i = 0; i < 1_000; i++) {
-                Assert.assertTrue(function.getBool(null));
-            }
-            Assert.assertEquals(1, constant.getTimestampCalls);
-            Assert.assertEquals(1, runtimeConst.getTimestampCalls);
-        }
-    }
-
-    @Test
-    public void testConvertedBothRuntimeConstCachesBoth() throws Exception {
-        // Two runtime-constants of different precisions: both sides are cached in
-        // init() and the left side is converted once, not per row.
-        CountingTimestampFunction micros = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP,
-                MicrosTimestampDriver.floor("2020-01-01T00:00:00.000001Z"),
-                false,
-                true
-        );
-        CountingTimestampFunction nanos = new CountingTimestampFunction(
-                ColumnType.TIMESTAMP_NANO,
-                NanosTimestampDriver.floor("2020-01-01T00:00:00.000001000Z"),
-                false,
-                true
-        );
-        ObjList<Function> args = new ObjList<>();
-        args.add(micros);
-        args.add(nanos);
-
-        try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
-            Assert.assertEquals(0, micros.getTimestampCalls);
-            Assert.assertEquals(0, nanos.getTimestampCalls);
-
-            function.init(null, sqlExecutionContext);
-            Assert.assertEquals(1, micros.getTimestampCalls);
-            Assert.assertEquals(1, nanos.getTimestampCalls);
-
-            for (int i = 0; i < 1_000; i++) {
-                Assert.assertTrue(function.getBool(null));
-            }
-            Assert.assertEquals(1, micros.getTimestampCalls);
-            Assert.assertEquals(1, nanos.getTimestampCalls);
-        }
-    }
-
-    @Test
-    public void testNotEqualsNewInstancePaths() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (a timestamp, b timestamp, ts timestamp, ts_ns timestamp_ns)");
-            execute("insert into x values " +
-                    "('2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001000Z'), " +
-                    "('2020-01-01T00:00:00.000002Z', '2020-01-01T00:00:00.000003Z', '2020-01-01T00:00:00.000002Z', '2020-01-01T00:00:00.000002000Z'), " +
-                    "('2020-01-01T00:00:00.000003Z', '2020-01-01T00:00:00.000004Z', '2020-01-01T00:00:00.000003Z', '2020-01-01T00:00:00.000004000Z')");
-            bindVariableService.clear();
-            bindVariableService.setStr("str_bind", "2020-01-01T00:00:00.000002Z");
-            bindVariableService.setTimestamp("micro_bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
-            assertQueryNoLeakCheck("""
-                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\tcolumn6
-                            false\tfalse\tfalse\ttrue\ttrue\ttrue\ttrue
-                            true\ttrue\tfalse\tfalse\tfalse\tfalse\tfalse
-                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
-                            """,
-                    "select " +
-                            "a != b, " +
-                            "ts != '2020-01-01T00:00:00.000001Z'::timestamp, " +
-                            "ts != ts_ns, " +
-                            "ts != '2020-01-01T00:00:00.000002000Z'::timestamp_ns, " +
-                            "ts != :str_bind, " +
-                            ":micro_bind != ts_ns, " +
-                            ":micro_bind != ts " +
-                            "from x");
-        });
-    }
-
-    @Test
-    public void testNullTimestampHandling() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, ts_ns timestamp_ns)");
-            execute("insert into x values " +
-                    "(null, null), " +
-                    "('2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001000Z'), " +
-                    "(null, '2020-01-01T00:00:00.000002000Z'), " +
-                    "('2020-01-01T00:00:00.000003Z', null)");
-            bindVariableService.clear();
-            bindVariableService.setTimestamp("null_bind", Numbers.LONG_NULL);
-            bindVariableService.setStr("null_str_bind", null);
-            assertQueryNoLeakCheck("""
-                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\tcolumn6\tcolumn7\tcolumn8\tcolumn9
-                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
-                            false\tfalse\ttrue\tfalse\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse
-                            true\ttrue\ttrue\ttrue\ttrue\tfalse\tfalse\ttrue\tfalse\ttrue
-                            false\tfalse\ttrue\tfalse\tfalse\ttrue\ttrue\ttrue\ttrue\tfalse
-                            """,
-                    "select " +
-                            "null::timestamp = ts, " +
-                            "ts = null::timestamp, " +
-                            "null::timestamp = null::timestamp, " +
-                            ":null_bind = ts, " +
-                            "ts = :null_bind, " +
-                            "null::timestamp = ts_ns, " +
-                            "ts_ns = null::timestamp, " +
-                            "null::timestamp = null::timestamp_ns, " +
-                            ":null_bind = ts_ns, " +
-                            "ts = :null_str_bind " +
-                            "from x");
-        });
     }
 
     @Test
@@ -604,6 +496,114 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
         long t4 = NanosTimestampDriver.floor("2020-12-31T23:59:59.000000001Z");
         callBySignature("<>(NN)", t3, t3).andAssert(false);
         callBySignature("<>(NN)", t3, t4).andAssert(true);
+    }
+
+    @Test
+    public void testNotEqualsNewInstancePaths() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a timestamp, b timestamp, ts timestamp, ts_ns timestamp_ns)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001000Z'), " +
+                    "('2020-01-01T00:00:00.000002Z', '2020-01-01T00:00:00.000003Z', '2020-01-01T00:00:00.000002Z', '2020-01-01T00:00:00.000002000Z'), " +
+                    "('2020-01-01T00:00:00.000003Z', '2020-01-01T00:00:00.000004Z', '2020-01-01T00:00:00.000003Z', '2020-01-01T00:00:00.000004000Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr("str_bind", "2020-01-01T00:00:00.000002Z");
+            bindVariableService.setTimestamp("micro_bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
+            assertQueryNoLeakCheck("""
+                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\tcolumn6
+                            false\tfalse\tfalse\ttrue\ttrue\ttrue\ttrue
+                            true\ttrue\tfalse\tfalse\tfalse\tfalse\tfalse
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
+                            """,
+                    "select " +
+                            "a != b, " +
+                            "ts != '2020-01-01T00:00:00.000001Z'::timestamp, " +
+                            "ts != ts_ns, " +
+                            "ts != '2020-01-01T00:00:00.000002000Z'::timestamp_ns, " +
+                            "ts != :str_bind, " +
+                            ":micro_bind != ts_ns, " +
+                            ":micro_bind != ts " +
+                            "from x");
+        });
+    }
+
+    @Test
+    public void testNullTimestampHandling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, ts_ns timestamp_ns)");
+            execute("insert into x values " +
+                    "(null, null), " +
+                    "('2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001000Z'), " +
+                    "(null, '2020-01-01T00:00:00.000002000Z'), " +
+                    "('2020-01-01T00:00:00.000003Z', null)");
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("null_bind", Numbers.LONG_NULL);
+            bindVariableService.setStr("null_str_bind", null);
+            assertQueryNoLeakCheck("""
+                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\tcolumn6\tcolumn7\tcolumn8\tcolumn9
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
+                            false\tfalse\ttrue\tfalse\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse
+                            true\ttrue\ttrue\ttrue\ttrue\tfalse\tfalse\ttrue\tfalse\ttrue
+                            false\tfalse\ttrue\tfalse\tfalse\ttrue\ttrue\ttrue\ttrue\tfalse
+                            """,
+                    "select " +
+                            "null::timestamp = ts, " +
+                            "ts = null::timestamp, " +
+                            "null::timestamp = null::timestamp, " +
+                            ":null_bind = ts, " +
+                            "ts = :null_bind, " +
+                            "null::timestamp = ts_ns, " +
+                            "ts_ns = null::timestamp, " +
+                            "null::timestamp = null::timestamp_ns, " +
+                            ":null_bind = ts_ns, " +
+                            "ts = :null_str_bind " +
+                            "from x");
+        });
+    }
+
+    @Test
+    public void testStringBindTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000001Z'), " +
+                    "('2020-01-01T00:00:00.000002Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr("bind", "2020-01-01T00:00:00.000002Z");
+            assertQueryNoLeakCheck("""
+                            column
+                            false
+                            true
+                            """,
+                    "select ts = :bind from x");
+        });
+    }
+
+    @Test
+    public void testStringBindTimestampNsColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp_ns)");
+            execute("insert into x values " +
+                    "('2020-01-01T00:00:00.000002000Z'), " +
+                    "('2020-01-01T00:00:00.000002123Z'), " +
+                    "('2020-01-01T00:00:00.000002124Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr("bind", "2020-01-01T00:00:00.000002123Z");
+            assertQueryNoLeakCheck("""
+                            column
+                            false
+                            true
+                            false
+                            """,
+                    "select ts = :bind from x");
+            assertQueryNoLeakCheck("""
+                            column
+                            false
+                            true
+                            false
+                            """,
+                    "select :bind = ts from x");
+        });
     }
 
     @Override

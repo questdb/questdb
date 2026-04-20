@@ -221,8 +221,8 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class LeftConvertFunc extends AbstractEqBinaryFunction {
-        protected TimestampDriver driver;
-        protected int fromTimestampType;
+        private final TimestampDriver driver;
+        private final int fromTimestampType;
 
         public LeftConvertFunc(Function left, Function right, TimestampDriver driver, int fromTimestampType) {
             super(left, right);
