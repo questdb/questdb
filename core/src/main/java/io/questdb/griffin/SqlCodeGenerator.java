@@ -3539,14 +3539,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 constantFillFuncs.add(NullConstant.NULL);
                                 continue;
                             }
-                            short targetTag = ColumnType.tagOf(groupByMetadata.getColumnType(col));
-                            short sourceTag = ColumnType.tagOf(groupByMetadata.getColumnType(srcColIdx));
-                            if (targetTag != sourceTag) {
+                            // Cross-column PREV type check: most types only need
+                            // tag-level equality, but DECIMAL (precision/scale),
+                            // GEOHASH (bit width), and ARRAY (element type +
+                            // dimensionality) encode discriminating subtype
+                            // information in the high bits of the type int. For
+                            // those families the check demands full-int equality
+                            // so that PREV(colX) cannot carry values across a
+                            // precision/width/dims mismatch. ColumnType.isDecimal
+                            // covers DECIMAL8..DECIMAL256 via tag range.
+                            final int targetType = groupByMetadata.getColumnType(col);
+                            final int sourceType = groupByMetadata.getColumnType(srcColIdx);
+                            final short targetTag = ColumnType.tagOf(targetType);
+                            final boolean needsExactTypeMatch =
+                                    ColumnType.isDecimal(targetType)
+                                            || ColumnType.isGeoHash(targetType)
+                                            || targetTag == ColumnType.ARRAY;
+                            final boolean isTypeCompatible = needsExactTypeMatch
+                                    ? targetType == sourceType
+                                    : targetTag == ColumnType.tagOf(sourceType);
+                            if (!isTypeCompatible) {
                                 throw SqlException.$(fillExpr.rhs.position,
                                                 "FILL(PREV(").put(srcAlias).put(")): source type ")
-                                        .put(ColumnType.nameOf(groupByMetadata.getColumnType(srcColIdx)))
+                                        .put(ColumnType.nameOf(sourceType))
                                         .put(" cannot fill target column of type ")
-                                        .put(ColumnType.nameOf(groupByMetadata.getColumnType(col)));
+                                        .put(ColumnType.nameOf(targetType));
                             }
                             fillModes.add(srcColIdx);
                             perColFillNodes.setQuick(col, fillExpr);
