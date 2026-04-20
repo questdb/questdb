@@ -57,4 +57,4 @@ SAMPLE BY FILL queries execute on the GROUP BY fast path with identical output t
 | Keep cursor path as fallback | Fast path is opt-in via optimizer rewrite. Cursor path untouched for correctness | ✓ Good |
 
 ---
-*Last updated: 2026-04-20 — Phase 13 complete: FILL(PREV) snapshots migrated to chain rowIds; retro-fallback machinery deleted; SEED-001 (WR-04 + Defect 3) and SEED-002 (Defect 1 + 2) closed.*
+*Last updated: 2026-04-20 — Phase 14 complete: closed Moderate code-review findings from PR #6946 (M-1 reorder-safe FILL(PREV) classification, M-2 FillRecord ARRAY/BIN dispatch, M-3 broadcast tightening, M-4 TIME ZONE + FROM grid alignment, M-7 SortedRecordCursorFactory constructor double-free, M-8 FillRecord.getInterval, M-9 cross-column full-type match, Mn-13 success-path fillValues cleanup); landed 21 new regression tests (D-14 per-type FILL(PREV) set, D-16 ghost-test rename, D-17 decimal zero-vs-null, D-18 direct factory-type assertions); appended D-19/D-20 Trade-offs bullets to PR #6946 body.*
