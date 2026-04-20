@@ -39,10 +39,9 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
     private final SortedRecordCursor cursor;
-
     private final ListColumnFilter sortColumnFilter;
+    private RecordCursorFactory base;
 
     public SortedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -53,7 +52,6 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
-        this.base = base;
         this.sortColumnFilter = sortColumnFilter;
         RecordTreeChain chain = null;
         try {
@@ -66,8 +64,18 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                     configuration.getSqlSortValuePageSize(),
                     configuration.getSqlSortValueMaxPages()
             );
+            // Assign this.base only after RecordTreeChain construction succeeds,
+            // so that if the allocation above throws, the catch block sees
+            // this.base == null and the cascaded close() does not free the
+            // caller-owned base factory. The caller retains ownership of base
+            // on any constructor-throw path and frees it through its own
+            // error handling.
+            this.base = base;
             this.cursor = new SortedRecordCursor(chain, comparator, SortKeyEncoder.createRankMaps(metadata, sortColumnFilter));
         } catch (Throwable th) {
+            // Null the field so _close() does not double-free the caller-owned
+            // base factory if the assignment above completed before the throw.
+            this.base = null;
             Misc.free(chain);
             close();
             throw th;
