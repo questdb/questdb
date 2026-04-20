@@ -25,11 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
-import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -140,7 +138,7 @@ public class ParquetPartitionSink implements SortedRowSink {
     }
 
     @Override
-    public void acceptRow(RowGroupBuffers src, int row, long ts) {
+    public void acceptRow(ColumnBlockSource src, int row, long ts) {
         final long partitionTs = floorMethod.floor(ts);
         if (partitionTs != currentPartitionTs) {
             if (partitionOpen) {
@@ -189,7 +187,7 @@ public class ParquetPartitionSink implements SortedRowSink {
     }
 
     @Override
-    public void onStart(PartitionDecoder.Metadata meta, int tsColIdx, long totalRows) {
+    public void onStart(SortedStreamMetadata meta, int tsColIdx, long totalRows) {
         this.tsColumnIndex = tsColIdx;
         this.columnCount = meta.getColumnCount();
         this.colTypes = new int[columnCount];
@@ -290,7 +288,7 @@ public class ParquetPartitionSink implements SortedRowSink {
         }
     }
 
-    private void appendRow(RowGroupBuffers src, int row) {
+    private void appendRow(ColumnBlockSource src, int row) {
         for (int c = 0; c < columnCount; c++) {
             if (isVarCol[c]) {
                 BulkSortedParquetWriter.copyVarValue(

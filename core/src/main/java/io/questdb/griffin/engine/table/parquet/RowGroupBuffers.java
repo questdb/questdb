@@ -24,12 +24,13 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
+import io.questdb.cairo.ColumnBlockSource;
 import io.questdb.cairo.Reopenable;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
-public class RowGroupBuffers implements QuietCloseable, Reopenable {
+public class RowGroupBuffers implements ColumnBlockSource, QuietCloseable, Reopenable {
     private static final long CHUNKS_PTR_OFFSET;
     private static final long CHUNK_AUX_PTR_OFFSET;
     private static final long CHUNK_AUX_SIZE_OFFSET;
@@ -59,24 +60,28 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         }
     }
 
+    @Override
     public long getChunkAuxPtr(int columnIndex) {
         final long chunksPtr = Unsafe.getUnsafe().getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;
         return Unsafe.getUnsafe().getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_AUX_PTR_OFFSET);
     }
 
+    @Override
     public long getChunkAuxSize(int columnIndex) {
         final long chunksPtr = Unsafe.getUnsafe().getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;
         return Unsafe.getUnsafe().getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_AUX_SIZE_OFFSET);
     }
 
+    @Override
     public long getChunkDataPtr(int columnIndex) {
         final long chunksPtr = Unsafe.getUnsafe().getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;
         return Unsafe.getUnsafe().getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_DATA_PTR_OFFSET);
     }
 
+    @Override
     public long getChunkDataSize(int columnIndex) {
         final long chunksPtr = Unsafe.getUnsafe().getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;

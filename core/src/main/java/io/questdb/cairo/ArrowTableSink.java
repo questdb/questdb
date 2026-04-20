@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
@@ -108,7 +106,7 @@ public class ArrowTableSink implements SortedRowSink {
     }
 
     @Override
-    public void acceptRow(RowGroupBuffers src, int row, long ts) {
+    public void acceptRow(ColumnBlockSource src, int row, long ts) {
         if (dataPtrs == null) {
             throw CairoException.nonCritical().put("ArrowTableSink was closed before acceptRow");
         }
@@ -221,7 +219,7 @@ public class ArrowTableSink implements SortedRowSink {
     }
 
     @Override
-    public void onStart(PartitionDecoder.Metadata meta, int tsColumnIndex, long totalRows) {
+    public void onStart(SortedStreamMetadata meta, int tsColumnIndex, long totalRows) {
         if (totalRows < 0) {
             throw CairoException.nonCritical()
                     .put("ArrowTableSink got negative totalRows [").put(totalRows).put(']');
@@ -317,7 +315,7 @@ public class ArrowTableSink implements SortedRowSink {
     }
 
     private void appendFixedValue(
-            RowGroupBuffers src, int c, int row, int rowIdx,
+            ColumnBlockSource src, int c, int row, int rowIdx,
             long validByteOffset, byte setBit
     ) {
         final int size = elemSize[c];
@@ -334,7 +332,7 @@ public class ArrowTableSink implements SortedRowSink {
     }
 
     private void appendVarValue(
-            RowGroupBuffers src, int c, int row, int rowIdx,
+            ColumnBlockSource src, int c, int row, int rowIdx,
             long validByteOffset, byte setBit
     ) {
         final int type = colTypes[c];

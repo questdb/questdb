@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
@@ -126,7 +124,7 @@ public class ArrowStreamSink implements SortedRowSink {
     }
 
     @Override
-    public void acceptRow(RowGroupBuffers src, int row, long ts) {
+    public void acceptRow(ColumnBlockSource src, int row, long ts) {
         if (isAbandoned) {
             freeCurrentBuffers();
             throw CairoException.nonCritical().put("ArrowStreamSink consumer abandoned the stream");
@@ -207,7 +205,7 @@ public class ArrowStreamSink implements SortedRowSink {
     }
 
     @Override
-    public void onStart(PartitionDecoder.Metadata meta, int tsColumnIndex, long totalRows) {
+    public void onStart(SortedStreamMetadata meta, int tsColumnIndex, long totalRows) {
         this.columnCount = meta.getColumnCount();
         this.colTypes = new int[columnCount];
         this.elemSize = new int[columnCount];
@@ -284,7 +282,7 @@ public class ArrowStreamSink implements SortedRowSink {
     }
 
     private void appendFixedValue(
-            RowGroupBuffers src, int c, int row, int rowInBatch,
+            ColumnBlockSource src, int c, int row, int rowInBatch,
             long validByteOffset, byte setBit
     ) {
         final int size = elemSize[c];
@@ -303,7 +301,7 @@ public class ArrowStreamSink implements SortedRowSink {
     }
 
     private void appendVarValue(
-            RowGroupBuffers src, int c, int row, int rowInBatch,
+            ColumnBlockSource src, int c, int row, int rowInBatch,
             long validByteOffset, byte setBit
     ) {
         final int type = colTypes[c];

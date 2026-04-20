@@ -25,8 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Unsafe;
@@ -43,7 +41,7 @@ import io.questdb.std.str.Utf8SplitString;
  * never closes the writer.
  * <p>
  * Column dispatch uses the parquet column types surfaced by
- * {@link PartitionDecoder.Metadata}. Every non-timestamp parquet column must
+ * {@link SortedStreamMetadata}. Every non-timestamp parquet column must
  * have a name + type match in the writer's {@link TableMetadata}; the
  * designated timestamp of the writer must match the parquet timestamp column
  * by name. Mismatches throw {@link CairoException} from {@link #onStart}.
@@ -76,7 +74,7 @@ public class TableWriterSink implements SortedRowSink {
     }
 
     @Override
-    public void acceptRow(RowGroupBuffers src, int row, long ts) {
+    public void acceptRow(ColumnBlockSource src, int row, long ts) {
         final TableWriter.Row r = writer.newRow(ts);
         for (int c = 0; c < columnCount; c++) {
             if (c == tsColumnIndex) {
@@ -107,7 +105,7 @@ public class TableWriterSink implements SortedRowSink {
     }
 
     @Override
-    public void onStart(PartitionDecoder.Metadata meta, int tsColumnIndex, long totalRows) {
+    public void onStart(SortedStreamMetadata meta, int tsColumnIndex, long totalRows) {
         this.tsColumnIndex = tsColumnIndex;
         this.columnCount = meta.getColumnCount();
         this.parquetColTypes = new int[columnCount];

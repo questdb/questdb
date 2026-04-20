@@ -712,7 +712,7 @@ public class BulkSortedParquetWriter {
      * growing the output data buffer if needed.
      */
     static void copyVarValue(
-            RowGroupBuffers srcBuf,
+            ColumnBlockSource srcBuf,
             int col,
             int srcRow,
             long[] outDataAddrs,

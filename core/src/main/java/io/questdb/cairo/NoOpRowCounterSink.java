@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 
 /**
  * {@link SortedRowSink} that discards column values, counts delivered rows,
@@ -49,7 +47,7 @@ public class NoOpRowCounterSink implements SortedRowSink {
     private long rowCount;
 
     @Override
-    public void acceptRow(RowGroupBuffers src, int row, long ts) {
+    public void acceptRow(ColumnBlockSource src, int row, long ts) {
         if (hasPrev && ts < prevTs && firstViolationRow < 0) {
             firstViolationRow = rowCount;
         }
@@ -81,7 +79,7 @@ public class NoOpRowCounterSink implements SortedRowSink {
     }
 
     @Override
-    public void onStart(PartitionDecoder.Metadata meta, int tsColumnIndex, long totalRows) {
+    public void onStart(SortedStreamMetadata meta, int tsColumnIndex, long totalRows) {
         expectedRows = totalRows;
         firstViolationRow = -1;
         hasPrev = false;

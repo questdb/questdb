@@ -452,7 +452,7 @@ public class PartitionDecoder implements QuietCloseable {
      * Note: low-level parquet metadata tracks all columns (unsupported are tagged as Undefined),
      * but higher-level GenericRecordMetadata produced via copyToSansUnsupported() omits them.
      */
-    public class Metadata {
+    public class Metadata implements io.questdb.cairo.SortedStreamMetadata {
         private final ObjList<DirectString> columnNames = new ObjList<>();
 
         /**

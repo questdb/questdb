@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.QuietCloseable;
 
 /**
@@ -52,16 +50,23 @@ public interface SortedRowSink extends QuietCloseable {
 
     /**
      * Accept a single row from the sorted stream. {@code src} points at the
-     * decoded column buffers of the run that currently holds this row; read
-     * fields out via the usual chunk data/aux pointer APIs. Do not retain
-     * {@code src} past the return of this method — the merger may rebind it
-     * to a different run on the next call.
+     * column memory of the run (or intermediate-table partition) that
+     * currently holds this row; read fields out via the
+     * {@link ColumnBlockSource} pointer accessors. Do not retain {@code src}
+     * past the return of this method — the merger may rebind it to a
+     * different run on the next call.
+     * <p>
+     * The memory-layout contract is documented on {@link ColumnBlockSource}.
+     * Both the parquet-run pipeline (backed by
+     * {@link io.questdb.griffin.engine.table.parquet.RowGroupBuffers}) and
+     * the intermediate-table pipeline (backed by a per-partition wrapper
+     * over native column memory) feed this method with bit-identical layouts.
      *
-     * @param src the source run's decoded row group buffers
+     * @param src the source run's column memory, as a {@link ColumnBlockSource}
      * @param row local row index within {@code src}
      * @param ts  timestamp of this row (already extracted by the merger)
      */
-    void acceptRow(RowGroupBuffers src, int row, long ts);
+    void acceptRow(ColumnBlockSource src, int row, long ts);
 
     /**
      * Called after the final {@link #acceptRow} call and before the merger
@@ -79,10 +84,10 @@ public interface SortedRowSink extends QuietCloseable {
      * releases its resources. Copy out any column names, types or other
      * fields you will need later before returning from this method.
      *
-     * @param meta           metadata of the first run (all runs share a schema)
+     * @param meta           schema view over the stream's columns
      * @param tsColumnIndex  index of the timestamp column in {@code meta}
      * @param totalRows      exact count of rows that will be delivered to
      *                       {@link #acceptRow}
      */
-    void onStart(PartitionDecoder.Metadata meta, int tsColumnIndex, long totalRows);
+    void onStart(SortedStreamMetadata meta, int tsColumnIndex, long totalRows);
 }
