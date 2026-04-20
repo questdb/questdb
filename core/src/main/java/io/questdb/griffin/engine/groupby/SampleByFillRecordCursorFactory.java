@@ -696,13 +696,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public ArrayView getArray(int col, int columnType) {
                 if (!isGapFilling) return baseRecord.getArray(col, columnType);
                 int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getArray(outputColToKeyPos[col], columnType);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getArray(outputColToKeyPos[mode], columnType);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getArray(mode >= 0 ? mode : col, columnType);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getArray(null);
-                // Plan 02 scope: FILL_KEY handling for Array/Bin/Varchar/String/Long256/Decimal128/Decimal256
-                // is outside Plan 02's contract (pre-existing behavior returned null for these
-                // types when mode == FILL_KEY). Phase 13 Plan 04 or a later hardening pass can
-                // extend the FILL_KEY delegation across all types uniformly.
                 return null;
             }
 
@@ -710,6 +709,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public BinarySequence getBin(int col) {
                 if (!isGapFilling) return baseRecord.getBin(col);
                 int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getBin(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getBin(outputColToKeyPos[mode]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getBin(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBin(null);
@@ -720,6 +722,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public long getBinLen(int col) {
                 if (!isGapFilling) return baseRecord.getBinLen(col);
                 int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getBinLen(outputColToKeyPos[col]);
+                if (mode >= 0 && outputColToKeyPos[mode] >= 0)
+                    return keysMapRecord.getBinLen(outputColToKeyPos[mode]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getBinLen(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBinLen(null);
