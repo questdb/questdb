@@ -126,6 +126,13 @@ public class ArrowStreamSink implements SortedRowSink {
     @Override
     public void acceptRow(ColumnBlockSource src, int row, long ts) {
         if (isAbandoned) {
+            // close() drained the queue once and set isAbandoned, but a
+            // producer-side sealAndEnqueueCurrent may have slipped a handle
+            // into the queue between close()'s drain and isAbandoned
+            // observation by the producer. Drain again here (we own the
+            // queue exclusively now that the consumer has closed) so those
+            // handles' buffers don't leak.
+            drainReadyQueue();
             freeCurrentBuffers();
             throw CairoException.nonCritical().put("ArrowStreamSink consumer abandoned the stream");
         }
@@ -165,13 +172,12 @@ public class ArrowStreamSink implements SortedRowSink {
     @Override
     public void close() {
         isAbandoned = true;
-        while (true) {
-            final ArrowBatchHandle h = readyQueue.poll();
-            if (h == null) {
-                break;
-            }
-            h.release();
-        }
+        // Drain once synchronously so we release anything the producer has
+        // already enqueued. A batch may still slip in after this drain
+        // and before the producer observes isAbandoned; the producer is
+        // responsible for a second drain on its abandonment path (see
+        // acceptRow).
+        drainReadyQueue();
         readyQueue.offer(ArrowBatchHandle.endSentinel());
     }
 
@@ -445,6 +451,16 @@ public class ArrowStreamSink implements SortedRowSink {
         }
         handle.release();
         throw CairoException.nonCritical().put("ArrowStreamSink consumer abandoned the stream");
+    }
+
+    private void drainReadyQueue() {
+        while (true) {
+            final ArrowBatchHandle h = readyQueue.poll();
+            if (h == null) {
+                return;
+            }
+            h.release();
+        }
     }
 
     private void ensureVarDataCapacity(int col, long needed) {
