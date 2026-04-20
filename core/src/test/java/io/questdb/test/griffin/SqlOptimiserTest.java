@@ -4277,6 +4277,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     Sample By Fill
                       range: ('2017-12-20','2018-01-31')
                       stride: '5d'
+                      fill: null
                         Sort
                           keys: [ts]
                             Async Group By workers: 1
@@ -4323,7 +4324,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "avg(n::double)," +
                             "from fromto sample by 5d from '2018-01-01' to '2018-01-31' fill(42)";
 
-            assertException(query, 0, "inconvertible value");
+            assertException(query, 218, "not enough fill values");
         });
     }
 
@@ -4416,6 +4417,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     Sample By Fill
                       range: ('2017-12-20','2018-01-31')
                       stride: '5d'
+                      fill: null
                         Sort
                           keys: [ts]
                             Async Group By workers: 1
@@ -4454,6 +4456,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     Sample By Fill
                       range: ('2017-12-20','2018-01-31')
                       stride: '5d'
+                      fill: value
                         Sort
                           keys: [ts]
                             Async Group By workers: 1
@@ -4492,6 +4495,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     Sample By Fill
                       range: (,'2018-01-31')
                       stride: '5d'
+                      fill: null
                         Sort
                           keys: [ts]
                             Async Group By workers: 1
@@ -4528,6 +4532,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     Sample By Fill
                       range: ('2017-12-20',)
                       stride: '5d'
+                      fill: null
                         Sort
                           keys: [ts]
                             Async Group By workers: 1
@@ -4570,6 +4575,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         Sample By Fill
                           range: ('2017-12-20','2018-01-31')
                           stride: '5d'
+                          fill: null
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
@@ -4585,6 +4591,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Sample By Fill
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
+                              fill: null
                                 Sort
                                   keys: [ts]
                                     Async Group By workers: 1
@@ -4605,6 +4612,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         Sample By Fill
                           range: ('2017-12-20','2018-01-31')
                           stride: '5d'
+                          fill: null
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
@@ -4620,6 +4628,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Sample By Fill
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
+                              fill: null
                                 Sort
                                   keys: [ts]
                                     Async Group By workers: 1
@@ -4656,6 +4665,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         Sample By Fill
                           range: ('2017-12-20','2018-01-31')
                           stride: '5d'
+                          fill: null
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
@@ -4671,6 +4681,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Sample By Fill
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
+                              fill: null
                                 Sort
                                   keys: [ts]
                                     Async Group By workers: 1
@@ -4702,6 +4713,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         Sample By Fill
                           range: ('2017-12-20','2018-01-31')
                           stride: '5d'
+                          fill: null
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
@@ -4717,6 +4729,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Sample By Fill
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
+                              fill: null
                                 Sort
                                   keys: [ts]
                                     Async Group By workers: 1
@@ -4763,6 +4776,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     Sample By Fill
                       range: ('2017-12-20','2018-01-31')
                       stride: '5d'
+                      fill: null
                         Sort
                           keys: [ts]
                             GroupBy vectorized: false
@@ -4814,6 +4828,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
+                                      fill: null
                                         Sort
                                           keys: [five_days]
                                             Async Group By workers: 1
@@ -4828,6 +4843,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '10d'
+                                      fill: null
                                         Sort
                                           keys: [ten_days]
                                             Async Group By workers: 1
@@ -4904,6 +4920,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     Sample By Fill
                       range: ('2017-12-20',)
                       stride: '5d'
+                      fill: null
                         Sort
                           keys: [ts]
                             Async Group By workers: 1
@@ -4922,6 +4939,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     Sample By Fill
                       range: ('2017-12-20',)
                       stride: '5d'
+                      fill: null
                         Sort
                           keys: [ts]
                             Async Group By workers: 1
@@ -4962,6 +4980,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
+                                      fill: null
                                         Sort
                                           keys: [ts]
                                             Async Group By workers: 1
@@ -4976,6 +4995,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
+                                      fill: null
                                         Sort
                                           keys: [ts]
                                             Async Group By workers: 1
@@ -5027,6 +5047,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
+                                      fill: null
                                         Sort
                                           keys: [ts]
                                             Async Group By workers: 1
@@ -5041,6 +5062,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
+                                      fill: null
                                         Sort
                                           keys: [ts]
                                             Async Group By workers: 1
@@ -5165,6 +5187,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Sample By Fill
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
+                              fill: null
                                 Sort
                                   keys: [five_days]
                                     Async Group By workers: 1

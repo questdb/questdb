@@ -214,8 +214,8 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     "ts\tgrp\tarr\n" +
                             "1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\n" +
                             "1970-01-01T00:00:00.000000Z\tb\tnull\n" +
-                            "1970-01-01T00:00:10.000000Z\ta\t[3.0,4.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\tb\t[5.0,6.0]\n",
+                            "1970-01-01T00:00:10.000000Z\tb\t[5.0,6.0]\n" +
+                            "1970-01-01T00:00:10.000000Z\ta\t[3.0,4.0]\n",
                     "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(PREV) ALIGN TO CALENDAR"
             );
         });
