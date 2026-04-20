@@ -28,20 +28,27 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.SimpleReadWriteLock;
 
 import java.util.Map;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.function.Function;
 
 /**
  * Thread-safe registry of live view instances.
  * <p>
- * TODO(live-view): zero-GC — {@link #getViewsForBaseTable}, {@link #invalidateViewsForBaseTable} and
- *  {@link #hasViewsForBaseTable} do a linear scan over {@code viewsByName.values()} on every call. The enhanced-for
- *  iteration allocates an Iterator via {@link ConcurrentHashMap}'s JDK-style {@code values()}, and all three methods
- *  are called on the WAL notification path. Maintain a secondary {@code baseTable -> ObjList<LiveViewInstance>}
- *  index (mirroring {@code MatViewGraph}'s base-table index) so lookups are O(1) and allocation-free.
+ * Two maps kept in sync: {@code viewsByName} for O(1) name lookup, and
+ * {@code viewsByBaseTable} (grow-only) for O(1) base-table fan-out on the WAL
+ * notification path and DDL invalidation paths. Both updates happen under the
+ * per-base-table write lock so that refresh/invalidate readers never observe a
+ * torn state.
  */
 public class LiveViewRegistry implements QuietCloseable {
+    private final Function<CharSequence, DepList> createDepList = name -> new DepList();
     private final ConcurrentHashMap<LiveViewInstance> viewsByName = new ConcurrentHashMap<>();
+    // Key is the base table name. Entries are never removed (grow-only, bounded by
+    // distinct base tables that ever had a live view registered).
+    private final ConcurrentHashMap<DepList> viewsByBaseTable = new ConcurrentHashMap<>(false);
 
     @Override
     public void close() {
@@ -53,6 +60,14 @@ public class LiveViewRegistry implements QuietCloseable {
             Misc.free(entry.getValue());
         }
         viewsByName.clear();
+        for (DepList list : viewsByBaseTable.values()) {
+            ObjList<LiveViewInstance> views = list.lockForWrite();
+            try {
+                views.clear();
+            } finally {
+                list.unlockAfterWrite();
+            }
+        }
     }
 
     public LiveViewInstance getViewInstance(CharSequence name) {
@@ -71,14 +86,19 @@ public class LiveViewRegistry implements QuietCloseable {
 
     /**
      * Collects all live view instances that depend on the given base table.
-     * Linear scan — acceptable for the V1 draft.
+     * O(k) where k is the number of dependents — no full-registry scan.
      */
     public void getViewsForBaseTable(CharSequence baseTableName, ObjList<LiveViewInstance> sink) {
         sink.clear();
-        for (LiveViewInstance instance : viewsByName.values()) {
-            if (instance.getDefinition().getBaseTableName().contentEquals(baseTableName)) {
-                sink.add(instance);
-            }
+        DepList list = viewsByBaseTable.get(baseTableName);
+        if (list == null) {
+            return;
+        }
+        ObjList<LiveViewInstance> views = list.lockForRead();
+        try {
+            sink.addAll(views);
+        } finally {
+            list.unlockAfterRead();
         }
     }
 
@@ -86,10 +106,17 @@ public class LiveViewRegistry implements QuietCloseable {
      * Invalidates all live view instances that depend on the given base table.
      */
     public void invalidateViewsForBaseTable(CharSequence baseTableName, String reason) {
-        for (LiveViewInstance instance : viewsByName.values()) {
-            if (instance.getDefinition().getBaseTableName().contentEquals(baseTableName)) {
-                instance.invalidate(reason);
+        DepList list = viewsByBaseTable.get(baseTableName);
+        if (list == null) {
+            return;
+        }
+        ObjList<LiveViewInstance> views = list.lockForRead();
+        try {
+            for (int i = 0, n = views.size(); i < n; i++) {
+                views.getQuick(i).invalidate(reason);
             }
+        } finally {
+            list.unlockAfterRead();
         }
     }
 
@@ -97,20 +124,58 @@ public class LiveViewRegistry implements QuietCloseable {
         return viewsByName.get(name) != null;
     }
 
-    public boolean hasViewsForBaseTable(CharSequence baseTableName) {
-        for (LiveViewInstance instance : viewsByName.values()) {
-            if (instance.getDefinition().getBaseTableName().contentEquals(baseTableName)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     public void registerView(LiveViewInstance instance) {
         viewsByName.put(instance.getDefinition().getViewName(), instance);
+        DepList list = viewsByBaseTable.computeIfAbsent(instance.getDefinition().getBaseTableName(), createDepList);
+        ObjList<LiveViewInstance> views = list.lockForWrite();
+        try {
+            views.add(instance);
+        } finally {
+            list.unlockAfterWrite();
+        }
     }
 
     public LiveViewInstance removeView(CharSequence name) {
-        return viewsByName.remove(name);
+        LiveViewInstance instance = viewsByName.remove(name);
+        if (instance != null) {
+            DepList list = viewsByBaseTable.get(instance.getDefinition().getBaseTableName());
+            if (list != null) {
+                ObjList<LiveViewInstance> views = list.lockForWrite();
+                try {
+                    for (int i = 0, n = views.size(); i < n; i++) {
+                        if (views.getQuick(i) == instance) {
+                            views.remove(i);
+                            break;
+                        }
+                    }
+                } finally {
+                    list.unlockAfterWrite();
+                }
+            }
+        }
+        return instance;
+    }
+
+    private static class DepList {
+        private final ReadWriteLock lock = new SimpleReadWriteLock();
+        private final ObjList<LiveViewInstance> views = new ObjList<>();
+
+        ObjList<LiveViewInstance> lockForRead() {
+            lock.readLock().lock();
+            return views;
+        }
+
+        ObjList<LiveViewInstance> lockForWrite() {
+            lock.writeLock().lock();
+            return views;
+        }
+
+        void unlockAfterRead() {
+            lock.readLock().unlock();
+        }
+
+        void unlockAfterWrite() {
+            lock.writeLock().unlock();
+        }
     }
 }
