@@ -334,10 +334,6 @@ public class ServerMain implements Closeable {
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
                                 setupWalApplyJob(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
                             }
-
-                            final LiveViewRefreshJob liveViewRefreshJob = new LiveViewRefreshJob(engine);
-                            sharedPoolWrite.assign(liveViewRefreshJob);
-                            sharedPoolWrite.freeOnExit(liveViewRefreshJob);
                         }
 
                         // text import
@@ -402,10 +398,14 @@ public class ServerMain implements Closeable {
                         WorkerPoolManager.Requester.MAT_VIEW_REFRESH
                 );
                 setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+                // Live view refresh shares the mat view refresh pool: same workload shape
+                // (compile SELECT, run cursor, materialize) triggered by WAL commits, same
+                // CPU/latency profile, one capacity knob to tune.
+                setupLiveViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
             } else {
-                log.advisory().$("mat view refresh is disabled; set ")
+                log.advisory().$("mat view and live view refresh are disabled; set ")
                         .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
-                        .$(" to a positive value or keep default to enable mat view refresh.")
+                        .$(" to a positive value or keep default to enable refresh.")
                         .$();
             }
         }
@@ -528,6 +528,15 @@ public class ServerMain implements Closeable {
 
     protected Job setupEngineMaintenanceJob(CairoEngine engine) {
         return new EngineMaintenanceJob(engine);
+    }
+
+    protected void setupLiveViewJobs(WorkerPool lvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = lvWorkerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final LiveViewRefreshJob liveViewRefreshJob = new LiveViewRefreshJob(i, engine, sharedQueryWorkerCount);
+            lvWorkerPool.assign(i, liveViewRefreshJob);
+            lvWorkerPool.freeOnExit(liveViewRefreshJob);
+        }
     }
 
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {

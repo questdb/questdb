@@ -34,8 +34,9 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
-import io.questdb.cairo.lv.LiveViewRefreshTask;
 import io.questdb.cairo.lv.LiveViewRegistry;
+import io.questdb.cairo.lv.LiveViewStateStore;
+import io.questdb.cairo.lv.LiveViewStateStoreImpl;
 import io.questdb.cairo.lv.LiveViewTableStructure;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -158,7 +159,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -182,9 +182,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DataID dataID;
     private final FunctionFactoryCache ffCache;
     private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
-    // TODO(live-view): zero-GC — JDK ConcurrentLinkedQueue allocates a Node per add() on the WAL notification hot path.
-    //  Switch to a ring/SPSC queue with pre-allocated task slots (see MatViewStateStore).
-    private final ConcurrentLinkedQueue<LiveViewRefreshTask> liveViewTaskQueue = new ConcurrentLinkedQueue<>();
+    private final LiveViewStateStore liveViewStateStore = new LiveViewStateStoreImpl();
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
@@ -576,6 +574,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                 instance.invalidate("base table is not WAL table");
                             }
                             liveViewRegistry.registerView(instance);
+                            liveViewStateStore.registerBaseTable(definition.getBaseTableName());
                         }
                     } catch (Throwable th) {
                         final LogRecord rec = LOG.error().$("could not load live view [view=").$(tableToken);
@@ -738,6 +737,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             LiveViewInstance instance = new LiveViewInstance(definition);
             liveViewRegistry.registerView(instance);
+            liveViewStateStore.registerBaseTable(definition.getBaseTableName());
         }
     }
 
@@ -1014,8 +1014,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return liveViewRegistry;
     }
 
-    public ConcurrentLinkedQueue<LiveViewRefreshTask> getLiveViewTaskQueue() {
-        return liveViewTaskQueue;
+    public LiveViewStateStore getLiveViewStateStore() {
+        return liveViewStateStore;
     }
 
     public @NotNull MatViewGraph getMatViewGraph() {
@@ -1650,14 +1650,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {
-        if (liveViewRegistry.hasViewsForBaseTable(baseTableToken.getTableName())) {
-            // TODO(live-view): zero-GC — allocates a fresh LiveViewRefreshTask on every WAL commit.
-            //  Use a pre-allocated pool or in-place ring-queue slots.
-            LiveViewRefreshTask task = new LiveViewRefreshTask();
-            task.baseTableToken = baseTableToken;
-            task.seqTxn = seqTxn;
-            liveViewTaskQueue.add(task);
-        }
+        liveViewStateStore.notifyBaseTableCommit(baseTableToken, seqTxn);
     }
 
     public void notifyMatViewBaseTableCommit(MatViewRefreshTask task, long seqTxn) {

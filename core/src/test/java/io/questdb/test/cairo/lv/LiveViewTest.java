@@ -945,7 +945,7 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     private static void drainLiveViewQueue() {
-        try (LiveViewRefreshJob job = new LiveViewRefreshJob(engine)) {
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             //noinspection StatementWithEmptyBody
             while (job.run(0, Job.RUNNING_STATUS)) ;
         }

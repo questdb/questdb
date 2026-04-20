@@ -499,6 +499,11 @@ public class TableSequencerImpl implements TableSequencer {
         if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
             engine.notifyWalTxnCommitted(tableToken);
         }
+        // Live views consume WAL segments directly, so notify the refresh job as soon as
+        // the sequencer has the commit visible, independently of the apply job's progress.
+        if (txn != Long.MAX_VALUE) {
+            engine.notifyLiveViewBaseTableCommit(tableToken, txn);
+        }
     }
 
     void readLock() {

@@ -25,13 +25,22 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.mp.ValueHolder;
+import io.questdb.std.Numbers;
 
-public class LiveViewRefreshTask {
+public class LiveViewRefreshTask implements ValueHolder<LiveViewRefreshTask> {
     public TableToken baseTableToken;
-    public long seqTxn;
+    public long seqTxn = Numbers.LONG_NULL;
 
+    @Override
     public void clear() {
         baseTableToken = null;
-        seqTxn = 0;
+        seqTxn = Numbers.LONG_NULL;
+    }
+
+    @Override
+    public void copyTo(LiveViewRefreshTask dest) {
+        dest.baseTableToken = baseTableToken;
+        dest.seqTxn = seqTxn;
     }
 }

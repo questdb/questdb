@@ -57,8 +57,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.concurrent.ConcurrentLinkedQueue;
-
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 /**
@@ -84,19 +82,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final CairoEngine engine;
     private final SqlExecutionContextImpl executionContext;
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
+    private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
+    private final LiveViewStateStore stateStore;
     private final ObjList<LiveViewInstance> viewInstanceSink = new ObjList<>();
     private final WalEventReader walEventReader;
     private final StringSink walNameSink = new StringSink();
     private final Path walPath = new Path();
+    private final int workerId;
 
-    public LiveViewRefreshJob(CairoEngine engine) {
+    public LiveViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
+        this.workerId = workerId;
         this.engine = engine;
-        this.executionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+        this.executionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount).with(AllowAllSecurityContext.INSTANCE);
         this.walEventReader = new WalEventReader(engine.getConfiguration());
+        this.stateStore = engine.getLiveViewStateStore();
     }
 
     @Override
     public void close() {
+        LOG.debug().$("live view refresh job closing [workerId=").$(workerId).I$();
         executionContext.close();
         Misc.free(walEventReader);
         Misc.free(walPath);
@@ -106,6 +110,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(int workerId, @NotNull Job.RunStatus runStatus) {
+        assert this.workerId == workerId;
         return processNotifications();
     }
 
@@ -255,10 +260,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     private boolean processNotifications() {
         boolean didWork = false;
-        ConcurrentLinkedQueue<LiveViewRefreshTask> queue = engine.getLiveViewTaskQueue();
-        LiveViewRefreshTask polled;
-        while ((polled = queue.poll()) != null) {
-            refreshViewsForBaseTable(polled.baseTableToken, polled.seqTxn);
+        while (stateStore.tryDequeueRefreshTask(refreshTask)) {
+            refreshViewsForBaseTable(refreshTask.baseTableToken, refreshTask.seqTxn);
+            // Reopen the dedup gate and re-enqueue if a newer commit landed while we were busy.
+            stateStore.notifyBaseRefreshed(refreshTask, refreshTask.seqTxn);
             didWork = true;
         }
         return didWork;
