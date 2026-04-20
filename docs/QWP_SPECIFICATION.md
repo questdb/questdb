@@ -311,7 +311,6 @@ the server accepts any ID within the per-connection schema-ID limit.
 | 5    | `0x05` | LONG            | 8       | Signed 64-bit integer              |
 | 6    | `0x06` | FLOAT           | 4       | IEEE 754 single precision          |
 | 7    | `0x07` | DOUBLE          | 8       | IEEE 754 double precision          |
-| 8    | `0x08` | STRING          | var     | Length-prefixed UTF-8              |
 | 9    | `0x09` | SYMBOL          | var     | Dictionary-encoded string          |
 | 10   | `0x0A` | TIMESTAMP       | 8       | Microseconds since epoch           |
 | 11   | `0x0B` | DATE            | 8       | Milliseconds since epoch           |
@@ -326,6 +325,9 @@ the server accepts any ID within the per-connection schema-ID limit.
 | 20   | `0x14` | DECIMAL128      | 16      | Decimal (38 digits precision)      |
 | 21   | `0x15` | DECIMAL256      | 32      | Decimal (77 digits precision)      |
 | 22   | `0x16` | CHAR            | 2       | Single UTF-16 code unit            |
+
+Code `0x08` is unassigned. It was previously STRING, which has been removed;
+senders should use VARCHAR (`0x0F`) for text columns.
 
 TIMESTAMP and TIMESTAMP_NANOS may use Gorilla encoding when `FLAG_GORILLA` is
 set (see [Column Data Encoding](#12-column-data-encoding)).
@@ -351,7 +353,7 @@ null bitmap.
 
 Sentinel mode requires the type to have a dedicated null representation
 available; it is not applicable to types whose full value range is meaningful
-payload (e.g. STRING, SYMBOL).
+payload (e.g. VARCHAR, SYMBOL).
 
 ### Bitmap Format
 
@@ -405,7 +407,7 @@ choice:
 | Strategy | Types                               |
 |----------|-------------------------------------|
 | Sentinel | BOOLEAN, BYTE, SHORT, CHAR, GEOHASH |
-| Bitmap   | INT, LONG, FLOAT, DOUBLE, STRING, VARCHAR, SYMBOL, TIMESTAMP, TIMESTAMP_NANOS, DATE, UUID, LONG256, DECIMAL64, DECIMAL128, DECIMAL256, DOUBLE_ARRAY, LONG_ARRAY |
+| Bitmap   | INT, LONG, FLOAT, DOUBLE, VARCHAR, SYMBOL, TIMESTAMP, TIMESTAMP_NANOS, DATE, UUID, LONG256, DECIMAL64, DECIMAL128, DECIMAL256, DOUBLE_ARRAY, LONG_ARRAY |
 
 The reference Java UDP client additionally uses sentinel mode for LONG and
 DOUBLE (encoding null rows as `Long.MIN_VALUE` and `NaN` respectively).
@@ -466,7 +468,7 @@ Byte layout for values [true, false, true, true, false, false, false, true]:
   0b10001101 = 0x8D
 ```
 
-### String / VARCHAR Type (`0x08`, `0x0F`)
+### VARCHAR Type (`0x0F`)
 
 ```
 ┌──────────────────────────────────────────┐
@@ -828,9 +830,9 @@ CD CC CC CC CC CC F4 3F  # value=1.3
 80 1A 06 00 00 00 00 00  # ts=400000 microseconds
 ```
 
-### Example 2: Nullable STRING Column
+### Example 2: Nullable VARCHAR Column
 
-Table with nullable STRING column, 4 rows where row 1 is null:
+Table with nullable VARCHAR column, 4 rows where row 1 is null:
 
 ```
 # Null flag + bitmap for 4 rows where row 1 is null
