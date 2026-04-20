@@ -57,4 +57,4 @@ SAMPLE BY FILL queries execute on the GROUP BY fast path with identical output t
 | Keep cursor path as fallback | Fast path is opt-in via optimizer rewrite. Cursor path untouched for correctness | ✓ Good |
 
 ---
-*Last updated: 2026-04-09 after codebase mapping*
+*Last updated: 2026-04-20 — Phase 13 complete: FILL(PREV) snapshots migrated to chain rowIds; retro-fallback machinery deleted; SEED-001 (WR-04 + Defect 3) and SEED-002 (Defect 1 + 2) closed.*
