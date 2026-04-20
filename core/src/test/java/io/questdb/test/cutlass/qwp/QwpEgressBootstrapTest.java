@@ -414,8 +414,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testConcurrentQueryRejectedInPhaseOne() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            io.questdb.cairo.CairoConfiguration cfg = new DefaultTestCairoConfiguration(
-                    "/tmp/qwp-concurrent-test");
+            io.questdb.cairo.CairoConfiguration cfg = new DefaultTestCairoConfiguration(root);
             try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
                 Assert.assertFalse("state starts inactive", state.isStreamingActive());
                 // Simulate a streaming-active state without actual native resources by

@@ -232,7 +232,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * Only valid when streaming was started via {@link #beginStreamingPageFrame}.
      */
     public Record advancePageFrameRow() {
-        if (streamingPageFrameRow >= streamingPageFrameRowHi) {
+        // Loop (not recurse) over consecutive empty frames so a pathological cursor
+        // that emits many zero-row frames in a row cannot blow the Java stack.
+        while (streamingPageFrameRow >= streamingPageFrameRowHi) {
             PageFrame frame = streamingPageFrameCursor.next();
             if (frame == null) {
                 return null;
@@ -242,10 +244,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             streamingPageFrameRow = 0;
             streamingPageFrameRowHi = frame.getPartitionHi() - frame.getPartitionLo();
             streamingPageFrameIndex++;
-            if (streamingPageFrameRow >= streamingPageFrameRowHi) {
-                // Empty frame - try again.
-                return advancePageFrameRow();
-            }
         }
         pageFrameMemoryRecord.setRowIndex(streamingPageFrameRow++);
         return pageFrameMemoryRecord;

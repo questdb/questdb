@@ -27,23 +27,14 @@ pub extern "system" fn Java_io_questdb_std_Zstd_createCCtx(
     // context; clamping first keeps the return contract (0 = setup failure).
     let clamped = level.clamp(-131072, 22);
     let mut cctx: CCtx<'static> = CCtx::create();
-    if zstd_safe::CCtx::set_parameter(
-        &mut cctx,
-        CParameter::CompressionLevel(clamped),
-    )
-    .is_err()
-    {
+    if zstd_safe::CCtx::set_parameter(&mut cctx, CParameter::CompressionLevel(clamped)).is_err() {
         return 0;
     }
     Box::into_raw(Box::new(cctx)) as jlong
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Zstd_freeCCtx(
-    _env: JNIEnv,
-    _class: JClass,
-    ptr: jlong,
-) {
+pub extern "system" fn Java_io_questdb_std_Zstd_freeCCtx(_env: JNIEnv, _class: JClass, ptr: jlong) {
     if ptr == 0 {
         return;
     }
@@ -78,20 +69,13 @@ pub extern "system" fn Java_io_questdb_std_Zstd_compress(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Zstd_createDCtx(
-    _env: JNIEnv,
-    _class: JClass,
-) -> jlong {
+pub extern "system" fn Java_io_questdb_std_Zstd_createDCtx(_env: JNIEnv, _class: JClass) -> jlong {
     let dctx: DCtx<'static> = DCtx::create();
     Box::into_raw(Box::new(dctx)) as jlong
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Zstd_freeDCtx(
-    _env: JNIEnv,
-    _class: JClass,
-    ptr: jlong,
-) {
+pub extern "system" fn Java_io_questdb_std_Zstd_freeDCtx(_env: JNIEnv, _class: JClass, ptr: jlong) {
     if ptr == 0 {
         return;
     }

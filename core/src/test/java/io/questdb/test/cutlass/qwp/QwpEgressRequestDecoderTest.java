@@ -40,7 +40,9 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.nio.charset.StandardCharsets;
 
@@ -52,6 +54,9 @@ import java.nio.charset.StandardCharsets;
  * native memory and any allocation that escapes the test must fail the build.
  */
 public class QwpEgressRequestDecoderTest {
+
+    @ClassRule
+    public static final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
     public void testCancelBody() throws Exception {
@@ -605,7 +610,7 @@ public class QwpEgressRequestDecoderTest {
     }
 
     private static BindVariableServiceImpl newBindVars() {
-        return new BindVariableServiceImpl(new DefaultTestCairoConfiguration("/tmp/qwp-decoder-test"));
+        return new BindVariableServiceImpl(new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath()));
     }
 
     /**

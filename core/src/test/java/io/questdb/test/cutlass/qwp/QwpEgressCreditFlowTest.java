@@ -207,6 +207,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
                         .withInitialCredit(8 * 1024)) {
                     client.connect();
                     for (int q = 0; q < 5; q++) {
+                        final int queryIndex = q;
                         final int[] rows = {0};
                         client.execute("SELECT * FROM a", new QwpColumnBatchHandler() {
                             @Override
@@ -220,11 +221,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
 
                             @Override
                             public void onError(byte status, String message) {
-                                Assert.fail("query " + queryIndex() + " error: " + message);
-                            }
-
-                            private int queryIndex() {
-                                return 0;
+                                Assert.fail("query " + queryIndex + " error: " + message);
                             }
                         });
                         Assert.assertEquals(3000, rows[0]);

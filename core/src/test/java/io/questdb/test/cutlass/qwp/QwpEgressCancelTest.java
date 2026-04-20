@@ -40,13 +40,27 @@ import org.junit.Test;
  * Coverage for the two egress-specific {@code QUERY_ERROR} status codes:
  * {@code STATUS_CANCELLED} and {@code STATUS_LIMIT_EXCEEDED}.
  * <p>
- * The e2e tests exercise the CANCEL frame path: server receives CANCEL, sets
- * the flag on {@code QwpEgressProcessorState}, {@code streamResults} observes
- * it between batches and aborts with {@code STATUS_CANCELLED}.
- * <p>
  * The unit tests exercise {@code QwpEgressUpgradeProcessor.mapErrorStatus} for
  * every {@code CairoException} classification that should surface as a QWP
  * status (authorization, cancellation, interruption, OOM, generic).
+ * <p>
+ * The e2e tests exercise the CANCEL frame plumbing:
+ * <ul>
+ *   <li>Cancel after completion is a no-op on the next query.</li>
+ *   <li>Cancel from a side thread mid-unbounded-stream does not corrupt the
+ *       connection. Note: for unbounded-credit streams the server is typically
+ *       WRITE-parked on the dispatcher, so the CANCEL frame is only observed
+ *       after the query has already completed -- this test asserts connection
+ *       health post-race, not the status code.</li>
+ *   <li>Cancel with no query in flight is silently dropped.</li>
+ *   <li>Mid-stream cancel under credit-based flow control DOES surface as
+ *       {@code onError(STATUS_CANCELLED, ...)}. Under credit flow the server
+ *       parks cooperatively between batches (fd re-registered for READ), so
+ *       CANCEL is dispatched before the next {@code streamResults} re-entry.</li>
+ * </ul>
+ * Mid-stream {@code STATUS_CANCELLED} delivery for default unbounded-credit
+ * streams is tracked as a Phase-2 item (dispatcher dual-registration for
+ * read+write during streaming).
  */
 public class QwpEgressCancelTest extends AbstractBootstrapTest {
 
@@ -244,13 +258,13 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
         });
     }
 
-    // -- Unit tests for mapErrorStatus ------------------------------------
-
     @Test
     public void testMapErrorStatusAuthorization() {
         CairoException ce = CairoException.authorization().put("denied");
         Assert.assertEquals(STATUS_SECURITY_ERROR, QwpEgressUpgradeProcessor.mapErrorStatus(ce));
     }
+
+    // -- Unit tests for mapErrorStatus ------------------------------------
 
     @Test
     public void testMapErrorStatusCancellation() {
@@ -291,8 +305,73 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testMapErrorStatusSqlException() throws Exception {
+    public void testMapErrorStatusSqlException() {
         io.questdb.griffin.SqlException sx = io.questdb.griffin.SqlException.$(0, "bad sql");
         Assert.assertEquals(STATUS_PARSE_ERROR, QwpEgressUpgradeProcessor.mapErrorStatus(sx));
+    }
+
+    @Test
+    public void testMidStreamCancelUnderCreditFlowSurfacesStatusCancelled() throws Exception {
+        // Under credit-based flow control the server parks between batches waiting
+        // for a CREDIT frame. That park is a cooperative yield -- the dispatcher
+        // re-registers the fd for READ while the stream is suspended, so a CANCEL
+        // frame sent by the client IS observed before the next batch. This is the
+        // one path where mid-stream cancel surfaces as STATUS_CANCELLED under the
+        // current single-op-per-fd dispatcher (the Phase-2 limitation applies to
+        // default unbounded-credit streams where the server is WRITE-parked).
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE big AS (SELECT x AS id, x::TIMESTAMP AS ts "
+                        + "FROM long_sequence(500_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTable("big");
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                                "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+                        .withInitialCredit(1024)) {
+                    client.connect();
+
+                    final int[] batchCount = {0};
+                    final int[] rows = {0};
+                    final byte[] observedStatus = {-1};
+                    final String[] observedMessage = {null};
+                    final boolean[] endSeen = {false};
+                    client.execute("SELECT * FROM big", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            rows[0] += batch.getRowCount();
+                            batchCount[0]++;
+                            if (batchCount[0] == 1) {
+                                // Issue cancel after receiving the first batch. The auto-release
+                                // on return from this callback flushes a CREDIT; the I/O thread's
+                                // next loop iteration then drains pendingCancel and sends CANCEL.
+                                // The server may still deliver one or two more batches before it
+                                // sees the flag on its next streamResults re-entry, but the stream
+                                // must end in STATUS_CANCELLED rather than RESULT_END.
+                                client.cancel();
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            endSeen[0] = true;
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            observedStatus[0] = status;
+                            observedMessage[0] = message;
+                        }
+                    });
+
+                    Assert.assertFalse("stream completed instead of cancelling", endSeen[0]);
+                    Assert.assertEquals(
+                            "expected STATUS_CANCELLED, got status=" + observedStatus[0]
+                                    + ", message=" + observedMessage[0],
+                            STATUS_CANCELLED, observedStatus[0]);
+                    Assert.assertTrue("rows streamed before cancel=" + rows[0],
+                            rows[0] > 0 && rows[0] < 500_000);
+                }
+            }
+        });
     }
 }
