@@ -11222,7 +11222,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select ntile(4) over (order by ts rows between 1 preceding and current row) from tab",
                     7,
-                    "ntile() does not support framing",
+                    "ntile() does not support framing; remove the frame clause",
+                    sqlExecutionContext
+            );
+
+            // GROUPS framing: the error must not mention ROWS/RANGE specifically --
+            // the message should cover every frame clause variant.
+            assertExceptionNoLeakCheck(
+                    "select ntile(4) over (order by ts groups between 1 preceding and current row) from tab",
+                    7,
+                    "ntile() does not support framing; remove the frame clause",
                     sqlExecutionContext
             );
         });
@@ -11600,6 +11609,149 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueRangeRequiresDesignatedTimestamp() throws Exception {
+        // nth_value is not in FRAME_FUNCTIONS (the parametric loop in
+        // testFrameFunctionOverRangeIsOnlySupportedOverDesignatedTimestamp iterates
+        // aggregate-style functions), so the two throw sites that reject RANGE over
+        // a non-designated-timestamp ORDER BY in NthValueDoubleWindowFunctionFactory
+        // require dedicated coverage.
+        assertMemoryLeak(() -> {
+            // Table without a designated timestamp exercises both non-partitioned
+            // and partitioned branches (isOrderedByDesignatedTimestamp() is false).
+            executeWithRewriteTimestamp("create table nodts (ts #TIMESTAMP, i long, val double)", timestampType.getTypeName());
+
+            // Non-partitioned path: NthValueDoubleWindowFunctionFactory.java ~line 289
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 1) over (order by val range between 1 preceding and current row) from nodts",
+                    40,
+                    "RANGE is supported only for queries ordered by designated timestamp",
+                    sqlExecutionContext
+            );
+
+            // Partitioned path: NthValueDoubleWindowFunctionFactory.java ~line 141
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 1) over (partition by i order by val range between 1 preceding and current row) from nodts",
+                    55,
+                    "RANGE is supported only for queries ordered by designated timestamp",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedWithNulls() throws Exception {
+        // Covers NULL-argument propagation for all five partitioned nth_value variants.
+        // testNthValueWithNulls only exercises the non-partitioned
+        // NthValueOverUnboundedRowsFrameFunction path; the map-backed partitioned
+        // classes have parallel NULL-handling code (NaN stored in native memory or
+        // in map slots) that needs separate coverage.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("""
+                    insert into tab values
+                    (1, 1, 10.0),
+                    (2, 1, null),
+                    (3, 1, 30.0),
+                    (4, 2, null),
+                    (5, 2, 20.0),
+                    (6, 2, null)""");
+
+            // Variant 1: NthValueOverPartitionFunction (whole partition, no ORDER BY, default frame).
+            // nth_value(val, 2) per partition: i=1 -> row 2 = null, i=2 -> row 2 = 20.0.
+            // Without ORDER BY the result is constant per partition.
+            assertQueryNoLeakCheck(
+                    "i\tnv\n" +
+                            "1\tnull\n" +
+                            "1\tnull\n" +
+                            "1\tnull\n" +
+                            "2\t20.0\n" +
+                            "2\t20.0\n" +
+                            "2\t20.0\n",
+                    "select i, nth_value(val, 2) over (partition by i) nv from tab",
+                    null,
+                    true,
+                    true
+            );
+
+            // Variant 2: NthValueOverUnboundedPartitionRowsFrameFunction
+            // (unbounded preceding to current row). nth_value(val, 2).
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t20.0
+                            1970-01-01T00:00:00.000006Z\t2\t20.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Variant 3: NthValueOverPartitionRangeFrameFunction (bounded RANGE over
+            // designated timestamp). Uses a 1-second window so the frame behaves
+            // identically under both microsecond and nanosecond timestamp precision
+            // (all partition rows fall within the frame). nth_value(val, 1) therefore
+            // returns the first row's val per partition: 10.0 for i=1, null for i=2.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t10.0
+                            1970-01-01T00:00:00.000002Z\t1\t10.0
+                            1970-01-01T00:00:00.000003Z\t1\t10.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\tnull
+                            """),
+                    "select ts, i, nth_value(val, 1) over (partition by i order by ts range between 1 second preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Variant 4: NthValueOverPartitionRowsFrameFunction (bounded ROWS).
+            // nth_value(val, 1) with rows between 1 preceding and current row.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t10.0
+                            1970-01-01T00:00:00.000002Z\t1\t10.0
+                            1970-01-01T00:00:00.000003Z\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\t20.0
+                            """),
+                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 1 preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Variant 5: NthValueOverPartitionRowsFrameUnboundedFunction
+            // (unbounded preceding to K preceding). Locks the n=1 value; emits from
+            // count >= n + K = 2 onward. i=1 locks val@ts=1 = 10. i=2 locks val@ts=4 = null.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t10.0
+                            1970-01-01T00:00:00.000003Z\t1\t10.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\tnull
+                            """),
+                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testCumeDistRejectsFraming() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
@@ -11607,7 +11759,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select cume_dist() over (order by ts rows between 1 preceding and current row) from tab",
                     7,
-                    "cume_dist() does not support framing",
+                    "cume_dist() does not support framing; remove the frame clause",
+                    sqlExecutionContext
+            );
+
+            // GROUPS framing: the error must not mention ROWS/RANGE specifically --
+            // the message should cover every frame clause variant.
+            assertExceptionNoLeakCheck(
+                    "select cume_dist() over (order by ts groups between 1 preceding and current row) from tab",
+                    7,
+                    "cume_dist() does not support framing; remove the frame clause",
                     sqlExecutionContext
             );
         });
@@ -12347,12 +12508,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
-            // CumeDistFunction (ordered, no partition)
+            // CumeDistFunction (ordered, no partition) -- toPlan drops ORDER BY
+            // to match the codebase convention (rank/dense_rank/row_number/ntile/nth_value).
             assertPlanNoLeakCheck(
                     "select ts, cume_dist() over (order by ts) from tab",
                     """
                             CachedWindow
-                              unorderedFunctions: [cume_dist() over (order by [ts])]
+                              unorderedFunctions: [cume_dist() over ()]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
@@ -12369,12 +12531,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                             """
             );
-            // CumeDistOverPartitionFunction
+            // CumeDistOverPartitionFunction -- toPlan drops ORDER BY.
             assertPlanNoLeakCheck(
                     "select ts, i, cume_dist() over (partition by i order by ts) from tab",
                     """
                             CachedWindow
-                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                              unorderedFunctions: [cume_dist() over (partition by [i])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab

@@ -85,7 +85,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (!windowContext.isDefaultFrame()) {
-            throw SqlException.$(position, "ntile() does not support framing; remove ROWS/RANGE clause");
+            throw SqlException.$(position, "ntile() does not support framing; remove the frame clause");
         }
 
         Function bucketCountFunc = args.get(0);

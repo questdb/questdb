@@ -100,7 +100,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (!windowContext.isDefaultFrame()) {
-            throw SqlException.$(position, "cume_dist() does not support framing; remove ROWS/RANGE clause");
+            throw SqlException.$(position, "cume_dist() does not support framing; remove the frame clause");
         }
 
         if (windowContext.isOrdered()) {
@@ -144,7 +144,6 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         private int columnIndex;
         private long count = 1;
         private long lastRecordOffset;
-        private ObjList<ExpressionNode> orderBy;
         private long prevRank;
         private long rank;
         private ObjList<DirectIntList> rankMaps;
@@ -183,7 +182,6 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
             this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
             this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
-            this.orderBy = orderBy;
         }
 
         @Override
@@ -252,11 +250,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
-            sink.val("()");
-            sink.val(" over (");
-            sink.val("order by ");
-            sink.val(orderBy);
-            sink.val(')');
+            sink.val("() over ()");
         }
 
         @Override
@@ -365,7 +359,6 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         private final RecordSink partitionBySink;
         private int columnIndex;
         private Map map;
-        private ObjList<ExpressionNode> orderBy;
         private ObjList<DirectIntList> rankMaps;
         private RecordComparator recordComparator;
 
@@ -427,7 +420,6 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             );
             this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
             this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
-            this.orderBy = orderBy;
         }
 
         @Override
@@ -557,8 +549,6 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
-            sink.val(" order by ");
-            sink.val(orderBy);
             sink.val(')');
         }
 
