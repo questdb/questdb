@@ -38,7 +38,6 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
@@ -46,23 +45,11 @@ import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.PostingSealPurgeTask;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.PriorityQueue;
 
-/**
- * Background worker that drains the {@link PostingSealPurgeTask} queue,
- * persists each task to the {@code sys.posting_seal_purge_log} system table
- * (so that a process restart can pick up unfinished work), and retries until
- * the {@link TxnScoreboard} signals it is safe to delete the superseded
- * sealed-version files.
- * <p>
- * Modeled on {@link ColumnPurgeJob}: the queue is drained into an in-memory
- * priority retry queue keyed on next-run-time; failed purges are re-scheduled
- * with exponential backoff. Successful purges write back a {@code completed}
- * timestamp to the log row (keyed by the row id stored on the retry task at
- * insert time).
- */
 public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     private static final int COLUMN_NAME_COLUMN = 3;
@@ -78,7 +65,8 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private static final int TABLE_NAME_COLUMN = 1;
     private static final int TO_TABLE_TXN_COLUMN = 10;
     private final MicrosecondClock clock;
-    private final Path completedPath; // scratch for direct `completed` column writes
+    private final Path completedPath;
+    private final int completedWriterIndex;
     private final FilesFacade ff;
     private final RingQueue<PostingSealPurgeTask> inQueue;
     private final SCSequence inSubSequence;
@@ -88,11 +76,10 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private final double retryDelayMultiplier;
     private final PriorityQueue<RetryEntry> retryQueue;
     private final TableToken tableToken;
-    private long completedFd = -1; // cached fd of `completed` column file
-    private long completedFdPartitionTimestamp = Long.MIN_VALUE; // partition behind completedFd
-    private int completedWriterIndex = -1; // cached writer-index of `completed` column
-    private int inErrorCount;
-    private long longBuf; // 8-byte scratch for direct ff.write of completionTime
+    private long completedFd = -1;
+    private long completedFdPartitionTimestamp = Long.MIN_VALUE;
+    private int errorCount;
+    private long longBuf;
     private PostingSealPurgeOperator operator;
     private SqlExecutionContextImpl sqlExecutionContext;
     private WeakMutableObjectPool<RetryEntry> taskPool;
@@ -166,10 +153,12 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         this.taskPool = Misc.free(taskPool);
     }
 
+    @TestOnly
     public String getLogTableName() {
         return tableToken == null ? null : tableToken.getTableName();
     }
 
+    @TestOnly
     public int getOutstandingPurgeTasks() {
         return retryQueue.size();
     }
@@ -188,6 +177,18 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             ff.close(completedFd);
             completedFd = -1;
             completedFdPartitionTimestamp = Long.MIN_VALUE;
+        }
+    }
+
+    private void commit() {
+        if (writer != null) {
+            try {
+                writer.commit();
+            } catch (Throwable th) {
+                LOG.error().$("posting seal purge: log commit failed, disabling writer [err=").$(th).I$();
+                errorCount++;
+                writer = Misc.free(writer);
+            }
         }
     }
 
@@ -223,6 +224,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             return true;
         } catch (Throwable th) {
             LOG.error().$("posting seal purge: cannot open completed-column file [err=").$(th).I$();
+            errorCount++;
             closeCompletedFd();
             return false;
         }
@@ -246,53 +248,46 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                         .$(", offset=").$(offset)
                         .$(", fd=").$(completedFd)
                         .I$();
-                // Re-open on the next attempt in case the fd is in a bad state.
+                errorCount++;
                 closeCompletedFd();
             }
         } catch (Throwable th) {
             LOG.error().$("posting seal purge: failed to mark row complete [rowId=").$(rowId).$(", err=").$(th).I$();
+            errorCount++;
             closeCompletedFd();
         }
     }
 
-    /**
-     * Persists a freshly-arrived task to the system table and remembers the
-     * row id on the retry entry so the eventual {@code completed} timestamp
-     * update can be done by row id (no SQL required).
-     */
     private void persistTask(RetryEntry entry) {
         if (writer == null) {
             return;
         }
         try {
+            TableToken tok = entry.getTableToken();
             TableWriter.Row row = writer.newRow(entry.scheduledAt);
-            row.putSym(TABLE_NAME_COLUMN, entry.tableToken.getDirName());
-            row.putInt(TABLE_ID_COLUMN, entry.tableToken.getTableId());
-            row.putSym(COLUMN_NAME_COLUMN, entry.task.getIndexColumnName());
-            row.putLong(POSTING_COLUMN_NAME_TXN_COLUMN, entry.task.getPostingColumnNameTxn());
-            row.putLong(SEAL_TXN_COLUMN, entry.task.getSealTxn());
-            row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, entry.task.getPartitionTimestamp());
-            row.putLong(PARTITION_NAME_TXN_COLUMN, entry.task.getPartitionNameTxn());
-            row.putInt(PARTITION_BY_COLUMN, entry.task.getPartitionBy());
-            row.putLong(FROM_TABLE_TXN_COLUMN, entry.task.getFromTableTxn());
-            row.putLong(TO_TABLE_TXN_COLUMN, entry.task.getToTableTxn());
-            // `completed` is left null until the row is updated post-purge.
+            row.putSym(TABLE_NAME_COLUMN, tok.getDirName());
+            row.putInt(TABLE_ID_COLUMN, tok.getTableId());
+            row.putSym(COLUMN_NAME_COLUMN, entry.getIndexColumnName());
+            row.putLong(POSTING_COLUMN_NAME_TXN_COLUMN, entry.getPostingColumnNameTxn());
+            row.putLong(SEAL_TXN_COLUMN, entry.getSealTxn());
+            row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, entry.getPartitionTimestamp());
+            row.putLong(PARTITION_NAME_TXN_COLUMN, entry.getPartitionNameTxn());
+            row.putInt(PARTITION_BY_COLUMN, entry.getPartitionBy());
+            row.putLong(FROM_TABLE_TXN_COLUMN, entry.getFromTableTxn());
+            row.putLong(TO_TABLE_TXN_COLUMN, entry.getToTableTxn());
             row.append();
             entry.logRowId = Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1);
         } catch (Throwable th) {
-            LOG.error().$("posting seal purge: failed to persist task — log writer disabled [err=").$(th).I$();
+            LOG.error().$("posting seal purge: failed to persist task, log writer disabled [err=").$(th).I$();
+            errorCount++;
             writer = Misc.free(writer);
         }
     }
 
-    /**
-     * Drains the queue, persists each task to the log table, and pushes it
-     * onto the retry queue. Bounded loop — terminates on queue-empty (cursor &lt; 0).
-     */
     private boolean processInQueue() {
         boolean useful = false;
         long now = clock.getTicks();
-        while (true) {
+        while (writer != null) {
             long cursor = inSubSequence.next();
             if (cursor < -1) {
                 Os.pause();
@@ -303,32 +298,20 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             }
             PostingSealPurgeTask src = inQueue.get(cursor);
             RetryEntry entry = taskPool.pop();
-            entry.copyFrom(src, now);
+            // First attempt immediate; retryDelay seeded with config base so
+            // the first-failure backoff multiplies from a non-zero value.
+            entry.copyFrom(src, now, retryDelay, now);
             inSubSequence.done(cursor);
             persistTask(entry);
-            calculateNextRunTime(entry, now);
-            // First attempt is immediate.
-            entry.nextRunTime = now;
             retryQueue.add(entry);
             useful = true;
         }
-        if (useful && writer != null) {
-            try {
-                writer.commit();
-            } catch (Throwable th) {
-                LOG.error().$("posting seal purge: log commit failed [err=").$(th).I$();
-                writer = Misc.free(writer);
-            }
+        if (useful) {
+            commit();
         }
         return useful;
     }
 
-    /**
-     * Walks the retry queue, attempting purge for every entry whose
-     * next-run-time has elapsed. Successful purges write back the
-     * {@code completed} timestamp (best-effort) and return the entry to the
-     * pool; failed purges are re-queued with an increased backoff.
-     */
     private boolean processRetryQueue() {
         boolean useful = false;
         long now = clock.getTicks();
@@ -341,13 +324,16 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             useful = true;
             boolean done;
             try {
-                done = operator.purge(head.task);
+                done = operator.purge(head);
             } catch (Throwable th) {
                 LOG.error().$("posting seal purge: operator threw, re-queuing [err=").$(th).I$();
                 done = false;
             }
+            // Refresh after the I/O so scheduling and completed timestamp
+            // reflect the time purge actually took.
+            now = clock.getTicks();
             if (done) {
-                markCompleted(head.logRowId, clock.getTicks());
+                markCompleted(head.logRowId, now);
                 head.clear();
                 taskPool.push(head);
             } else {
@@ -355,25 +341,14 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                 retryQueue.add(head);
             }
         }
-        if (useful && writer != null) {
-            try {
-                writer.commit();
-            } catch (Throwable th) {
-                LOG.error().$("posting seal purge: log commit failed during retry [err=").$(th).I$();
-                writer = Misc.free(writer);
-            }
+        if (useful) {
+            commit();
         }
         return useful;
     }
 
-    /**
-     * Reads every row in {@code sys.posting_seal_purge_log} whose
-     * {@code completed} is null and re-queues each as a fresh retry entry.
-     * Without this, tasks that were enqueued before a process restart would
-     * be lost (the in-memory queue is empty at startup).
-     */
     private void recoverOpenTasks(CairoEngine engine) {
-        RecordCursorFactory factory = null;
+        RecordCursorFactory factory;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             factory = compiler.query()
                     .$("SELECT * FROM \"")
@@ -385,99 +360,115 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             LOG.advisory().$("posting seal purge: recovery query failed, starting empty [err=").$(th).I$();
             return;
         }
+        int succeeded = 0;
+        int failed = 0;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Record rec = cursor.getRecord();
-            int recovered = 0;
-            long now = clock.getTicks();
-            while (cursor.hasNext()) {
-                CharSequence tableDirName = rec.getSymA(TABLE_NAME_COLUMN);
-                int tableId = rec.getInt(TABLE_ID_COLUMN);
-                TableToken token = engine.getTableTokenByDirName(tableDirName);
-                if (token == null || token.getTableId() != tableId) {
-                    // Table was dropped — no files to purge.
-                    continue;
+            RetryEntry entry = taskPool.pop();
+            try {
+                while (cursor.hasNext()) {
+                    CharSequence tableDirName = rec.getSymA(TABLE_NAME_COLUMN);
+                    int tableId = rec.getInt(TABLE_ID_COLUMN);
+                    TableToken token = engine.getTableTokenByDirName(tableDirName);
+                    if (token == null || token.getTableId() != tableId) {
+                        continue;
+                    }
+                    String columnName = io.questdb.std.Chars.toString(rec.getSymA(COLUMN_NAME_COLUMN));
+                    entry.of(
+                            token,
+                            columnName,
+                            rec.getLong(POSTING_COLUMN_NAME_TXN_COLUMN),
+                            rec.getLong(SEAL_TXN_COLUMN),
+                            rec.getTimestamp(PARTITION_TIMESTAMP_COLUMN),
+                            rec.getLong(PARTITION_NAME_TXN_COLUMN),
+                            rec.getInt(PARTITION_BY_COLUMN),
+                            rec.getLong(FROM_TABLE_TXN_COLUMN),
+                            rec.getLong(TO_TABLE_TXN_COLUMN)
+                    );
+                    boolean done;
+                    try {
+                        done = operator.purge(entry);
+                    } catch (Throwable th) {
+                        LOG.error().$("posting seal purge: recovery purge failed [err=").$(th).I$();
+                        done = false;
+                    }
+                    if (done) {
+                        succeeded++;
+                    } else {
+                        failed++;
+                    }
                 }
-                RetryEntry entry = taskPool.pop();
-                String columnName = io.questdb.std.Chars.toString(rec.getSymA(COLUMN_NAME_COLUMN));
-                entry.task.of(
-                        token,
-                        columnName,
-                        rec.getLong(POSTING_COLUMN_NAME_TXN_COLUMN),
-                        rec.getLong(SEAL_TXN_COLUMN),
-                        rec.getTimestamp(PARTITION_TIMESTAMP_COLUMN),
-                        rec.getLong(PARTITION_NAME_TXN_COLUMN),
-                        rec.getInt(PARTITION_BY_COLUMN),
-                        rec.getLong(FROM_TABLE_TXN_COLUMN),
-                        rec.getLong(TO_TABLE_TXN_COLUMN)
-                );
-                entry.tableToken = token;
-                entry.scheduledAt = rec.getTimestamp(0);
-                entry.logRowId = rec.getUpdateRowId();
-                entry.retryDelay = retryDelay;
-                entry.nextRunTime = now;
-                retryQueue.add(entry);
-                recovered++;
+            } finally {
+                entry.clear();
+                taskPool.push(entry);
             }
-            if (recovered > 0) {
-                LOG.info().$("posting seal purge: recovered ").$(recovered).$(" pending tasks from log table").$();
+            if (succeeded + failed > 0) {
+                LOG.info().$("posting seal purge: recovery done [succeeded=").$(succeeded)
+                        .$(", failed=").$(failed).I$();
             }
         } catch (Throwable th) {
             LOG.error().$("posting seal purge: recovery cursor failed [err=").$(th).I$();
         } finally {
             Misc.free(factory);
         }
+
+        // Only truncate when every recovered task purged successfully. Leaving
+        // rows in place ensures the next startup retries failed tasks; any
+        // missing files are harmless because removeQuiet tolerates ENOENT.
+        if (failed == 0 && succeeded > 0 && writer != null) {
+            try {
+                writer.truncate();
+            } catch (Throwable th) {
+                LOG.error().$("posting seal purge: failed to truncate log table [err=").$(th).I$();
+            }
+        }
     }
 
     @Override
     protected boolean runSerially() {
-        if (inErrorCount >= MAX_ERRORS) {
+        if (errorCount >= MAX_ERRORS) {
             return false;
         }
+        int before = errorCount;
+        boolean queueUseful = false;
+        boolean retryUseful = false;
         try {
-            boolean queueUseful = processInQueue();
-            boolean retryUseful = processRetryQueue();
-            inErrorCount = 0;
-            return queueUseful || retryUseful;
+            queueUseful = processInQueue();
+            retryUseful = processRetryQueue();
         } catch (Throwable th) {
             LOG.error().$("posting seal purge: job loop failed [err=").$(th).I$();
-            inErrorCount++;
-            if (inErrorCount == MAX_ERRORS) {
-                if (!retryQueue.isEmpty()) {
-                    LOG.error().$("posting seal purge: too many errors, dropping in-memory retry queue (rows in log table remain)").$();
-                    retryQueue.clear();
-                    inErrorCount = 0;
-                } else {
-                    LOG.error().$("posting seal purge: too many errors, disabling job (restart QuestDB to re-enable)").$();
-                    close();
-                }
-            }
+            errorCount++;
+        }
+        if (errorCount == before) {
+            errorCount = 0;
+        } else if (errorCount >= MAX_ERRORS) {
+            LOG.error().$("posting seal purge: too many errors, disabling job (restart QuestDB to re-enable)").$();
+            close();
             return false;
         }
+        return queueUseful || retryUseful;
     }
 
-    /**
-     * Retry-queue entry — a {@link PostingSealPurgeTask} plus scheduling
-     * fields. Pooled (no per-task allocation in steady state).
-     */
-    static final class RetryEntry implements Mutable {
-        final PostingSealPurgeTask task = new PostingSealPurgeTask();
+    static final class RetryEntry extends PostingSealPurgeTask {
         long logRowId = -1;
         long nextRunTime;
         long retryDelay;
         long scheduledAt;
-        TableToken tableToken;
 
         @Override
         public void clear() {
-            task.clear();
-            tableToken = null;
+            super.clear();
             logRowId = -1;
+            nextRunTime = 0L;
+            retryDelay = 0L;
+            scheduledAt = 0L;
         }
 
-        void copyFrom(PostingSealPurgeTask src, long now) {
-            this.tableToken = src.getTableToken();
-            this.scheduledAt = now;
-            this.task.of(
+        void copyFrom(PostingSealPurgeTask src, long scheduledAt, long retryDelay, long nextRunTime) {
+            this.scheduledAt = scheduledAt;
+            this.retryDelay = retryDelay;
+            this.nextRunTime = nextRunTime;
+            of(
                     src.getTableToken(),
                     src.getIndexColumnName(),
                     src.getPostingColumnNameTxn(),
