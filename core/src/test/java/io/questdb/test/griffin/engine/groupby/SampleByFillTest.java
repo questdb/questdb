@@ -238,6 +238,42 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillKeyedDecimalNarrow() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keyed SAMPLE BY across the four narrow decimal widths. DECIMAL(2,0),
+            // (4,0), (9,0), and (18,0) encode as DECIMAL8, DECIMAL16, DECIMAL32,
+            // and DECIMAL64 respectively, so each block exercises a distinct
+            // FillRecord.getDecimal{8,16,32,64} FILL_KEY dispatch. The fill row at
+            // 01:00 for each key must carry the decimal key value, not its null
+            // sentinel.
+            String expected = """
+                    ts\tk\tsum
+                    2024-01-01T00:00:00.000000Z\t1\t10.0
+                    2024-01-01T00:00:00.000000Z\t2\t20.0
+                    2024-01-01T01:00:00.000000Z\t1\tnull
+                    2024-01-01T01:00:00.000000Z\t2\tnull
+                    2024-01-01T02:00:00.000000Z\t1\t11.0
+                    2024-01-01T02:00:00.000000Z\t2\t21.0
+                    """;
+            int[] precisions = {2, 4, 9, 18};
+            for (int precision : precisions) {
+                execute("DROP TABLE IF EXISTS t");
+                execute("CREATE TABLE t (k DECIMAL(" + precision + ", 0), v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO t VALUES " +
+                        "(1::DECIMAL(" + precision + ",0), 10.0, '2024-01-01T00:00:00.000000Z')," +
+                        "(2::DECIMAL(" + precision + ",0), 20.0, '2024-01-01T00:00:00.000000Z')," +
+                        "(1::DECIMAL(" + precision + ",0), 11.0, '2024-01-01T02:00:00.000000Z')," +
+                        "(2::DECIMAL(" + precision + ",0), 21.0, '2024-01-01T02:00:00.000000Z')");
+                assertQueryNoLeakCheck(
+                        expected,
+                        "SELECT ts, k, sum(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                        "ts", false, false
+                );
+            }
+        });
+    }
+
+    @Test
     public void testFillKeyedLong256() throws Exception {
         assertMemoryLeak(() -> {
             // Keyed SAMPLE BY with a LONG256 key column. Covers FillRecord.getLong256A,
