@@ -3394,15 +3394,79 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Key columns get FILL_KEY and do NOT consume a fill expression index.
             final ObjList<QueryColumn> bottomUpCols = model.getBottomUpColumns();
 
+            // The user's fill-value list is keyed by user SELECT order (the order
+            // in which non-key aggregate columns appear in bottomUpCols), but
+            // SqlOptimiser.propagateTopDownColumns0 may reorder the inner
+            // sample-by model's columns based on outer-query DFS, so factory
+            // metadata order is NOT guaranteed to match user SELECT order.
+            // GROUP BY consumes the reorder correctly, but positional
+            // assignment of fill values here would land a fill spec on the
+            // wrong aggregate. Precompute a lookup from factory-metadata
+            // column index to user-fill-list index by walking bottomUpCols
+            // in user order and matching via alias. Shared by both the bare
+            // FILL(PREV) branch (decides FILL_KEY vs FILL_PREV_SELF) and the
+            // per-column branch (decides fill-spec slot).
+            final IntList factoryColToUserFillIdx = new IntList(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                factoryColToUserFillIdx.add(-1);
+            }
+            int userFillIdx = 0;
+            for (int i = 0, n = bottomUpCols.size(); i < n; i++) {
+                final QueryColumn qc = bottomUpCols.getQuick(i);
+                // Key columns and the timestamp column do NOT consume a user
+                // fill-value index. Detect them directly from the QueryColumn
+                // AST (LITERAL = column reference = key, or timestamp_floor
+                // function = timestamp column) rather than via isKeyColumn on
+                // a factory index — bottomUpCols is indexed in user order
+                // and factory order may diverge after propagateTopDownColumns0.
+                final ExpressionNode ast = qc.getAst();
+                if (ast.type == ExpressionNode.LITERAL) {
+                    continue;
+                }
+                if (SqlUtil.isTimestampFloorFunction(ast)) {
+                    continue;
+                }
+                // This bottomUp column is an aggregate and therefore consumes
+                // one slot in the user's fill-value list, regardless of whether
+                // the outer projection keeps the column in the factory metadata.
+                // When the column IS present in factory metadata, record the
+                // mapping from factory index to user fill idx; when it is not,
+                // skip the mapping but still advance userFillIdx so subsequent
+                // aggregates land on the correct fill value.
+                final CharSequence qcAlias = qc.getAlias();
+                if (qcAlias != null) {
+                    final int factoryIdx = groupByMetadata.getColumnIndexQuiet(qcAlias);
+                    if (factoryIdx >= 0 && factoryIdx != timestampIndex) {
+                        factoryColToUserFillIdx.setQuick(factoryIdx, userFillIdx);
+                    }
+                }
+                userFillIdx++;
+            }
+
+            // aggNonKeyCount counts every non-key, non-timestamp column in
+            // the user's SELECT list, which is the number of fill values
+            // the user must provide in per-column mode. Computed from
+            // bottomUpCols (user order) rather than from factory metadata
+            // because outer projection may drop aggregate columns while
+            // the user-facing fill-value grammar still requires one spec
+            // per user aggregate.
+            final int aggNonKeyCount = userFillIdx;
+
             if (fillValuesExprs.size() == 1
                     && isPrevKeyword(fillValuesExprs.getQuick(0).token)
                     && fillValuesExprs.getQuick(0).type == ExpressionNode.LITERAL) {
-                // bare FILL(PREV) — key columns get FILL_KEY, aggregates fill from self
-                for (int i = 0; i < columnCount; i++) {
-                    if (i == timestampIndex) {
+                // bare FILL(PREV): classify each factory-order column via the
+                // user-fill-idx mapping rather than via isKeyColumn on a factory
+                // index. An entry of -1 means the factory column does not
+                // correspond to a user aggregate slot (it is either a key column
+                // or the timestamp floor), so FILL_KEY applies; a mapping >= 0
+                // marks an aggregate that fills from its own prior value.
+                // propagateTopDownColumns0 reorder is now reorder-safe.
+                for (int col = 0; col < columnCount; col++) {
+                    if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                         constantFillFuncs.add(NullConstant.NULL);
-                    } else if (isKeyColumn(i, bottomUpCols, timestampIndex)) {
+                    } else if (factoryColToUserFillIdx.getQuick(col) < 0) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
                         constantFillFuncs.add(NullConstant.NULL);
                     } else {
@@ -3412,62 +3476,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             } else {
                 // Per-column fill spec — key columns get FILL_KEY and skip fillIdx.
-                //
-                // The user's fill-value list is keyed by user SELECT order (the order
-                // in which non-key aggregate columns appear in bottomUpCols), but
-                // SqlOptimiser.propagateTopDownColumns0 may reorder the inner
-                // sample-by model's columns based on outer-query DFS, so factory
-                // metadata order is NOT guaranteed to match user SELECT order.
-                // GROUP BY consumes the reorder correctly, but positional
-                // assignment of fill values here would land a fill spec on the
-                // wrong aggregate. Precompute a lookup from factory-metadata
-                // column index to user-fill-list index by walking bottomUpCols
-                // in user order and matching via alias.
-                final IntList factoryColToUserFillIdx = new IntList(columnCount);
-                for (int i = 0; i < columnCount; i++) {
-                    factoryColToUserFillIdx.add(-1);
-                }
-                int userFillIdx = 0;
-                for (int i = 0, n = bottomUpCols.size(); i < n; i++) {
-                    final QueryColumn qc = bottomUpCols.getQuick(i);
-                    // Key columns and the timestamp column do NOT consume a user
-                    // fill-value index. Detect them directly from the QueryColumn
-                    // AST (LITERAL = column reference = key, or timestamp_floor
-                    // function = timestamp column) rather than via isKeyColumn on
-                    // a factory index — bottomUpCols is indexed in user order
-                    // and factory order may diverge after propagateTopDownColumns0.
-                    final ExpressionNode ast = qc.getAst();
-                    if (ast.type == ExpressionNode.LITERAL) {
-                        continue;
-                    }
-                    if (SqlUtil.isTimestampFloorFunction(ast)) {
-                        continue;
-                    }
-                    // This bottomUp column is an aggregate and therefore consumes
-                    // one slot in the user's fill-value list, regardless of whether
-                    // the outer projection keeps the column in the factory metadata.
-                    // When the column IS present in factory metadata, record the
-                    // mapping from factory index to user fill idx; when it is not,
-                    // skip the mapping but still advance userFillIdx so subsequent
-                    // aggregates land on the correct fill value.
-                    final CharSequence qcAlias = qc.getAlias();
-                    if (qcAlias != null) {
-                        final int factoryIdx = groupByMetadata.getColumnIndexQuiet(qcAlias);
-                        if (factoryIdx >= 0 && factoryIdx != timestampIndex) {
-                            factoryColToUserFillIdx.setQuick(factoryIdx, userFillIdx);
-                        }
-                    }
-                    userFillIdx++;
-                }
-
-                // aggNonKeyCount counts every non-key, non-timestamp column in
-                // the user's SELECT list, which is the number of fill values
-                // the user must provide in per-column mode. Computed from
-                // bottomUpCols (user order) rather than from factory metadata
-                // because outer projection may drop aggregate columns while
-                // the user-facing fill-value grammar still requires one spec
-                // per user aggregate.
-                final int aggNonKeyCount = userFillIdx;
+                // factoryColToUserFillIdx and aggNonKeyCount are already built above
+                // (shared with the bare FILL(PREV) branch).
 
                 // WR-04: track the ExpressionNode that established each column's
                 // fill mode so the chain-rejection error can point at the specific
@@ -3561,14 +3571,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Defect 3: in per-column mode, the user must provide one fill
                 // value per non-key aggregate column. Only bare FILL(PREV) and
                 // FILL(NULL) broadcast across all aggregates; a single non-null
-                // constant (FILL(0), FILL(42)) must not broadcast and must be
-                // rejected as under-specified. Rejecting here matches master's
-                // grammar and points at the first fill expression for context.
+                // constant (FILL(0), FILL(42)) and FILL(PREV(colX)) must not
+                // broadcast and must be rejected as under-specified. Rejecting
+                // here matches master's grammar and points at the first fill
+                // expression for context. Bare PREV parses as LITERAL, whereas
+                // PREV(colX) parses as FUNCTION — the broadcast predicate
+                // therefore demands LITERAL for PREV, keeping NULL broadcastable
+                // (NULL only has a LITERAL form).
                 if (fillValuesExprs.size() < aggNonKeyCount) {
                     final ExpressionNode only = fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null;
-                    final boolean isBroadcastable = only != null
-                            && (isPrevKeyword(only.token) || isNullKeyword(only.token));
-                    if (!isBroadcastable) {
+                    final boolean isBareBroadcastable = only != null
+                            && ((isPrevKeyword(only.token) && only.type == ExpressionNode.LITERAL)
+                                    || isNullKeyword(only.token));
+                    if (!isBareBroadcastable) {
                         throw SqlException.$(fillValuesExprs.getQuick(0).position, "not enough fill values");
                     }
                 }
@@ -3669,6 +3684,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfNew(groupByFactory.getMetadata());
             fillMetadata.setTimestampIndex(timestampIndex);
 
+            // Free any residual non-transferred fill functions. Transferred
+            // slots are already null (see ownership transfer at
+            // fillValues.setQuick(fillIdx, null) in the per-column branch
+            // above); Misc.freeObjList skips nulls. The catch block below
+            // also calls Misc.freeObjList(fillValues), but on the success
+            // path every slot is null by the time this point is reached.
+            Misc.freeObjList(fillValues);
             return new SampleByFillRecordCursorFactory(
                     configuration,
                     fillMetadata,
