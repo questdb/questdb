@@ -141,10 +141,9 @@ public class PostingGenLookup implements Closeable {
                 long genAddr = valueMem.addressOf(genFileOffset);
                 for (int i = 0; i < activeKeyCount; i++) {
                     int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
-                    if (key < kc) {
-                        int prev = Unsafe.getUnsafe().getInt(countsAddr + (long) key * Integer.BYTES);
-                        Unsafe.getUnsafe().putInt(countsAddr + (long) key * Integer.BYTES, prev + 1);
-                    }
+                    assert key >= 0 && key < kc : "posting index sparse gen key out of range";
+                    int prev = Unsafe.getUnsafe().getInt(countsAddr + (long) key * Integer.BYTES);
+                    Unsafe.getUnsafe().putInt(countsAddr + (long) key * Integer.BYTES, prev + 1);
                 }
             }
 
@@ -199,12 +198,11 @@ public class PostingGenLookup implements Closeable {
                 long genAddr = valueMem.addressOf(genFileOffsets.getQuick(g));
                 for (int i = 0; i < activeKeyCount; i++) {
                     int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
-                    if (key < kc) {
-                        int pos = Unsafe.getUnsafe().getInt(countsAddr + (long) key * Integer.BYTES);
-                        Unsafe.getUnsafe().putInt(countsAddr + (long) key * Integer.BYTES, pos + 1);
-                        Unsafe.getUnsafe().putInt(genIndicesAddr + (long) pos * Integer.BYTES, g);
-                        Unsafe.getUnsafe().putInt(posInGenAddr + (long) pos * Integer.BYTES, i);
-                    }
+                    assert key >= 0 && key < kc;
+                    int pos = Unsafe.getUnsafe().getInt(countsAddr + (long) key * Integer.BYTES);
+                    Unsafe.getUnsafe().putInt(countsAddr + (long) key * Integer.BYTES, pos + 1);
+                    Unsafe.getUnsafe().putInt(genIndicesAddr + (long) pos * Integer.BYTES, g);
+                    Unsafe.getUnsafe().putInt(posInGenAddr + (long) pos * Integer.BYTES, i);
                 }
             }
 
@@ -300,7 +298,7 @@ public class PostingGenLookup implements Closeable {
      * Called from ensureGenLookup() after snapshotMetadata() has populated the arrays.
      */
     void buildLookupIfNeeded(MemoryMR valueMem, int keyCount, int genCount) {
-        if (genCount <= builtForGenCount && this.keyCount == keyCount) {
+        if (genCount == builtForGenCount && this.keyCount == keyCount) {
             return;
         }
         this.keyCount = keyCount;

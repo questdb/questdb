@@ -110,6 +110,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int blockBufferCapacity = 0;
         private int blockBufferEnd;
         private int blockBufferPos;
+        private boolean bufferRangeChecked;
         private int constantDeltaRemaining;
         private long constantDeltaStep;
         private long constantDeltaValue;
@@ -162,7 +163,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         public boolean hasNext() {
             while (true) {
                 // Serve from constant-delta stream (bitWidth=0 block)
-                while (constantDeltaRemaining > 0) {
+                if (constantDeltaRemaining > 0) {
                     long value = constantDeltaValue;
                     constantDeltaValue += constantDeltaStep;
                     constantDeltaRemaining--;
@@ -170,31 +171,42 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         constantDeltaRemaining = 0;
                         return false;
                     }
-                    if (value >= minValue) {
-                        next = value;
-                        if (coverCount > 0) sidecarOrdinal++;
-                        cachedSidecarIdx = sidecarValueIdx();
-                        return true;
+                    next = value;
+                    if (coverCount > 0) {
+                        cachedSidecarIdx = sidecarStrideKeyStart + sidecarOrdinal;
+                        sidecarOrdinal++;
                     }
-                    if (coverCount > 0) sidecarOrdinal++;
+                    return true;
                 }
 
                 // Serve from block buffer
-                while (blockBufferPos < blockBufferEnd) {
-                    long value = Unsafe.getUnsafe().getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
-                    blockBufferPos++;
-                    if (value > maxValue) {
-                        return false;
-                    }
-                    if (value >= minValue) {
-                        this.next = value;
+                if (bufferRangeChecked) {
+                    if (blockBufferPos < blockBufferEnd) {
+                        this.next = Unsafe.getUnsafe().getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
+                        blockBufferPos++;
                         if (coverCount > 0) {
+                            cachedSidecarIdx = sidecarStrideKeyStart + sidecarOrdinal;
                             sidecarOrdinal++;
-                            cachedSidecarIdx = sidecarValueIdx();
                         }
                         return true;
                     }
-                    if (coverCount > 0) sidecarOrdinal++;
+                } else {
+                    while (blockBufferPos < blockBufferEnd) {
+                        long value = Unsafe.getUnsafe().getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
+                        blockBufferPos++;
+                        if (value > maxValue) {
+                            return false;
+                        }
+                        if (value >= minValue) {
+                            this.next = value;
+                            if (coverCount > 0) {
+                                cachedSidecarIdx = sidecarStrideKeyStart + sidecarOrdinal;
+                                sidecarOrdinal++;
+                            }
+                            return true;
+                        }
+                        if (coverCount > 0) sidecarOrdinal++;
+                    }
                 }
 
                 // Decode next block in current generation
@@ -340,6 +352,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.isFlatMode = false;
             this.flatRemaining = 0;
             this.totalValueCount = 0;
+            this.bufferRangeChecked = false;
         }
 
         private void decodeNextBlock() {
@@ -356,9 +369,27 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 long minD = numDeltas > 0
                         ? Unsafe.getUnsafe().getLong(baseAddr + srcMinDeltasOffset + (long) b * Long.BYTES)
                         : 0;
-                constantDeltaValue = firstValue;
+                long startValue = firstValue;
+                int remaining = count;
+                if (minValue > startValue) {
+                    if (minD > 0) {
+                        long skip = (minValue - startValue + minD - 1) / minD;
+                        if (skip >= remaining) {
+                            if (coverCount > 0) sidecarOrdinal += remaining;
+                            remaining = 0;
+                        } else {
+                            startValue += skip * minD;
+                            if (coverCount > 0) sidecarOrdinal += (int) skip;
+                            remaining -= (int) skip;
+                        }
+                    } else {
+                        if (coverCount > 0) sidecarOrdinal += remaining;
+                        remaining = 0;
+                    }
+                }
+                constantDeltaValue = startValue;
                 constantDeltaStep = minD;
-                constantDeltaRemaining = count;
+                constantDeltaRemaining = remaining;
                 blockBufferPos = 0;
                 blockBufferEnd = 0;
                 return;
@@ -380,6 +411,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             blockBufferPos = 0;
             blockBufferEnd = count;
+            bufferRangeChecked = false;
         }
 
         private void decodeNextEFChunk() {
@@ -443,6 +475,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             blockBufferPos = 0;
             blockBufferEnd = totalBuf;
+            bufferRangeChecked = false;
         }
 
         private void decodeNextFlatBatch() {
@@ -454,6 +487,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             flatRemaining -= batch;
             blockBufferPos = 0;
             blockBufferEnd = batch;
+            bufferRangeChecked = true;
         }
 
         private void ensureBuffer(int count) {
@@ -475,6 +509,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             this.isCurrentGenDense = true;
             this.sidecarOrdinal = 0;
+            this.bufferRangeChecked = false;
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
@@ -572,6 +607,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.blockBufferEnd = batch;
                 this.flatStartIdx = effectiveStart + batch;
                 this.flatRemaining = effectiveCount - batch;
+                this.bufferRangeChecked = true;
                 return;
             }
 
@@ -600,6 +636,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
             this.isCurrentGenDense = false;
+            this.bufferRangeChecked = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
@@ -659,6 +696,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
             this.isCurrentGenDense = false;
+            this.bufferRangeChecked = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
