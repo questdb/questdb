@@ -136,7 +136,7 @@ public class LogFactoryTest {
 
             System.err.println(x.getAbsolutePath());
 
-            Os.sleep(100);
+            factory.flushJobs();
             final String expected = orig + "\r\n";
             final String actual = java.nio.file.Files.readString(x.toPath());
             Assert.assertEquals(expected, actual);
@@ -273,7 +273,7 @@ public class LogFactoryTest {
                 logger.xerror().$("test ").$hex(i).$();
             }
 
-            Os.sleep(100);
+            factory.flushJobs();
 
             Assert.assertEquals(0, x.length());
             Assert.assertEquals(576, y.length());
@@ -400,7 +400,7 @@ public class LogFactoryTest {
                 logger.xinfo().$("test ").$(' ').$(i).$();
             }
 
-            Os.sleep(100);
+            factory.flushJobs();
             Assert.assertTrue(x.length() > 0);
             TestUtils.assertEquals(x, y);
         }
@@ -523,8 +523,7 @@ public class LogFactoryTest {
             Log logger1 = factory.create("com.questdb.net.Y");
             logger1.xinfo().$("this is for network").$();
 
-            // let async writer catch up in a busy environment
-            Os.sleep(100);
+            factory.flushJobs();
 
             Assert.assertEquals("this is for network" + Misc.EOL, TestUtils.readStringFromFile(a));
             Assert.assertEquals("this is for std" + Misc.EOL, TestUtils.readStringFromFile(b));
@@ -677,7 +676,7 @@ public class LogFactoryTest {
                 logger.xinfo().$("test ").$(' ').$(i).$();
             }
 
-            Os.sleep(100);
+            factory.flushJobs();
         }
         Assert.assertTrue(new File(expectedLogFile).length() > 0);
     }
@@ -723,7 +722,7 @@ public class LogFactoryTest {
                 logger.xinfo().$("test ").$(' ').$(i).$();
             }
 
-            Os.sleep(1000);
+            factory.flushJobs();
         }
         Assert.assertTrue(new File(expectedLogFile).length() > 0);
     }
