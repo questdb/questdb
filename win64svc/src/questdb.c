@@ -95,7 +95,13 @@ void buildJavaArgs(CONFIG *config) {
     // put together static java opts
     LPCSTR javaOpts = "-XX:+UnlockExperimentalVMOptions"
                       " -XX:+AlwaysPreTouch"
-                      " -XX:+UseParallelGC";
+                      " -XX:+UseParallelGC"
+                      " --sun-misc-unsafe-memory-access=allow"
+                      " --enable-native-access=io.questdb"
+                      " --add-opens=java.base/java.lang=io.questdb"
+                      " --add-opens=java.base/java.lang.reflect=io.questdb"
+                      " --add-opens=java.base/java.nio=io.questdb"
+                      " --add-opens=java.base/java.time.zone=io.questdb";
 
     // put together classpath
 
