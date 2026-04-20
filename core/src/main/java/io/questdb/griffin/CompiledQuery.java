@@ -72,7 +72,8 @@ public interface CompiledQuery {
     short CREATE_VIEW = REFRESH_MAT_VIEW + 1; // 34
     short COMPILE_VIEW = CREATE_VIEW + 1; // 35
     short ALTER_VIEW = COMPILE_VIEW + 1; // 36
-    short CREATE_LIVE_VIEW = ALTER_VIEW + 1; // 37
+    short ALTER_STORAGE_POLICY = ALTER_VIEW + 1; // 37
+    short CREATE_LIVE_VIEW = ALTER_VIEW + 1; // 38
     short EMPTY = CREATE_LIVE_VIEW + 1;
     short TYPES_COUNT = EMPTY;
 
