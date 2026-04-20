@@ -212,6 +212,12 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {
+        RecordCursorFactory rewrappedBase = base.rewrapOverTopK(topK, base.getMetadata());
+        return new SelectedRecordCursorFactory(orderedMetadata, columnCrossIndex, rewrappedBase);
+    }
+
+    @Override
     public boolean supportsPageFrameCursor() {
         return base.supportsPageFrameCursor();
     }
@@ -235,6 +241,14 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     public void toPlan(PlanSink sink) {
         sink.type("SelectedRecord");
         sink.child(base);
+    }
+
+    @Override
+    public int translateOrderByColumnToBase(int projectedIndex) {
+        if (projectedIndex < 0 || projectedIndex >= columnCrossIndex.size()) {
+            return -1;
+        }
+        return base.translateOrderByColumnToBase(columnCrossIndex.getQuick(projectedIndex));
     }
 
     @Override

@@ -8768,6 +8768,142 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
+    @Test // projection wrapper + JIT filter still hits top-K (issue #6528)
+    public void testSelectWhereOrderByLimit4() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc limit 10", """
+                SelectedRecord
+                    Async JIT Top K lo: 10 workers: 1
+                      filter: str is not null
+                      keys: [str desc]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: xx
+                """);
+    }
+
+    @Test // virtual-column projection + JIT filter still hits top-K
+    public void testSelectWhereOrderByLimit5() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp from xx where str is not null order by str desc limit 10", """
+                SelectedRecord
+                    VirtualRecord
+                      functions: [x+1,str]
+                        Async JIT Top K lo: 10 workers: 1
+                          filter: str is not null
+                          keys: [str desc]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: xx
+                """);
+    }
+
+    @Test // bare virtual-column wrapper (no outer SelectedRecord) still hits top-K
+    public void testSelectWhereOrderByLimit6() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp, * from xx where str is not null order by str desc limit 10", """
+                VirtualRecord
+                  functions: [x+1,x,str]
+                    Async JIT Top K lo: 10 workers: 1
+                      filter: str is not null
+                      keys: [str desc]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: xx
+                """);
+    }
+
+    @Test // projection without filter: peel SelectedRecord, run top-K on base, rewrap projection
+    public void testSelectWhereOrderByLimit7() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx order by str desc limit 10", """
+                SelectedRecord
+                    Async Top K lo: 10 workers: 1
+                      filter: null
+                      keys: [str desc]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: xx
+                """);
+    }
+
+    @Test // ORDER BY on a computed column must fall back to Sort light
+    public void testSelectWhereOrderByLimit8() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp from xx where str is not null order by xp desc limit 10", """
+                Sort light lo: 10
+                  keys: [xp desc]
+                    VirtualRecord
+                      functions: [x+1]
+                        Async JIT Filter workers: 1
+                          filter: str is not null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: xx
+                """);
+    }
+
+    @Test // SelectedRecord over VirtualRecord over JIT filter: chained wrapper peel reaches leaf
+    public void testSelectWhereOrderByLimit_chainedWrapper() throws Exception {
+        // ORDER BY str references a column absent from the SELECT list, forcing the
+        // optimizer to emit SelectedRecord around the VirtualRecord (str is kept inside
+        // VirtualRecord for the sort but projected away on top). translateOrderByColumnToBase
+        // must chain from SelectedRecordCursorFactory through VirtualRecordCursorFactory
+        // to the filter leaf so top-K fires on the page frame instead of falling back to
+        // Sort light.
+        assertPlan(
+                "create table xx ( x long, str varchar ) ",
+                "select x + 1 as xp, x from xx where str is not null order by str desc limit 10",
+                """
+                        SelectedRecord
+                            VirtualRecord
+                              functions: [x+1,x,str]
+                                Async JIT Top K lo: 10 workers: 1
+                                  filter: str is not null
+                                  keys: [str desc]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: xx
+                        """);
+    }
+
+    @Test // two-bound LIMIT is not a top-K candidate; Sort light handles it
+    public void testSelectWhereOrderByLimit9() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc limit 10, 20", """
+                Sort light lo: 10 hi: 20
+                  keys: [str desc]
+                    SelectedRecord
+                        Async JIT Filter workers: 1
+                          filter: str is not null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: xx
+                """);
+    }
+
+    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
+    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc, x asc limit 10", """
+                SelectedRecord
+                    Async JIT Top K lo: 10 workers: 1
+                      filter: str is not null
+                      keys: [str desc, x]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: xx
+                """);
+    }
+
+    @Test // multi-key ORDER BY translates every key through a VirtualRecord wrapper
+    public void testSelectWhereOrderByLimit_multiKeyThroughVirtualRecord() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp, x from xx where str is not null order by str desc, x asc limit 10", """
+                SelectedRecord
+                    VirtualRecord
+                      functions: [x+1,x,str]
+                        Async JIT Top K lo: 10 workers: 1
+                          filter: str is not null
+                          keys: [str desc, x]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: xx
+                """);
+    }
+
     @Test
     public void testSelectWithJittedFilter1() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 ", """

@@ -1386,6 +1386,83 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTopKThroughProjection() throws Exception {
+        // ts2 is reversed relative to ts: x=1 -> ts2=1000us, x=1000 -> ts2=1us.
+        // A regression that mistranslated ORDER BY ts2 to the designated
+        // timestamp ts would return the x=1000..996 rows instead of x=1..5.
+        assertMemoryLeak(() -> {
+            execute("create table tab as (" +
+                    "  select x, x::timestamp as ts, (1_001 - x)::timestamp as ts2" +
+                    "  from long_sequence(1_000)" +
+                    ") timestamp (ts) partition by hour wal");
+            drainWalQueue();
+
+            String expected = """
+                    x\tx1\tts\tts2
+                    1\t1\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.001000Z
+                    2\t2\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000999Z
+                    3\t3\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000998Z
+                    4\t4\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000997Z
+                    5\t5\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000996Z
+                    """;
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select x, * from tab where ts2 in '1970' order by ts2 desc limit 5",
+                    "ts2###desc",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "x\tx1\tts\tts2\n",
+                    "select x, * from tab where ts2 in '2099' order by ts2 desc limit 5",
+                    "ts2###desc",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTopKThroughVirtualProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab as (" +
+                    "  select x, x::timestamp as ts, (1_001 - x)::timestamp as ts2" +
+                    "  from long_sequence(1_000)" +
+                    ") timestamp (ts) partition by hour wal");
+            drainWalQueue();
+
+            String expected = """
+                    x_plus
+                    2
+                    3
+                    4
+                    5
+                    6
+                    """;
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select x + 1 as x_plus from tab where ts2 in '1970' order by ts2 desc limit 5",
+                    null,
+                    true,
+                    true
+            );
+
+            // repeated execution must not leak filter, function, page-frame or
+            // comparator state across the steal/halfClose/transfer boundary.
+            for (int i = 0; i < 5; i++) {
+                assertQueryNoLeakCheck(
+                        "x_plus\n2\n",
+                        "select x + 1 as x_plus from tab where ts2 in '1970' order by ts2 desc limit 1",
+                        null,
+                        true,
+                        true
+                );
+            }
+        });
+    }
+
+    @Test
     public void testTopN() throws Exception {
         String expected = """
                 i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
