@@ -74,13 +74,13 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
                 serverMain.execute("CREATE TABLE two_sym(a SYMBOL, b SYMBOL)");
                 // a cycles through {X, Y, Z}; b cycles through {Y, Z, W}. Shared {Y, Z}
                 // should only be transmitted once total across both columns.
-                serverMain.execute(
-                        "INSERT INTO two_sym " +
-                                "SELECT " +
-                                "  CASE WHEN (x % 3) = 0 THEN 'X' WHEN (x % 3) = 1 THEN 'Y' ELSE 'Z' END, " +
-                                "  CASE WHEN (x % 3) = 0 THEN 'Y' WHEN (x % 3) = 1 THEN 'Z' ELSE 'W' END " +
-                                "FROM long_sequence(30)"
-                );
+                serverMain.execute("""
+                        INSERT INTO two_sym
+                        SELECT
+                            CASE WHEN (x % 3) = 0 THEN 'X' WHEN (x % 3) = 1 THEN 'Y' ELSE 'Z' END,
+                            CASE WHEN (x % 3) = 0 THEN 'Y' WHEN (x % 3) = 1 THEN 'Z' ELSE 'W' END
+                        FROM long_sequence(30)
+                        """);
 
                 final int[] countA = new int[4];  // X, Y, Z, W
                 final int[] countB = new int[4];
@@ -277,11 +277,11 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
                 // 60 rows, 3 unique symbols (aa, bbb, cccc) -- guaranteed total
                 // entry-bytes savings (2+3+4 = 9 bytes of dict + 3 varint lengths
                 // = 12 bytes) which dominates the 2-byte empty delta section.
-                serverMain.execute(
-                        "INSERT INTO recur " +
-                                "SELECT CASE WHEN (x % 3) = 0 THEN 'aa' WHEN (x % 3) = 1 THEN 'bbb' ELSE 'cccc' END " +
-                                "FROM long_sequence(60)"
-                );
+                serverMain.execute("""
+                        INSERT INTO recur
+                        SELECT CASE WHEN (x % 3) = 0 THEN 'aa' WHEN (x % 3) = 1 THEN 'bbb' ELSE 'cccc' END
+                        FROM long_sequence(60)
+                        """);
 
                 final long[] q1Bytes = {0};
                 final long[] q2Bytes = {0};

@@ -296,10 +296,17 @@ public class QwpEgressRequestDecoder {
                 if (isNull) {
                     bindVars.setStr(index);
                 } else {
-                    // (N+1) x uint32 offsets where N=1 -> 2 offsets = 8 bytes
+                    // (N+1) x uint32 offsets where N=1 -> 2 offsets = 8 bytes.
+                    // Spec: offset[0] must be 0 and offset[1] must be >= 0 (treated as uint32
+                    // but Java reads signed int, so values >= 2^31 would come through as negative
+                    // and must be rejected).
                     if (p + 8 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated STRING offsets");
-                    int strLen = Unsafe.getUnsafe().getInt(p + 4); // offset[1] - offset[0] (offset[0] = 0)
+                    int offset0 = Unsafe.getUnsafe().getInt(p);
+                    int strLen = Unsafe.getUnsafe().getInt(p + 4);
+                    if (offset0 != 0 || strLen < 0)
+                        throw QwpParseException.instance(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY)
+                                .put("bind: STRING offsets invalid [offset0=").put(offset0).put(", strLen=").put(strLen).put("]");
                     p += 8;
                     if (p + strLen > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated STRING bytes");
@@ -317,7 +324,11 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 8 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated VARCHAR offsets");
+                    int offset0 = Unsafe.getUnsafe().getInt(p);
                     int strLen = Unsafe.getUnsafe().getInt(p + 4);
+                    if (offset0 != 0 || strLen < 0)
+                        throw QwpParseException.instance(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY)
+                                .put("bind: VARCHAR offsets invalid [offset0=").put(offset0).put(", strLen=").put(strLen).put("]");
                     p += 8;
                     if (p + strLen > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated VARCHAR bytes");

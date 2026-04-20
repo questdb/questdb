@@ -115,8 +115,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * (and resources freed) on completion, error, or disconnect. Lets the upgrade
      * processor's {@code resumeSend} continue iteration from the cursor's current
      * position after a {@code PeerIsSlowToReadException} parks the connection.
+     * <p>
+     * {@code volatile} because CANCEL / CREDIT handling on the read side and
+     * streamResults on the write side observe this flag across workers. Today
+     * per-fd events serialise through the IO dispatcher (one registered op at
+     * a time), but the Phase-2 plan to register for both READ and WRITE during
+     * streaming would expose a true data race on plain fields.
      */
-    private boolean streamingActive;
+    private volatile boolean streamingActive;
     private long streamingBatchSeq;
     // Set by {@link #onStreamingBatchSent} and consumed by
     // {@link #consumeBatchSeqCommit} at the top of {@link QwpEgressUpgradeProcessor#sendResultBatch}.
@@ -131,8 +137,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * between batches and aborts with {@code STATUS_CANCELLED} when true.
      * Cleared on {@code beginStreaming}/{@code beginStreamingPageFrame} so a
      * stale cancel can't kill the next query.
+     * <p>
+     * {@code volatile}: see the note on {@link #streamingActive}.
      */
-    private boolean streamingCancelRequested;
+    private volatile boolean streamingCancelRequested;
     private int streamingColumnCount;
     /**
      * Credit-flow state for the in-flight query.
@@ -145,13 +153,21 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * stream until a CREDIT frame replenishes it.
      */
     private long streamingCreditInitial;
-    private long streamingCreditRemaining;
+    /**
+     * {@code volatile}: see the note on {@link #streamingActive}. Cross-worker
+     * access is coupled to {@link #streamingCreditSuspended}; the CREDIT handler
+     * only writes here and the streamResults writer only reads/decrements, so
+     * no atomic RMW is required under today's single-op-per-fd dispatcher.
+     */
+    private volatile long streamingCreditRemaining;
     /**
      * True when {@code streamResults} returned early because credit is exhausted.
      * The state is still "active"; an inbound CREDIT frame will replenish the
      * budget and re-enter {@code streamResults} to continue.
+     * <p>
+     * {@code volatile}: see the note on {@link #streamingActive}.
      */
-    private boolean streamingCreditSuspended;
+    private volatile boolean streamingCreditSuspended;
     private RecordCursor streamingCursor;
     private RecordCursorFactory streamingFactory;
     private boolean streamingFullSchemaSent;
@@ -164,7 +180,11 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private int streamingPageFrameIndex;
     private long streamingPageFrameRow;
     private long streamingPageFrameRowHi;
-    private long streamingRequestId;
+    /**
+     * {@code volatile}: the CANCEL handler compares the current request id
+     * against the incoming target; see the note on {@link #streamingActive}.
+     */
+    private volatile long streamingRequestId;
     /**
      * Set true the moment {@code sendResultEnd} is initiated (whether it succeeds or
      * throws {@code PeerIsSlowToReadException}). Lets {@code resumeSend} know not to
@@ -694,6 +714,11 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         if (zstdCompressScratchCapacity < minCapacity) {
             if (zstdCompressScratchAddr != 0) {
                 Unsafe.free(zstdCompressScratchAddr, zstdCompressScratchCapacity, MemoryTag.NATIVE_DEFAULT);
+                // Clear before malloc so a throwing allocation leaves the state
+                // "not allocated" rather than pointing at a freed address, which
+                // would double-free on the next call or on close().
+                zstdCompressScratchAddr = 0;
+                zstdCompressScratchCapacity = 0;
             }
             // Round up to next 4 KiB so small growths don't thrash when batch
             // sizes drift slightly between queries.

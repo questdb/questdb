@@ -60,36 +60,31 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     public void testAllPrimitiveTypes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute(
-                        "CREATE TABLE allp(" +
-                                "  b BOOLEAN," +
-                                "  bt BYTE," +
-                                "  sh SHORT," +
-                                "  ch CHAR," +
-                                "  i INT," +
-                                "  l LONG," +
-                                "  f FLOAT," +
-                                "  d DOUBLE," +
-                                "  dt DATE," +
-                                "  ts TIMESTAMP," +
-                                "  s STRING," +
-                                "  v VARCHAR," +
-                                "  sy SYMBOL" +
-                                ")"
-                );
-                // Row 0: all set
-                serverMain.execute(
-                        "INSERT INTO allp VALUES (" +
-                                "  true, 127, 32767, 'A', 999, 999999999999L, 1.5f, 3.14, " +
-                                "  '2024-01-01'::DATE, '2024-01-01T00:00:00.000Z', 'hello', 'world', 'SYM1'" +
-                                ")"
-                );
-                // Row 1: nulls (only types that can hold NULL)
-                serverMain.execute(
-                        "INSERT INTO allp VALUES (" +
-                                "  false, 0, 0, 'B', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL" +
-                                ")"
-                );
+                serverMain.execute("""
+                        CREATE TABLE allp(
+                            b BOOLEAN,
+                            bt BYTE,
+                            sh SHORT,
+                            ch CHAR,
+                            i INT,
+                            l LONG,
+                            f FLOAT,
+                            d DOUBLE,
+                            dt DATE,
+                            ts TIMESTAMP,
+                            s STRING,
+                            v VARCHAR,
+                            sy SYMBOL
+                        )
+                        """);
+                // Row 0: all set. Row 1: nulls (only types that can hold NULL).
+                serverMain.execute("""
+                        INSERT INTO allp VALUES
+                            (true,  127, 32767, 'A', 999,  999999999999L, 1.5f, 3.14,
+                             '2024-01-01'::DATE, '2024-01-01T00:00:00.000Z', 'hello', 'world', 'SYM1'),
+                            (false, 0,   0,     'B', NULL, NULL,          NULL, NULL,
+                             NULL,               NULL,                       NULL,    NULL,    NULL)
+                        """);
 
                 final Object[][] row = new Object[2][];
                 try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
@@ -691,20 +686,25 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     public void testGeohashNullAcrossAllWidths() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE geo_nulls(" +
-                        "g4 GEOHASH(4b)," +    // 4 bits  -> GEOBYTE
-                        "g8 GEOHASH(8b)," +    // 8 bits  -> GEOSHORT
-                        "g16 GEOHASH(16b)," +  // 16 bits -> GEOINT
-                        "g40 GEOHASH(40b)," +  // 40 bits -> GEOLONG
-                        "g60 GEOHASH(60b)" +   // 60 bits -> GEOLONG
-                        ")");
-                serverMain.execute("INSERT INTO geo_nulls VALUES (" +
-                        "CAST(NULL AS GEOHASH(4b))," +
-                        "CAST(NULL AS GEOHASH(8b))," +
-                        "CAST(NULL AS GEOHASH(16b))," +
-                        "CAST(NULL AS GEOHASH(40b))," +
-                        "CAST(NULL AS GEOHASH(60b))" +
-                        ")");
+                // 4->GEOBYTE, 8->GEOSHORT, 16->GEOINT, 40/60->GEOLONG.
+                serverMain.execute("""
+                        CREATE TABLE geo_nulls(
+                            g4 GEOHASH(4b),
+                            g8 GEOHASH(8b),
+                            g16 GEOHASH(16b),
+                            g40 GEOHASH(40b),
+                            g60 GEOHASH(60b)
+                        )
+                        """);
+                serverMain.execute("""
+                        INSERT INTO geo_nulls VALUES (
+                            CAST(NULL AS GEOHASH(4b)),
+                            CAST(NULL AS GEOHASH(8b)),
+                            CAST(NULL AS GEOHASH(16b)),
+                            CAST(NULL AS GEOHASH(40b)),
+                            CAST(NULL AS GEOHASH(60b))
+                        )
+                        """);
                 // A non-null row to ensure the column isn't always null.
                 serverMain.execute("INSERT INTO geo_nulls VALUES (#0, #00, #0000, #00000000, #000000000000)");
 
@@ -753,10 +753,12 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE ipx(addr IPv4)");
-                serverMain.execute("INSERT INTO ipx VALUES " +
-                        "('0.0.0.0'), " +
-                        "(NULL), " +
-                        "('192.168.1.1')");
+                serverMain.execute("""
+                        INSERT INTO ipx VALUES
+                            ('0.0.0.0'),
+                            (NULL),
+                            ('192.168.1.1')
+                        """);
 
                 final boolean[] nullSeen = new boolean[3];
                 final long[] valueSeen = new long[3];
@@ -1120,12 +1122,12 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE mixed(id LONG, px DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute(
-                        "INSERT INTO mixed VALUES " +
-                                "  (1, 1.5, 'AAPL', '2024-01-01T00:00:00.000Z'), " +
-                                "  (2, 2.5, 'MSFT', '2024-01-01T00:00:01.000Z'), " +
-                                "  (3, 3.5, 'AAPL', '2024-01-01T00:00:02.000Z')"
-                );
+                serverMain.execute("""
+                        INSERT INTO mixed VALUES
+                            (1, 1.5, 'AAPL', '2024-01-01T00:00:00.000Z'),
+                            (2, 2.5, 'MSFT', '2024-01-01T00:00:01.000Z'),
+                            (3, 3.5, 'AAPL', '2024-01-01T00:00:02.000Z')
+                        """);
                 serverMain.awaitTxn("mixed", 1);
 
                 final int[] rows = {0};
@@ -1418,9 +1420,11 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE ts_n(ts TIMESTAMP_NS, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO ts_n VALUES " +
-                        "('2024-01-01T00:00:00.000000001Z', 1), " +
-                        "('2024-01-01T00:00:00.000000002Z', 2)");
+                serverMain.execute("""
+                        INSERT INTO ts_n VALUES
+                            ('2024-01-01T00:00:00.000000001Z', 1),
+                            ('2024-01-01T00:00:00.000000002Z', 2)
+                        """);
                 serverMain.awaitTxn("ts_n", 1);
 
                 final int[] count = {0};

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.codec;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -175,8 +176,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // so individual values cannot exceed Integer.MAX_VALUE bytes. The total
                         // batch is also bounded by the 16 MiB QwpConstants.DEFAULT_MAX_BATCH_SIZE.
                         if (len < 0 || len > Integer.MAX_VALUE) {
-                            throw new UnsupportedOperationException(
-                                    "QWP egress: BINARY value too large (" + len + " bytes)");
+                            throw CairoException.nonCritical()
+                                    .put("QWP egress: BINARY value too large [len=").put(len).put(']');
                         }
                         scratch.appendBinary(bin);
                     }
@@ -274,8 +275,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 default:
-                    throw new UnsupportedOperationException(
-                            "QWP egress append: unsupported wire type 0x" + Integer.toHexString(wts[ci] & 0xFF));
+                    throw CairoException.nonCritical()
+                            .put("QWP egress append: unsupported wire type [code=")
+                            .put(wts[ci] & 0xFF).put(']');
             }
         }
         rowCount++;
@@ -452,12 +454,14 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         for (int d = 0; d < nDims; d++) {
             int dim = av.getDimLen(d);
             if (dim < 0) {
-                throw new ArithmeticException("QWP egress: ARRAY dim " + d + " is negative: " + dim);
+                throw CairoException.nonCritical()
+                        .put("QWP egress: ARRAY dim is negative [dim=").put(d).put(", value=").put(dim).put(']');
             }
             elements *= dim;
             if (elements > MAX_ARRAY_ELEMENTS) {
-                throw new ArithmeticException("QWP egress: ARRAY element count exceeds limit ("
-                        + elements + " > " + MAX_ARRAY_ELEMENTS + ")");
+                throw CairoException.nonCritical()
+                        .put("QWP egress: ARRAY element count exceeds limit [elements=").put(elements)
+                        .put(", limit=").put(MAX_ARRAY_ELEMENTS).put(']');
             }
         }
         int totalBytes = 1 + 4 * nDims + 8 * (int) elements;
@@ -595,11 +599,14 @@ public class QwpResultBatchBuffer implements QuietCloseable {
 
     private long emitTimestampColumn(QwpColumnScratch scratch, long p, long wireLimit, int nonNull) {
         if (p >= wireLimit) return -1;
+        // nonNull * 8 is carried as long throughout: int multiplication would
+        // overflow if MAX_ROWS_PER_BATCH is ever raised past ~2^28. Today the
+        // cap is 4096, so no overflow can happen -- the cast is defence in depth.
+        long rawBytes = (long) nonNull * 8L;
         // 0, 1, 2 values have no delta-of-delta to emit; ship raw int64s under the
         // uncompressed discriminator so the decoder sees a consistent layout.
         if (nonNull < 3) {
             Unsafe.getUnsafe().putByte(p++, ENCODING_UNCOMPRESSED);
-            int rawBytes = nonNull * 8;
             if (p + rawBytes > wireLimit) return -1;
             if (rawBytes > 0) {
                 Vect.memcpy(p, scratch.valuesAddr, rawBytes);
@@ -609,13 +616,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         // Probe first: -1 = delta-of-delta doesn't fit int32 anywhere; fall back
         // to raw rather than silently truncate.
         int gorillaBytes = QwpGorillaEncoder.calculateEncodedSizeIfSupported(scratch.valuesAddr, nonNull);
-        if (gorillaBytes >= 0 && gorillaBytes < nonNull * 8) {
+        if (gorillaBytes >= 0 && gorillaBytes < rawBytes) {
             if (p + 1 + gorillaBytes > wireLimit) return -1;
             Unsafe.getUnsafe().putByte(p++, ENCODING_GORILLA);
             int written = gorillaEncoder.encodeTimestamps(p, wireLimit - p, scratch.valuesAddr, nonNull);
             return p + written;
         }
-        int rawBytes = nonNull * 8;
         if (p + 1 + rawBytes > wireLimit) return -1;
         Unsafe.getUnsafe().putByte(p++, ENCODING_UNCOMPRESSED);
         Vect.memcpy(p, scratch.valuesAddr, rawBytes);

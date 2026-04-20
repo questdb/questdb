@@ -83,11 +83,11 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                     String tbl = "bnd_" + n;
                     serverMain.execute("CREATE TABLE " + tbl + "(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
                     if (n > 0) {
-                        serverMain.execute(
-                                "INSERT INTO " + tbl + " " +
-                                        "SELECT CAST((x - 1) * 1_000_000L AS TIMESTAMP) " +
-                                        "FROM long_sequence(" + n + ")"
-                        );
+                        serverMain.execute(String.format("""
+                                INSERT INTO %s
+                                SELECT CAST((x - 1) * 1_000_000L AS TIMESTAMP)
+                                FROM long_sequence(%d)
+                                """, tbl, n));
                     }
 
                     final long[] sum = {0};
@@ -130,11 +130,11 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE dt(d DATE)");
                 // 500 rows, 100 ms apart starting at 0.
-                serverMain.execute(
-                        "INSERT INTO dt " +
-                                "SELECT CAST((x - 1) * 100 AS DATE) " +
-                                "FROM long_sequence(500)"
-                );
+                serverMain.execute("""
+                        INSERT INTO dt
+                        SELECT CAST((x - 1) * 100 AS DATE)
+                        FROM long_sequence(500)
+                        """);
 
                 final long[] sum = {0};
                 final long[] bytes = {0};
@@ -186,11 +186,11 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         "CREATE TABLE dts(ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY"
                 );
                 final int N = 4000;
-                serverMain.execute(
-                        "INSERT INTO dts " +
-                                "SELECT CAST((x - 1) * 10_000L AS TIMESTAMP), x " +
-                                "FROM long_sequence(" + N + ")"
-                );
+                serverMain.execute(String.format("""
+                        INSERT INTO dts
+                        SELECT CAST((x - 1) * 10_000L AS TIMESTAMP), x
+                        FROM long_sequence(%d)
+                        """, N));
 
                 final long[] lastSeen = {Long.MIN_VALUE};
                 final long[] totalBytes = {0};
@@ -243,18 +243,17 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute(
-                        "CREATE TABLE mix(ts TIMESTAMP, scrambled TIMESTAMP, x LONG) " +
-                                "TIMESTAMP(ts) PARTITION BY DAY"
+                        "CREATE TABLE mix(ts TIMESTAMP, scrambled TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY"
                 );
                 // ts ascending by 1 s; scrambled deliberately jumps around.
-                serverMain.execute(
-                        "INSERT INTO mix " +
-                                "SELECT " +
-                                "  CAST((x - 1) * 1_000_000L AS TIMESTAMP), " +
-                                "  CAST((x % 7) * 1_000_000_000_000L + x AS TIMESTAMP), " +
-                                "  x " +
-                                "FROM long_sequence(300)"
-                );
+                serverMain.execute("""
+                        INSERT INTO mix
+                        SELECT
+                            CAST((x - 1) * 1_000_000L AS TIMESTAMP),
+                            CAST((x % 7) * 1_000_000_000_000L + x AS TIMESTAMP),
+                            x
+                        FROM long_sequence(300)
+                        """);
 
                 final int[] rowCount = {0};
                 final long[] tsSum = {0};
@@ -308,11 +307,11 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         "CREATE TABLE multi(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY"
                 );
                 final int N = 10_000;
-                serverMain.execute(
-                        "INSERT INTO multi " +
-                                "SELECT CAST((x - 1) * 100_000L AS TIMESTAMP) " +
-                                "FROM long_sequence(" + N + ")"
-                );
+                serverMain.execute(String.format("""
+                        INSERT INTO multi
+                        SELECT CAST((x - 1) * 100_000L AS TIMESTAMP)
+                        FROM long_sequence(%d)
+                        """, N));
 
                 final long[] lastSeen = {Long.MIN_VALUE};
                 final int[] batches = {0};
@@ -361,11 +360,11 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE nonsts(x LONG, ts2 TIMESTAMP)");
                 // ts2 ascending, x scrambled.
-                serverMain.execute(
-                        "INSERT INTO nonsts " +
-                                "SELECT (x * 31) % 1000, CAST((x - 1) * 5_000_000L AS TIMESTAMP) " +
-                                "FROM long_sequence(500)"
-                );
+                serverMain.execute("""
+                        INSERT INTO nonsts
+                        SELECT (x * 31) % 1000, CAST((x - 1) * 5_000_000L AS TIMESTAMP)
+                        FROM long_sequence(500)
+                        """);
 
                 final long[] lastSeen = {Long.MIN_VALUE};
                 final long[] bytes = {0};
@@ -416,11 +415,11 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                 serverMain.execute("CREATE TABLE scr(ts2 TIMESTAMP)");
                 // Pseudo-random: multiply by a prime and take modulo of a
                 // large value. Delta-of-delta won't fit in int32 reliably.
-                serverMain.execute(
-                        "INSERT INTO scr " +
-                                "SELECT CAST((x * 1_600_000_003L) % 9_000_000_000_000L AS TIMESTAMP) " +
-                                "FROM long_sequence(200)"
-                );
+                serverMain.execute("""
+                        INSERT INTO scr
+                        SELECT CAST((x * 1_600_000_003L) % 9_000_000_000_000L AS TIMESTAMP)
+                        FROM long_sequence(200)
+                        """);
 
                 final int[] rowCount = {0};
                 final long[] checksum = {0};
@@ -464,10 +463,11 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE nanos(t TIMESTAMP_NS)");
-                serverMain.execute(
-                        "INSERT INTO nanos SELECT CAST((x - 1) * 100 AS TIMESTAMP_NS) " +
-                                "FROM long_sequence(400)"
-                );
+                serverMain.execute("""
+                        INSERT INTO nanos
+                        SELECT CAST((x - 1) * 100 AS TIMESTAMP_NS)
+                        FROM long_sequence(400)
+                        """);
 
                 final long[] sum = {0};
                 final int[] rowCount = {0};
@@ -508,12 +508,12 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE tsn(ts TIMESTAMP)");
-                serverMain.execute(
-                        "INSERT INTO tsn " +
-                                "SELECT CASE WHEN x % 5 = 0 THEN CAST(NULL AS TIMESTAMP) " +
-                                "       ELSE CAST((x - 1) * 1_000_000L AS TIMESTAMP) END " +
-                                "FROM long_sequence(300)"
-                );
+                serverMain.execute("""
+                        INSERT INTO tsn
+                        SELECT CASE WHEN x % 5 = 0 THEN CAST(NULL AS TIMESTAMP)
+                                    ELSE CAST((x - 1) * 1_000_000L AS TIMESTAMP) END
+                        FROM long_sequence(300)
+                        """);
 
                 final int[] nullCount = {0};
                 final int[] rowCount = {0};

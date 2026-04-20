@@ -21,10 +21,15 @@ pub extern "system" fn Java_io_questdb_std_Zstd_createCCtx(
     _class: JClass,
     level: jint,
 ) -> jlong {
+    // Clamp to zstd's real range: negative levels are "fast" modes
+    // (-131072..=-1) and positive levels cap at 22. Values outside this range
+    // would be rejected by CParameter::set_parameter and leak the half-built
+    // context; clamping first keeps the return contract (0 = setup failure).
+    let clamped = level.clamp(-131072, 22);
     let mut cctx: CCtx<'static> = CCtx::create();
     if zstd_safe::CCtx::set_parameter(
         &mut cctx,
-        CParameter::CompressionLevel(level.clamp(1, 22)),
+        CParameter::CompressionLevel(clamped),
     )
     .is_err()
     {
@@ -57,15 +62,18 @@ pub extern "system" fn Java_io_questdb_std_Zstd_compress(
     dst_addr: jlong,
     dst_cap: jlong,
 ) -> jlong {
-    if ctx == 0 {
+    if ctx == 0 || !valid_slice_args(src_addr, src_len) || !valid_slice_args(dst_addr, dst_cap) {
         return -1;
     }
     let cctx = unsafe { &mut *(ctx as *mut CCtx<'static>) };
-    let src = unsafe { std::slice::from_raw_parts(src_addr as *const u8, src_len as usize) };
-    let dst = unsafe { std::slice::from_raw_parts_mut(dst_addr as *mut u8, dst_cap as usize) };
+    let src = unsafe { make_slice(src_addr, src_len) };
+    let dst = unsafe { make_slice_mut(dst_addr, dst_cap) };
     match cctx.compress2(dst, src) {
         Ok(n) => n as jlong,
-        Err(code) => -(code as jlong),
+        // zstd represents errors as usize values near usize::MAX; casting to
+        // jlong yields a negative i64 that the Java side already interprets as
+        // an error signal.
+        Err(code) => code as jlong,
     }
 }
 
@@ -102,14 +110,52 @@ pub extern "system" fn Java_io_questdb_std_Zstd_decompress(
     dst_addr: jlong,
     dst_cap: jlong,
 ) -> jlong {
-    if ctx == 0 {
+    if ctx == 0 || !valid_slice_args(src_addr, src_len) || !valid_slice_args(dst_addr, dst_cap) {
         return -1;
     }
     let dctx = unsafe { &mut *(ctx as *mut DCtx<'static>) };
-    let src = unsafe { std::slice::from_raw_parts(src_addr as *const u8, src_len as usize) };
-    let dst = unsafe { std::slice::from_raw_parts_mut(dst_addr as *mut u8, dst_cap as usize) };
+    let src = unsafe { make_slice(src_addr, src_len) };
+    let dst = unsafe { make_slice_mut(dst_addr, dst_cap) };
     match dctx.decompress(dst, src) {
         Ok(n) => n as jlong,
-        Err(code) => -(code as jlong),
+        // See `Java_io_questdb_std_Zstd_compress` for the error-code encoding.
+        Err(code) => code as jlong,
     }
+}
+
+/// Returns `true` iff `(addr, len)` can be passed to `from_raw_parts` safely:
+/// non-negative length and a non-null address unless the length is zero.
+/// Rejects lengths that would exceed `isize::MAX` (a documented UB precondition
+/// for `slice::from_raw_parts`).
+fn valid_slice_args(addr: jlong, len: jlong) -> bool {
+    if len < 0 || len as u64 > isize::MAX as u64 {
+        return false;
+    }
+    if len > 0 && addr == 0 {
+        return false;
+    }
+    true
+}
+
+/// # Safety
+/// Caller must have checked `valid_slice_args(addr, len)` beforehand and must
+/// guarantee the memory region is valid for reads for the slice's lifetime.
+unsafe fn make_slice<'a>(addr: jlong, len: jlong) -> &'a [u8] {
+    if len == 0 {
+        // Passing the addr through with len==0 would still require it to be
+        // non-null per the `from_raw_parts` contract. A dangling aligned ptr
+        // satisfies that precondition without dereferencing.
+        return &[];
+    }
+    std::slice::from_raw_parts(addr as *const u8, len as usize)
+}
+
+/// # Safety
+/// Caller must have checked `valid_slice_args(addr, len)` beforehand and must
+/// guarantee the memory region is valid for writes for the slice's lifetime.
+unsafe fn make_slice_mut<'a>(addr: jlong, len: jlong) -> &'a mut [u8] {
+    if len == 0 {
+        return &mut [];
+    }
+    std::slice::from_raw_parts_mut(addr as *mut u8, len as usize)
 }

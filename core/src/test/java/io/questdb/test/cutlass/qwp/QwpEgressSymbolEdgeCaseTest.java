@@ -118,14 +118,14 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE emojis(s SYMBOL)");
                 // Rocket: U+1F680 (0xF0 0x9F 0x9A 0x80), thumbs up: U+1F44D.
-                serverMain.execute(
-                        "INSERT INTO emojis VALUES " +
-                                "('\uD83D\uDE80'), " +
-                                "('\uD83D\uDC4D'), " +
-                                "('\uD83D\uDE80'), " +
-                                "('plain'), " +
-                                "('\uD83D\uDC4D')"
-                );
+                serverMain.execute("""
+                        INSERT INTO emojis VALUES
+                            ('\uD83D\uDE80'),
+                            ('\uD83D\uDC4D'),
+                            ('\uD83D\uDE80'),
+                            ('plain'),
+                            ('\uD83D\uDC4D')
+                        """);
 
                 // Two unique emojis (4 bytes each) + 'plain' (5 bytes) + 2
                 // repeats of the emojis = 3 unique, 5 total rows.
@@ -313,12 +313,14 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
                 serverMain.execute("CREATE TABLE multi(s SYMBOL, x LONG)");
                 // 4 unique symbols cycling; all unique values appear in batch 1,
                 // so batches 2 and 3 have empty delta sections.
-                serverMain.execute(
-                        "INSERT INTO multi " +
-                                "SELECT CASE WHEN (x % 4) = 0 THEN 'A' WHEN (x % 4) = 1 THEN 'B' " +
-                                "  WHEN (x % 4) = 2 THEN 'C' ELSE 'D' END, x " +
-                                "FROM long_sequence(" + MULTI_BATCH_ROWS + ')'
-                );
+                serverMain.execute(String.format("""
+                        INSERT INTO multi
+                        SELECT CASE WHEN (x %% 4) = 0 THEN 'A'
+                                    WHEN (x %% 4) = 1 THEN 'B'
+                                    WHEN (x %% 4) = 2 THEN 'C'
+                                    ELSE 'D' END, x
+                        FROM long_sequence(%d)
+                        """, MULTI_BATCH_ROWS));
 
                 final int[] counts = new int[4];  // A, B, C, D
                 final int[] totalRows = {0};
@@ -375,12 +377,13 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE mix(s SYMBOL)");
-                serverMain.execute(
-                        "INSERT INTO mix " +
-                                "SELECT CASE WHEN x % 3 = 0 THEN CAST(NULL AS SYMBOL) " +
-                                "  WHEN x % 3 = 1 THEN 'odd' ELSE 'even' END " +
-                                "FROM long_sequence(" + MULTI_BATCH_ROWS + ')'
-                );
+                serverMain.execute(String.format("""
+                        INSERT INTO mix
+                        SELECT CASE WHEN x %% 3 = 0 THEN CAST(NULL AS SYMBOL)
+                                    WHEN x %% 3 = 1 THEN 'odd'
+                                    ELSE 'even' END
+                        FROM long_sequence(%d)
+                        """, MULTI_BATCH_ROWS));
 
                 final int[] nullCount = {0};
                 final int[] oddCount = {0};
@@ -481,13 +484,13 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE uni(s SYMBOL)");
                 // café (5 bytes: c a f 0xC3 0xA9), 中文 (6 bytes).
-                serverMain.execute(
-                        "INSERT INTO uni VALUES " +
-                                "('café'), " +
-                                "('中文'), " +
-                                "('café'), " +
-                                "('ascii')"
-                );
+                serverMain.execute("""
+                        INSERT INTO uni VALUES
+                            ('café'),
+                            ('中文'),
+                            ('café'),
+                            ('ascii')
+                        """);
 
                 final String[] expected = {"café", "中文", "café", "ascii"};
                 final int[] rowIdx = {0};

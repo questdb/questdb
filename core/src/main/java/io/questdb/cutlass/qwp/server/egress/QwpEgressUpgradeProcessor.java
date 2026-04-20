@@ -508,8 +508,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
             case CompiledQuery.CREATE_MAT_VIEW:
             case CompiledQuery.CREATE_VIEW: {
-                Operation op = cq.getOperation();
-                try (OperationFuture fut = op.execute(sqlCtx, state.getEventSubSequence())) {
+                try (
+                        Operation op = cq.getOperation();
+                        OperationFuture fut = op.execute(sqlCtx, state.getEventSubSequence())
+                ) {
                     fut.await();
                 }
                 break;

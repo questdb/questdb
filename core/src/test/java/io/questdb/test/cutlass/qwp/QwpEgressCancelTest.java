@@ -149,6 +149,7 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
                     canceler.start();
 
                     int[] rows1 = {0};
+                    boolean[] errored = {false};
                     client.execute("SELECT * FROM small", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
@@ -162,10 +163,18 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
                         @Override
                         public void onError(byte status, String message) {
                             // Tolerated: cancel may have landed.
+                            errored[0] = true;
                         }
                     });
                     canceler.join(2_000);
-                    Assert.assertTrue(rows1[0] >= 0);
+                    // Either the cancel raced in and surfaced as onError, or the
+                    // full result streamed before the cancel was observed. Any
+                    // partial non-zero row count with no error would indicate a
+                    // truncated stream, which must not happen silently.
+                    Assert.assertTrue(
+                            "rows=" + rows1[0] + ", errored=" + errored[0],
+                            errored[0] || rows1[0] == 1000
+                    );
 
                     // Follow-up query must succeed cleanly, proving the cancel
                     // didn't corrupt the connection or streaming state.
