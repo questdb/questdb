@@ -34,9 +34,10 @@ use parquet2::metadata::Descriptor;
 use parquet2::read::{SlicePageReader, SlicedPage};
 use parquet2::schema::types::{FieldInfo, PhysicalType, PrimitiveType};
 use parquet2::schema::Repetition;
-use qdb_core::col_type::ColumnTypeTag;
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
-use crate::parquet::error::{ParquetErrorExt, ParquetResult};
+use crate::allocator::QdbAllocator;
+use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::QdbMetaCol;
 use crate::parquet_read::column_sink::var::fixup_varchar_slice_spill_pointers;
 use crate::parquet_read::decode::{
@@ -47,6 +48,63 @@ use crate::parquet_read::row_groups::{
     decompress_varchar_slice_data, decompress_varchar_slice_dict,
 };
 use crate::parquet_read::{ColumnChunkBuffers, DecodeContext};
+
+/// Decode a single i64 timestamp value from a column chunk. Both the `_pm`
+/// read path (`decode_single_ts_from_pm`) and the Mig940 backfill path
+/// (`decode_single_ts_value_from_parquet`) call this after resolving their
+/// own descriptors and byte ranges.
+///
+/// # Safety
+/// `allocator` must point to a valid `QdbAllocator` that outlives this call.
+#[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
+pub fn decode_single_timestamp_value(
+    allocator: *const QdbAllocator,
+    file_data: &[u8],
+    col_start: usize,
+    col_len: usize,
+    compression: Compression,
+    descriptor: Descriptor,
+    num_values: i64,
+    column_name: &str,
+    row_group_index: usize,
+    row_lo: usize,
+    row_hi: usize,
+) -> ParquetResult<i64> {
+    let col_info = QdbMetaCol {
+        column_type: ColumnType::new(ColumnTypeTag::Timestamp, 0),
+        column_top: 0,
+        format: None,
+        ascii: None,
+    };
+    let mut ctx = DecodeContext::new(file_data.as_ptr(), file_data.len() as u64);
+    // Safety: caller guarantees `allocator` points to a valid QdbAllocator
+    // for the duration of this call.
+    let alloc = unsafe { &*allocator }.clone();
+    let mut bufs = ColumnChunkBuffers::new(alloc);
+    decode_column_chunk_with_params(
+        &mut ctx,
+        &mut bufs,
+        file_data,
+        col_start,
+        col_len,
+        compression,
+        descriptor,
+        num_values,
+        col_info,
+        row_lo,
+        row_hi,
+        column_name,
+        row_group_index,
+    )?;
+    if bufs.data_vec.len() < 8 {
+        return Err(fmt_err!(
+            InvalidType,
+            "decoded timestamp buffer too small: {}",
+            bufs.data_vec.len()
+        ));
+    }
+    Ok(i64::from_le_bytes(bufs.data_vec[..8].try_into().unwrap()))
+}
 
 /// Builds a [`Descriptor`] from `_pm` column descriptor fields.
 ///

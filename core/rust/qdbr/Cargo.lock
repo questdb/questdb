@@ -1268,6 +1268,7 @@ dependencies = [
  "jni",
  "libc",
  "log",
+ "memmap2",
  "nonmax",
  "num-traits",
  "parquet",

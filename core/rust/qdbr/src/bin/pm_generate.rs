@@ -81,6 +81,7 @@ fn generate(
         qdb_meta.as_ref(),
         parquet_footer_offset,
         footer_length,
+        None,
     )
     .map_err(|e| format!("failed to convert: {}", e))?;
 

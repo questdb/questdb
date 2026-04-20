@@ -963,8 +963,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
 
                             try {
-                                long pmSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
-                                LOG.info().$("generated parquet metadata [path=").$(path).$(", pmSize=").$(pmSize).I$();
+                                long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+                                long parquetMetaSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
+                                LOG.info().$("generated parquet metadata [path=").$(path).$(", parquetMetaSize=").$(parquetMetaSize).I$();
                             } catch (Throwable t) {
                                 LOG.error().$("failed to generate parquet metadata [path=").$(path).$(", error=").$(t.getMessage()).I$();
                                 ff.remove(path.$());
@@ -9873,14 +9874,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long parquetFd = openRO(ff, path.$(), LOG);
         try {
             path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
-            long pmFd = openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            long parquetMetaFd = openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
             try {
-                if (!ff.truncate(pmFd, 0)) {
+                if (!ff.truncate(parquetMetaFd, 0)) {
                     throw CairoException.critical(ff.errno()).put("could not truncate _pm [path=").put(path).put(']');
                 }
-                ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(pmFd));
+                long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+                ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
             } finally {
-                ff.close(pmFd);
+                ff.close(parquetMetaFd);
             }
         } finally {
             ff.close(parquetFd);

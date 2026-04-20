@@ -37,12 +37,19 @@ public class ParquetMetadataWriter {
      * Reads parquet metadata from the file descriptor {@code parquetFd},
      * generates the {@code _pm} metadata file, and writes it to
      * {@code parquetMetaFd}.
+     * <p>
+     * When a row group's designated timestamp column lacks inline min/max
+     * statistics, the native side memory-maps the parquet file and decodes
+     * the first and last timestamp values directly to backfill the stats.
+     * The backfill uses {@code allocator} for short-lived native buffers.
      *
+     * @param allocator       {@code QdbAllocator} pointer
+     *                        (from {@link io.questdb.std.Unsafe#getNativeAllocator(int)})
      * @param parquetFd       file descriptor of the parquet file (read-only)
      * @param parquetFileSize size of the parquet file in bytes
      * @param parquetMetaFd   file descriptor of the parquet meta file (write)
      * @return the parquet meta file size (to store in {@code _txn})
      * @throws io.questdb.cairo.CairoException on error
      */
-    public static native long generate(int parquetFd, long parquetFileSize, int parquetMetaFd);
+    public static native long generate(long allocator, int parquetFd, long parquetFileSize, int parquetMetaFd);
 }

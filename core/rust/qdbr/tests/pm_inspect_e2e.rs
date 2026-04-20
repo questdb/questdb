@@ -77,9 +77,14 @@ fn extract_qdb_meta(metadata: &parquet2::metadata::FileMetaData) -> Option<QdbMe
 fn make_pm_bytes(parquet_bytes: &[u8]) -> Vec<u8> {
     let (metadata, footer_offset, footer_length) = read_parquet2_metadata(parquet_bytes);
     let qdb_meta = extract_qdb_meta(&metadata);
-    let (pm_bytes, _) =
-        convert_from_parquet(&metadata, qdb_meta.as_ref(), footer_offset, footer_length)
-            .expect("convert_from_parquet");
+    let (pm_bytes, _) = convert_from_parquet(
+        &metadata,
+        qdb_meta.as_ref(),
+        footer_offset,
+        footer_length,
+        None,
+    )
+    .expect("convert_from_parquet");
     pm_bytes
 }
 

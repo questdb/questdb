@@ -3223,14 +3223,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long parquetFd = TableUtils.openRO(ff, path.$(), LOG);
         try {
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            long pmFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            long parquetMetaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
             try {
-                if (!ff.truncate(pmFd, 0)) {
+                if (!ff.truncate(parquetMetaFd, 0)) {
                     throw CairoException.critical(ff.errno()).put("could not truncate _pm [path=").put(path).put(']');
                 }
-                ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(pmFd));
+                long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+                ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
             } finally {
-                ff.close(pmFd);
+                ff.close(parquetMetaFd);
             }
         } finally {
             ff.close(parquetFd);

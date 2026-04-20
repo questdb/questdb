@@ -727,8 +727,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            long pmFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
-            if (pmFd < 0) {
+            long parquetMetaFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
+            if (parquetMetaFd < 0) {
                 int errno = ff.errno();
                 ff.close(parquetFd);
                 tablePath.trimTo(plen);
@@ -736,9 +736,10 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             try {
-                long parquetMetaFileSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(pmFd));
+                long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT);
+                long parquetMetaFileSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
                 txWriter.setPartitionParquetFormat(partitionTs, parquetFileSize);
-                LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", pmSize=").$(parquetMetaFileSize).I$();
+                LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", parquetMetaSize=").$(parquetMetaFileSize).I$();
             } catch (Throwable t) {
                 // Remove partially written _pm file so a retry regenerates it.
                 tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
@@ -746,7 +747,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 throw t;
             } finally {
                 ff.close(parquetFd);
-                ff.close(pmFd);
+                ff.close(parquetMetaFd);
             }
             tablePath.trimTo(plen);
         }

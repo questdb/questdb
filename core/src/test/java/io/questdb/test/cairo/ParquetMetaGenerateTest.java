@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -79,7 +80,8 @@ public class ParquetMetaGenerateTest extends AbstractCairoTest {
 
                 long parquetMetaFileSize;
                 try {
-                    parquetMetaFileSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
+                    long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT);
+                    parquetMetaFileSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
                     Assert.assertTrue("_pm file size should be positive", parquetMetaFileSize > 0);
                 } finally {
                     ff.close(parquetFd);

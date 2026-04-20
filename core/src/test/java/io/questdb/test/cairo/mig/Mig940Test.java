@@ -46,7 +46,81 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.InputStream;
+import java.nio.file.Files;
+
 public class Mig940Test extends AbstractCairoTest {
+
+    /// Committed parquet fixture: single designated-ts column, two row
+    /// groups of 10 rows each, row values 0..19, no min/max stats on the ts
+    /// column. Regenerate via
+    /// `cargo test emit_mig940_ts_no_stats_fixture -- --ignored`.
+    private static final String TS_NO_STATS_FIXTURE = "/mig940/ts_no_stats.parquet";
+
+    @Test
+    public void testMigrateBackfillsMissingTsStats() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES('2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES('2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            engine.releaseInactive();
+
+            // Overwrite data.parquet with a committed fixture that has QdbMeta
+            // marking col 0 as designated ts but NO inline stats.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                try (InputStream is = Mig940Test.class.getResourceAsStream(TS_NO_STATS_FIXTURE)) {
+                    Assert.assertNotNull("fixture missing: " + TS_NO_STATS_FIXTURE, is);
+                    Files.write(java.nio.file.Path.of(path.toString()), is.readAllBytes());
+                }
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                ff.remove(path.$());
+            }
+
+            runMig940(token);
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                long parquetMetaSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(parquetMetaAddr, Long.MAX_VALUE);
+                    Assert.assertEquals(1, reader.getColumnCount());
+                    Assert.assertEquals(2, reader.getRowGroupCount());
+                    // MIN_PRESENT=bit0, MIN_INLINED=bit1, MAX_PRESENT=bit3, MAX_INLINED=bit4.
+                    final int minMask = (1 << 0) | (1 << 1);
+                    final int maxMask = (1 << 3) | (1 << 4);
+                    for (int rg = 0; rg < 2; rg++) {
+                        int flags = reader.getChunkStatFlags(rg, 0);
+                        Assert.assertEquals("rg " + rg + " min flags", minMask, flags & minMask);
+                        Assert.assertEquals("rg " + rg + " max flags", maxMask, flags & maxMask);
+                        long expectedMin = rg * 10L;
+                        long expectedMax = expectedMin + 9;
+                        Assert.assertEquals("rg " + rg + " min", expectedMin, reader.getRowGroupMinTimestamp(rg, 0));
+                        Assert.assertEquals("rg " + rg + " max", expectedMax, reader.getRowGroupMaxTimestamp(rg, 0));
+                    }
+                } finally {
+                    ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                }
+            }
+        });
+    }
 
     @Test
     public void testMigrateGeneratesPmForParquetPartitions() throws Exception {

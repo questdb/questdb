@@ -270,7 +270,8 @@ public final class Mig940 {
             if (!ff.truncate(parquetMetaFd, 0)) {
                 throw CairoException.critical(ff.errno()).put("could not truncate _pm [path=").put(path).put(']');
             }
-            long parquetMetaSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
+            long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_MIG);
+            long parquetMetaSize = ParquetMetadataWriter.generate(allocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
             LOG.info().$("generated parquet metadata [path=").$(path).$(", parquetMetadataFileSize=").$(parquetMetaSize).I$();
             return parquetMetaSize;
         } catch (Throwable t) {
