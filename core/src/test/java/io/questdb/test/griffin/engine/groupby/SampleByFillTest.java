@@ -2529,6 +2529,124 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillSubDayTimezoneFromDense() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            // Dense data - four rows at London local 00:00, 01:00, 02:00, 03:00
+            // (UTC 23:00Z previous day, 00:00Z, 01:00Z, 02:00Z). No gaps, no
+            // leading fill. Case C locks in the dense-path behavior that was
+            // already correct pre-fix because the firstTs anchor masked the
+            // grid divergence. With the fill-range to_utc wrap in place, this
+            // test continues to pass and documents the intended invariant.
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-05-31T23:00:00.000000Z', 1.0),
+                        ('2024-06-01T00:00:00.000000Z', 2.0),
+                        ('2024-06-01T01:00:00.000000Z', 3.0),
+                        ('2024-06-01T02:00:00.000000Z', 4.0)""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tx
+                            2024-05-31T23:00:00.000000Z\t1.0
+                            2024-06-01T00:00:00.000000Z\t2.0
+                            2024-06-01T01:00:00.000000Z\t3.0
+                            """,
+                    """
+                            SELECT ts, sum(x) x FROM t
+                            SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T03:00:00.000000Z'
+                            FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London'""",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillSubDayTimezoneFromEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        x DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            // No data rows matching the WHERE predicate - empty base cursor.
+            // The fill cursor alone emits the 24 hourly buckets at UTC
+            // positions that correspond to London 00:00..23:00 local time.
+            // During June 2024, London is on BST (UTC+1), so local 00:00 maps
+            // to UTC 23:00 of the previous day. Pre-fix the buckets landed at
+            // UTC 00:00..23:00 on 2024-06-01 (one-timezone-offset shifted).
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-06-01T00:00:00.000000Z', 'other', 1.0)""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tx
+                            2024-05-31T23:00:00.000000Z\tnull
+                            2024-06-01T00:00:00.000000Z\tnull
+                            2024-06-01T01:00:00.000000Z\tnull
+                            2024-06-01T02:00:00.000000Z\tnull
+                            2024-06-01T03:00:00.000000Z\tnull
+                            2024-06-01T04:00:00.000000Z\tnull
+                            2024-06-01T05:00:00.000000Z\tnull
+                            2024-06-01T06:00:00.000000Z\tnull
+                            2024-06-01T07:00:00.000000Z\tnull
+                            2024-06-01T08:00:00.000000Z\tnull
+                            2024-06-01T09:00:00.000000Z\tnull
+                            2024-06-01T10:00:00.000000Z\tnull
+                            2024-06-01T11:00:00.000000Z\tnull
+                            2024-06-01T12:00:00.000000Z\tnull
+                            2024-06-01T13:00:00.000000Z\tnull
+                            2024-06-01T14:00:00.000000Z\tnull
+                            2024-06-01T15:00:00.000000Z\tnull
+                            2024-06-01T16:00:00.000000Z\tnull
+                            2024-06-01T17:00:00.000000Z\tnull
+                            2024-06-01T18:00:00.000000Z\tnull
+                            2024-06-01T19:00:00.000000Z\tnull
+                            2024-06-01T20:00:00.000000Z\tnull
+                            2024-06-01T21:00:00.000000Z\tnull
+                            2024-06-01T22:00:00.000000Z\tnull
+                            """,
+                    """
+                            SELECT ts, sum(x) x FROM t
+                            WHERE sym = 'never_matches'
+                            SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-02'
+                            FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London'""",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillSubDayTimezoneFromSparse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            // Single data row at London 2024-06-01T03:00 local (UTC 02:00Z).
+            // Query spans London 00:00..04:00 local via FROM/TO; expected 3
+            // leading NULL fills at London 00:00/01:00/02:00 (UTC 23:00Z /
+            // 00:00Z / 01:00Z) then the data row at UTC 02:00Z. Pre-fix this
+            // missed the London 00:00 bucket entirely and emitted only 2
+            // leading NULL fills at shifted UTC positions.
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-06-01T02:00:00.000000Z', 42.0)""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tx
+                            2024-05-31T23:00:00.000000Z\tnull
+                            2024-06-01T00:00:00.000000Z\tnull
+                            2024-06-01T01:00:00.000000Z\tnull
+                            2024-06-01T02:00:00.000000Z\t42.0
+                            """,
+                    """
+                            SELECT ts, sum(x) x FROM t
+                            SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000Z'
+                            FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London'""",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testFillToNullTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             // A bind variable bound to null timestamp evaluates to LONG_NULL at
