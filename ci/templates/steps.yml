@@ -210,11 +210,9 @@ steps:
       options: "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
-        -P qdbr-coverage,build-web-console
+        -P jacoco,qdbr-coverage,build-web-console
         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
-      codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
-      codeCoverageClassFilter: "$(COVERAGE_DIFF)"
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
       LD_PRELOAD: $(Build.SourcesDirectory)/core/src/main/bin/linux-x86-64/libjemalloc.so
@@ -266,7 +264,7 @@ steps:
 
   - bash: |
       set -eux
-      mv core/CCReport43F6D5EF/jacoco.exec $(testset).exec
+      mv core/target/jacoco.exec $(testset).exec
     displayName: "Prepare partial JaCoCo report for upload"
     condition: |
       and(
