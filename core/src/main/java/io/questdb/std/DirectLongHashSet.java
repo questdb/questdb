@@ -50,7 +50,7 @@ import java.io.Closeable;
  * </pre>
  */
 public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
-    public static final double DEFAULT_LOAD_FACTOR = 0.4;
+    public static final double DEFAULT_LOAD_FACTOR = 0.7;
     private static final int MIN_CAPACITY = 16;
     private final double loadFactor;
     private final int memoryTag;
