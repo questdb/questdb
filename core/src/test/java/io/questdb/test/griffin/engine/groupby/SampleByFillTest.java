@@ -464,6 +464,32 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullCastMultiKey() throws Exception {
+        // FILL(NULL) variant of the multi-key inline-function classifier regression (D-04 representative).
+        // Captured via probe-and-freeze.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 10.0, '2024-01-01T00:00:00.000000Z'),
+                        (2, 20.0, '2024-01-01T02:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tk\tfirst
+                            2024-01-01T00:00:00.000000Z\t1\t10.0
+                            2024-01-01T00:00:00.000000Z\t2\tnull
+                            2024-01-01T01:00:00.000000Z\t1\tnull
+                            2024-01-01T01:00:00.000000Z\t2\tnull
+                            2024-01-01T02:00:00.000000Z\t2\t20.0
+                            2024-01-01T02:00:00.000000Z\t1\tnull
+                            """,
+                    "SELECT ts, cast(x AS STRING) k, first(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testFillNullDstFallback() throws Exception {
         assertMemoryLeak(() -> {
             // Dense data: one row every 10 minutes around Europe/Riga DST fall-back 2021-10-31.
@@ -1200,6 +1226,85 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevCastMultiKey() throws Exception {
+        // Two distinct cast(x AS STRING) keys across three buckets produce
+        // 2 x 3 = 6 cartesian rows. Captured via probe-and-freeze.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 10.0, '2024-01-01T00:00:00.000000Z'),
+                        (2, 20.0, '2024-01-01T02:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tk\tfirst
+                            2024-01-01T00:00:00.000000Z\t1\t10.0
+                            2024-01-01T00:00:00.000000Z\t2\tnull
+                            2024-01-01T01:00:00.000000Z\t1\t10.0
+                            2024-01-01T01:00:00.000000Z\t2\tnull
+                            2024-01-01T02:00:00.000000Z\t2\t20.0
+                            2024-01-01T02:00:00.000000Z\t1\t10.0
+                            """,
+                    "SELECT ts, cast(x AS STRING) k, first(v) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevConcatMultiKey() throws Exception {
+        // Two distinct concat(a, b) (FUNCTION form) keys across three buckets
+        // produce 2 x 3 = 6 cartesian rows. Captured via probe-and-freeze.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a STRING, b STRING, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('Lon', 'don', 10.0, '2024-01-01T00:00:00.000000Z'),
+                        ('Par', 'is', 20.0, '2024-01-01T02:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tk\tfirst
+                            2024-01-01T00:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T00:00:00.000000Z\tParis\tnull
+                            2024-01-01T01:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T01:00:00.000000Z\tParis\tnull
+                            2024-01-01T02:00:00.000000Z\tParis\t20.0
+                            2024-01-01T02:00:00.000000Z\tLondon\t10.0
+                            """,
+                    "SELECT ts, concat(a, b) k, first(v) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevConcatOperatorMultiKey() throws Exception {
+        // Two distinct a || b (OPERATION form) keys across three buckets produce
+        // 2 x 3 = 6 cartesian rows. Captured via probe-and-freeze. Pins the
+        // OPERATION branch of the classifier predicate.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a STRING, b STRING, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('Lon', 'don', 10.0, '2024-01-01T00:00:00.000000Z'),
+                        ('Par', 'is', 20.0, '2024-01-01T02:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tk\tfirst
+                            2024-01-01T00:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T00:00:00.000000Z\tParis\tnull
+                            2024-01-01T01:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T01:00:00.000000Z\tParis\tnull
+                            2024-01-01T02:00:00.000000Z\tParis\t20.0
+                            2024-01-01T02:00:00.000000Z\tLondon\t10.0
+                            """,
+                    "SELECT ts, a || b k, first(v) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevCrossColumnArrayDimsMismatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1703,6 +1808,41 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t30.0
                             """,
                     "SELECT ts, interval(lo, hi) k, first(v) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
+        });
+    }
+
+    @Test
+    public void testFillPrevIntervalMultiKey() throws Exception {
+        // Two distinct interval(lo, hi) keys across three buckets should
+        // produce 2 x 3 = 6 cartesian rows. Pre-fix classifier treated the
+        // function-valued key as an aggregate, dropped it from keyColIndices,
+        // and collapsed output to 3 rows.
+        // Row order and Interval.NULL rendering captured from probe-and-freeze run.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        lo TIMESTAMP,
+                        hi TIMESTAMP,
+                        v DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2020-01-01T00:00:00.000Z'::TIMESTAMP, '2020-02-01T00:00:00.000Z'::TIMESTAMP, 10.0, '2024-01-01T00:00:00.000000Z'),
+                        ('2021-01-01T00:00:00.000Z'::TIMESTAMP, '2021-02-01T00:00:00.000Z'::TIMESTAMP, 20.0, '2024-01-01T02:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tk\tfirst
+                            2024-01-01T00:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0
+                            2024-01-01T00:00:00.000000Z\t('2021-01-01T00:00:00.000Z', '2021-02-01T00:00:00.000Z')\tnull
+                            2024-01-01T01:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0
+                            2024-01-01T01:00:00.000000Z\t('2021-01-01T00:00:00.000Z', '2021-02-01T00:00:00.000Z')\tnull
+                            2024-01-01T02:00:00.000000Z\t('2021-01-01T00:00:00.000Z', '2021-02-01T00:00:00.000Z')\t20.0
+                            2024-01-01T02:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0
+                            """,
+                    "SELECT ts, interval(lo, hi) k, first(v) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
         });
     }
 
