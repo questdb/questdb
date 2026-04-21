@@ -67,6 +67,35 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testWriteBadRequestResponseUsesUtf8ContentLength() throws Exception {
+        assertMemoryLeak(() -> {
+            long bufferSize = 512;
+            long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                String reason = "Invalid WebSocket handshake: \u043F\u0440\u0438\u0432\u0435\u0442 \uD83D\uDE00";
+                int written = QwpWebSocketUpgradeProcessor.writeBadRequestResponse(buffer, (int) bufferSize, reason);
+
+                Assert.assertTrue("Response should be written", written > 0);
+
+                byte[] responseBytes = new byte[written];
+                for (int i = 0; i < written; i++) {
+                    responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
+                }
+                String response = new String(responseBytes, StandardCharsets.UTF_8);
+                int expectedContentLength = reason.getBytes(StandardCharsets.UTF_8).length;
+
+                Assert.assertTrue(
+                        "Response should use UTF-8 byte length",
+                        response.contains("Content-Length: " + expectedContentLength + "\r\n")
+                );
+                Assert.assertTrue("Response should contain UTF-8 body", response.endsWith("\r\n\r\n" + reason));
+            } finally {
+                Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testWriteHandshakeResponse() throws Exception {
         assertMemoryLeak(() -> {
             // Given a valid WebSocket key
