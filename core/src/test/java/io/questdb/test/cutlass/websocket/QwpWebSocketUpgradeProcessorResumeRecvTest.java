@@ -87,8 +87,8 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
-            // First send = pong, second send = ACK. Throw on ACK.
-            mockRawSocket.throwSlowToReadOnCall = 2;
+            // First send = ACK (via flushPendingAck in handlePing). Throw on ACK.
+            mockRawSocket.throwSlowToReadOnCall = 1;
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {

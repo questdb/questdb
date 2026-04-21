@@ -656,19 +656,11 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private void handlePing(HttpConnectionContext context, QwpProcessorState state, long payload, int length)
-            throws PeerDisconnectedException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         // PING is a documented flush point for pending ACK/durable-ACK frames.
         // A client may send PING specifically to prod the server into emitting
         // acks for commits whose uploads have completed since the last message.
-        try {
-            flushPendingAck(context, state);
-        } catch (PeerIsSlowToReadException e) {
-            // trySend{Ack,DurableAck} transitioned the state into a resume variant
-            // before rethrowing, so the isSendReady() check below will skip the pong
-            // response and the outer IO loop will drive the resume on writability.
-        }
-        // PeerDisconnectedException propagates: the peer is gone, so let the context
-        // tear the connection down rather than attempting a pong on a dead socket.
+        flushPendingAck(context, state);
 
         // Can only send pong when buffer is clear
         if (!state.isSendReady()) {
