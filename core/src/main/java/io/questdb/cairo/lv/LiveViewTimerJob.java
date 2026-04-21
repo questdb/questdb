@@ -70,6 +70,22 @@ public class LiveViewTimerJob extends SynchronizedJob {
             if (instance.isDropped() || instance.isInvalid()) {
                 continue;
             }
+            TableToken baseTableToken = instance.getDefinition().getBaseTableToken();
+            if (baseTableToken == null) {
+                continue;
+            }
+
+            // Retry a refresh that the worker bailed out of because readers still pinned
+            // the write buffer. The flag is cleared by publishWriteBuffer on success.
+            if (instance.isPendingRefresh()) {
+                LOG.debug().$("enqueueing live view pending-refresh retry [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", base=").$(baseTableToken).I$();
+                stateStore.enqueueForceDrain(baseTableToken);
+                didWork = true;
+                continue;
+            }
+
             MergeBuffer mergeBuffer = instance.getMergeBuffer();
             if (mergeBuffer == null || mergeBuffer.isEmpty()) {
                 continue;
@@ -77,10 +93,6 @@ public class LiveViewTimerJob extends SynchronizedJob {
             long lagMicros = instance.getDefinition().getLagMicros();
             long lastRefreshUs = instance.getLastRefreshTimeUs();
             if (nowUs - lastRefreshUs < lagMicros) {
-                continue;
-            }
-            TableToken baseTableToken = instance.getDefinition().getBaseTableToken();
-            if (baseTableToken == null) {
                 continue;
             }
             LOG.debug().$("enqueueing live view idle flush [view=").$(instance.getDefinition().getViewName())

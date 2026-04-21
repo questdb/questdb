@@ -150,33 +150,54 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void bootstrap(LiveViewInstance instance, boolean forceDrain) throws SqlException {
         WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
         RecordCursorFactory baseFactory = windowFactory.getBaseFactory();
-        windowFactory.resetWindowFunctions();
 
-        MergeBuffer mergeBuffer = ensureMergeBuffer(instance, baseFactory.getMetadata());
-        mergeBuffer.reset();
-
-        RecordCursor baseCursor = baseFactory.getCursor(executionContext);
-        try {
-            Record record = baseCursor.getRecord();
-            while (baseCursor.hasNext()) {
-                mergeBuffer.addRow(record);
-            }
-        } finally {
-            baseCursor.close();
+        // Claim the write buffer before any destructive work on the merge buffer or
+        // window state: a readers-are-still-pinned failure later would lose rows.
+        InMemoryTable writeBuffer = instance.tryAcquireWriteBuffer();
+        if (writeBuffer == null) {
+            LOG.debug().$("live view bootstrap deferred, write buffer pinned by readers [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            return;
         }
 
-        long lagMicros = instance.getDefinition().getLagMicros();
-        long watermark = forceDrain ? mergeBuffer.getMaxTsSeen() : mergeBuffer.getMaxTsSeen() - lagMicros;
-        RecordCursor drainCursor = mergeBuffer.drain(watermark);
         try {
-            RecordCursor windowCursor = windowFactory.getBootstrapCursor(drainCursor, executionContext);
+            windowFactory.resetWindowFunctions();
+            MergeBuffer mergeBuffer = ensureMergeBuffer(instance, baseFactory.getMetadata());
+            mergeBuffer.reset();
+
+            RecordCursor baseCursor = baseFactory.getCursor(executionContext);
             try {
-                instance.refresh(windowCursor);
+                Record record = baseCursor.getRecord();
+                while (baseCursor.hasNext()) {
+                    mergeBuffer.addRow(record);
+                }
             } finally {
-                windowCursor.close();
+                baseCursor.close();
             }
+
+            long lagMicros = instance.getDefinition().getLagMicros();
+            long watermark = forceDrain ? mergeBuffer.getMaxTsSeen() : mergeBuffer.getMaxTsSeen() - lagMicros;
+
+            writeBuffer.clear();
+            RecordCursor drainCursor = mergeBuffer.drain(watermark);
+            try {
+                RecordCursor windowCursor = windowFactory.getBootstrapCursor(drainCursor, executionContext);
+                try {
+                    Record record = windowCursor.getRecord();
+                    while (windowCursor.hasNext()) {
+                        writeBuffer.appendRow(record);
+                    }
+                } finally {
+                    windowCursor.close();
+                }
+            } catch (Throwable t) {
+                Misc.free(drainCursor);
+                throw t;
+            }
+            writeBuffer.applyRetention(instance.getDefinition().getRetentionMicros());
+            instance.publishWriteBuffer();
         } catch (Throwable t) {
-            Misc.free(drainCursor);
+            instance.abortWriteBuffer(writeBuffer);
             throw t;
         }
     }
@@ -211,18 +232,42 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (mergeBuffer.isEmpty()) {
             return;
         }
-        long lagMicros = instance.getDefinition().getLagMicros();
-        long watermark = forceDrain ? mergeBuffer.getMaxTsSeen() : mergeBuffer.getMaxTsSeen() - lagMicros;
-        RecordCursor drainCursor = mergeBuffer.drain(watermark);
+        // Acquire the write buffer before draining — drain is destructive on the merge
+        // buffer (rows with ts <= watermark are dropped on cursor close). A late failure
+        // to acquire would lose rows with no rollback path.
+        InMemoryTable writeBuffer = instance.tryAcquireWriteBuffer();
+        if (writeBuffer == null) {
+            LOG.debug().$("live view incremental refresh deferred, write buffer pinned by readers [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            return;
+        }
+
         try {
-            RecordCursor windowCursor = windowFactory.getIncrementalCursor(drainCursor, executionContext);
+            // Sync the write buffer from the currently-published state; appending the
+            // delta on top yields the next publishable snapshot.
+            writeBuffer.copyFrom(instance.peekPublishedBuffer());
+
+            long lagMicros = instance.getDefinition().getLagMicros();
+            long watermark = forceDrain ? mergeBuffer.getMaxTsSeen() : mergeBuffer.getMaxTsSeen() - lagMicros;
+            RecordCursor drainCursor = mergeBuffer.drain(watermark);
             try {
-                instance.appendIncremental(windowCursor);
-            } finally {
-                windowCursor.close();
+                RecordCursor windowCursor = windowFactory.getIncrementalCursor(drainCursor, executionContext);
+                try {
+                    Record record = windowCursor.getRecord();
+                    while (windowCursor.hasNext()) {
+                        writeBuffer.appendRow(record);
+                    }
+                } finally {
+                    windowCursor.close();
+                }
+            } catch (Throwable t) {
+                Misc.free(drainCursor);
+                throw t;
             }
+            writeBuffer.applyRetention(instance.getDefinition().getRetentionMicros());
+            instance.publishWriteBuffer();
         } catch (Throwable t) {
-            Misc.free(drainCursor);
+            instance.abortWriteBuffer(writeBuffer);
             throw t;
         }
     }
@@ -395,7 +440,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             try {
                 long lastSeqTxn = instance.getLastProcessedSeqTxn();
+                boolean bootstrapAttempted = false;
                 if (lastSeqTxn < 0) {
+                    bootstrapAttempted = true;
                     bootstrap(instance, forceDrain);
                 } else if (seqTxn > lastSeqTxn) {
                     incrementalRefresh(instance, lastSeqTxn, seqTxn, forceDrain);
@@ -408,7 +455,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         drainAndCommit(instance, windowFactory, mergeBuffer, true);
                     }
                 }
-                if (seqTxn > lastSeqTxn) {
+                // Advance lastProcessedSeqTxn for an incremental refresh even when the final
+                // drainAndCommit bailed on write buffer contention: WAL rows were already
+                // drained into the merge buffer, so the retry path (force-drain via the
+                // timer) just needs to flush the merge buffer into the write buffer, not
+                // re-read the same WAL segments. Bootstrap is different — it never touches
+                // WAL state on a pending-refresh bail, so do not advance or the retry would
+                // take the incremental branch on an un-bootstrapped view.
+                if (seqTxn > lastSeqTxn && !(bootstrapAttempted && instance.isPendingRefresh())) {
                     instance.setLastProcessedSeqTxn(seqTxn);
                 }
                 instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());

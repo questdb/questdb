@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.InMemoryTable;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewTimerJob;
@@ -363,19 +364,19 @@ public class LiveViewTest extends AbstractCairoTest {
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
             Assert.assertNotNull(instance);
 
-            // Simulate an active reader cursor: hold the read lock across the DROP.
-            Assert.assertTrue(instance.tryLockForRead());
+            // Simulate an active reader cursor: hold a read pin across the DROP.
+            io.questdb.cairo.lv.InMemoryTable pinned = instance.acquireForRead();
+            Assert.assertNotNull(pinned);
             try {
                 execute("DROP LIVE VIEW live_rn");
                 // The view is removed from the registry and marked dropped, but the
-                // table is NOT freed yet because we hold the read lock.
+                // table is NOT freed yet because we hold the read pin.
                 Assert.assertTrue(instance.isDropped());
                 Assert.assertFalse(engine.getLiveViewRegistry().hasView("live_rn"));
             } finally {
-                instance.unlockAfterRead();
+                instance.releaseAfterRead(pinned);
             }
-            // The cursor close hook would normally do this; call it explicitly here.
-            instance.tryCloseIfDropped();
+            // The cursor close hook runs tryCloseIfDropped via releaseAfterRead above.
         });
     }
 
@@ -1019,7 +1020,7 @@ public class LiveViewTest extends AbstractCairoTest {
             Assert.assertTrue(instance.isDropped());
 
             // A reader arriving after the drop must be turned away.
-            Assert.assertFalse(instance.tryLockForRead());
+            Assert.assertNull(instance.acquireForRead());
         });
     }
 
@@ -1103,6 +1104,108 @@ public class LiveViewTest extends AbstractCairoTest {
         );
 
         execute("DROP LIVE VIEW live_lag");
+    }
+
+    @Test
+    public void testPendingRefreshRetriedViaTimerAfterContention() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndLiveView();
+
+            execute("INSERT INTO trades VALUES ('AAPL', 150.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            drainLiveViewQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+
+            // A reader pins the currently-published buffer. After the incremental
+            // refresh below, the writer swaps, and this pinned buffer becomes the
+            // write-slot candidate — the force-flush pass inside drainLiveViewQueue
+            // will then fail to claim it and set pendingRefresh.
+            InMemoryTable pinned = instance.acquireForRead();
+            Assert.assertNotNull(pinned);
+            try {
+                // Two inserts spanning past LAG: the ts=5s row drains on the normal
+                // (non-force) refresh, then the ts=10s row stays held back until a
+                // force-flush. That force-flush is what hits write buffer contention.
+                execute("INSERT INTO trades VALUES" +
+                        " ('AAPL', 151.0, '2024-01-01T00:00:05.000000Z')," +
+                        " ('AAPL', 152.0, '2024-01-01T00:00:10.000000Z')");
+                drainWalQueue();
+                drainLiveViewQueue();
+                Assert.assertTrue(instance.isPendingRefresh());
+            } finally {
+                instance.releaseAfterRead(pinned);
+            }
+
+            // Timer tick observes pendingRefresh and enqueues a retry. Draining the
+            // queue without force-flush ensures the retry path (not the drain helper's
+            // own force-refresh) is what commits the pending work.
+            LiveViewTimerJob timerJob = new LiveViewTimerJob(engine);
+            timerJob.run(0);
+            drainLiveViewQueueNoForce();
+
+            Assert.assertFalse(instance.isPendingRefresh());
+
+            assertQueryNoLeakCheck(
+                    "symbol\tprice\tts\trn\n" +
+                            "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                            "AAPL\t151.0\t2024-01-01T00:00:05.000000Z\t2\n" +
+                            "AAPL\t152.0\t2024-01-01T00:00:10.000000Z\t3\n",
+                    "SELECT * FROM live_rn",
+                    null,
+                    "ts",
+                    true,
+                    true
+            );
+
+            execute("DROP LIVE VIEW live_rn");
+        });
+    }
+
+    @Test
+    public void testReaderSeesStableSnapshotAcrossRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndLiveView();
+
+            execute("INSERT INTO trades VALUES ('AAPL', 150.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            drainLiveViewQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+            InMemoryTable pinned = instance.acquireForRead();
+            Assert.assertNotNull(pinned);
+            try {
+                long snapshotRowCount = pinned.getRowCount();
+                Assert.assertEquals(1, snapshotRowCount);
+
+                // Two inserts spanning past LAG: the ts=5s row drains on the non-force
+                // refresh into the non-pinned write buffer and swaps, leaving the
+                // pinned buffer frozen. The ts=10s row stays buffered (held back by
+                // LAG) and the force-flush pass is blocked by the pin.
+                execute("INSERT INTO trades VALUES" +
+                        " ('AAPL', 151.0, '2024-01-01T00:00:05.000000Z')," +
+                        " ('AAPL', 152.0, '2024-01-01T00:00:10.000000Z')");
+                drainWalQueue();
+                drainLiveViewQueue();
+
+                Assert.assertEquals(snapshotRowCount, pinned.getRowCount());
+            } finally {
+                instance.releaseAfterRead(pinned);
+            }
+
+            // A reader opened after the publish sees the post-swap snapshot. Only the
+            // first new row made it in — the second is still in the merge buffer
+            // waiting for the force-flush retry (not relevant to this test).
+            InMemoryTable fresh = instance.acquireForRead();
+            Assert.assertNotNull(fresh);
+            try {
+                Assert.assertEquals(2, fresh.getRowCount());
+            } finally {
+                instance.releaseAfterRead(fresh);
+            }
+
+            execute("DROP LIVE VIEW live_rn");
+        });
     }
 
     @Test

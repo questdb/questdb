@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.lv.InMemoryTable;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRecord;
 import io.questdb.cairo.sql.Record;
@@ -35,21 +36,25 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.ObjList;
 
 /**
- * Cursor that iterates over the rows of a live view's InMemoryTable.
- * Acquires a read lock on the view instance for the duration of the query.
+ * Cursor over a snapshot of a live view's double-buffered InMemoryTable. On {@link
+ * #open} the cursor pins the currently-published buffer via {@link
+ * LiveViewInstance#acquireForRead}; writes by the refresh worker go to the other
+ * buffer, so the pinned buffer's bytes are frozen for the cursor's lifetime. On
+ * {@link #close} the pin is released and, if the view has been dropped, a close
+ * attempt is made.
  */
 public class LiveViewRecordCursor implements RecordCursor {
-    private final LiveViewRecord record;
-    private final LiveViewRecord recordB;
+    private final LiveViewRecord record = new LiveViewRecord(null);
+    private final LiveViewRecord recordB = new LiveViewRecord(null);
     private final LiveViewInstance viewInstance;
     private long currentRow;
     private boolean isOpen;
+    // Pinned published buffer, set on open() and released on close(). Null when closed.
+    private InMemoryTable pinnedBuffer;
     private long rowCount;
 
     public LiveViewRecordCursor(LiveViewInstance viewInstance) {
         this.viewInstance = viewInstance;
-        this.record = new LiveViewRecord(viewInstance.getTable());
-        this.recordB = new LiveViewRecord(viewInstance.getTable());
     }
 
     @Override
@@ -62,8 +67,11 @@ public class LiveViewRecordCursor implements RecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            viewInstance.unlockAfterRead();
-            viewInstance.tryCloseIfDropped();
+            InMemoryTable buffer = pinnedBuffer;
+            pinnedBuffer = null;
+            record.setTable(null);
+            recordB.setTable(null);
+            viewInstance.releaseAfterRead(buffer);
         }
     }
 
@@ -93,11 +101,12 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     public void open() {
         if (isOpen) {
-            // cursor reuse: reset state without re-acquiring lock
+            // cursor reuse: reset position but keep the existing pin (same snapshot).
             currentRow = 0;
             return;
         }
-        if (!viewInstance.tryLockForRead()) {
+        InMemoryTable buffer = viewInstance.acquireForRead();
+        if (buffer == null) {
             throw CairoException.nonCritical()
                     .put("live view was dropped [name=").put(viewInstance.getDefinition().getViewName()).put(']');
         }
@@ -107,11 +116,14 @@ public class LiveViewRecordCursor implements RecordCursor {
                         .put("live view is invalid [name=").put(viewInstance.getDefinition().getViewName())
                         .put(", reason=").put(viewInstance.getInvalidationReason()).put(']');
             }
-            rowCount = viewInstance.getTable().getRowCount();
+            pinnedBuffer = buffer;
+            record.setTable(buffer);
+            recordB.setTable(buffer);
+            rowCount = buffer.getRowCount();
             currentRow = 0;
             isOpen = true;
         } catch (Throwable t) {
-            viewInstance.unlockAfterRead();
+            viewInstance.releaseAfterRead(buffer);
             throw t;
         }
     }
@@ -121,11 +133,11 @@ public class LiveViewRecordCursor implements RecordCursor {
     //  sized to columnCount (mirroring PageFrameRecordCursorFactory).
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        int type = viewInstance.getTable().getColumnType(columnIndex);
+        int type = pinnedBuffer.getColumnType(columnIndex);
         if (ColumnType.tagOf(type) != ColumnType.SYMBOL) {
             return null;
         }
-        ObjList<String> st = viewInstance.getTable().getSymbolTable(columnIndex);
+        ObjList<String> st = pinnedBuffer.getSymbolTable(columnIndex);
         return new SymbolTable() {
             @Override
             public CharSequence valueBOf(int key) {

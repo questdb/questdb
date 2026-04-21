@@ -132,6 +132,54 @@ public class InMemoryTable implements QuietCloseable {
     }
 
     /**
+     * Replaces this table's row state with an exact byte-level copy of {@code source}.
+     * Fixed-size and variable-length column regions are memcpy'd wholesale, aux vectors
+     * are reproduced verbatim (including sentinels), and symbol dictionaries are cloned
+     * entry-for-entry so that int keys in the copied data columns still resolve. The
+     * {@link RecordMetadata} of the two tables must match — callers are responsible for
+     * enforcing that (both buffers in a {@code DoubleBufferedTable} are initialized from
+     * the same metadata).
+     */
+    public void copyFrom(InMemoryTable source) {
+        for (int i = 0; i < columnCount; i++) {
+            MemoryCARW srcData = source.columns.getQuick(i);
+            MemoryCARW dstData = columns.getQuick(i);
+            long dataBytes = srcData.getAppendOffset();
+            dstData.jumpTo(0);
+            if (dataBytes > 0) {
+                long dstAddr = dstData.appendAddressFor(dataBytes);
+                Vect.memcpy(dstAddr, srcData.getPageAddress(0), dataBytes);
+            }
+
+            MemoryCARW srcAux = source.auxColumns.getQuick(i);
+            if (srcAux != null) {
+                MemoryCARW dstAux = auxColumns.getQuick(i);
+                long auxBytes = srcAux.getAppendOffset();
+                dstAux.jumpTo(0);
+                if (auxBytes > 0) {
+                    long dstAuxAddr = dstAux.appendAddressFor(auxBytes);
+                    Vect.memcpy(dstAuxAddr, srcAux.getPageAddress(0), auxBytes);
+                }
+            }
+        }
+
+        if (symbolTables != null && source.symbolTables != null) {
+            for (int i = 0; i < columnCount; i++) {
+                ObjList<String> srcSt = source.symbolTables.getQuick(i);
+                ObjList<String> dstSt = symbolTables.getQuick(i);
+                if (srcSt != null && dstSt != null) {
+                    dstSt.clear();
+                    for (int j = 0, m = srcSt.size(); j < m; j++) {
+                        dstSt.add(srcSt.getQuick(j));
+                    }
+                }
+            }
+        }
+
+        this.rowCount = source.rowCount;
+    }
+
+    /**
      * Returns the aux (offset index) address for a variable-length column.
      */
     public long getAuxColumnAddress(int columnIndex) {

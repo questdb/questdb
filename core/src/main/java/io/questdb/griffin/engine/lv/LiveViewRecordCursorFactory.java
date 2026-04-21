@@ -39,7 +39,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     private final LiveViewInstance viewInstance;
 
     public LiveViewRecordCursorFactory(LiveViewInstance viewInstance) {
-        super(viewInstance.getTable().getMetadata());
+        super(viewInstance.getDefinition().getMetadata());
         this.viewInstance = viewInstance;
         this.cursor = new LiveViewRecordCursor(viewInstance);
     }
