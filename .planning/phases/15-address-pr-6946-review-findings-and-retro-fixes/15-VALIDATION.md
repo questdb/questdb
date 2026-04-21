@@ -43,10 +43,10 @@ created: 2026-04-21
 | 15-01-03 | 01 | 1 | Criterion 1 (nano twin) | - | Nano TIMESTAMP fill constants unchanged (already correct) | integration | `mvn -pl core -Dtest=SampleByNanoTimestampTest#testTimestampFillNullAndValue test` | YES | pending |
 | 15-01-04 | 01 | 1 | Criterion 2 (nano twin) | - | Unquoted numeric rejected for nano TIMESTAMP target | integration | `mvn -pl core -Dtest=SampleByNanoTimestampTest#testTimestampFillValueUnquoted test` | YES | pending |
 | 15-01-05 | 01 | 1 | Criterion 5 (M-5) | - | Non-TIMESTAMP timestamp-index fallback skips fill instead of crashing | integration | `mvn -pl core -Dtest=SampleByFillTest test` | YES | pending |
-| 15-02-01 | 02 | 2 | Criterion 3 (C-3) | T-15-01 | Keyed SAMPLE BY FILL respects SqlExecutionCircuitBreaker cancellation | integration | `mvn -pl core -Dtest=SampleByFillTest#testKeyedFillRespectsCircuitBreaker test` | Wave 0 (new test) | pending |
-| 15-02-02 | 02 | 2 | Criterion 4 (M-4) | - | FillRecord.getLong256 sink resets to null on FILL_PREV_SELF miss | integration | `mvn -pl core -Dtest=SampleByFillTest test` | Wave 0 (new test) | pending |
-| 15-03-01 | 03 | 3 | Criterion 6 (M-7) | - | testSampleByFromToParallelSampleByRewriteWithKeys asserts bounded-TO output | integration | `mvn -pl core -Dtest=SqlOptimiserTest#testSampleByFromToParallelSampleByRewriteWithKeys test` | YES | pending |
-| 15-04-01 | 04 | 4 | Criterion 7 (retro-doc) | - | 15-04-SUMMARY.md exists with three commit hashes | doc | `test -f .planning/phases/15-address-pr-6946-review-findings-and-retro-fixes/15-04-SUMMARY.md` | Wave 0 (new doc) | pending |
+| 15-02-01 | 02 | 1 | Criterion 3 (C-3) | T-15-01 | Keyed SAMPLE BY FILL respects SqlExecutionCircuitBreaker cancellation | integration | `mvn -pl core -Dtest=SampleByFillTest#testFillKeyedRespectsCircuitBreaker test` | Wave 0 (new test) | pending |
+| 15-02-02 | 02 | 1 | Criterion 4 (M-4) | - | FillRecord.getLong256 sink resets to null on FILL_PREV_SELF miss | integration | `mvn -pl core -Dtest=SampleByFillTest#testFillPrevLong256NoPrevYet test` | Wave 0 (new test) | pending |
+| 15-03-01 | 03 | 1 | Criterion 6 (M-7) | - | testSampleByFromToParallelSampleByRewriteWithKeys asserts bounded-TO output | integration | `mvn -pl core -Dtest=SqlOptimiserTest#testSampleByFromToParallelSampleByRewriteWithKeys test` | YES | pending |
+| 15-04-01 | 04 | 2 | Criterion 7 (retro-doc) | - | 15-04-SUMMARY.md exists with three commit hashes | doc | `test -f .planning/phases/15-address-pr-6946-review-findings-and-retro-fixes/15-04-SUMMARY.md` | Wave 0 (new doc) | pending |
 
 *Status: pending / green / red / flaky*
 
@@ -54,8 +54,8 @@ created: 2026-04-21
 
 ## Wave 0 Requirements
 
-- [ ] `SampleByFillTest.testKeyedFillRespectsCircuitBreaker` - new test (Plan 02, C-3)
-- [ ] `SampleByFillTest.testFillPrevLong256SinkNullFallthrough` (or similar) - new test (Plan 02, M-4)
+- [ ] `SampleByFillTest.testFillKeyedRespectsCircuitBreaker` - new test (Plan 02, C-3)
+- [ ] `SampleByFillTest.testFillPrevLong256NoPrevYet` - new test (Plan 02, M-4)
 - [ ] `15-04-SUMMARY.md` - retro-doc artifact (Plan 04)
 
 *Restoration (not new):*
