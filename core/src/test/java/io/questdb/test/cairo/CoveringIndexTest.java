@@ -32,7 +32,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.idx.CoveringRowCursor;
-import io.questdb.cairo.idx.FSST;
+import io.questdb.cairo.idx.FSSTNative;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -6355,67 +6355,80 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testFsstRoundtrip() throws Exception {
-        // Direct test: FSST compress → decompress roundtrip on byte sequences
         assertMemoryLeak(() -> {
-            // Train on repeating patterns
             String[] values = {
                     "order_confirmation_alpha_2024",
                     "order_confirmation_beta_2024",
                     "order_confirmation_gamma_2024"
             };
-            // Build a training buffer
+            byte[][] valueBytes = new byte[values.length][];
             int totalLen = 0;
-            for (String v : values) {
-                totalLen += v.length() * 100;
+            for (int i = 0; i < values.length; i++) {
+                valueBytes[i] = values[i].getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                totalLen += valueBytes[i].length;
             }
-            long trainBuf = Unsafe.malloc(totalLen, MemoryTag.NATIVE_DEFAULT);
+            int reps = 100;
+            int trainCount = values.length * reps;
+            long offsetsBytes = (long) (trainCount + 1) * Long.BYTES;
+            long trainBufSize = (long) totalLen * reps;
+            long cmpCap = trainBufSize * 2 + 16;
+            long decCap = trainBufSize + 32;
+
+            long trainBuf = Unsafe.malloc(trainBufSize, MemoryTag.NATIVE_DEFAULT);
+            long srcOffsAddr = Unsafe.malloc(offsetsBytes, MemoryTag.NATIVE_DEFAULT);
+            long cmpBuf = Unsafe.malloc(cmpCap, MemoryTag.NATIVE_DEFAULT);
+            long cmpOffsAddr = Unsafe.malloc(offsetsBytes, MemoryTag.NATIVE_DEFAULT);
+            long decBuf = Unsafe.malloc(decCap, MemoryTag.NATIVE_DEFAULT);
+            long decOffsAddr = Unsafe.malloc(offsetsBytes, MemoryTag.NATIVE_DEFAULT);
+            long tableBuf = Unsafe.malloc(FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long decoder = Unsafe.malloc(FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
             try {
-                int pos = 0;
-                for (int rep = 0; rep < 100; rep++) {
-                    for (String v : values) {
-                        byte[] bytes = v.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                long pos = 0;
+                int ord = 0;
+                for (int rep = 0; rep < reps; rep++) {
+                    for (byte[] bytes : valueBytes) {
+                        Unsafe.getUnsafe().putLong(srcOffsAddr + (long) ord * Long.BYTES, pos);
                         for (byte b : bytes) {
                             Unsafe.getUnsafe().putByte(trainBuf + pos++, b);
                         }
+                        ord++;
                     }
                 }
+                Unsafe.getUnsafe().putLong(srcOffsAddr + (long) trainCount * Long.BYTES, pos);
 
-                try (FSST.SymbolTable table = FSST.trainBytes(trainBuf, pos)) {
-                    assertNotNull("FSST training should succeed on repetitive data", table);
-                    // Compress each value and verify roundtrip
-                    long cmpBuf = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
-                    long decBuf = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
-                    try {
-                        for (String v : values) {
-                            byte[] bytes = v.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                            long srcBuf = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
-                            try {
-                                for (int i = 0; i < bytes.length; i++) {
-                                    Unsafe.getUnsafe().putByte(srcBuf + i, bytes[i]);
-                                }
-                                int cmpLen = io.questdb.cairo.idx.FSST.compressBytes(table, srcBuf, bytes.length, cmpBuf);
-                                assertTrue("Compressed size should be > 0", cmpLen > 0);
-                                assertTrue("Compressed should be smaller than original for repetitive data",
-                                        cmpLen < bytes.length);
+                long packed = FSSTNative.trainAndCompressBlock(
+                        trainBuf, srcOffsAddr, trainCount,
+                        cmpBuf, cmpCap, cmpOffsAddr,
+                        tableBuf);
+                assertTrue("train+compress must succeed", packed >= 0);
+                long compressed = FSSTNative.unpackCompressed(packed);
+                assertTrue("repetitive data must compress smaller", compressed < pos);
 
-                                int decLen = io.questdb.cairo.idx.FSST.decompressBytes(table, cmpBuf, cmpLen, decBuf);
-                                assertEquals("Decompressed length must match original", bytes.length, decLen);
+                assertTrue("table import must succeed", FSSTNative.importTable(decoder, tableBuf) > 0);
+                long decoded = FSSTNative.decompressBlock(
+                        decoder, cmpBuf, cmpOffsAddr, Long.BYTES, trainCount,
+                        decBuf, decCap, decOffsAddr);
+                assertEquals("decoded length must match original", pos, decoded);
 
-                                for (int i = 0; i < bytes.length; i++) {
-                                    assertEquals("Byte mismatch at position " + i,
-                                            bytes[i], Unsafe.getUnsafe().getByte(decBuf + i));
-                                }
-                            } finally {
-                                Unsafe.free(srcBuf, bytes.length, MemoryTag.NATIVE_DEFAULT);
-                            }
-                        }
-                    } finally {
-                        Unsafe.free(cmpBuf, 1024, MemoryTag.NATIVE_DEFAULT);
-                        Unsafe.free(decBuf, 1024, MemoryTag.NATIVE_DEFAULT);
+                for (int i = 0; i < trainCount; i++) {
+                    long lo = Unsafe.getUnsafe().getLong(decOffsAddr + (long) i * Long.BYTES);
+                    long hi = Unsafe.getUnsafe().getLong(decOffsAddr + (long) (i + 1) * Long.BYTES);
+                    byte[] expected = valueBytes[i % values.length];
+                    assertEquals("value " + i + " length", expected.length, (int) (hi - lo));
+                    for (int j = 0; j < expected.length; j++) {
+                        assertEquals("value " + i + " byte " + j,
+                                expected[j], Unsafe.getUnsafe().getByte(decBuf + lo + j));
                     }
                 }
             } finally {
-                Unsafe.free(trainBuf, totalLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(decoder, FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(tableBuf, FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(decOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(decBuf, decCap, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(cmpOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(cmpBuf, cmpCap, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(srcOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(trainBuf, trainBufSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }

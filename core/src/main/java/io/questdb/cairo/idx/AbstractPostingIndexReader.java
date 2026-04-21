@@ -57,6 +57,8 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.Arrays;
+
 public abstract class AbstractPostingIndexReader implements IndexReader {
     private static final String INDEX_CORRUPT = "posting index is corrupt";
     private static final Log LOG = LogFactory.getLog(AbstractPostingIndexReader.class);
@@ -523,8 +525,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected final BorrowedArray arrayView = new BorrowedArray();
         protected final DirectBinarySequence binView = new DirectBinarySequence();
         protected final LongList currentGenSidecarOffsets = new LongList();
-        protected final LongList fsstCachedBlockBases = new LongList();
-        protected final ObjList<FSST.SymbolTable> fsstCachedTables = new ObjList<>();
         protected final DirectString stringViewA = new DirectString();
         protected final DirectString stringViewB = new DirectString();
         protected final DirectUtf8String varcharViewA = new DirectUtf8String();
@@ -534,8 +534,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected long decodeWorkspaceAddr;
         protected int decodeWorkspaceCapacity;
         protected int denseVarKeyStartCount;
-        protected long fsstDecompBufAddr;
-        protected int fsstDecompBufCapacity;
+        protected long[] fsstCachedBlockBases;
+        protected long[] fsstDecoderAddrs;
+        protected long[] fsstDstAddrs;
+        protected long[] fsstDstCapacities;
+        protected long[] fsstOffsetsAddrs;
+        protected long[] fsstOffsetsCapacities;
         protected boolean isCurrentGenDense;
         protected long[] keyBlockAddrs;
         protected int requestedKey;
@@ -745,7 +749,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 int gkc = genLookup.getGenKeyCount(g);
                 if (gkc >= 0) {
                     int denseCount = getDenseGenCount(gkc);
-                    if (denseCount < 0) return -1;
+                    if (denseCount < 0) {
+                        return -1;
+                    }
                     total += denseCount;
                 } else {
                     total += getSparseGenCount(g);
@@ -785,49 +791,111 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private CharSequence decompressFsstStr(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectString view, boolean longOffsets) {
-            int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
-            if (decompLen < 0) return null;
-            int len = Unsafe.getUnsafe().getInt(fsstDecompBufAddr);
-            if (len < 0) return null;
-            return view.of(fsstDecompBufAddr + Integer.BYTES, len);
+            if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+                return null;
+            }
+            long offsBase = fsstOffsetsAddrs[includeIdx];
+            long lo = Unsafe.getUnsafe().getLong(offsBase + (long) ordinal * Long.BYTES);
+            long hi = Unsafe.getUnsafe().getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+            if (lo == hi) {
+                return null;
+            }
+            long valAddr = fsstDstAddrs[includeIdx] + lo;
+            int len = Unsafe.getUnsafe().getInt(valAddr);
+            if (len < 0) {
+                return null;
+            }
+            return view.of(valAddr + Integer.BYTES, len);
         }
 
         private Utf8Sequence decompressFsstUtf8(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectUtf8String view, boolean longOffsets) {
-            int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
-            if (decompLen < 0) return null;
-            return view.of(fsstDecompBufAddr, fsstDecompBufAddr + decompLen);
+            if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+                return null;
+            }
+            long offsBase = fsstOffsetsAddrs[includeIdx];
+            long lo = Unsafe.getUnsafe().getLong(offsBase + (long) ordinal * Long.BYTES);
+            long hi = Unsafe.getUnsafe().getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+            if (lo == hi) {
+                return null;
+            }
+            long valAddr = fsstDstAddrs[includeIdx] + lo;
+            return view.of(valAddr, valAddr + (hi - lo));
         }
 
-        private int decompressFsstValue(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, boolean longOffsets) {
-            FSST.SymbolTable table = resolveFsstTable(mem, blockBase, includeIdx);
+        private boolean isFsstBlockUnavailable(MemoryMR mem, long blockBase, int count, int includeIdx, boolean longOffsets) {
+            ensureFsstCacheCapacity();
+            if (fsstCachedBlockBases[includeIdx] == blockBase) {
+                return false;
+            }
+
             long pos = blockBase + 4;
             int tableLen = Unsafe.getUnsafe().getShort(mem.addressOf(pos)) & 0xFFFF;
-
+            long tableAddr = mem.addressOf(pos + 2);
             long offsetsAddr = mem.addressOf(pos + 2 + tableLen);
-            long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
-            long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
-            if (lo == hi) {
-                return -1; // NULL
+            long offsetsTableSize = varBlockOffsetsSize(count, longOffsets);
+            long dataBase = pos + 2 + tableLen + offsetsTableSize;
+
+            long decoderAddr = fsstDecoderAddrs[includeIdx];
+            if (decoderAddr == 0) {
+                decoderAddr = Unsafe.malloc(FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_INDEX_READER);
+                fsstDecoderAddrs[includeIdx] = decoderAddr;
+            }
+            if (FSSTNative.importTable(decoderAddr, tableAddr) < 0) {
+                fsstCachedBlockBases[includeIdx] = -1;
+                return true;
             }
 
-            long dataBase = pos + 2 + tableLen + varBlockOffsetsSize(count, longOffsets);
-            long compAddr = mem.addressOf(dataBase + lo);
-            // A single value's compressed length fits in int: blocks are bounded
-            // by var_value max size, which is always well under 2 GB even for
-            // ARRAY/BINARY columns.
-            int compLen = (int) (hi - lo);
+            // Buffers are overwritten end-to-end on each miss; free + malloc skips realloc's stale-copy.
+            long offsetsBytes = (long) (count + 1) * Long.BYTES;
+            if (fsstOffsetsCapacities[includeIdx] < offsetsBytes) {
+                if (fsstOffsetsAddrs[includeIdx] != 0) {
+                    Unsafe.free(fsstOffsetsAddrs[includeIdx], fsstOffsetsCapacities[includeIdx], MemoryTag.NATIVE_INDEX_READER);
+                }
+                fsstOffsetsAddrs[includeIdx] = Unsafe.malloc(offsetsBytes, MemoryTag.NATIVE_INDEX_READER);
+                fsstOffsetsCapacities[includeIdx] = offsetsBytes;
+            }
 
-            int needed = compLen * 8;
-            if (fsstDecompBufCapacity < needed) {
-                fsstDecompBufAddr = Unsafe.realloc(
-                        fsstDecompBufAddr,
-                        fsstDecompBufCapacity,
-                        needed,
-                        MemoryTag.NATIVE_INDEX_READER
+            long totalCompressed = readVarBlockOffset(offsetsAddr, count, longOffsets);
+            long initialDstCap = Math.max(totalCompressed * 4L, 256L);
+            if (fsstDstCapacities[includeIdx] < initialDstCap) {
+                if (fsstDstAddrs[includeIdx] != 0) {
+                    Unsafe.free(fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx], MemoryTag.NATIVE_INDEX_READER);
+                }
+                fsstDstAddrs[includeIdx] = Unsafe.malloc(initialDstCap, MemoryTag.NATIVE_INDEX_READER);
+                fsstDstCapacities[includeIdx] = initialDstCap;
+            }
+
+            int srcOffsetsWidth = longOffsets ? Long.BYTES : Integer.BYTES;
+            while (true) {
+                long decoded = FSSTNative.decompressBlock(
+                        decoderAddr,
+                        mem.addressOf(dataBase), offsetsAddr, srcOffsetsWidth, count,
+                        fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx],
+                        fsstOffsetsAddrs[includeIdx]
                 );
-                fsstDecompBufCapacity = needed;
+                if (decoded >= 0) {
+                    break;
+                }
+                long newCap = fsstDstCapacities[includeIdx] * 2L;
+                Unsafe.free(fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx], MemoryTag.NATIVE_INDEX_READER);
+                fsstDstAddrs[includeIdx] = Unsafe.malloc(newCap, MemoryTag.NATIVE_INDEX_READER);
+                fsstDstCapacities[includeIdx] = newCap;
             }
-            return FSST.decompressBytes(table, compAddr, compLen, fsstDecompBufAddr);
+
+            fsstCachedBlockBases[includeIdx] = blockBase;
+            return false;
+        }
+
+        private void ensureFsstCacheCapacity() {
+            if (fsstCachedBlockBases == null) {
+                fsstCachedBlockBases = new long[coverCount];
+                Arrays.fill(fsstCachedBlockBases, -1L);
+                fsstDecoderAddrs = new long[coverCount];
+                fsstDstAddrs = new long[coverCount];
+                fsstDstCapacities = new long[coverCount];
+                fsstOffsetsAddrs = new long[coverCount];
+                fsstOffsetsCapacities = new long[coverCount];
+            }
         }
 
         private long findDenseVarBlockBase(int includeIdx) {
@@ -848,6 +916,29 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return siSize + strideOff;
         }
 
+        private void freeFsstCache() {
+            if (fsstCachedBlockBases == null) {
+                return;
+            }
+            for (int i = 0, n = fsstCachedBlockBases.length; i < n; i++) {
+                if (fsstDecoderAddrs[i] != 0) {
+                    Unsafe.free(fsstDecoderAddrs[i], FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_INDEX_READER);
+                    fsstDecoderAddrs[i] = 0;
+                }
+                if (fsstDstAddrs[i] != 0) {
+                    Unsafe.free(fsstDstAddrs[i], fsstDstCapacities[i], MemoryTag.NATIVE_INDEX_READER);
+                    fsstDstAddrs[i] = 0;
+                    fsstDstCapacities[i] = 0;
+                }
+                if (fsstOffsetsAddrs[i] != 0) {
+                    Unsafe.free(fsstOffsetsAddrs[i], fsstOffsetsCapacities[i], MemoryTag.NATIVE_INDEX_READER);
+                    fsstOffsetsAddrs[i] = 0;
+                    fsstOffsetsCapacities[i] = 0;
+                }
+                fsstCachedBlockBases[i] = -1;
+            }
+        }
+
         private int getDenseGenCount(int genKeyCount) {
             int memIdx = -1;
             for (int c = 0; c < coverCount; c++) {
@@ -858,7 +949,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     break;
                 }
             }
-            if (memIdx < 0) return -1;
+            if (memIdx < 0) {
+                return -1;
+            }
 
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
@@ -947,27 +1040,41 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
         private ArrayView getVarSidecarArray(int includeIdx, int columnType) {
             MemoryMR mem = sidecarMems.getQuick(includeIdx);
-            if (mem.size() == 0) return null;
+            if (mem.size() == 0) {
+                return null;
+            }
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + cachedSidecarIdx
                     : cachedSidecarIdx;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
                     : currentGenSidecarOffsets.getQuick(includeIdx);
-            if (blockBase < 0) return null;
+            if (blockBase < 0) {
+                return null;
+            }
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
-            boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
+            boolean fsst = (rawCount & FSSTNative.FSST_BLOCK_FLAG) != 0;
             boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
-            int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
-            if (ordinal >= count) return null;
+            int count = rawCount & ~(FSSTNative.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
+            if (ordinal >= count) {
+                return null;
+            }
 
             long dataAddr;
             int dataLen;
             if (fsst) {
-                int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
-                if (decompLen < 0) return null;
-                dataAddr = fsstDecompBufAddr;
-                dataLen = decompLen;
+                if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+                    return null;
+                }
+                long offsBase = fsstOffsetsAddrs[includeIdx];
+                long lo = Unsafe.getUnsafe().getLong(offsBase + (long) ordinal * Long.BYTES);
+                long hi = Unsafe.getUnsafe().getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+                if (lo == hi) {
+                    arrayView.ofNull();
+                    return arrayView;
+                }
+                dataAddr = fsstDstAddrs[includeIdx] + lo;
+                dataLen = (int) (hi - lo);
             } else {
                 long offsetsAddr = mem.addressOf(blockBase + 4);
                 long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
@@ -1008,62 +1115,87 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 return null;
             }
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
-            boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
+            boolean fsst = (rawCount & FSSTNative.FSST_BLOCK_FLAG) != 0;
             boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
-            int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
+            int count = rawCount & ~(FSSTNative.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
             if (ordinal >= count) {
                 return null;
             }
 
             if (fsst) {
-                int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
-                if (decompLen < 0) {
+                if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
                     return null;
                 }
-                long len = Unsafe.getUnsafe().getLong(fsstDecompBufAddr);
+                long offsBase = fsstOffsetsAddrs[includeIdx];
+                long lo = Unsafe.getUnsafe().getLong(offsBase + (long) ordinal * Long.BYTES);
+                long hi = Unsafe.getUnsafe().getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+                if (lo == hi) {
+                    return null;
+                }
+                long valAddr = fsstDstAddrs[includeIdx] + lo;
+                long len = Unsafe.getUnsafe().getLong(valAddr);
                 if (len < 0) {
                     return null;
                 }
-                return binView.of(fsstDecompBufAddr + Long.BYTES, len);
+                return binView.of(valAddr + Long.BYTES, len);
             }
 
             long offsetsAddr = mem.addressOf(blockBase + 4);
             long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
             long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
-            if (lo == hi) return null;
+            if (lo == hi) {
+                return null;
+            }
             long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
             long dataAddr = mem.addressOf(dataBase + lo);
             long len = Unsafe.getUnsafe().getLong(dataAddr);
-            if (len < 0) return null;
+            if (len < 0) {
+                return null;
+            }
             return binView.of(dataAddr + Long.BYTES, len);
         }
 
         private long getVarSidecarBinLen(int includeIdx) {
             MemoryMR mem = sidecarMems.getQuick(includeIdx);
-            if (mem.size() == 0) return -1;
+            if (mem.size() == 0) {
+                return -1;
+            }
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + cachedSidecarIdx
                     : cachedSidecarIdx;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
                     : currentGenSidecarOffsets.getQuick(includeIdx);
-            if (blockBase < 0) return -1;
+            if (blockBase < 0) {
+                return -1;
+            }
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
-            boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
+            boolean fsst = (rawCount & FSSTNative.FSST_BLOCK_FLAG) != 0;
             boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
-            int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
-            if (ordinal >= count) return -1;
+            int count = rawCount & ~(FSSTNative.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
+            if (ordinal >= count) {
+                return -1;
+            }
 
             if (fsst) {
-                int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
-                if (decompLen < 0) return -1;
-                return Unsafe.getUnsafe().getLong(fsstDecompBufAddr);
+                if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+                    return -1;
+                }
+                long offsBase = fsstOffsetsAddrs[includeIdx];
+                long lo = Unsafe.getUnsafe().getLong(offsBase + (long) ordinal * Long.BYTES);
+                long hi = Unsafe.getUnsafe().getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+                if (lo == hi) {
+                    return -1;
+                }
+                return Unsafe.getUnsafe().getLong(fsstDstAddrs[includeIdx] + lo);
             }
 
             long offsetsAddr = mem.addressOf(blockBase + 4);
             long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
             long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
-            if (lo == hi) return -1;
+            if (lo == hi) {
+                return -1;
+            }
             long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
             long dataAddr = mem.addressOf(dataBase + lo);
             return Unsafe.getUnsafe().getLong(dataAddr);
@@ -1071,19 +1203,25 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
         private CharSequence getVarSidecarStr(int includeIdx, DirectString view) {
             MemoryMR mem = sidecarMems.getQuick(includeIdx);
-            if (mem.size() == 0) return null;
+            if (mem.size() == 0) {
+                return null;
+            }
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + cachedSidecarIdx
                     : cachedSidecarIdx;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
                     : currentGenSidecarOffsets.getQuick(includeIdx);
-            if (blockBase < 0) return null;
+            if (blockBase < 0) {
+                return null;
+            }
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
-            boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
+            boolean fsst = (rawCount & FSSTNative.FSST_BLOCK_FLAG) != 0;
             boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
-            int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
-            if (ordinal >= count) return null;
+            int count = rawCount & ~(FSSTNative.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
+            if (ordinal >= count) {
+                return null;
+            }
 
             if (fsst) {
                 return decompressFsstStr(mem, blockBase, count, ordinal, includeIdx, view, longOffsets);
@@ -1092,29 +1230,39 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             long offsetsAddr = mem.addressOf(blockBase + 4);
             long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
             long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
-            if (lo == hi) return null;
+            if (lo == hi) {
+                return null;
+            }
             long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
             long dataAddr = mem.addressOf(dataBase + lo);
             int len = Unsafe.getUnsafe().getInt(dataAddr);
-            if (len < 0) return null;
+            if (len < 0) {
+                return null;
+            }
             return view.of(dataAddr + Integer.BYTES, len);
         }
 
         private Utf8Sequence getVarSidecarUtf8(int includeIdx, DirectUtf8String view) {
             MemoryMR mem = sidecarMems.getQuick(includeIdx);
-            if (mem.size() == 0) return null;
+            if (mem.size() == 0) {
+                return null;
+            }
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + cachedSidecarIdx
                     : cachedSidecarIdx;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
                     : currentGenSidecarOffsets.getQuick(includeIdx);
-            if (blockBase < 0) return null;
+            if (blockBase < 0) {
+                return null;
+            }
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
-            boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
+            boolean fsst = (rawCount & FSSTNative.FSST_BLOCK_FLAG) != 0;
             boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
-            int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
-            if (ordinal >= count) return null;
+            int count = rawCount & ~(FSSTNative.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
+            if (ordinal >= count) {
+                return null;
+            }
 
             if (fsst) {
                 return decompressFsstUtf8(mem, blockBase, count, ordinal, includeIdx, view, longOffsets);
@@ -1123,32 +1271,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             long offsetsAddr = mem.addressOf(blockBase + 4);
             long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
             long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
-            if (lo == hi) return null;
+            if (lo == hi) {
+                return null;
+            }
             long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
             long dataAddr = mem.addressOf(dataBase + lo);
             return view.of(dataAddr, dataAddr + (hi - lo));
-        }
-
-        private FSST.SymbolTable resolveFsstTable(MemoryMR mem, long blockBase, int includeIdx) {
-            if (fsstCachedTables.size() < coverCount) {
-                fsstCachedBlockBases.setAll(coverCount, -1L);
-                fsstCachedTables.setPos(coverCount);
-                for (int i = 0; i < coverCount; i++) {
-                    if (fsstCachedTables.getQuick(i) == null) {
-                        fsstCachedTables.setQuick(i, new FSST.SymbolTable());
-                    }
-                }
-            }
-            if (includeIdx < fsstCachedTables.size()
-                    && fsstCachedBlockBases.getQuick(includeIdx) == blockBase) {
-                return fsstCachedTables.getQuick(includeIdx);
-            }
-            long pos = blockBase + 4;
-            long tableAddr = mem.addressOf(pos + 2);
-            FSST.SymbolTable table = fsstCachedTables.getQuick(includeIdx);
-            FSST.deserializeInto(tableAddr, table);
-            fsstCachedBlockBases.setQuick(includeIdx, blockBase);
-            return table;
         }
 
         protected void cacheSidecarKeyAddrs(int stride, int localKey) {
@@ -1222,13 +1350,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 decodeWorkspaceAddr = 0;
                 decodeWorkspaceCapacity = 0;
             }
-            if (fsstDecompBufAddr != 0) {
-                Unsafe.free(fsstDecompBufAddr, fsstDecompBufCapacity, MemoryTag.NATIVE_INDEX_READER);
-                fsstDecompBufAddr = 0;
-                fsstDecompBufCapacity = 0;
-            }
-            Misc.freeObjListAndClear(fsstCachedTables);
-            fsstCachedBlockBases.clear();
+            freeFsstCache();
         }
 
         protected void computePerColumnSidecarOffsets(int gen) {

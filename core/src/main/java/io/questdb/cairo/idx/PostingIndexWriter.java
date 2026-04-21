@@ -122,6 +122,13 @@ public class PostingIndexWriter implements IndexWriter {
     private long currentPublishTableTxn = -1;
     private long flushHeaderBuf;
     private int flushHeaderBufCapacity;
+    private long fsstCmpAddr;
+    private long fsstCmpCap;
+    private long fsstCmpOffsAddr;
+    private long fsstCmpOffsCap;
+    private long fsstSrcOffsAddr;
+    private long fsstSrcOffsCap;
+    private long fsstTableAddr;
     private int genCount;
     private boolean hasPendingData;
     private boolean hasSpillData;
@@ -1913,9 +1920,32 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    private void freeFsstScratch() {
+        if (fsstSrcOffsAddr != 0) {
+            Unsafe.free(fsstSrcOffsAddr, fsstSrcOffsCap, MemoryTag.NATIVE_INDEX_READER);
+            fsstSrcOffsAddr = 0;
+            fsstSrcOffsCap = 0;
+        }
+        if (fsstCmpAddr != 0) {
+            Unsafe.free(fsstCmpAddr, fsstCmpCap, MemoryTag.NATIVE_INDEX_READER);
+            fsstCmpAddr = 0;
+            fsstCmpCap = 0;
+        }
+        if (fsstCmpOffsAddr != 0) {
+            Unsafe.free(fsstCmpOffsAddr, fsstCmpOffsCap, MemoryTag.NATIVE_INDEX_READER);
+            fsstCmpOffsAddr = 0;
+            fsstCmpOffsCap = 0;
+        }
+        if (fsstTableAddr != 0) {
+            Unsafe.free(fsstTableAddr, FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_INDEX_READER);
+            fsstTableAddr = 0;
+        }
+    }
+
     private void freeNativeBuffers() {
         freePendingBuffers();
         freeSpillData();
+        freeFsstScratch();
         if (flushHeaderBuf != 0) {
             Unsafe.free(flushHeaderBuf, flushHeaderBufCapacity, MemoryTag.NATIVE_INDEX_READER);
             flushHeaderBuf = 0;
@@ -4119,10 +4149,14 @@ public class PostingIndexWriter implements IndexWriter {
     /**
      * Writes var-sized sidecar data for one stride in the sealed path.
      * <p>
-     * Uncompressed format: [totalCount:4B][offsets:(totalCount+1)×4B][concatenated bytes]
+     * Uncompressed format: [totalCount:4B][offsets:(totalCount+1)×W][concatenated bytes]
      * <p>
-     * FSST-compressed format (count has high bit set):
-     * [totalCount|0x80000000:4B][tableLen:2B][FSST table][offsets:(count+1)×4B][compressed bytes]
+     * FSST-compressed format (count high bit set):
+     * [totalCount|FSST_BLOCK_FLAG|LONG_OFFSETS_FLAG?:4B][tableLen:2B][FSST table]
+     * [offsets:(count+1)×W][compressed bytes]
+     * <p>
+     * Offset width W is 4 bytes by default; 8 bytes when the block sets LONG_OFFSETS_FLAG
+     * (either uncompressed data span or compressed data span exceeds 2 GB).
      */
     private void writeSidecarVarStrideData(
             MemoryMARW mem, int covIdx, long colTop, int colType,
@@ -4133,7 +4167,6 @@ public class PostingIndexWriter implements IndexWriter {
             totalCount += keyCounts[j];
         }
 
-        // === Pass 1: Write uncompressed block to mem ===
         long blockStart = mem.getAppendOffset();
         boolean longOffsets = false;
         if (!writeVarStrideDataAttempt(mem, covIdx, colTop, colType, ks, keyCounts, keyOffsets, mergedValuesAddr, totalCount, false)) {
@@ -4152,73 +4185,81 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         long rawDataAddr = mem.addressOf(dataStart);
-        int trainLen = (int) Math.min(rawDataLen, 65_536L);
-        try (FSST.SymbolTable table = FSST.trainBytes(rawDataAddr, trainLen)) {
-            if (table == null) {
-                return;
+        long offsetsArrayBytes = (long) (totalCount + 1) * Long.BYTES;
+        long cmpCap = rawDataLen * 2 + 16;
+
+        if (fsstSrcOffsCap < offsetsArrayBytes) {
+            if (fsstSrcOffsAddr != 0) {
+                Unsafe.free(fsstSrcOffsAddr, fsstSrcOffsCap, MemoryTag.NATIVE_INDEX_READER);
             }
-            // Compress each value into a native buffer; store offsets in a long scratch
-            // so the FSST block can also use long offsets if compressed data > 2 GB.
-            long cmpBufAddr = Unsafe.malloc(rawDataLen * 2, MemoryTag.NATIVE_INDEX_READER);
-            long cmpOffsetsAddr = Unsafe.malloc((long) (totalCount + 1) * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            try {
-                long cmpPos = 0;
-                for (int i = 0; i < totalCount; i++) {
-                    Unsafe.getUnsafe().putLong(cmpOffsetsAddr + (long) i * Long.BYTES, cmpPos);
-                    long lo = longOffsets
-                            ? Unsafe.getUnsafe().getLong(mem.addressOf(offsetsStart + (long) i * Long.BYTES))
-                            : Unsafe.getUnsafe().getInt(mem.addressOf(offsetsStart + (long) i * Integer.BYTES)) & 0xFFFFFFFFL;
-                    long hi = longOffsets
-                            ? Unsafe.getUnsafe().getLong(mem.addressOf(offsetsStart + (long) (i + 1) * Long.BYTES))
-                            : Unsafe.getUnsafe().getInt(mem.addressOf(offsetsStart + (long) (i + 1) * Integer.BYTES)) & 0xFFFFFFFFL;
-                    long valLen = hi - lo;
-                    if (valLen > 0) {
-                        cmpPos += FSST.compressBytes(table, rawDataAddr + lo, (int) valLen, cmpBufAddr + cmpPos);
-                    }
-                }
-                Unsafe.getUnsafe().putLong(cmpOffsetsAddr + (long) totalCount * Long.BYTES, cmpPos);
+            fsstSrcOffsAddr = Unsafe.malloc(offsetsArrayBytes, MemoryTag.NATIVE_INDEX_READER);
+            fsstSrcOffsCap = offsetsArrayBytes;
+        }
+        if (fsstCmpCap < cmpCap) {
+            if (fsstCmpAddr != 0) {
+                Unsafe.free(fsstCmpAddr, fsstCmpCap, MemoryTag.NATIVE_INDEX_READER);
+            }
+            fsstCmpAddr = Unsafe.malloc(cmpCap, MemoryTag.NATIVE_INDEX_READER);
+            fsstCmpCap = cmpCap;
+        }
+        if (fsstCmpOffsCap < offsetsArrayBytes) {
+            if (fsstCmpOffsAddr != 0) {
+                Unsafe.free(fsstCmpOffsAddr, fsstCmpOffsCap, MemoryTag.NATIVE_INDEX_READER);
+            }
+            fsstCmpOffsAddr = Unsafe.malloc(offsetsArrayBytes, MemoryTag.NATIVE_INDEX_READER);
+            fsstCmpOffsCap = offsetsArrayBytes;
+        }
+        if (fsstTableAddr == 0) {
+            fsstTableAddr = Unsafe.malloc(FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_INDEX_READER);
+        }
 
-                boolean fsstLongOffsets = cmpPos > Integer.MAX_VALUE;
-                int fsstOffsetWidth = fsstLongOffsets ? Long.BYTES : Integer.BYTES;
+        for (int i = 0; i <= totalCount; i++) {
+            long off = longOffsets
+                    ? Unsafe.getUnsafe().getLong(mem.addressOf(offsetsStart + (long) i * Long.BYTES))
+                    : Unsafe.getUnsafe().getInt(mem.addressOf(offsetsStart + (long) i * Integer.BYTES)) & 0xFFFFFFFFL;
+            Unsafe.getUnsafe().putLong(fsstSrcOffsAddr + (long) i * Long.BYTES, off);
+        }
 
-                // Serialize FSST table
-                long tableBufAddr = Unsafe.malloc(FSST.SERIALIZED_MAX_SIZE, MemoryTag.NATIVE_INDEX_READER);
-                try {
-                    int tableLen = FSST.serialize(table, tableBufAddr);
+        long packed = FSSTNative.trainAndCompressBlock(
+                rawDataAddr, fsstSrcOffsAddr, totalCount,
+                fsstCmpAddr, fsstCmpCap, fsstCmpOffsAddr,
+                fsstTableAddr
+        );
+        if (packed < 0) {
+            LOG.info().$("FSST compression skipped [covIdx=").$(covIdx)
+                    .$(", totalCount=").$(totalCount)
+                    .$(", rawDataLen=").$(rawDataLen)
+                    .$(']').$();
+            return;
+        }
+        long cmpPos = FSSTNative.unpackCompressed(packed);
+        int tableLen = FSSTNative.unpackTableLen(packed);
 
-                    // Only rewrite if compression saved space (accounting for table overhead)
-                    long compressedBlockSize = 4 + 2 + tableLen + (long) (totalCount + 1) * fsstOffsetWidth + cmpPos;
-                    long uncompressedBlockSize = mem.getAppendOffset() - blockStart;
-                    if (compressedBlockSize >= uncompressedBlockSize) {
-                        return; // Not worth it
-                    }
+        boolean fsstLongOffsets = cmpPos > Integer.MAX_VALUE;
+        int fsstOffsetWidth = fsstLongOffsets ? Long.BYTES : Integer.BYTES;
+        long compressedBlockSize = 4 + 2 + tableLen + (long) (totalCount + 1) * fsstOffsetWidth + cmpPos;
+        long uncompressedBlockSize = mem.getAppendOffset() - blockStart;
+        if (compressedBlockSize >= uncompressedBlockSize) {
+            return;
+        }
 
-                    // Rewrite the block from blockStart
-                    mem.jumpTo(blockStart);
-                    int flags = FSST.FSST_BLOCK_FLAG | (fsstLongOffsets ? PostingIndexUtils.LONG_OFFSETS_FLAG : 0);
-                    mem.putInt(totalCount | flags);
-                    mem.putShort((short) tableLen);
-                    for (int i = 0; i < tableLen; i++) {
-                        mem.putByte(Unsafe.getUnsafe().getByte(tableBufAddr + i));
-                    }
-                    if (fsstLongOffsets) {
-                        for (int i = 0; i <= totalCount; i++) {
-                            mem.putLong(Unsafe.getUnsafe().getLong(cmpOffsetsAddr + (long) i * Long.BYTES));
-                        }
-                    } else {
-                        for (int i = 0; i <= totalCount; i++) {
-                            mem.putInt((int) Unsafe.getUnsafe().getLong(cmpOffsetsAddr + (long) i * Long.BYTES));
-                        }
-                    }
-                    mem.putBlockOfBytes(cmpBufAddr, cmpPos);
-                } finally {
-                    Unsafe.free(tableBufAddr, FSST.SERIALIZED_MAX_SIZE, MemoryTag.NATIVE_INDEX_READER);
-                }
-            } finally {
-                Unsafe.free(cmpOffsetsAddr, (long) (totalCount + 1) * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                Unsafe.free(cmpBufAddr, rawDataLen * 2, MemoryTag.NATIVE_INDEX_READER);
+        mem.jumpTo(blockStart);
+        int flags = FSSTNative.FSST_BLOCK_FLAG | (fsstLongOffsets ? PostingIndexUtils.LONG_OFFSETS_FLAG : 0);
+        mem.putInt(totalCount | flags);
+        mem.putShort((short) tableLen);
+        for (int i = 0; i < tableLen; i++) {
+            mem.putByte(Unsafe.getUnsafe().getByte(fsstTableAddr + i));
+        }
+        if (fsstLongOffsets) {
+            for (int i = 0; i <= totalCount; i++) {
+                mem.putLong(Unsafe.getUnsafe().getLong(fsstCmpOffsAddr + (long) i * Long.BYTES));
+            }
+        } else {
+            for (int i = 0; i <= totalCount; i++) {
+                mem.putInt((int) Unsafe.getUnsafe().getLong(fsstCmpOffsAddr + (long) i * Long.BYTES));
             }
         }
+        mem.putBlockOfBytes(fsstCmpAddr, cmpPos);
     }
 
     private void writeSidecarsPerColumn(long totalCountsAddr, long strideValsAddr) {
