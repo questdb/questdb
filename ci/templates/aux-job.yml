@@ -3,7 +3,7 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        linux-jdk25:
+        linux-jdk17:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
