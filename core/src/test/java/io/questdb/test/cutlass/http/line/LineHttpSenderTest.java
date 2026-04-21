@@ -3385,7 +3385,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         }
                     } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                            // JDK 25 C2 intrinsics for Math.multiplyExact may throw
+                            // ArithmeticException without a message (null instead of "long overflow")
+                            Assert.assertTrue("Expected ArithmeticException, got: " + e.getClass().getName(),
+                                    e instanceof ArithmeticException);
                         } else {
                             throw e;
                         }
@@ -3406,7 +3409,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         }
                     } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                            Assert.assertTrue("Expected ArithmeticException, got: " + e.getClass().getName(),
+                                    e instanceof ArithmeticException);
                         } else {
                             throw e;
                         }
