@@ -142,8 +142,6 @@ public final class Unordered4MapCursor implements MapRecordCursor {
         this.count = count;
         this.zeroKeyAddress = zeroKeyAddress;
         toTop();
-        recordA.setLimit(memLimit);
-        recordB.setLimit(memLimit);
         return this;
     }
 }

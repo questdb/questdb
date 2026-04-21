@@ -79,7 +79,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private int keySize = -1;
     private int lastKeyIndex = -1;
     private int lastKeyOffset = -1;
-    private long limit;
     private long startAddress; // key-value pair start address
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
@@ -567,11 +566,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.valueAddress = address + Integer.BYTES + keySize;
         this.lastKeyIndex = -1;
         this.lastKeyOffset = -1;
-    }
-
-    @Override
-    public void setLimit(long limit) {
-        this.limit = limit;
     }
 
     @Override

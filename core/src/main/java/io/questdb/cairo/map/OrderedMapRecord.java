@@ -27,6 +27,4 @@ package io.questdb.cairo.map;
 interface OrderedMapRecord extends MapRecord {
 
     OrderedMapRecord clone();
-
-    void setLimit(long limit);
 }
