@@ -6,16 +6,28 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.Assert.fail;
 
@@ -330,6 +342,94 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SELECT ts, b, by, c, f, s, sum(v) " +
                             "FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
                     "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillKeyedRespectsCircuitBreaker() throws Exception {
+        // C-3 regression: a keyed SAMPLE BY 1s FROM '1970' TO '2100' FILL(NULL)
+        // query iterates billions of buckets without a circuit-breaker check
+        // inside the fill-emission outer loop. Phase 15 Plan 02 added two CB
+        // check sites (hasNext head + emitNextFillRow outer-loop top) so the
+        // query now honors cancellation within bounded wall-clock. The
+        // tick-counting MillisecondClock returns 0 until tripWhenTicks ticks
+        // have accumulated, then flips to Long.MAX_VALUE so the CB's 1ms query
+        // timeout trips deterministically. Pre-fix, the cursor iterates until
+        // OOM or the JUnit wall-clock timeout. Post-fix, CairoException fires
+        // with the canonical "timeout, query aborted" message inside the fill
+        // emission loop.
+        final long tripWhenTicks = 100;
+        assertMemoryLeak(() -> {
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                private final AtomicLong ticks = new AtomicLong();
+
+                @Override
+                @NotNull
+                public MillisecondClock getClock() {
+                    return () -> {
+                        if (ticks.incrementAndGet() < tripWhenTicks) {
+                            return 0;
+                        }
+                        return Long.MAX_VALUE;
+                    };
+                }
+
+                @Override
+                public long getQueryTimeout() {
+                    return 1;
+                }
+            };
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+                        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                                engine,
+                                circuitBreakerConfiguration,
+                                MemoryTag.NATIVE_DEFAULT
+                        );
+                        try {
+                            engine.execute(
+                                    "CREATE TABLE t (" +
+                                            "  ts TIMESTAMP," +
+                                            "  k SYMBOL," +
+                                            "  x DOUBLE" +
+                                            ") TIMESTAMP(ts) PARTITION BY DAY",
+                                    sqlExecutionContext
+                            );
+                            engine.execute(
+                                    "INSERT INTO t VALUES" +
+                                            " ('2024-01-01T00:00:00.000000Z', 'a', 1.0)," +
+                                            " ('2024-01-01T00:00:00.000000Z', 'b', 2.0)",
+                                    sqlExecutionContext
+                            );
+                            context.with(
+                                    context.getSecurityContext(),
+                                    context.getBindVariableService(),
+                                    context.getRandom(),
+                                    context.getRequestFd(),
+                                    circuitBreaker
+                            );
+                            TestUtils.assertSql(
+                                    compiler,
+                                    context,
+                                    "SELECT ts, k, first(x) FROM t " +
+                                            "SAMPLE BY 1s FROM '1970-01-01' TO '2100-01-01' FILL(NULL)",
+                                    sink,
+                                    ""
+                            );
+                            Assert.fail("expected CB-tripped exception");
+                        } catch (CairoException ex) {
+                            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+                        } finally {
+                            Misc.free(circuitBreaker);
+                        }
+                    },
+                    configuration,
+                    LOG
             );
         });
     }
@@ -1835,6 +1935,41 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SELECT ts, first(val) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     11,
                     "there is no matching function `first` with the argument types"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevLong256NoPrevYet() throws Exception {
+        // M-4 regression: FillRecord.getLong256(int, CharSink<?>) must render
+        // null on leading FILL(PREV) rows where hasKeyPrev() == false. Unlike
+        // the Decimal128/Decimal256 siblings that call sink.ofRawNull() on the
+        // terminal fall-through, CharSink<?> has no ofRawNull() method, so the
+        // null-render contract here is "leave the caller-owned sink untouched"
+        // (matching NullMemoryCMR.getLong256(offset, CharSink) at :194).
+        //
+        // FROM '2024-01-01' TO '2024-01-01T03:00:00Z' with data only at 02:00.
+        // The 00:00 and 01:00 leading fill rows must emit empty text for
+        // sum(h) because no prior data row has set simplePrevRowId; the
+        // FillRecord getter falls through past the (mode == FILL_PREV_SELF &&
+        // hasKeyPrev()) branch and exits without writing to the sink, matching
+        // the empty-string rendering convention for null LONG256.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (h LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES ('0x01', '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsum
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T01:00:00.000000Z\t
+                            2024-01-01T02:00:00.000000Z\t0x01
+                            """,
+                    "SELECT ts, sum(h) FROM x " +
+                            "SAMPLE BY 1h FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-01T03:00:00.000000Z' " +
+                            "FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
             );
         });
     }

@@ -45,6 +45,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -301,6 +302,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final Function toFunc;
         private RecordCursor baseCursor;
         private Record baseRecord;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean hasDataForCurrentBucket;
         private boolean hasExplicitTo;
         private boolean hasPendingRow;
@@ -377,6 +379,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (!isInitialized) {
                 initialize();
                 isInitialized = true;
@@ -524,6 +527,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         private boolean emitNextFillRow() {
             while (true) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 // Inner loop: scan remaining keys in current bucket
                 while (keysMapCursor.hasNext()) {
                     MapValue value = keysMapRecord.getValue();
@@ -679,6 +683,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
             this.baseRecord = baseCursor.getRecord();
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             Function.init(constantFills, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
@@ -1077,6 +1082,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_CONSTANT) {
                     constantFills.getQuick(col).getLong256(null, sink);
                 }
+                // Fall-through case (e.g., FILL_PREV_SELF with hasKeyPrev() == false)
+                // leaves the caller-owned sink untouched. CharSink<?> has no
+                // ofRawNull() counterpart to Decimal128/Decimal256 sinks, and
+                // NullMemoryCMR.getLong256(offset, CharSink) uses the same
+                // empty-body convention to render null as empty text.
             }
 
             @Override
