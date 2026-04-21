@@ -40,8 +40,9 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.BitSet;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
@@ -68,6 +69,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
     @Override
     public void close() {
         Misc.free(dfcFactory);
+        Misc.free(cursor);
     }
 
     @Override
@@ -105,7 +107,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
     }
 
     private static class DistinctCursor implements RecordCursor {
-        private final BitSet foundKeys = new BitSet();
+        private final DirectBitSet foundKeys = new DirectBitSet(DirectBitSet.BITS_PER_WORD, MemoryTag.NATIVE_BIT_SET, true);
         private final int queryColumnPosition;
         private final int readerColumnIndex;
         private final DistinctRecord record = new DistinctRecord();
@@ -125,6 +127,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         @Override
         public void close() {
             frameCursor = Misc.free(frameCursor);
+            Misc.free(foundKeys);
         }
 
         @Override
@@ -139,9 +142,6 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            // Map query column index to reader column index — the DISTINCT result
-            // has a single column but the underlying table may have the symbol at a
-            // different position.
             return frameCursor.getSymbolTable(readerColumnIndex);
         }
 
@@ -153,14 +153,11 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             }
             while (nextKeyToReturn < symbolCount) {
                 int key = nextKeyToReturn++;
-                // foundKeys uses index key space: 0 = NULL, 1..N = symbol keys.
-                // Symbol key k maps to index key k+1 (toIndexKey adds 1).
                 if (foundKeys.get(key + 1)) {
                     record.symbolKey = key;
                     return true;
                 }
             }
-            // After all non-null keys, emit NULL if found (index key 0)
             if (foundKeys.get(0) && !isNullReturned) {
                 isNullReturned = true;
                 record.symbolKey = SymbolTable.VALUE_IS_NULL;
@@ -215,7 +212,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                         IndexReader.DIR_FORWARD
                 );
                 // Bulk stride-scan: walks all dense/sparse gens in one sequential pass
-                // and marks present keys in the BitSet. Returns newly found count,
+                // and marks present keys in the bit set. Returns newly found count,
                 // or -1 if not supported (bitmap index fallback).
                 int newlyFound = indexReader.collectDistinctKeys(foundKeys);
                 if (newlyFound >= 0) {
@@ -253,6 +250,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             this.isScanned = false;
             this.foundCount = 0;
             this.isNullReturned = false;
+            foundKeys.reserve(symbolCount + 1);
             foundKeys.clear();
         }
     }

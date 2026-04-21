@@ -38,7 +38,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.BitSet;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -103,7 +103,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     @Override
-    public int collectDistinctKeys(BitSet foundKeys) {
+    public int collectDistinctKeys(DirectBitSet foundKeys) {
         if (genCount == 0 || keyCount == 0) {
             return 0;
         }
@@ -272,7 +272,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         sidecarCovTs.clear();
     }
 
-    private int collectDenseGenKeys(long genFileOffset, long genDataSize, int genKeyCount, BitSet foundKeys) {
+    private int collectDenseGenKeys(long genFileOffset, long genDataSize, int genKeyCount, DirectBitSet foundKeys) {
         valueMem.extend(genFileOffset + genDataSize);
         long genAddr = valueMem.addressOf(genFileOffset);
         int sc = PostingIndexUtils.strideCount(genKeyCount);
@@ -308,7 +308,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return newlyFound;
     }
 
-    private int collectSparseGenKeys(long genFileOffset, long genDataSize, int activeKeyCount, BitSet foundKeys) {
+    private int collectSparseGenKeys(long genFileOffset, long genDataSize, int activeKeyCount, DirectBitSet foundKeys) {
         long needed = genFileOffset + genDataSize;
         if (needed > valueMem.size()) {
             valueMem.extend(needed);

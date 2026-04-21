@@ -1,0 +1,272 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.std;
+
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.DirectBitSet;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import org.junit.Assert;
+import org.junit.Test;
+
+public class DirectBitSetTest {
+    private static final Log LOG = LogFactory.getLog(DirectBitSetTest.class);
+
+    @Test
+    public void testCloseIsIdempotent() {
+        LOG.info().$("testCloseIsIdempotent").$();
+        long expected = Unsafe.getMemUsed();
+        DirectBitSet set = new DirectBitSet();
+        set.set(100);
+        set.close();
+        set.close();
+        Assert.assertEquals(0, set.capacity());
+        Assert.assertFalse(set.get(100));
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testGetAndSet() {
+        LOG.info().$("testGetAndSet").$();
+        long expected = Unsafe.getMemUsed();
+        final int N = 1000;
+        try (DirectBitSet set = new DirectBitSet()) {
+            Assert.assertTrue(set.capacity() > 0);
+
+            for (int i = 0; i < N; i++) {
+                Assert.assertFalse(set.get(i));
+            }
+            Assert.assertTrue(set.capacity() >= N);
+
+            for (int i = 0; i < N; i++) {
+                Assert.assertFalse(set.getAndSet(i));
+                Assert.assertTrue(set.get(i));
+            }
+
+            for (int i = 0; i < N; i++) {
+                Assert.assertTrue(set.getAndSet(i));
+                Assert.assertTrue(set.get(i));
+            }
+        }
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testKeepClosedSkipsInitialAllocation() {
+        LOG.info().$("testKeepClosedSkipsInitialAllocation").$();
+        long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_BIT_SET);
+        try (DirectBitSet set = new DirectBitSet(1024, MemoryTag.NATIVE_BIT_SET, true)) {
+            Assert.assertEquals(0, set.capacity());
+            Assert.assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_BIT_SET));
+            Assert.assertFalse(set.get(0));
+
+            set.reserve(2048);
+            Assert.assertTrue(set.capacity() >= 2048);
+            set.set(1000);
+            Assert.assertTrue(set.get(1000));
+        }
+        Assert.assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_BIT_SET));
+    }
+
+    @Test
+    public void testMemoryTagAccounting() {
+        LOG.info().$("testMemoryTagAccounting").$();
+        long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_BIT_SET);
+        try (DirectBitSet set = new DirectBitSet(1_000_000)) {
+            long held = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_BIT_SET) - before;
+            Assert.assertTrue("expected native bit set allocation accounted, got " + held, held >= 1_000_000 / 8);
+            set.set(999_999);
+        }
+        Assert.assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_BIT_SET));
+    }
+
+    @Test
+    public void testPreSizedAvoidsResize() {
+        LOG.info().$("testPreSizedAvoidsResize").$();
+        final int N = 1_000_000;
+        try (DirectBitSet set = new DirectBitSet(N + 1)) {
+            long cap = set.capacity();
+            Assert.assertTrue(cap >= N + 1);
+            for (int i = 0; i < N; i++) {
+                set.set(i);
+            }
+            Assert.assertEquals(cap, set.capacity());
+        }
+    }
+
+    @Test
+    public void testReopenAfterClose() {
+        LOG.info().$("testReopenAfterClose").$();
+        long expected = Unsafe.getMemUsed();
+        DirectBitSet set = new DirectBitSet();
+        set.set(42);
+        Assert.assertTrue(set.get(42));
+        set.close();
+        Assert.assertEquals(0, set.capacity());
+
+        set.reopen();
+        Assert.assertTrue(set.capacity() > 0);
+        Assert.assertFalse(set.get(42));
+        set.set(42);
+        Assert.assertTrue(set.get(42));
+        set.close();
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testReservePreservesExistingBits() {
+        LOG.info().$("testReservePreservesExistingBits").$();
+        try (DirectBitSet set = new DirectBitSet(128)) {
+            set.set(10);
+            set.set(100);
+            Assert.assertTrue(set.capacity() < 10_000);
+
+            set.reserve(10_000);
+            Assert.assertTrue(set.capacity() >= 10_000);
+            Assert.assertTrue(set.get(10));
+            Assert.assertTrue(set.get(100));
+            Assert.assertFalse(set.get(9_999));
+
+            // Calling reserve with a smaller value is a no-op.
+            long cap = set.capacity();
+            set.reserve(64);
+            Assert.assertEquals(cap, set.capacity());
+        }
+    }
+
+    @Test
+    public void testResetCapacity() {
+        LOG.info().$("testResetCapacity").$();
+        long expected = Unsafe.getMemUsed();
+        final int N = 1000;
+        final int max = 1_000_000;
+        final Rnd rnd = new Rnd();
+        try (DirectBitSet set = new DirectBitSet()) {
+            final long initialCapacity = set.capacity();
+            Assert.assertTrue(initialCapacity > 0);
+
+            for (int i = 0; i < N; i++) {
+                int idx = rnd.nextInt(max);
+                Assert.assertFalse(set.get(idx));
+                set.set(idx);
+            }
+            Assert.assertTrue(set.capacity() >= N);
+
+            set.resetCapacity();
+            Assert.assertEquals(initialCapacity, set.capacity());
+
+            rnd.reset();
+            for (int i = 0; i < N; i++) {
+                Assert.assertFalse(set.get(rnd.nextInt(max)));
+            }
+        }
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testResetCapacityOnClosed() {
+        LOG.info().$("testResetCapacityOnClosed").$();
+        long expected = Unsafe.getMemUsed();
+        DirectBitSet set = new DirectBitSet(128);
+        set.set(100);
+        set.close();
+        set.resetCapacity();
+        Assert.assertTrue(set.capacity() >= 128);
+        Assert.assertFalse(set.get(100));
+        set.set(50);
+        Assert.assertTrue(set.get(50));
+        set.close();
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testResizeMemLeak() {
+        LOG.info().$("testResizeMemLeak").$();
+        long expected = Unsafe.getMemUsed();
+        try (DirectBitSet set = new DirectBitSet()) {
+            for (int i = 0; i < 1_000_000; i++) {
+                set.set(i);
+            }
+        }
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testSmoke() {
+        LOG.info().$("testSmoke").$();
+        long expected = Unsafe.getMemUsed();
+        final int N = 1000;
+        final int max = 1_000_000;
+        final Rnd rnd = new Rnd();
+        try (DirectBitSet set = new DirectBitSet()) {
+            Assert.assertTrue(set.capacity() > 0);
+
+            for (int i = 0; i < N; i++) {
+                Assert.assertFalse(set.get(rnd.nextInt(max)));
+            }
+            Assert.assertTrue(set.capacity() >= N);
+
+            rnd.reset();
+            for (int i = 0; i < N; i++) {
+                set.set(rnd.nextInt(max));
+            }
+
+            rnd.reset();
+            for (int i = 0; i < N; i++) {
+                Assert.assertTrue(set.get(rnd.nextInt(max)));
+            }
+
+            set.clear();
+
+            rnd.reset();
+            for (int i = 0; i < N; i++) {
+                Assert.assertFalse(set.get(rnd.nextInt(max)));
+            }
+        }
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testUnset() {
+        LOG.info().$("testUnset").$();
+        try (DirectBitSet set = new DirectBitSet()) {
+            for (int i = 0; i < 256; i++) {
+                set.set(i);
+            }
+            for (int i = 0; i < 256; i += 2) {
+                set.unset(i);
+            }
+            for (int i = 0; i < 256; i++) {
+                Assert.assertEquals((i & 1) != 0, set.get(i));
+            }
+            // Unsetting out-of-range bit is a no-op and must not grow the set.
+            long cap = set.capacity();
+            set.unset(10_000_000);
+            Assert.assertEquals(cap, set.capacity());
+        }
+    }
+}
