@@ -253,12 +253,12 @@ fn run_e2e_pipeline(parquet_bytes: &[u8]) {
             let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
 
+            let col_start = chunk.byte_range_start as usize;
+            let col_end = col_start + chunk.total_compressed as usize;
             decode_column_chunk_with_params(
                 &mut ctx,
                 &mut bufs,
-                parquet_bytes,
-                chunk.byte_range_start as usize,
-                chunk.total_compressed as usize,
+                &parquet_bytes[col_start..col_end],
                 compression,
                 descriptor,
                 chunk.num_values as i64,
@@ -396,12 +396,12 @@ fn run_e2e_pipeline_multi(parquet_bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) 
             let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
 
+            let col_start = chunk.byte_range_start as usize;
+            let col_end = col_start + chunk.total_compressed as usize;
             decode_column_chunk_with_params(
                 &mut ctx,
                 &mut bufs,
-                parquet_bytes,
-                chunk.byte_range_start as usize,
-                chunk.total_compressed as usize,
+                &parquet_bytes[col_start..col_end],
                 compression,
                 descriptor,
                 chunk.num_values as i64,
@@ -1024,12 +1024,12 @@ fn e2e_multiple_row_groups() {
         let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
         let mut bufs = ColumnChunkBuffers::new(allocator.clone());
 
+        let col_start = chunk.byte_range_start as usize;
+        let col_end = col_start + chunk.total_compressed as usize;
         let decoded_rows = decode_column_chunk_with_params(
             &mut ctx,
             &mut bufs,
-            &parquet_bytes,
-            chunk.byte_range_start as usize,
-            chunk.total_compressed as usize,
+            &parquet_bytes[col_start..col_end],
             compression,
             descriptor,
             chunk.num_values as i64,
@@ -1127,12 +1127,12 @@ fn run_e2e_filtered<const FILL_NULLS: bool>(parquet_bytes: &[u8], rows_filter: &
     let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
     let mut bufs = ColumnChunkBuffers::new(allocator);
 
+    let col_start = chunk.byte_range_start as usize;
+    let col_end = col_start + chunk.total_compressed as usize;
     decode_column_chunk_filtered_with_params::<FILL_NULLS>(
         &mut ctx,
         &mut bufs,
-        parquet_bytes,
-        chunk.byte_range_start as usize,
-        chunk.total_compressed as usize,
+        &parquet_bytes[col_start..col_end],
         compression,
         descriptor,
         chunk.num_values as i64,

@@ -1424,15 +1424,24 @@ public class TableReader implements Closeable, SymbolTableSource {
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
                         if (ff.exists(path.$())) {
                             MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
-                            if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
-                                parquetMem.of(ff, path.$(), parquetFileSize, parquetFileSize, MemoryTag.MMAP_TABLE_READER);
-                            } else {
-                                // Don't keep fd around to close/open reconciled parquet partitions instead of mremap'ping them.
-                                parquetMem = new MemoryCMRDetachedImpl(ff, path.$(), parquetFileSize, MemoryTag.MMAP_TABLE_READER, false);
-                                parquetPartitions.setQuick(partitionIndex, parquetMem);
+                            try {
+                                if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
+                                    parquetMem.of(ff, path.$(), parquetFileSize, parquetFileSize, MemoryTag.MMAP_TABLE_READER);
+                                } else {
+                                    // Don't keep fd around to close/open reconciled parquet partitions instead of mremap'ping them.
+                                    parquetMem = new MemoryCMRDetachedImpl(ff, path.$(), parquetFileSize, MemoryTag.MMAP_TABLE_READER, false);
+                                    parquetPartitions.setQuick(partitionIndex, parquetMem);
+                                }
+                            } catch (CairoException e) {
+                                // The local parquet file vanished between exists() and mmap (writer dropped it for cold storage).
+                                LOG.info().$("local parquet unavailable, switching partition to cold-storage path [path=")
+                                        .$substr(dbRootSize, path).$(", errno=").$(e.getErrno()).I$();
+                                Misc.free(parquetPartitions.getQuick(partitionIndex));
+                                parquetPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
                             }
                         } else {
                             // The file might not exist if it was sent to object store.
+                            Misc.free(parquetPartitions.getQuick(partitionIndex));
                             parquetPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
                         }
                         // Initialize columns and bitmap index readers for parquet partitions.

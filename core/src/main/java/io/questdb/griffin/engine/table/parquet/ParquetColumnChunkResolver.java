@@ -33,6 +33,11 @@ public interface ParquetColumnChunkResolver {
      * Release the column chunks previously returned by {@link #resolve}.
      * The list is owned by the decoder; the resolver must only release the
      * underlying native buffers it allocated.
+     * <p>
+     * Must tolerate a partially populated {@code chunks} list: if {@link #resolve}
+     * threw mid-way, some slots may hold valid {@code [addr, size]} pairs while
+     * others remain zero. Implementations must free only the buffers they
+     * allocated and treat zero entries as no-ops.
      */
     void release(DirectLongList chunks, int columnsSize);
 

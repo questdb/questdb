@@ -149,8 +149,7 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         if (parquetAddr != 0) {
             decodeRowGroupWithRowFilter(
                     decodeContextPtr, parquetAddr, parquetSize,
-                    parquetMetaReader.getOrCreateNativeReaderPtr(),
-                    rowGroupBuffers.ptr(), columnOffset,
+                    parquetMetaAddr, parquetMetaSize, rowGroupBuffers.ptr(), columnOffset,
                     columns.getAddress(), columnsSize,
                     rowGroupIndex, rowLo, rowHi,
                     filteredRows.getAddress(), filteredRows.size()
@@ -487,6 +486,10 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     }
 
     private void buildColdPartitionPath() {
+        if (table == null) {
+            throw CairoException.critical(0)
+                    .put("cannot build cold-storage partition path: decoder was initialized via the hot-path-only of() overload");
+        }
         if (coldPartitionPath == null) {
             coldPartitionPath = new Path();
         }
@@ -555,7 +558,18 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         }
         final DirectLongList chunkList = ensureChunks(columnsSize);
         buildColdPartitionPath();
-        resolver.resolve(coldPartitionPath, ranges, columnsSize, chunkList);
+        try {
+            resolver.resolve(coldPartitionPath, ranges, columnsSize, chunkList);
+        } catch (Throwable t) {
+            // The resolver may have allocated buffers and partially populated chunkList before throwing.
+            // Release defensively so those native buffers do not leak.
+            try {
+                resolver.release(chunkList, columnsSize);
+            } catch (Throwable releaseFailure) {
+                t.addSuppressed(releaseFailure);
+            }
+            throw t;
+        }
         return chunkList;
     }
 

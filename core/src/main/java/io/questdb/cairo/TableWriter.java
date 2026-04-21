@@ -1997,6 +1997,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             if (ff.exists(path.$())) {
+                // Bump version and commit BEFORE removing the file. The reader's cold-storage
+                // path tolerates a missing local file, so even if a reader observes the new
+                // txn before the file is gone, the subsequent mmap fallback is safe. If the
+                // delete then fails, the on-disk state is "version bumped, file still present"
+                // (readers continue to use the local file), which is safer than the inverse.
+                txWriter.bumpPartitionTableVersion();
+                txWriter.commit(denseSymbolMapWriters);
                 if (!ff.removeQuiet(path.$())) {
                     throw CairoException.critical(ff.errno())
                             .put("could not remove local parquet file [path=").put(path).put(']');
@@ -2004,10 +2011,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.info().$("dropped local parquet, partition now served from cold storage [path=")
                         .$substr(pathRootSize, path).I$();
             }
-            // Bump version so open readers reload their partition metadata and
-            // route through the cold resolver on the next access.
-            txWriter.bumpPartitionTableVersion();
-            txWriter.commit(denseSymbolMapWriters);
         } finally {
             path.trimTo(pathSize);
         }
