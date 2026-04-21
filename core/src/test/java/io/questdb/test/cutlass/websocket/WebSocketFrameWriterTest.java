@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.websocket;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.Utf8s;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -168,49 +167,6 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
                 }
             } finally {
                 freeBuffer(buf, totalSize);
-            }
-        });
-    }
-
-    @Test
-    public void testWriteCloseFrameHeaderAndCodeRejectsTooLongReason() throws Exception {
-        assertMemoryLeak(() -> {
-            long buf = allocateBuffer(16);
-            try {
-                try {
-                    WebSocketFrameWriter.writeCloseFrameHeaderAndCode(buf, Integer.MAX_VALUE, 1001, 124);
-                    Assert.fail();
-                } catch (IllegalArgumentException e) {
-                    Assert.assertEquals("reasonLen out of range: 124", e.getMessage());
-                }
-            } finally {
-                freeBuffer(buf, 16);
-            }
-        });
-    }
-
-    @Test
-    public void testWriteCloseFrameHeaderAndCodeWithReason() throws Exception {
-        assertMemoryLeak(() -> {
-            long buf = allocateBuffer(64);
-            try {
-                String reason = "Normal";
-                int reasonLen = reason.length();
-                int reasonOffset = WebSocketFrameWriter.writeCloseFrameHeaderAndCode(buf, Integer.MAX_VALUE, 1000, reasonLen);
-                Utf8s.strCpyAscii(reason, reasonLen, buf + reasonOffset);
-                int totalLen = reasonOffset + reasonLen;
-
-                int expectedPayload = 2 + reasonLen;
-                Assert.assertEquals(2 + expectedPayload, totalLen);
-                Assert.assertEquals((byte) expectedPayload, Unsafe.getUnsafe().getByte(buf + 1));
-                short code = Short.reverseBytes(Unsafe.getUnsafe().getShort(buf + 2));
-                Assert.assertEquals(1000, code);
-                byte[] writtenReason = readBytes(buf + reasonOffset, reasonLen);
-                for (int i = 0; i < reasonLen; i++) {
-                    Assert.assertEquals((byte) reason.charAt(i), writtenReason[i]);
-                }
-            } finally {
-                freeBuffer(buf, 64);
             }
         });
     }

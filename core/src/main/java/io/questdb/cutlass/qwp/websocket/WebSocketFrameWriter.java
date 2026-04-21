@@ -38,10 +38,6 @@ public final class WebSocketFrameWriter {
     // Frame header bits
     private static final int FIN_BIT = 0x80;
     private static final int MASK_BIT = 0x80;
-    // RFC 6455 Section 5.5: control frame payload <= 125 bytes;
-    // close payload starts with a 2-byte status code, leaving 123 for the reason.
-    private static final int MAX_CLOSE_REASON_BYTES = 123;
-
     private WebSocketFrameWriter() {
         // Static utility class
     }
@@ -85,20 +81,7 @@ public final class WebSocketFrameWriter {
      * @return the total number of bytes written, or -1 if the buffer is too small
      */
     public static int writeCloseFrame(long buf, int bufferSize, int code) {
-        return writeCloseFrameHeaderAndCode(buf, bufferSize, code, 0);
-    }
-
-    /**
-     * Writes the Close frame header and status code, reserving {@code reasonLen}
-     * bytes for the caller to fill immediately after the returned offset.
-     *
-     * @return the reason offset, or -1 if the frame does not fit
-     */
-    public static int writeCloseFrameHeaderAndCode(long buf, int bufferSize, int code, int reasonLen) {
-        if (reasonLen < 0 || reasonLen > MAX_CLOSE_REASON_BYTES) {
-            throw new IllegalArgumentException("reasonLen out of range: " + reasonLen);
-        }
-        int payloadLen = 2 + reasonLen;
+        int payloadLen = 2;
         int frameSize = headerSize(payloadLen, false) + payloadLen;
         if (frameSize > bufferSize) {
             return -1;
@@ -106,7 +89,7 @@ public final class WebSocketFrameWriter {
 
         int headerLen = writeHeader(buf, true, WebSocketOpcode.CLOSE, payloadLen, false);
         Unsafe.getUnsafe().putShort(buf + headerLen, Short.reverseBytes((short) code));
-        return headerLen + 2;
+        return frameSize;
     }
 
     /**

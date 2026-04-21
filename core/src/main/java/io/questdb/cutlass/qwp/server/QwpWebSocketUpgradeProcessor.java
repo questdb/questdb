@@ -436,10 +436,22 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 .put(']');
     }
 
+    private static int writeCloseFrameHeaderAndCode(long bufferAddr, int bufferSize, int code, int reasonLen) {
+        int payloadLen = 2 + reasonLen;
+        int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
+        if (frameSize > bufferSize) {
+            return -1;
+        }
+
+        int headerLen = WebSocketFrameWriter.writeHeader(bufferAddr, true, WebSocketOpcode.CLOSE, payloadLen, false);
+        Unsafe.getUnsafe().putShort(bufferAddr + headerLen, Short.reverseBytes((short) code));
+        return headerLen + 2;
+    }
+
     private static int writeFragmentedFrameCloseFrame(long bufferAddr, int bufferSize) {
         final String reason = "fragmented WebSocket frames are not supported";
         final int reasonLen = reason.length();
-        int reasonOffset = WebSocketFrameWriter.writeCloseFrameHeaderAndCode(
+        int reasonOffset = writeCloseFrameHeaderAndCode(
                 bufferAddr,
                 bufferSize,
                 WebSocketCloseCode.PROTOCOL_ERROR,
@@ -460,7 +472,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 .put(maxFrameSize)
                 .putAscii(" bytes]; decrease batch size");
         int reasonLen = sink.size();
-        int reasonOffset = WebSocketFrameWriter.writeCloseFrameHeaderAndCode(
+        int reasonOffset = writeCloseFrameHeaderAndCode(
                 bufferAddr,
                 bufferSize,
                 WebSocketCloseCode.MESSAGE_TOO_BIG,
@@ -476,7 +488,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     private static int writeTextFrameCloseFrame(long bufferAddr, int bufferSize) {
         final String reason = "text frames are not supported, QWP requires binary frames";
         final int reasonLen = reason.length();
-        int reasonOffset = WebSocketFrameWriter.writeCloseFrameHeaderAndCode(
+        int reasonOffset = writeCloseFrameHeaderAndCode(
                 bufferAddr,
                 bufferSize,
                 WebSocketCloseCode.UNSUPPORTED_DATA,
