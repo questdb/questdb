@@ -387,14 +387,28 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
             if (parquetIdx >= 0) {
                 int targetType = addressCache.getColumnTypes().getQuick(i);
-                if (ColumnType.isSymbol(ColumnType.tagOf(targetType))) {
-                    // Symbol conversion not yet supported for parquet partitions.
-                    return;
-                }
-
                 final int sourceType = parquetMetadata.getColumnType(parquetIdx);
                 final int sourceTag = ColumnType.tagOf(sourceType);
                 final int targetTag = ColumnType.tagOf(targetType);
+                if (ColumnType.isSymbol(targetTag) && !ColumnType.isSymbol(sourceTag)) {
+                    // Non-symbol → symbol: the pre-pass in ConvertOperatorImpl should have
+                    // converted this parquet partition to native. If we get here, it's a bug.
+                    throw CairoException.critical(0)
+                            .put("unexpected non-symbol→symbol in parquet, column=").put(i)
+                            .put(", sourceType=").put(ColumnType.nameOf(sourceTag))
+                            .put(", targetType=").put(ColumnType.nameOf(targetTag));
+                }
+                if (sourceTag == targetTag) {
+                    // Same type, just a writer index mismatch after ALTER COLUMN TYPE.
+                    // No conversion needed, decode normally.
+                    parquetColumns.add(parquetIdx);
+                    fromParquetColumnIndexes.setQuick(parquetIdx, i);
+                    if (ColumnType.tagOf(targetType) == ColumnType.VARCHAR) {
+                        targetType = ColumnType.VARCHAR_SLICE;
+                    }
+                    parquetColumns.add(targetType);
+                    return;
+                }
 
                 if (ColumnType.isSymbol(sourceTag) && !ColumnType.isSymbol(targetTag)) {
                     // Symbol → non-symbol: decode as VARCHAR_SLICE, Java converts lazily.

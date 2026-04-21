@@ -2398,17 +2398,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampColumnChunkIndex = decodeColCount;
                 }
                 parquetColumns.add(parquetIdx);
-                // For var→fixed or symbol→any conversions, request a var decode type
-                // so Rust decodes as VARCHAR_SLICE/STRING. Java batch-converts afterward.
+                // When the source parquet type differs from the target, request a decode
+                // type that Rust can actually produce. Java batch-converts afterward.
                 int decodeType = columnType;
                 int srcType = decoder.metadata().getColumnType(parquetIdx);
                 int srcTag = ColumnType.tagOf(srcType);
                 int dstTag = ColumnType.tagOf(columnType);
                 if (ColumnType.isVarSize(srcTag) && !ColumnType.isVarSize(dstTag) && !ColumnType.isSymbol(dstTag)) {
+                    // Var→fixed: decode as source var type.
                     decodeType = (srcTag == ColumnType.VARCHAR)
                             ? ColumnType.VARCHAR_SLICE : srcType;
                 } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
                     decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR_SLICE;
+                } else if (!ColumnType.isVarSize(srcTag) && !ColumnType.isSymbol(srcTag)
+                        && ColumnType.isVarSize(dstTag)) {
+                    // Fixed→var: Rust cannot produce var-size output from fixed input.
+                    // Decode as source fixed type; Java converts afterward.
+                    decodeType = srcType;
                 }
                 parquetColumns.add(decodeType);
                 activeToDecodeIdx.setQuick(activeColCount, decodeColCount);
@@ -3598,6 +3604,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             ? ColumnType.VARCHAR_SLICE : srcType;
                 } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
                     decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR_SLICE;
+                } else if (!ColumnType.isVarSize(srcTag) && !ColumnType.isSymbol(srcTag)
+                        && ColumnType.isVarSize(dstTag)) {
+                    // Fixed→var: Rust cannot produce var-size output from fixed input.
+                    // Decode as source fixed type; Java converts afterward.
+                    decodeType = srcType;
                 }
                 parquetColumns.add(decodeType);
                 activeToDecodeIdx[activeColCount] = decodeColCount;

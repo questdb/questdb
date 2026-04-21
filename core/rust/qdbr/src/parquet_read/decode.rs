@@ -765,7 +765,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
+        (Encoding::Plain, _, Some(PrimitiveLogicalType::Date), ColumnTypeTag::Date) => {
+            // Parquet-native DATE column: Int32 stores days since epoch, convert to millis.
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -778,14 +779,48 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
+        (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
+            // Type conversion (e.g. INT→DATE): plain i32→i64 widening.
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i64>::new(values_buffer, bufs, nulls::TIMESTAMP),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            Some(PrimitiveLogicalType::Date),
+            ColumnTypeTag::Date,
+        ) => {
+            // Parquet-native DATE column with dictionary encoding.
+            let dict_decoder =
+                ConvertablePrimitiveDictDecoder::try_new(dict_page, DayToMillisConverter::new())?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::TIMESTAMP,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
             _,
             ColumnTypeTag::Date,
         ) => {
-            let dict_decoder =
-                ConvertablePrimitiveDictDecoder::try_new(dict_page, DayToMillisConverter::new())?;
+            // Type conversion with dictionary encoding: plain i32→i64 widening.
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i32, i64, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -844,7 +879,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             }
         }
         // -- Type conversion arms: Int32 physical → wider/different QDB type --
-        (Encoding::Plain, _, _, ColumnTypeTag::Long) => {
+        (Encoding::Plain, _, _, ColumnTypeTag::Long | ColumnTypeTag::Timestamp) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -852,7 +887,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Long) => {
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Long | ColumnTypeTag::Timestamp) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -868,7 +903,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
             _,
-            ColumnTypeTag::Long,
+            ColumnTypeTag::Long | ColumnTypeTag::Timestamp,
         ) => {
             let dict_decoder = ConvertablePrimitiveDictDecoder::<i32, i64, _>::try_new(
                 dict_page,
@@ -1939,7 +1974,11 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, ColumnTypeTag::Long) => {
+        (
+            Encoding::Plain,
+            _,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
             clear_aux_buffers(bufs);
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
@@ -1956,7 +1995,7 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            ColumnTypeTag::Long,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
         ) => {
             clear_aux_buffers(bufs);
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
@@ -2218,8 +2257,13 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        // -- Type conversion: Float → Long (range-checked) --
-        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Long) => {
+        // -- Type conversion: Float → Long/Date/Timestamp (range-checked) --
+        (
+            Encoding::Plain,
+            _,
+            PhysicalType::Float,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -2236,7 +2280,7 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
             PhysicalType::Float,
-            ColumnTypeTag::Long,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
         ) => {
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                 dict_page,

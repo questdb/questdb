@@ -1729,7 +1729,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (inTransaction()) {
             LOG.info()
-                    .$("committing open transaction before applying convert partition to parquet command [table=")
+                    .$("committing open transaction before applying convert partition to native command [table=")
                     .$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .I$();
@@ -2589,6 +2589,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             return parquetIdx >= 0 ? parquetMetadata.getColumnType(parquetIdx) : ColumnType.UNDEFINED;
         } finally {
+            path.trimTo(pathSize);
             if (parquetAddr != 0) {
                 ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
