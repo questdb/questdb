@@ -121,8 +121,6 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
-        // Pinned seeds make the fuzz deterministic across runs -- swap for new
-        // constants if/when a CI run surfaces a previously-unseen failure.
         random = TestUtils.generateRandom(LOG);
     }
 
@@ -237,7 +235,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
 
                     // Seed the cache with the SELECTs we'll later rerun, so the first
                     // structural op actually invalidates something.
-                    runSelectShape(client, 0, rowCount, spacingMicros);
+                    runSelectShape(client, 0, rowCount, spacingMicros, liveAdded);
 
                     for (int op = 0; op < opCount; op++) {
                         int pick = random.nextInt(1000);
@@ -266,11 +264,11 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
                                 // Neither add nor drop possible (cap hit and nothing to drop).
                                 // Fall through to SELECT so the op isn't wasted.
                                 int shape = random.nextInt(6);
-                                runSelectShape(client, shape, rowCount, spacingMicros);
+                                runSelectShape(client, shape, rowCount, spacingMicros, liveAdded);
                             }
                         } else {
                             int shape = random.nextInt(6);
-                            runSelectShape(client, shape, rowCount, spacingMicros);
+                            runSelectShape(client, shape, rowCount, spacingMicros, liveAdded);
                         }
                     }
                 }
@@ -297,39 +295,96 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
 
     /**
      * Runs one of six SELECT shapes against the stable {@code fz_seq} table and
-     * asserts the returned row count. Shapes span both cursor paths:
-     * PageFrameCursor (plain / predicate / interval / projection / star) and
-     * RecordCursor (GROUP BY). Filter thresholds and projection sets are
-     * randomised per call so repeat invocations of the same shape don't
-     * trivially hit the same cached factory every time.
+     * asserts BOTH the row count AND the per-cell data correctness. Shapes
+     * span both cursor paths: PageFrameCursor (plain / predicate / interval /
+     * projection / star) and RecordCursor (GROUP BY). Filter thresholds and
+     * projection sets are randomised per call so repeat invocations of the
+     * same shape don't trivially hit the same cached factory every time.
      * <p>
      * Shape 5 uses {@code SELECT *}, which is deliberately unaffected by ADD /
      * DROP COLUMN: the stable SQL text keeps hitting the cache, but each
      * stale-factory retry recompiles against the current metadata, so the
      * column set expands / shrinks seamlessly. Row count stays the same across
-     * schema evolutions, which is what we assert.
+     * schema evolutions; the verifier asserts the live extra-column count
+     * matches and that all extra-column cells are NULL (the test never
+     * UPDATEs them).
+     * <p>
+     * Per-cell verification is the point: a regression that returns the right
+     * row count with scrambled column data, off-by-one in the dense values
+     * array, or a swapped null bit slips through a row-count-only check.
      */
-    private void runSelectShape(QwpQueryClient client, int shape, int totalRows, long spacingMicros) {
+    private void runSelectShape(QwpQueryClient client, int shape, int totalRows, long spacingMicros,
+                                java.util.List<String> liveAdded) {
         switch (shape) {
-            case 0: // plain full scan, PageFrameCursor
-                assertRowCount(client, "SELECT id FROM fz_seq", totalRows);
+            case 0: { // plain full scan, PageFrameCursor
+                // No ORDER BY: ts is the designated timestamp, so rows come back
+                // in ts order, which is monotonic with id. globalRow N -> id N+1.
+                assertRows(client, "SELECT id FROM fz_seq", totalRows, (batch, startRow) -> {
+                    int n = batch.getRowCount();
+                    for (int r = 0; r < n; r++) {
+                        long expectedId = startRow + r + 1;
+                        Assert.assertEquals("shape 0 id @ row " + (startRow + r),
+                                expectedId, batch.getLongValue(0, r));
+                    }
+                    return startRow + n;
+                });
                 return;
+            }
             case 1: {
                 // id-range predicate with a random threshold. Threshold chosen
                 // inside [1, totalRows-1] so the expected count is deterministic
                 // and strictly positive.
                 int threshold = 1 + random.nextInt(Math.max(1, totalRows - 1));
                 int expected = totalRows - threshold;
-                assertRowCount(client,
+                // ts-ordered (no ORDER BY) -> id-ordered. Row N -> id = threshold + N + 1.
+                assertRows(client,
                         "SELECT id, v FROM fz_seq WHERE id > " + threshold,
-                        expected);
+                        expected, (batch, startRow) -> {
+                            int n = batch.getRowCount();
+                            for (int r = 0; r < n; r++) {
+                                long expectedId = threshold + startRow + r + 1;
+                                Assert.assertEquals("shape 1 id @ row " + (startRow + r),
+                                        expectedId, batch.getLongValue(0, r));
+                                Assert.assertEquals("shape 1 v @ row " + (startRow + r),
+                                        expectedV(expectedId), batch.getDouble(1, r), 0.0);
+                            }
+                            return startRow + n;
+                        });
                 return;
             }
-            case 2: // GROUP BY -- RecordCursor path
-                // cat cycles 4 symbols, so the result set has min(4, totalRows)
-                // rows. totalRows >= 50 in the caller, so always 4.
-                assertRowCount(client, "SELECT cat, COUNT(*) c FROM fz_seq", 4);
+            case 2: { // GROUP BY -- RecordCursor path
+                // cat cycles 4 symbols, so the result set has 4 rows.
+                // GROUP BY result order is undefined: collect all (cat, count)
+                // pairs into a map and verify against the analytic formula.
+                final java.util.Map<String, Long> counts = new java.util.HashMap<>();
+                client.execute("SELECT cat, COUNT(*) c FROM fz_seq", new QwpColumnBatchHandler() {
+                    @Override
+                    public void onBatch(QwpColumnBatch batch) {
+                        for (int r = 0; r < batch.getRowCount(); r++) {
+                            DirectUtf8Sequence catSeq = batch.getStrA(0, r);
+                            Assert.assertNotNull("shape 2 cat must not be NULL", catSeq);
+                            Assert.assertEquals("shape 2 cat byte length", 1, catSeq.size());
+                            String cat = String.valueOf((char) (catSeq.byteAt(0) & 0xFF));
+                            counts.put(cat, batch.getLongValue(1, r));
+                        }
+                    }
+
+                    @Override
+                    public void onEnd(long t) {
+                    }
+
+                    @Override
+                    public void onError(byte status, String message) {
+                        Assert.fail("shape 2 query failed: " + message);
+                    }
+                });
+                Assert.assertEquals("shape 2 distinct cat count", 4, counts.size());
+                Assert.assertEquals("shape 2 count(a)", catCount(totalRows, 0), (long) counts.get("a"));
+                Assert.assertEquals("shape 2 count(b)", catCount(totalRows, 1), (long) counts.get("b"));
+                Assert.assertEquals("shape 2 count(c)", catCount(totalRows, 2), (long) counts.get("c"));
+                Assert.assertEquals("shape 2 count(d)", catCount(totalRows, 3), (long) counts.get("d"));
                 return;
+            }
             case 3: {
                 // Interval on designated timestamp -- PageFrameCursor with
                 // partition skip. Pick a random sub-range [loRow, hiRow)
@@ -343,11 +398,20 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
                 // x in [loRow, hiRow - 1]: span rows.
                 long tsLo = (long) (loRow - 1) * spacingMicros;
                 long tsHi = (long) (hiRow - 1) * spacingMicros;
-                assertRowCount(client,
+                // ts-ordered -> id-ordered. globalRow N -> id = loRow + N.
+                assertRows(client,
                         "SELECT id FROM fz_seq "
                                 + "WHERE ts >= CAST(" + tsLo + "L AS TIMESTAMP) "
                                 + "AND ts < CAST(" + tsHi + "L AS TIMESTAMP)",
-                        span);
+                        span, (batch, startRow) -> {
+                            int n = batch.getRowCount();
+                            for (int r = 0; r < n; r++) {
+                                long expectedId = loRow + startRow + r;
+                                Assert.assertEquals("shape 3 id @ row " + (startRow + r),
+                                        expectedId, batch.getLongValue(0, r));
+                            }
+                            return startRow + n;
+                        });
                 return;
             }
             case 4: {
@@ -370,16 +434,51 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
                     sql.append(shuffled[i]);
                 }
                 sql.append(" FROM fz_seq ORDER BY id");
-                assertRowCount(client, sql.toString(), totalRows);
+                String[] projection = java.util.Arrays.copyOf(shuffled, pickCount);
+                // Explicit ORDER BY id -> globalRow N -> id N+1.
+                assertRows(client, sql.toString(), totalRows, (batch, startRow) -> {
+                    Assert.assertEquals("shape 4 column count", projection.length, batch.getColumnCount());
+                    int n = batch.getRowCount();
+                    for (int r = 0; r < n; r++) {
+                        long id = startRow + r + 1;
+                        for (int c = 0; c < projection.length; c++) {
+                            verifyBaseColumn(batch, c, r, projection[c], id, spacingMicros, "shape 4");
+                        }
+                    }
+                    return startRow + n;
+                });
                 return;
             }
-            case 5:
+            case 5: {
                 // SELECT * -- stable SQL text, but the expanded column set
                 // follows ADD / DROP automatically. Every ALTER invalidates the
                 // cached factory; the recompile picks up the new column list
-                // without the test needing to know it. Row count stays constant.
-                assertRowCount(client, "SELECT * FROM fz_seq", totalRows);
+                // without the test needing to know it. Verifier checks the
+                // base 4 columns, asserts the extra-column count matches the
+                // current liveAdded, and asserts every extra-column cell is
+                // NULL (the test never UPDATEs them).
+                int expectedExtras = liveAdded.size();
+                // ts-ordered -> id-ordered. Base columns are at fixed indices:
+                // id=0, v=1, cat=2, ts=3. Extras follow in ALTER-order.
+                assertRows(client, "SELECT * FROM fz_seq", totalRows, (batch, startRow) -> {
+                    Assert.assertEquals("shape 5 column count",
+                            4 + expectedExtras, batch.getColumnCount());
+                    int n = batch.getRowCount();
+                    for (int r = 0; r < n; r++) {
+                        long id = startRow + r + 1;
+                        verifyBaseColumn(batch, 0, r, "id", id, spacingMicros, "shape 5");
+                        verifyBaseColumn(batch, 1, r, "v", id, spacingMicros, "shape 5");
+                        verifyBaseColumn(batch, 2, r, "cat", id, spacingMicros, "shape 5");
+                        verifyBaseColumn(batch, 3, r, "ts", id, spacingMicros, "shape 5");
+                        for (int c = 4; c < 4 + expectedExtras; c++) {
+                            Assert.assertTrue("shape 5 extra col " + c + " @ row " + (startRow + r)
+                                    + " must be NULL", batch.isNull(c, r));
+                        }
+                    }
+                    return startRow + n;
+                });
                 return;
+            }
             default:
                 throw new IllegalStateException("unknown shape: " + shape);
         }
@@ -406,12 +505,19 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         return choices[random.nextInt(choices.length)];
     }
 
-    private static void assertRowCount(QwpQueryClient client, String sql, long expected) {
+    /**
+     * Drives {@code client.execute(sql)} and dispatches every batch to the
+     * supplied verifier. The verifier returns the running total of rows
+     * checked so far; we assert that total against {@code expected} after
+     * RESULT_END. Per-cell assertions live inside the verifier; this helper
+     * only handles transport, error mapping, and the final row-count check.
+     */
+    private static void assertRows(QwpQueryClient client, String sql, long expected, BatchVerifier verifier) {
         final long[] seen = {0};
         client.execute(sql, new QwpColumnBatchHandler() {
             @Override
             public void onBatch(QwpColumnBatch batch) {
-                seen[0] += batch.getRowCount();
+                seen[0] = verifier.verify(batch, seen[0]);
             }
 
             @Override
@@ -424,6 +530,85 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
             }
         });
         Assert.assertEquals("row count [" + sql + "]", expected, seen[0]);
+    }
+
+    /**
+     * Number of rows in {@code 1..totalRows} whose value modulo 4 equals
+     * {@code kMod}. Mirrors the populating CASE expression that maps id %% 4
+     * to one of "abcd". Closed-form so the test doesn't loop totalRows
+     * times for the GROUP BY assertion.
+     */
+    private static long catCount(int totalRows, int kMod) {
+        return kMod == 0 ? totalRows / 4 : (totalRows + 4 - kMod) / 4;
+    }
+
+    /**
+     * Maps a row id to the expected {@code cat} symbol value. Mirrors the
+     * populating CASE: x %% 4 -> 'a','b','c','d' for k = 0,1,2,3.
+     */
+    private static char catFor(long id) {
+        return "abcd".charAt((int) (id % 4));
+    }
+
+    /**
+     * Expected DOUBLE value for column {@code v} given a row id. Mirrors the
+     * populating expression {@code x * 1.5}.
+     */
+    private static double expectedV(long id) {
+        return id * 1.5;
+    }
+
+    /**
+     * Expected designated-timestamp value (microseconds) for a row id. Mirrors
+     * the populating expression {@code (x - 1) * spacingMicros}.
+     */
+    private static long expectedTs(long id, long spacingMicros) {
+        return (id - 1) * spacingMicros;
+    }
+
+    /**
+     * Asserts cell {@code (col, batchRow)} of {@code batch} matches the
+     * expected value for the named base column at row {@code id}. Used by
+     * shape-4 and shape-5 verifiers where the projection / column-set is
+     * known but column index varies across calls.
+     */
+    private static void verifyBaseColumn(QwpColumnBatch batch, int col, int batchRow,
+                                         String name, long id, long spacingMicros, String tag) {
+        switch (name) {
+            case "id":
+                Assert.assertEquals(tag + " id @ row id=" + id,
+                        id, batch.getLongValue(col, batchRow));
+                return;
+            case "v":
+                Assert.assertEquals(tag + " v @ row id=" + id,
+                        expectedV(id), batch.getDouble(col, batchRow), 0.0);
+                return;
+            case "cat": {
+                DirectUtf8Sequence seq = batch.getStrA(col, batchRow);
+                Assert.assertNotNull(tag + " cat must not be NULL @ row id=" + id, seq);
+                Assert.assertEquals(tag + " cat byte length @ row id=" + id, 1, seq.size());
+                Assert.assertEquals(tag + " cat char @ row id=" + id,
+                        catFor(id), (char) (seq.byteAt(0) & 0xFF));
+                return;
+            }
+            case "ts":
+                Assert.assertEquals(tag + " ts @ row id=" + id,
+                        expectedTs(id, spacingMicros), batch.getLongValue(col, batchRow));
+                return;
+            default:
+                throw new IllegalStateException(tag + " unknown base column: " + name);
+        }
+    }
+
+    /**
+     * Receives one batch at a time during {@link #assertRows} and verifies
+     * its rows against expected values derived from the row position. Returns
+     * the running total of rows checked so the caller can compare against
+     * the query's expected row count after RESULT_END.
+     */
+    @FunctionalInterface
+    private interface BatchVerifier {
+        long verify(QwpColumnBatch batch, long startRow);
     }
 
     private static String allDataCols(int colCount) {

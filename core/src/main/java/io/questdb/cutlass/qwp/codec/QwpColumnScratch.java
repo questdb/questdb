@@ -423,6 +423,11 @@ final class QwpColumnScratch implements QuietCloseable {
     void appendColumnSymbolKeys(long srcAddr, int n, SymbolTable st, QwpEgressConnSymbolDict dict) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
+        // Pre-grow symbol-ids buffer for the worst case (every input row is
+        // non-null) so the per-row hot path doesn't pay the capacity check on
+        // every iteration. Mirrors the pattern other appendColumn* bulk
+        // methods already use for valuesAddr.
+        ensureSymbolIdsCapacity(4 * (nonNullCount + n));
         IntIntHashMap k2c = connKeyToConnId;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
@@ -440,7 +445,6 @@ final class QwpColumnScratch implements QuietCloseable {
                     k2c.putAt(mapIdx, key, connId);
                 }
                 int slot = nonNullCount + nonNullWritten;
-                ensureSymbolIdsCapacity(4 * (slot + 1));
                 Unsafe.getUnsafe().putInt(symbolIdsAddr + 4L * slot, connId);
                 nonNullWritten++;
             }
@@ -575,6 +579,55 @@ final class QwpColumnScratch implements QuietCloseable {
         Unsafe.getUnsafe().putByte(byteAddr, (byte) (cur | (1 << (rowCount & 7))));
         nullCount++;
         rowCount++;
+    }
+
+    /**
+     * Bulk equivalent of {@code n} consecutive {@link #appendNull()} calls.
+     * Sets bits {@code [rowCount, rowCount + n)} in the null bitmap using one
+     * partial-byte OR at each end and a single {@code setMemory(0xFF)} for the
+     * full bytes in between, replacing the per-row read-modify-write loop. The
+     * bitmap is zeroed at {@link #beginBatch} and at every grow, so OR is safe
+     * against any state in the partial bytes.
+     */
+    void appendNullColumn(int n) {
+        if (n <= 0) {
+            return;
+        }
+        int start = rowCount;
+        int lastBit = start + n - 1;
+        ensureNullBitmapCapacity(lastBit);
+        int firstByte = start >>> 3;
+        int lastByte = lastBit >>> 3;
+        int firstBitInFirstByte = start & 7;
+        int lastBitInLastByte = lastBit & 7;
+        if (firstByte == lastByte) {
+            // All n bits (n <= 8) sit in a single byte at offset firstBitInFirstByte.
+            int mask = ((1 << n) - 1) << firstBitInFirstByte;
+            long addr = nullBitmapAddr + firstByte;
+            byte cur = Unsafe.getUnsafe().getByte(addr);
+            Unsafe.getUnsafe().putByte(addr, (byte) (cur | mask));
+        } else {
+            // First (possibly partial) byte: bits [firstBitInFirstByte, 8).
+            int firstMask = (0xFF << firstBitInFirstByte) & 0xFF;
+            long firstAddr = nullBitmapAddr + firstByte;
+            byte firstCur = Unsafe.getUnsafe().getByte(firstAddr);
+            Unsafe.getUnsafe().putByte(firstAddr, (byte) (firstCur | firstMask));
+            // Middle bytes [firstByte + 1, lastByte) are entirely owned by this
+            // column-top (rows haven't been written yet) and were left zero by
+            // the most recent grow / beginBatch, so memset is correct.
+            int middleStart = firstByte + 1;
+            int middleLen = lastByte - middleStart;
+            if (middleLen > 0) {
+                Unsafe.getUnsafe().setMemory(nullBitmapAddr + middleStart, middleLen, (byte) 0xFF);
+            }
+            // Last (possibly partial) byte: bits [0, lastBitInLastByte + 1).
+            int lastMask = (1 << (lastBitInLastByte + 1)) - 1;
+            long lastAddr = nullBitmapAddr + lastByte;
+            byte lastCur = Unsafe.getUnsafe().getByte(lastAddr);
+            Unsafe.getUnsafe().putByte(lastAddr, (byte) (lastCur | lastMask));
+        }
+        nullCount += n;
+        rowCount += n;
     }
 
     void appendShort(short v) {

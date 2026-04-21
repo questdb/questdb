@@ -500,9 +500,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     private static void fillNulls(QwpColumnScratch scratch, int n) {
-        for (int i = 0; i < n; i++) {
-            scratch.appendNull();
-        }
+        // Bulk bitmap fill -- one partial-byte OR at each end and a memset for
+        // the full bytes in between, instead of n iterations of read-modify-
+        // write. Matters when an ALTER TABLE ADD COLUMN leaves many columns as
+        // column-tops and every page-frame triggers fillNulls per such column.
+        scratch.appendNullColumn(n);
     }
 
     private static long readGeoBits(Record record, int col, int precisionBits) {

@@ -356,10 +356,15 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                             @Override
                             public void onBatch(QwpColumnBatch batch) {
                                 firstBatchSeen.countDown();
-                                // Block forever (or until the client is closed) so we are
-                                // guaranteed to be inside execute() when close() fires.
+                                // Sleep just long enough that close() lands while we're still
+                                // mid-onBatch (so the I/O thread is parked on pendingRelease.take()
+                                // when shutdown arrives). MUST NOT be interrupted by the test --
+                                // an interrupt would also pop the user thread out of any blocking
+                                // events.take() it later parks on, masking the C7 fix that this
+                                // test exists to regression-check (the I/O thread's finally-block
+                                // synthetic error is what must wake events.take, not an interrupt).
                                 try {
-                                    Thread.sleep(60_000);
+                                    Thread.sleep(2_000);
                                 } catch (InterruptedException ie) {
                                     Thread.currentThread().interrupt();
                                 }
@@ -388,14 +393,16 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
 
                 // Close from the main thread while the query thread is parked in onBatch.
                 // Without the C7 fix, the user thread would hang on events.take() forever
-                // after the I/O thread exited.
+                // after the I/O thread exited and the user returned from its in-handler
+                // sleep -- the I/O thread would be gone but no sentinel event would be
+                // there to unblock the next take().
                 client.close();
 
-                // The user thread must wake up -- interrupt it so the in-handler sleep ends,
-                // then verify execute() actually returns.
-                queryThread.interrupt();
-                Assert.assertTrue("execute() did not return within 10s after close()",
-                        executeReturned.await(10, java.util.concurrent.TimeUnit.SECONDS));
+                // No interrupt() here: the user thread must exit onBatch on its own and
+                // then wake from events.take() on the C7 sentinel error. 15s window
+                // covers the in-handler sleep + close + take + return.
+                Assert.assertTrue("execute() did not return within 15s after close()",
+                        executeReturned.await(15, java.util.concurrent.TimeUnit.SECONDS));
                 Assert.assertNotNull("expected a synthetic error notifying that the query was aborted",
                         errorMessage.get());
                 Assert.assertFalse("RESULT_END must not have been delivered after close()", endSeen.get());
