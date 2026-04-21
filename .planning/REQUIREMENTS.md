@@ -14,7 +14,7 @@
 ### Fill Cursor -- Non-keyed
 
 - [ ] **FILL-01**: Non-keyed FILL(NULL) emits null-filled rows for missing buckets
-- [ ] **FILL-02**: Non-keyed FILL(PREV) carries forward previous bucket's aggregate values
+- [x] **FILL-02**: Non-keyed FILL(PREV) carries forward previous bucket's aggregate values
 - [ ] **FILL-03**: Non-keyed FILL(VALUE) emits constant-filled rows for missing buckets
 - [ ] **FILL-04**: FROM/TO range bounds control the fill range (leading/trailing fill rows)
 - [ ] **FILL-05**: DST timezone queries produce correctly ordered output during fall-back transitions
@@ -60,7 +60,7 @@
 
 - [x] **COR-01**: All 302 existing SampleByTest tests pass
 - [x] **COR-02**: No native memory leaks (assertMemoryLeak passes for all tests)
-- [ ] **COR-03**: Query plan shows Async Group By (parallel execution) for fill queries
+- [x] **COR-03**: Query plan shows Async Group By (parallel execution) for fill queries
 - [x] **COR-04**: Fill cursor output matches cursor-path output exactly for all fill modes
 
 ## v2 Requirements
@@ -119,5 +119,5 @@
 | PTSF-06 | Phase 7: PREV Type-Safe Fast Path | Complete |
 | COR-01 | Phase 5: Verification and Hardening | Complete |
 | COR-02 | Phase 5: Verification and Hardening | Complete |
-| COR-03 | Phase 5: Verification and Hardening | Pending |
+| COR-03 | Phase 5: Verification and Hardening | Complete |
 | COR-04 | Phase 5: Verification and Hardening | Complete |

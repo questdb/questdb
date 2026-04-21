@@ -19,6 +19,7 @@ QuestDB's SAMPLE BY FILL queries now execute on the parallel GROUP BY fast path 
 - [x] **Phase 11: Hardening — Review Findings & Missing Test Coverage** — UUID FILL_KEY dispatch, geo/decimal null sentinels, NULL-key/CTE/sparse-DST tests
 - [x] **Phase 12: Replace safety-net reclassification with legacy fallback and tighten optimizer PREV gate** — Retro-fallback mechanism, Tier 1 gate tightening, FILL(PREV, PREV(...)) grammar rules, 19 regression tests, code-quality sweep (completed 2026-04-17)
 - [x] **Phase 13: Migrate FILL(PREV) snapshots from materialized values to rowId-based replay** — Replace per-type snapshot materialization in `SampleByFillRecordCursorFactory` with a single chain rowId per key, read lazily via `recordAt`. Ship prerequisite `SortedRecordCursor.chain.clear()` fix as its own commit. Borrowed from `sm_fill_prev_fast_all_types` branch (research verdict GO, candidate a) (completed 2026-04-19)
+- [ ] **Phase 15: Address PR #6946 review findings and retro-document post-phase-14 fixes** — Fix 3 critical `/review-pr 6946` findings (TIMESTAMP fill constant unit conversion, unquoted numeric rejection for TIMESTAMP columns, keyed-fill circuit-breaker); absorb three selected moderate findings (getLong256 sink null sentinel, timestampIndex type check, lost output assertion in testSampleByFromToParallelSampleByRewriteWithKeys); retroactively document three post-Phase-14 commits (narrow-decimal FILL_KEY coverage, decimal128/256 sink fix + -ea assert, SampleByFillRecordCursorFactory clean-up)
 
 ## Phase Details
 
@@ -229,7 +230,7 @@ Plans:
 
 ## Progress
 
-**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13.
+**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -246,6 +247,8 @@ Plans:
 | 11. Hardening — Review Findings & Missing Test Coverage | 1/1 | Complete (retroactive) | 2026-04-13 |
 | 12. Replace safety-net reclassification with legacy fallback | 4/4 | Complete    | 2026-04-17 |
 | 13. Migrate FILL(PREV) snapshots to rowId-based replay | 6/6 | Complete    | 2026-04-20 |
+| 14. Fix issues from moderate list for M5/M6 mention in PR | 4/4 | Complete | 2026-04-20 |
+| 15. Address PR #6946 review findings and retro-document post-phase-14 fixes | 1/4 | In Progress|  |
 
 ### Phase 14: Fix issues from moderate list, for m5 and m6 just mention in the existing PR description under the right section. Borrow ideas for tests from minor findings.
 
@@ -259,3 +262,34 @@ Plans:
 - [x] 14-02-PLAN.md - Cursor cluster: M-2 FILL_KEY + cross-column-PREV-to-key branches for getArray/getBin/getBinLen + M-8 FillRecord.getInterval + audit close-out, plus 10 per-type FILL(PREV) tests and 2 keyed ARRAY/BINARY tests (Wave 2)
 - [x] 14-03-PLAN.md - Optimiser: M-4 TIME ZONE + FROM fill-range UTC wrap via createToUtcCall, plus 3 regression tests (empty-base, sparse, dense) (Wave 2)
 - [x] 14-04-PLAN.md - Pre-existing defensive fix: M-7 SortedRecordCursorFactory constructor double-free + regression test via sqlSortKeyMaxPages=-1, D-18 RCM direct factory-type assertion restore, D-19/D-20 PR #6946 body Trade-offs append (checkpoint:decision for wording approval) (Wave 3 - last commit of phase)
+
+### Phase 15: Address PR #6946 review findings and retro-document post-phase-14 fixes
+
+**Goal:** Close the three Critical findings from a second `/review-pr 6946` pass that landed after Phase 14, pull in three well-scoped Moderate findings from the same pass, and retroactively bring three already-landed post-Phase-14 commits under phase ownership for audit completeness.
+
+**Depends on:** Phase 14
+
+**Requirements**: Second-pass `/review-pr 6946` findings. No new requirement IDs — strengthens COR-01..04, FILL-02, and the keyed-fill safety envelope.
+
+**Success Criteria** (what must be TRUE):
+  1. `testTimestampFillNullAndValue` expected output restored to master's `2019-02-03T12:23:34.123456Z`. `FillRecord.getTimestamp` FILL_CONSTANT branch applies `timestampDriver.from(fn.getTimestamp(null), ColumnType.getTimestampType(fn.getType()))` symmetrically with the FROM/TO pattern, OR `generateFill` parses TIMESTAMP fill constants through `TimestampConstant.newInstance(timestampDriver.parseQuotedLiteral(...), type)` so the stored value is already in the column's unit.
+  2. `testTimestampFillValueUnquoted` restored to `assertException(..., 66, "Invalid fill value: '1236'. Timestamp fill value must be in quotes.")`. `generateFill` type-checks each fill constant against the target column type and rejects unquoted numeric literals for TIMESTAMP columns with the master error.
+  3. `SampleByFillCursor` captures `SqlExecutionCircuitBreaker` in `of()` and calls `statefulThrowExceptionIfTripped()` at the head of `hasNext()` and inside `emitNextFillRow()`'s outer `while(true)`. A keyed `SAMPLE BY 1s FROM '1970' TO '2100' FILL(NULL)` with ≥2 keys respects cancellation within bounded time under a regression test that trips the breaker.
+  4. `FillRecord.getLong256(int, CharSink<?>)` adds a terminal null fallback matching the `sink.ofRawNull()` pattern used by `getDecimal128` (line 821) and `getDecimal256` (line 860). A regression test reads the sink after a FILL_PREV_SELF miss and asserts it is not left holding prior-row bytes.
+  5. `generateFill` timestamp-index fallback (SqlCodeGenerator.java:3334-3339) guards with `ColumnType.isTimestamp(groupByFactory.getMetadata().getColumnType(origIndex))` before accepting `origIndex`; if the fallback column is non-TIMESTAMP, codegen returns `groupByFactory` (skips fill) instead of cascading into `UnsupportedOperationException`.
+  6. `testSampleByFromToParallelSampleByRewriteWithKeys` upgrades the four compile-only `select(...).close()` calls to positive-output assertions against bounded (TO-specified) query variants.
+  7. Retro-document commits `6c2c44237c` (narrow-decimal FILL_KEY coverage), `2696df1749` (decimal128/256 sink null fall-through fix + `-ea` assert promotion + 2 regression tests), and `a986070e43` (SampleByFillRecordCursorFactory clean-up) under this phase's paper trail (SUMMARY per commit, no code changes — commits already landed).
+  8. `/review-pr 6946` re-run after this phase shows 0 Critical findings and Moderate list reduced to items explicitly deferred (M-6 CairoException defensive guard coverage + multi-worker test) documented as Future Work in PR body.
+
+**Plans:** 1/4 plans executed
+
+Plans:
+- [x] 15-01-PLAN.md - Codegen cluster: C-1 + C-2 unified TIMESTAMP-target fix in generateFill (driver-aware re-parse + Chars.isQuoted rejection), M-5 timestampIndex non-TIMESTAMP guard, restore the four pinning tests (testTimestampFillNullAndValue + testTimestampFillValueUnquoted, micro and nano)
+- [ ] 15-02-PLAN.md - Cursor cluster: C-3 SqlExecutionCircuitBreaker field + 2 check sites in SampleByFillCursor, M-4 FillRecord.getLong256 terminal sink.ofRawNull fallthrough, 2 new regression tests (testFillKeyedRespectsCircuitBreaker + testFillPrevLong256NoPrevYet)
+- [ ] 15-03-PLAN.md - Test-only: M-7 upgrade testSampleByFromToParallelSampleByRewriteWithKeys with 4 bounded-variant assertQueryNoLeakCheck blocks replacing compile-only select().close() calls
+- [ ] 15-04-PLAN.md - Retro-doc: write 15-04-SUMMARY.md covering three post-Phase-14 commits (6c2c44237c narrow-decimal FILL_KEY coverage, 2696df1749 decimal128/256 sink null fall-through fix, a986070e43 SampleByFillRecordCursorFactory clean-up); no code change
+
+**Not in scope (Future Work — mention in PR #6946 Trade-offs or defer to post-merge phase):**
+- M-6: Missing test for `CairoException.critical("sample by fill: data row timestamp ... precedes next bucket")` at SampleByFillRecordCursorFactory.java:483-488 — defense-in-depth guard has no pinning test. Requires crafting a bucket-grid-drift repro (sub-day TZ + FROM/offset misalignment or multi-worker non-determinism); larger scope than a single regression test.
+- M-6b: No multi-worker parallel test — all existing test plans show `workers: 1`. Requires harness changes (set `CAIRO_SQL_SHARED_WORKER_COUNT` >1 under a dedicated suite); larger scope than a surgical fix.
+- Minor: dead `isKeyColumn` method at SqlCodeGenerator.java:1212-1221 (+2 stale comment references), non-ASCII em-dashes in comments, PR title narrowness, `.planning/` directory pollution in PR diff. Housekeeping; fold in at merge time via `/gsd-pr-branch`.

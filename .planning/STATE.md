@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 14-04-PLAN.md — Phase 14 ready for verification
-last_updated: "2026-04-21T14:01:50.247Z"
-last_activity: 2026-04-21 -- Phase 15 planning complete
+stopped_at: Completed 15-01-PLAN.md
+last_updated: "2026-04-21T14:18:43.990Z"
+last_activity: 2026-04-21
 progress:
   total_phases: 15
   completed_phases: 13
   total_plans: 28
-  completed_plans: 24
-  percent: 86
+  completed_plans: 25
+  percent: 89
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 
 ## Current Position
 
-Phase: 15
-Plan: Not started
+Phase: 15 (address-pr-6946-review-findings-and-retro-fixes) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-04-21 -- Phase 15 planning complete
+Last activity: 2026-04-21
 
 Progress: [#########-] 93%
 
@@ -71,6 +71,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 14 P02 | 39min | 3 tasks | 4 files |
 | Phase 14 P03 | 20min | 2 tasks | 2 files |
 | Phase 14-fix-issues-from-moderate-list-for-m5-and-m6-just-mention-in- P04 | 35min | 4 tasks | 3 files |
+| Phase 15 P01 | 13min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -144,6 +145,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 14]: Plan 04 D-18 chain-walk helper: testSampleByCursorReleasesMemoryOnClose walks factory.getBaseFactory() with self-loop guard (next == cur) until expectedClass.isInstance match; one helper edit covers all three FILL CALENDAR tests; FIRST OBSERVATION tests and non-FILL CALENDAR test unaffected because their expected class is on the first step of the chain
 - [Phase 14]: Plan 04 D-20: PR #6946 ## Trade-offs section gained 2 bullets (M-5 O(unique_keys × buckets) memory envelope, M-6 3-pass scan multiplier); appended after existing 4 bullets per D-19 policy; user approved verbatim at checkpoint; gh pr edit 6946 verified via grep on both bullet substrings
 - [Phase 14]: Plan 04 notable flag: M-7 regression test passes pre-fix under idempotent close() — most QuestDB factory classes clear internal pointer state after first free, so latent pre-fix double-free rarely produces observable assertMemoryLeak imbalance; test still locks clean exception-propagation contract + catch-block sequence + canonical config-override-driven throw pattern
+- [Phase 15]: Plan 01: C-1+C-2 unified fix mirrors SampleByFillValueRecordCursorFactory.createPlaceHolderFunction:144-173 verbatim in SqlCodeGenerator.generateFill per-column FILL_CONSTANT branch (Chars.isQuoted gate + TimestampDriver.parseQuotedLiteral re-parse + Misc.free on stale slot before setQuick replacement)
+- [Phase 15]: Plan 01: M-5 broader fix covers both alias-path and fallback-path ColumnType.isTimestamp guards (broader than D-10 literal wording per RESEARCH recommendation); existing skip-fill 'if (timestampIndex < 0)' path catches non-TIMESTAMP resolution on either path
+- [Phase 15]: Plan 01 commit discipline: Tasks 1+2+3 landed as single commit (Fix TIMESTAMP fill constant unit drift, 9df205bac5) per CONTEXT D-02; test restorations cannot pass without the codegen fix and the codegen fix regresses the existing test bodies without restoration, so splitting would be artificial
 
 ### Roadmap Evolution
 
@@ -169,6 +173,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-20T15:52:07.980Z
-Stopped at: Completed 14-04-PLAN.md — Phase 14 ready for verification
+Last session: 2026-04-21T14:18:29.672Z
+Stopped at: Completed 15-01-PLAN.md
 Resume file: None
