@@ -70,11 +70,12 @@ public final class QwpColumnTypeMapper {
             case ColumnType.DATE -> QwpConstants.TYPE_DATE;
             case ColumnType.FLOAT -> QwpConstants.TYPE_FLOAT;
             case ColumnType.DOUBLE -> QwpConstants.TYPE_DOUBLE;
-            case ColumnType.STRING -> QwpConstants.TYPE_STRING;
+            // QuestDB STRING and VARCHAR share the wire layout; egress always advertises
+            // TYPE_VARCHAR so clients see a single string type regardless of source column.
+            case ColumnType.STRING, ColumnType.VARCHAR -> QwpConstants.TYPE_VARCHAR;
             case ColumnType.SYMBOL -> QwpConstants.TYPE_SYMBOL;
             case ColumnType.LONG256 -> QwpConstants.TYPE_LONG256;
             case ColumnType.UUID -> QwpConstants.TYPE_UUID;
-            case ColumnType.VARCHAR -> QwpConstants.TYPE_VARCHAR;
             case ColumnType.BINARY -> QwpConstants.TYPE_BINARY;
             case ColumnType.DECIMAL64 -> QwpConstants.TYPE_DECIMAL64;
             case ColumnType.DECIMAL128 -> QwpConstants.TYPE_DECIMAL128;

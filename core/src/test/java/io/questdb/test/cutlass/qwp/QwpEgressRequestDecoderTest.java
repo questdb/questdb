@@ -395,7 +395,7 @@ public class QwpEgressRequestDecoderTest {
             Unsafe.getUnsafe().putLong(p, 42L);
             p += 8;
 
-            p = writeNonNullBind(p, QwpConstants.TYPE_STRING);
+            p = writeNonNullBind(p, QwpConstants.TYPE_VARCHAR);
             Unsafe.getUnsafe().putInt(p, 0);
             p += 4;
             Unsafe.getUnsafe().putInt(p, s.length);
@@ -430,7 +430,7 @@ public class QwpEgressRequestDecoderTest {
             byte[] sql = "SELECT ?".getBytes(StandardCharsets.UTF_8);
             int len = writeQueryRequest(buf, 9, sql, 0, 1);
             long p = buf + len;
-            p = writeNullBind(p, QwpConstants.TYPE_STRING);
+            p = writeNullBind(p, QwpConstants.TYPE_VARCHAR);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
 
             Function bind0 = bindVars.getFunction(0);
@@ -447,7 +447,7 @@ public class QwpEgressRequestDecoderTest {
 
             int len = writeQueryRequest(buf, 7, sql, 0, 1);
             long p = buf + len;
-            p = writeNonNullBind(p, QwpConstants.TYPE_STRING);
+            p = writeNonNullBind(p, QwpConstants.TYPE_VARCHAR);
             Unsafe.getUnsafe().putInt(p, 0);
             p += 4;
             Unsafe.getUnsafe().putInt(p, bindStr.length);

@@ -827,7 +827,8 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                         }
                     });
                 }
-                Assert.assertEquals(QwpConstants.TYPE_STRING, wireType[0]);
+                // Egress advertises VARCHAR for both QuestDB STRING and VARCHAR columns.
+                Assert.assertEquals(QwpConstants.TYPE_VARCHAR, wireType[0]);
                 Assert.assertEquals("", values.get(0));
                 Assert.assertEquals("hello", values.get(1));
                 Assert.assertEquals("héllo wörld", values.get(2));

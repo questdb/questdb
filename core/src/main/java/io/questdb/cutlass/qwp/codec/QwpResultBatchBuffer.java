@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -564,16 +565,19 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 // Same NaN-as-NULL convention as FLOAT (spec sec 11.5).
                 scratch.appendDoubleOrNull(record.getDouble(ci));
                 break;
-            case QwpConstants.TYPE_STRING: {
-                CharSequence cs = record.getStrA(ci);
-                if (cs == null) scratch.appendNull();
-                else scratch.appendString(cs);
-                break;
-            }
             case QwpConstants.TYPE_VARCHAR: {
-                Utf8Sequence us = record.getVarcharA(ci);
-                if (us == null) scratch.appendNull();
-                else scratch.appendVarchar(us);
+                // Egress advertises TYPE_VARCHAR for both QuestDB STRING and VARCHAR source
+                // columns (identical wire layout); branch on the source type to reach the
+                // right Record getter.
+                if (ColumnType.tagOf(qt) == ColumnType.STRING) {
+                    CharSequence cs = record.getStrA(ci);
+                    if (cs == null) scratch.appendNull();
+                    else scratch.appendString(cs);
+                } else {
+                    Utf8Sequence us = record.getVarcharA(ci);
+                    if (us == null) scratch.appendNull();
+                    else scratch.appendVarchar(us);
+                }
                 break;
             }
             case QwpConstants.TYPE_BINARY: {
@@ -716,10 +720,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             Vect.memcpy(p, scratch.valuesAddr, bytes);
             return p + bytes;
         }
-        if (wire == QwpConstants.TYPE_STRING || wire == QwpConstants.TYPE_VARCHAR
-                || wire == QwpConstants.TYPE_BINARY) {
-            // All three share the same wire layout: (N+1) x uint32 offsets + concatenated bytes.
-            // BINARY differs from STRING only in that the bytes are opaque (no UTF-8 contract).
+        if (wire == QwpConstants.TYPE_VARCHAR || wire == QwpConstants.TYPE_BINARY) {
+            // Both share the same wire layout: (N+1) x uint32 offsets + concatenated bytes.
+            // BINARY differs from VARCHAR only in that the bytes are opaque (no UTF-8 contract).
             return emitStringColumn(scratch, p, wireLimit);
         }
         if (wire == QwpConstants.TYPE_SYMBOL) {

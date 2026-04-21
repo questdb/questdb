@@ -289,10 +289,9 @@ public class QwpEgressRequestDecoder {
                     p += 8;
                 }
             }
-            // SYMBOL bind: spec sec 6 says clients should send STRING wire type for symbol-typed
-            // placeholders (no per-value dict). The server is lenient and accepts SYMBOL wire
-            // type by routing it through the same single-UTF-8-value path. See M1 in code-review.
-            case QwpConstants.TYPE_STRING, QwpConstants.TYPE_SYMBOL -> {
+            // SYMBOL bind: single UTF-8 value, same (N+1) x uint32 offsets layout as VARCHAR
+            // but decoded into a String bind so the planner sees a CharSequence-typed placeholder.
+            case QwpConstants.TYPE_SYMBOL -> {
                 if (isNull) {
                     bindVars.setStr(index);
                 } else {
@@ -301,15 +300,15 @@ public class QwpEgressRequestDecoder {
                     // but Java reads signed int, so values >= 2^31 would come through as negative
                     // and must be rejected).
                     if (p + 8 > limit)
-                        throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated STRING offsets");
+                        throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated SYMBOL offsets");
                     int offset0 = Unsafe.getUnsafe().getInt(p);
                     int strLen = Unsafe.getUnsafe().getInt(p + 4);
                     if (offset0 != 0 || strLen < 0)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY)
-                                .put("bind: STRING offsets invalid [offset0=").put(offset0).put(", strLen=").put(strLen).put("]");
+                                .put("bind: SYMBOL offsets invalid [offset0=").put(offset0).put(", strLen=").put(strLen).put("]");
                     p += 8;
                     if (p + strLen > limit)
-                        throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated STRING bytes");
+                        throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated SYMBOL bytes");
                     // Reuse stringBindScratch -- StrBindVariable.setValue copies the CharSequence
                     // into its own utf16Sink, so the scratch can be freely reused for the next bind.
                     stringBindScratch.clear();
