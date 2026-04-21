@@ -32,6 +32,8 @@ jobs:
           use-public-rspm: true
 
       - name: Run R Script
+        env:
+          USE_BUNDLED_LIBUV: "1"
         run: Rscript compat/src/test/R/test_sequence.R
 
       - name: Stop QuestDB
