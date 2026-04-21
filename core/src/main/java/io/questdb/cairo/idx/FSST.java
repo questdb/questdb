@@ -60,25 +60,7 @@ public final class FSST {
     private FSST() {
     }
 
-    /**
-     * Compress a sequence of 8-byte longs using a pre-trained symbol table.
-     *
-     * @param table   symbol table
-     * @param srcAddr source address (array of longs in native memory)
-     * @param count   number of longs
-     * @param dstAddr destination address (must have capacity for worst case: count * 16)
-     * @return number of bytes written to dst
-     */
-    public static int compress(SymbolTable table, long srcAddr, int count, long dstAddr) {
-        int dstOff = 0;
-        for (int i = 0; i < count; i++) {
-            long value = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
-            dstOff = encodeValue(table, value, dstAddr, dstOff);
-        }
-        return dstOff;
-    }
-
-    /**
+    /*
      * Compress an arbitrary-length byte sequence using a pre-trained symbol table.
      *
      * @param table   symbol table
@@ -175,22 +157,6 @@ public final class FSST {
             }
         }
         return dstOff;
-    }
-
-    /**
-     * Deserialize symbol table from native memory.
-     *
-     * @return new SymbolTable
-     */
-    public static SymbolTable deserialize(long srcAddr) {
-        SymbolTable table = new SymbolTable();
-        try {
-            deserializeInto(srcAddr, table);
-        } catch (Throwable e) {
-            table.close();
-            throw e;
-        }
-        return table;
     }
 
     /**
@@ -441,61 +407,6 @@ public final class FSST {
         } finally {
             Unsafe.free(bufAddr, longCount * 8L, MemoryTag.NATIVE_DEFAULT);
         }
-    }
-
-    private static int encodeValue(SymbolTable table, long value, long dstAddr, int dstOff) {
-        int bytePos = 0;
-        while (bytePos < 8) {
-            int remaining = 8 - bytePos;
-            int bestLen = 0;
-            int bestCode = -1;
-
-            // Try hash lookup for multi-byte symbols
-            if (remaining >= 2) {
-                long window = (value >>> (bytePos * 8));
-                for (int candLen = Math.min(remaining, 8); candLen >= 2 && candLen > bestLen; candLen--) {
-                    long prefix = candLen == 8 ? window : (window & ((1L << (candLen * 8)) - 1));
-                    int h = hash(prefix, candLen);
-                    for (int probe = 0; probe < 4; probe++) {
-                        int idx = (h + probe) & (HASH_SIZE - 1);
-                        int code = table.getHashCode(idx);
-                        if (code < 0) break;
-                        if (table.getLen(code) != candLen) continue;
-                        if (table.getSymbol(code) == prefix) {
-                            bestLen = candLen;
-                            bestCode = code;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Try single-byte symbol
-            if (bestLen <= 1) {
-                int b = (int) ((value >>> (bytePos * 8)) & 0xFF);
-                int singleCode = table.getByteMap(b);
-                if (singleCode >= 0) {
-                    Unsafe.getUnsafe().putByte(dstAddr + dstOff, (byte) singleCode);
-                    dstOff++;
-                    bytePos++;
-                    continue;
-                }
-            }
-
-            if (bestLen >= 2) {
-                Unsafe.getUnsafe().putByte(dstAddr + dstOff, (byte) bestCode);
-                dstOff++;
-                bytePos += bestLen;
-            } else {
-                // Escape + literal byte
-                int b = (int) ((value >>> (bytePos * 8)) & 0xFF);
-                Unsafe.getUnsafe().putByte(dstAddr + dstOff, (byte) ESCAPE);
-                Unsafe.getUnsafe().putByte(dstAddr + dstOff + 1, (byte) b);
-                dstOff += 2;
-                bytePos++;
-            }
-        }
-        return dstOff;
     }
 
     private static int findBestCode(SymbolTable table, long value, int bytePos) {

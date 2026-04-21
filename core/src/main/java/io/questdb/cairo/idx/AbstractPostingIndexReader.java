@@ -806,7 +806,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             long offsetsAddr = mem.addressOf(pos + 2 + tableLen);
             long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
             long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
-            if (lo == hi) return -1; // NULL
+            if (lo == hi) {
+                return -1; // NULL
+            }
 
             long dataBase = pos + 2 + tableLen + varBlockOffsetsSize(count, longOffsets);
             long compAddr = mem.addressOf(dataBase + lo);
@@ -993,25 +995,35 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
         private BinarySequence getVarSidecarBin(int includeIdx) {
             MemoryMR mem = sidecarMems.getQuick(includeIdx);
-            if (mem.size() == 0) return null;
+            if (mem.size() == 0) {
+                return null;
+            }
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + cachedSidecarIdx
                     : cachedSidecarIdx;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
                     : currentGenSidecarOffsets.getQuick(includeIdx);
-            if (blockBase < 0) return null;
+            if (blockBase < 0) {
+                return null;
+            }
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
             boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
             int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
-            if (ordinal >= count) return null;
+            if (ordinal >= count) {
+                return null;
+            }
 
             if (fsst) {
                 int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
-                if (decompLen < 0) return null;
+                if (decompLen < 0) {
+                    return null;
+                }
                 long len = Unsafe.getUnsafe().getLong(fsstDecompBufAddr);
-                if (len < 0) return null;
+                if (len < 0) {
+                    return null;
+                }
                 return binView.of(fsstDecompBufAddr + Long.BYTES, len);
             }
 
@@ -1321,10 +1333,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     colPointBlockAddrs[i] = 0;
                 }
             }
-        }
-
-        protected int sidecarValueIdx() {
-            return sidecarStrideKeyStart + sidecarOrdinal - 1;
         }
     }
 }
