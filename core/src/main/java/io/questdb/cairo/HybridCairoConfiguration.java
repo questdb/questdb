@@ -49,6 +49,7 @@ public class HybridCairoConfiguration extends DefaultCairoConfiguration {
     private static final ThreadLocal<RoutingFilesFacade> INIT_FF = new ThreadLocal<>();
 
     private final RoutingFilesFacade routingFf;
+    private CharSequence sqlCopyExportRoot;
     private CharSequence sqlCopyInputRoot;
     private CharSequence sqlCopyInputWorkRoot;
 
@@ -83,6 +84,11 @@ public class HybridCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public CharSequence getSqlCopyExportRoot() {
+        return sqlCopyExportRoot;
+    }
+
+    @Override
     public CharSequence getSqlCopyInputRoot() {
         return sqlCopyInputRoot;
     }
@@ -97,6 +103,15 @@ public class HybridCairoConfiguration extends DefaultCairoConfiguration {
      */
     public RoutingFilesFacade getRoutingFilesFacade() {
         return routingFf;
+    }
+
+    /**
+     * Enables {@code COPY <table> TO '<relpath>' WITH (FORMAT PARQUET, ...)}
+     * by setting the allowed export root. Pass {@code "/"} to allow
+     * writing to any absolute path.
+     */
+    public void setSqlCopyExportRoot(CharSequence root) {
+        this.sqlCopyExportRoot = root;
     }
 
     /**
