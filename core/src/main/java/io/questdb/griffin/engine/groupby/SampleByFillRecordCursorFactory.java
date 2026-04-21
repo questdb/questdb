@@ -480,9 +480,15 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
 
                 if (dataTs < nextBucketTimestamp && hasPendingRow) {
-                    // Defensive: the async GROUP BY upstream emits exactly one row per
-                    // (bucket, key), so this branch is unreachable in practice. Kept to
-                    // preserve the cursor-contract semantics around DST fall-back.
+                    // The async GROUP BY upstream emits exactly one row per (bucket, key),
+                    // so reaching here means the upstream contract is broken or the bucket
+                    // grid drifted out of sync with the data. Fail loudly under -ea so any
+                    // regression surfaces in test/dev; production keeps the defensive
+                    // fallback below to preserve cursor-contract semantics around DST
+                    // fall-back instead of corrupting query output.
+                    assert false : "out-of-order data row at " + dataTs
+                            + " precedes next bucket " + nextBucketTimestamp
+                            + "; async GROUP BY upstream contract violated";
                     hasPendingRow = false;
                     fillRecord.isGapFilling = false;
                     if (hasPrevFill) {
@@ -830,7 +836,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 if (mode == FILL_CONSTANT) {
                     constantFills.getQuick(col).getDecimal128(null, sink);
+                    return;
                 }
+                sink.ofRawNull();
             }
 
             @Override
@@ -867,7 +875,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 if (mode == FILL_CONSTANT) {
                     constantFills.getQuick(col).getDecimal256(null, sink);
+                    return;
                 }
+                sink.ofRawNull();
             }
 
             @Override

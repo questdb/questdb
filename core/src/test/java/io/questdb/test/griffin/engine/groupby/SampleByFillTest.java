@@ -302,6 +302,39 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillKeyedPrimitiveTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            // Multi-key SAMPLE BY using BOOLEAN, BYTE, CHAR, FLOAT, and SHORT key
+            // columns simultaneously. Covers the FILL_KEY dispatch in
+            // FillRecord.getBool, getByte, getChar, getFloat, getShort. The fill
+            // row at 01:00 for each (b, by, c, f, s) tuple must carry the typed
+            // key values, not the type's zero/false sentinel.
+            execute("CREATE TABLE t (" +
+                    "b BOOLEAN, by BYTE, c CHAR, f FLOAT, s SHORT, " +
+                    "v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(true,  1::BYTE, 'a', 1.5::FLOAT, 100::SHORT, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(false, 2::BYTE, 'b', 2.5::FLOAT, 200::SHORT, 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(true,  1::BYTE, 'a', 1.5::FLOAT, 100::SHORT, 11.0, '2024-01-01T02:00:00.000000Z')," +
+                    "(false, 2::BYTE, 'b', 2.5::FLOAT, 200::SHORT, 21.0, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tb\tby\tc\tf\ts\tsum
+                            2024-01-01T00:00:00.000000Z\ttrue\t1\ta\t1.5\t100\t10.0
+                            2024-01-01T00:00:00.000000Z\tfalse\t2\tb\t2.5\t200\t20.0
+                            2024-01-01T01:00:00.000000Z\ttrue\t1\ta\t1.5\t100\tnull
+                            2024-01-01T01:00:00.000000Z\tfalse\t2\tb\t2.5\t200\tnull
+                            2024-01-01T02:00:00.000000Z\ttrue\t1\ta\t1.5\t100\t11.0
+                            2024-01-01T02:00:00.000000Z\tfalse\t2\tb\t2.5\t200\t21.0
+                            """,
+                    "SELECT ts, b, by, c, f, s, sum(v) " +
+                            "FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testFillKeyedUuid() throws Exception {
         assertMemoryLeak(() -> {
             // Keyed SAMPLE BY with a UUID key column. Covers FillRecord.getLong128Hi
@@ -1243,6 +1276,37 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     "SELECT ts, sum(val) AS s, sum(ival::DOUBLE) AS a " +
                             "FROM x SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevCrossColumnNoPrevYet() throws Exception {
+        assertMemoryLeak(() -> {
+            // FROM '2024-01-01T20:00' TO '2024-01-02T00:00' with data only at 22:00.
+            // FILL(PREV, PREV(s)) — column `s` is self-prev, column `a` is
+            // cross-column-from-s. The leading 20:00 and 21:00 fill rows must
+            // emit NULL for both columns: hasKeyPrev() returns false because
+            // no prior data row has set simplePrevRowId, so each FillRecord
+            // getter falls through past the (mode >= 0 && hasKeyPrev()) branch
+            // into the default null sentinel. Ensures the cross-column fall-through
+            // path returns the correct null for non-key sources, mirroring
+            // testFillPrevGeoNoPrevYet's coverage of the self-prev case.
+            execute("CREATE TABLE x (val DOUBLE, ival INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1.0, 10, '2024-01-01T22:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\ts\ta
+                            2024-01-01T20:00:00.000000Z\tnull\tnull
+                            2024-01-01T21:00:00.000000Z\tnull\tnull
+                            2024-01-01T22:00:00.000000Z\t1.0\t10.0
+                            2024-01-01T23:00:00.000000Z\t1.0\t1.0
+                            """,
+                    "SELECT ts, sum(val) AS s, sum(ival::DOUBLE) AS a " +
+                            "FROM x " +
+                            "SAMPLE BY 1h FROM '2024-01-01T20:00:00.000000Z' TO '2024-01-02T00:00:00.000000Z' " +
+                            "FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
                     "ts", false, false
             );
         });
