@@ -37,7 +37,6 @@ public final class QwpConstants {
      * Default maximum batch size in bytes (16 MB).
      */
     public static final int DEFAULT_MAX_BATCH_SIZE = 16 * 1024 * 1024;
-
     /**
      * Default maximum rows per table in a batch.
      */
@@ -107,6 +106,18 @@ public final class QwpConstants {
      * Schema mode: Full schema included.
      */
     public static final byte SCHEMA_MODE_FULL = 0x00;
+    /**
+     * Status: Cumulative durable-upload acknowledgment.
+     * <p>
+     * Sent by the server (only when the client opted in via the
+     * {@code X-QWP-Request-Durable-Ack} handshake header) when the WAL
+     * containing the referenced client sequence has been uploaded to the
+     * configured object store. Payload layout matches {@link #STATUS_OK}:
+     * 1-byte status + 8-byte little-endian cumulative sequence.
+     * Not emitted on servers without primary replication enabled; in that
+     * case the handshake header is silently ignored.
+     */
+    public static final byte STATUS_DURABLE_ACK = 0x02;
     /**
      * Status: Server error.
      */

@@ -274,6 +274,15 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
+        // Opt-in flag for STATUS_DURABLE_ACK frames. Silently ignored when the
+        // engine has no durable-ack registry installed (OSS build or primary
+        // replication disabled), so opted-in clients on such servers simply
+        // never see durable acks.
+        Utf8Sequence durableAckHeader = requestHeader.getHeader(
+                QwpWebSocketHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
+        boolean durableAckRequested = durableAckHeader != null
+                && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpWebSocketHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
+        state.setDurableAckEnabled(durableAckRequested && engine.getDurableAckRegistry().isEnabled());
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
         int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion);
@@ -395,6 +404,22 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 if (state.hasPendingAck()) {
                     trySendAck(context, state);
                 }
+                if (state.isDurableAckEnabled()) {
+                    state.advanceDurableWatermark(engine.getDurableAckRegistry());
+                    if (state.hasPendingDurableAck()) {
+                        trySendDurableAck(context, state);
+                    }
+                }
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK -> {
+                context.resumeResponseSend();
+                state.onResumeDurableAckComplete();
+                LOG.debug().$("Resumed durable ACK sent successfully [fd=").$(context.getFd())
+                        .$(", upTo=").$(state.getLastDurablyAckedSequence()).I$();
+                state.advanceDurableWatermark(engine.getDurableAckRegistry());
+                if (state.hasPendingDurableAck()) {
+                    trySendDurableAck(context, state);
+                }
             }
             case QwpProcessorState.SEND_STATE_RESUME_ERROR -> {
                 context.resumeResponseSend();
@@ -406,6 +431,13 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 state.onResumeAckComplete();
                 LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
                         .$(", upTo=").$(state.getLastAckedSequence()).I$();
+                sendDeferredErrorResponse(context, state);
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR -> {
+                context.resumeResponseSend();
+                state.onResumeDurableAckComplete();
+                LOG.debug().$("Resumed durable ACK sent successfully [fd=").$(context.getFd())
+                        .$(", upTo=").$(state.getLastDurablyAckedSequence()).I$();
                 sendDeferredErrorResponse(context, state);
             }
             default -> {
@@ -446,6 +478,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
             }
+            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK -> {
+                context.resumeResponseSend();
+                state.onResumeDurableAckComplete();
+            }
             case QwpProcessorState.SEND_STATE_RESUME_ERROR -> {
                 context.resumeResponseSend();
                 state.onResumeErrorComplete();
@@ -453,6 +489,11 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR -> {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
+                sendDeferredErrorResponse(context, state);
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR -> {
+                context.resumeResponseSend();
+                state.onResumeDurableAckComplete();
                 sendDeferredErrorResponse(context, state);
             }
             default -> {
@@ -464,13 +505,21 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Flushes any pending cumulative ACK.
-     * Only attempts to send when in READY state (buffer is clear).
+     * Flushes any pending cumulative ACK, then if the client opted in, consults
+     * the upload-watermark registry and emits a cumulative STATUS_DURABLE_ACK
+     * frame for newly-uploaded commits. Only attempts to send when in READY
+     * state (buffer is clear).
      */
     private void flushPendingAck(HttpConnectionContext context, QwpProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.hasPendingAck()) {
             trySendAck(context, state);
+        }
+        if (state.isDurableAckEnabled()) {
+            state.advanceDurableWatermark(engine.getDurableAckRegistry());
+            if (state.hasPendingDurableAck()) {
+                trySendDurableAck(context, state);
+            }
         }
     }
 
@@ -498,7 +547,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             state.processMessage();
 
             if (state.isOk()) {
-                state.commit();
+                state.commit(seq);
             }
             // commit() swallows exceptions internally
             if (state.isOk()) {
@@ -606,7 +655,21 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void handlePing(HttpConnectionContext context, QwpProcessorState state, long payload, int length) {
+    private void handlePing(HttpConnectionContext context, QwpProcessorState state, long payload, int length)
+            throws PeerDisconnectedException {
+        // PING is a documented flush point for pending ACK/durable-ACK frames.
+        // A client may send PING specifically to prod the server into emitting
+        // acks for commits whose uploads have completed since the last message.
+        try {
+            flushPendingAck(context, state);
+        } catch (PeerIsSlowToReadException e) {
+            // trySend{Ack,DurableAck} transitioned the state into a resume variant
+            // before rethrowing, so the isSendReady() check below will skip the pong
+            // response and the outer IO loop will drive the resume on writability.
+        }
+        // PeerDisconnectedException propagates: the peer is gone, so let the context
+        // tear the connection down rather than attempting a pong on a dead socket.
+
         // Can only send pong when buffer is clear
         if (!state.isSendReady()) {
             LOG.debug().$("Skipping pong, buffer busy [fd=").$(context.getFd()).I$();
@@ -959,6 +1022,46 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             state.onAckBlocked(sequence);
             LOG.debug().$("ACK blocked, transitioning to SENDING [fd=").$(context.getFd())
                     .$(", seq=").$(sequence).I$();
+            throw e;
+        }
+    }
+
+    /**
+     * Attempts to send a cumulative durable-upload ACK. Layout mirrors
+     * {@link #trySendAck} — 1-byte status (STATUS_DURABLE_ACK) + 8-byte sequence.
+     */
+    private void trySendDurableAck(HttpConnectionContext context, QwpProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        assert state.isSendReady() : "trySendDurableAck called in wrong state";
+
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufferAddr = rawSocket.getBufferAddress();
+        int bufferSize = rawSocket.getBufferSize();
+
+        int payloadLen = 9;
+        int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
+
+        if (frameSize > bufferSize) {
+            LOG.critical().$("Buffer too small for durable ACK response [fd=").$(context.getFd())
+                    .$(", required=").$(frameSize)
+                    .$(", bufferSize=").$(bufferSize).I$();
+            throw PeerDisconnectedException.INSTANCE;
+        }
+
+        long sequence = state.getHighestDurableSequence();
+        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
+        Unsafe.getUnsafe().putByte(bufferAddr + headerLen, STATUS_DURABLE_ACK);
+        Unsafe.getUnsafe().putLong(bufferAddr + headerLen + 1, sequence);
+
+        try {
+            rawSocket.send(headerLen + payloadLen);
+            state.onDurableAckSent(sequence);
+            LOG.debug().$("Sent cumulative durable ACK [fd=").$(context.getFd())
+                    .$(", upTo=").$(sequence).I$();
+        } catch (PeerIsSlowToReadException e) {
+            state.onDurableAckBlocked(sequence);
+            LOG.debug().$("Durable ACK blocked, transitioning to RESUME_DURABLE_ACK [fd=")
+                    .$(context.getFd()).$(", seq=").$(sequence).I$();
             throw e;
         }
     }

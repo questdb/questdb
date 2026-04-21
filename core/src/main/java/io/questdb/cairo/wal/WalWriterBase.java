@@ -87,8 +87,16 @@ abstract class WalWriterBase implements AutoCloseable {
         events = new WalEventWriter(configuration);
     }
 
+    public long getLastSeqTxn() {
+        return lastSeqTxn;
+    }
+
     public @NotNull TableToken getTableToken() {
         return tableToken;
+    }
+
+    public int getSegmentId() {
+        return segmentId;
     }
 
     public int getWalId() {

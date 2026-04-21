@@ -252,6 +252,22 @@ public class TableUpdateDetails implements Closeable {
         return lastMeasurementMillis;
     }
 
+    /**
+     * Returns the sequencer txn assigned to the most recent commit on the
+     * underlying writer, or -1 if none.
+     */
+    public long getLastSeqTxn() {
+        return writerAPI != null ? writerAPI.getLastSeqTxn() : -1L;
+    }
+
+    public int getSegmentId() {
+        return writerAPI != null ? writerAPI.getSegmentId() : -1;
+    }
+
+    public int getWalId() {
+        return writerAPI != null ? writerAPI.getWalId() : -1;
+    }
+
     public MillisecondClock getMillisecondClock() {
         return millisecondClock;
     }
