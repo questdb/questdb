@@ -46,7 +46,6 @@ stages:
         dependsOn: BuildOnLinux
         condition: succeeded()
         displayName: "Upload snapshot to S3"
-        container: pypy:3.7-slim-buster
         pool: hetzner-incus
         steps:
           - checkout: none
@@ -55,54 +54,51 @@ stages:
             inputs:
               artifactName: Snapshot
               downloadPath: $(Build.BinariesDirectory)
-          - bash: |
-              commitId=$(echo "$(Build.SourceVersion)" | cut -c1-7)
-              today=$(date +'%Y.%m.%d')
-
-              function toSnapshot {
-                local -n VAR=$1
-                VAR=$(echo "$2" | sed 's/SNAPSHOT-//' | sed 's/[0-9]\+.[0-9]\+.[0-9]\+/&-'$commitId'-'$today'/')
-              }
-
-              function toLatest {
-                local -n VAR=$1
-                VAR=$(echo "$2" | sed 's/SNAPSHOT-//' | sed 's/[0-9]\+.[0-9]\+.[0-9]\+/latest/')
-              }
-
-              cd "$(Build.BinariesDirectory)"/Snapshot
-
-              noJreBinOld=$(ls | grep no-jre)
-              rtLinuxBinOld=$(ls | grep rt-linux)
-
-              toSnapshot noJreBinSnapshot "$noJreBinOld"
-              toSnapshot rtLinuxBinSnapshot "$rtLinuxBinOld"
-
-              cp "$rtLinuxBinOld" "$rtLinuxBinSnapshot"
-              cp "$noJreBinOld" "$noJreBinSnapshot"
-
-              toLatest noJreBinLatest "$noJreBinOld"
-              toLatest rtLinuxBinLatest "$rtLinuxBinOld"
-
-              mv "$rtLinuxBinOld" "$rtLinuxBinLatest"
-              mv "$noJreBinOld" "$noJreBinLatest"
-
-              pip install awscli -q --user
-
-              export PATH=$PATH:~/.local/bin
-
-              echo "Uploading \"$rtLinuxBinLatest\""
-              aws s3 cp "$rtLinuxBinLatest" s3://questdb/snapshots/ --no-progress
-
-              echo "Uploading \"$noJreBinLatest\""
-              aws s3 cp "$noJreBinLatest" s3://questdb/snapshots/ --no-progress
-
-              echo "Uploading \"$rtLinuxBinSnapshot\""
-              aws s3 cp "$rtLinuxBinSnapshot" s3://questdb/snapshots/ --no-progress
-
-              echo "Uploading \"$noJreBinSnapshot\""
-              aws s3 cp "$noJreBinSnapshot" s3://questdb/snapshots/ --no-progress
+          - task: AWSShellScript@1
             displayName: "Normalize names and upload"
-            env:
-              AWS_ACCESS_KEY_ID: $(AwsAccessKeyId)
-              AWS_SECRET_ACCESS_KEY: $(AwsSecretAccessKey)
-              AWS_DEFAULT_REGION: "eu-west-1"
+            inputs:
+              awsCredentials: 'snapshot-uploads'
+              regionName: 'eu-west-1'
+              scriptType: 'inline'
+              inlineScript: |
+                commitId=$(echo "$(Build.SourceVersion)" | cut -c1-7)
+                today=$(date +'%Y.%m.%d')
+
+                function toSnapshot {
+                  local -n VAR=$1
+                  VAR=$(echo "$2" | sed 's/SNAPSHOT-//' | sed 's/[0-9]\+.[0-9]\+.[0-9]\+/&-'$commitId'-'$today'/')
+                }
+
+                function toLatest {
+                  local -n VAR=$1
+                  VAR=$(echo "$2" | sed 's/SNAPSHOT-//' | sed 's/[0-9]\+.[0-9]\+.[0-9]\+/latest/')
+                }
+
+                cd "$(Build.BinariesDirectory)"/Snapshot
+
+                noJreBinOld=$(ls | grep no-jre)
+                rtLinuxBinOld=$(ls | grep rt-linux)
+
+                toSnapshot noJreBinSnapshot "$noJreBinOld"
+                toSnapshot rtLinuxBinSnapshot "$rtLinuxBinOld"
+
+                cp "$rtLinuxBinOld" "$rtLinuxBinSnapshot"
+                cp "$noJreBinOld" "$noJreBinSnapshot"
+
+                toLatest noJreBinLatest "$noJreBinOld"
+                toLatest rtLinuxBinLatest "$rtLinuxBinOld"
+
+                mv "$rtLinuxBinOld" "$rtLinuxBinLatest"
+                mv "$noJreBinOld" "$noJreBinLatest"
+
+                echo "Uploading \"$rtLinuxBinLatest\""
+                aws s3 cp "$rtLinuxBinLatest" s3://questdb/snapshots/ --no-progress
+
+                echo "Uploading \"$noJreBinLatest\""
+                aws s3 cp "$noJreBinLatest" s3://questdb/snapshots/ --no-progress
+
+                echo "Uploading \"$rtLinuxBinSnapshot\""
+                aws s3 cp "$rtLinuxBinSnapshot" s3://questdb/snapshots/ --no-progress
+
+                echo "Uploading \"$noJreBinSnapshot\""
+                aws s3 cp "$noJreBinSnapshot" s3://questdb/snapshots/ --no-progress
