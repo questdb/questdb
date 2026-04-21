@@ -3385,10 +3385,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         }
                     } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            // JDK 25 C2 intrinsics for Math.multiplyExact may throw
-                            // ArithmeticException without a message (null instead of "long overflow")
-                            Assert.assertTrue("Expected ArithmeticException, got: " + e.getClass().getName(),
-                                    e instanceof ArithmeticException);
+                            // V1 overflows client-side (ArithmeticException from Math.multiplyExact),
+                            // V2 sends micros as-is and the server rejects the nanos overflow (LineSenderException)
+                            Assert.assertTrue("Expected ArithmeticException or LineSenderException, got: " + e.getClass().getName(),
+                                    e instanceof ArithmeticException || e instanceof LineSenderException);
                         } else {
                             throw e;
                         }
@@ -3409,8 +3409,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         }
                     } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            Assert.assertTrue("Expected ArithmeticException, got: " + e.getClass().getName(),
-                                    e instanceof ArithmeticException);
+                            Assert.assertTrue("Expected ArithmeticException or LineSenderException, got: " + e.getClass().getName(),
+                                    e instanceof ArithmeticException || e instanceof LineSenderException);
                         } else {
                             throw e;
                         }
