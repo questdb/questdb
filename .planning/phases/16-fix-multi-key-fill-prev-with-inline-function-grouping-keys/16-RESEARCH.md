@@ -561,9 +561,9 @@ All five land in a single commit with a ~50-char title plus long-form body.
 | A2 | The "leading bucket with no prev yet" cell renders as `null` (not empty, not omitted) | Test template | Partial — pinned by `testFillPrevKeyedNoPrevYet:1890` for DOUBLE `avg` output. Other types (INTERVAL, STRING) may render differently. Mitigation: capture actual output during task execution. For INTERVAL specifically, `FillRecord.getInterval` returns `Interval.NULL` on the default branch (verified at SampleByFillRecordCursorFactory.java:1020), and `Interval.NULL` renders as empty text per Phase 14 D-15 conventions — may differ from the "null" literal. Planner should probe first for INTERVAL variant. |
 | A3 | The `functionParser.getFunctionFactoryCache().isGroupBy("concat")` returns `false` (concat is not registered as a groupBy function) | D-02 predicate | If `isGroupBy("concat")` returns `true`, the D-02 predicate would misclassify `concat(a,b)` as an aggregate and the bug would persist. `concat` is a string function factory, not a groupBy factory — extremely unlikely to be registered in `groupByFunctionNames`. Mitigation: the `testFillPrevConcatMultiKey` test will fail loudly if this assumption is wrong. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Exact output row order for INTERVAL `null` rendering** — Interval.NULL renders differently from DOUBLE null. Recommendation: planner probes the INTERVAL variant first, captures actual output, freezes it as the expected string. This is Phase 15 Plan 03 "probe-and-freeze" precedent.
+1. **Exact output row order for INTERVAL `null` rendering** — RESOLVED: `16-01-PLAN.md` Tasks 2-5 apply the probe-and-freeze protocol (run test under fixed classifier, capture actual output verbatim, freeze as expected string). Interval.NULL renders differently from DOUBLE null; OrderedMap hash-dependent row ordering forbids guessing. Phase 15 Plan 03 precedent.
 
 ## Security Domain
 
