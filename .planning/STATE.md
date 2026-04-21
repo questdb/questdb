@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 15-01-PLAN.md
-last_updated: "2026-04-21T14:18:43.990Z"
+stopped_at: Completed 15-02-PLAN.md
+last_updated: "2026-04-21T14:44:43.719Z"
 last_activity: 2026-04-21
 progress:
   total_phases: 15
   completed_phases: 13
   total_plans: 28
-  completed_plans: 25
-  percent: 89
+  completed_plans: 26
+  percent: 93
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 15 (address-pr-6946-review-findings-and-retro-fixes) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-04-21
 
@@ -72,6 +72,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 14 P03 | 20min | 2 tasks | 2 files |
 | Phase 14-fix-issues-from-moderate-list-for-m5-and-m6-just-mention-in- P04 | 35min | 4 tasks | 3 files |
 | Phase 15 P01 | 13min | 3 tasks | 3 files |
+| Phase 15 P02 | 20min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -148,6 +149,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 15]: Plan 01: C-1+C-2 unified fix mirrors SampleByFillValueRecordCursorFactory.createPlaceHolderFunction:144-173 verbatim in SqlCodeGenerator.generateFill per-column FILL_CONSTANT branch (Chars.isQuoted gate + TimestampDriver.parseQuotedLiteral re-parse + Misc.free on stale slot before setQuick replacement)
 - [Phase 15]: Plan 01: M-5 broader fix covers both alias-path and fallback-path ColumnType.isTimestamp guards (broader than D-10 literal wording per RESEARCH recommendation); existing skip-fill 'if (timestampIndex < 0)' path catches non-TIMESTAMP resolution on either path
 - [Phase 15]: Plan 01 commit discipline: Tasks 1+2+3 landed as single commit (Fix TIMESTAMP fill constant unit drift, 9df205bac5) per CONTEXT D-02; test restorations cannot pass without the codegen fix and the codegen fix regresses the existing test bodies without restoration, so splitting would be artificial
+- [Phase 15]: Plan 02: C-3 fix captures SqlExecutionCircuitBreaker inside of() into new private field; hasNext head + emitNextFillRow outer-loop top each call statefulThrowExceptionIfTripped (throttled / zero-GC on non-trip path)
+- [Phase 15]: Plan 02 Rule 1 deviation: M-4 terminal sink.ofRawNull() does not compile because CharSink<?> has no ofRawNull method (only Decimal128/256 sinks do); NullMemoryCMR.getLong256(offset, CharSink) uses empty-body convention to render null as empty text; pre-edit code already correct; documentation comment added
+- [Phase 15]: Plan 02: C-3 regression test testFillKeyedRespectsCircuitBreaker transplants ParallelGroupByFuzzTest:4241-4306 tick-counting MillisecondClock CB harness into SampleByFillTest; regression-coverage self-check confirmed test fails under reverted production code within 10 seconds
 
 ### Roadmap Evolution
 
@@ -173,6 +177,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-21T14:18:29.672Z
-Stopped at: Completed 15-01-PLAN.md
+Last session: 2026-04-21T14:44:43.716Z
+Stopped at: Completed 15-02-PLAN.md
 Resume file: None

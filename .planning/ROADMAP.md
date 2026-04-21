@@ -248,7 +248,7 @@ Plans:
 | 12. Replace safety-net reclassification with legacy fallback | 4/4 | Complete    | 2026-04-17 |
 | 13. Migrate FILL(PREV) snapshots to rowId-based replay | 6/6 | Complete    | 2026-04-20 |
 | 14. Fix issues from moderate list for M5/M6 mention in PR | 4/4 | Complete | 2026-04-20 |
-| 15. Address PR #6946 review findings and retro-document post-phase-14 fixes | 1/4 | In Progress|  |
+| 15. Address PR #6946 review findings and retro-document post-phase-14 fixes | 2/4 | In Progress|  |
 
 ### Phase 14: Fix issues from moderate list, for m5 and m6 just mention in the existing PR description under the right section. Borrow ideas for tests from minor findings.
 
@@ -281,11 +281,11 @@ Plans:
   7. Retro-document commits `6c2c44237c` (narrow-decimal FILL_KEY coverage), `2696df1749` (decimal128/256 sink null fall-through fix + `-ea` assert promotion + 2 regression tests), and `a986070e43` (SampleByFillRecordCursorFactory clean-up) under this phase's paper trail (SUMMARY per commit, no code changes — commits already landed).
   8. `/review-pr 6946` re-run after this phase shows 0 Critical findings and Moderate list reduced to items explicitly deferred (M-6 CairoException defensive guard coverage + multi-worker test) documented as Future Work in PR body.
 
-**Plans:** 1/4 plans executed
+**Plans:** 2/4 plans executed
 
 Plans:
 - [x] 15-01-PLAN.md - Codegen cluster: C-1 + C-2 unified TIMESTAMP-target fix in generateFill (driver-aware re-parse + Chars.isQuoted rejection), M-5 timestampIndex non-TIMESTAMP guard, restore the four pinning tests (testTimestampFillNullAndValue + testTimestampFillValueUnquoted, micro and nano)
-- [ ] 15-02-PLAN.md - Cursor cluster: C-3 SqlExecutionCircuitBreaker field + 2 check sites in SampleByFillCursor, M-4 FillRecord.getLong256 terminal sink.ofRawNull fallthrough, 2 new regression tests (testFillKeyedRespectsCircuitBreaker + testFillPrevLong256NoPrevYet)
+- [x] 15-02-PLAN.md - Cursor cluster: C-3 SqlExecutionCircuitBreaker field + 2 check sites in SampleByFillCursor, M-4 FillRecord.getLong256 terminal sink.ofRawNull fallthrough, 2 new regression tests (testFillKeyedRespectsCircuitBreaker + testFillPrevLong256NoPrevYet)
 - [ ] 15-03-PLAN.md - Test-only: M-7 upgrade testSampleByFromToParallelSampleByRewriteWithKeys with 4 bounded-variant assertQueryNoLeakCheck blocks replacing compile-only select().close() calls
 - [ ] 15-04-PLAN.md - Retro-doc: write 15-04-SUMMARY.md covering three post-Phase-14 commits (6c2c44237c narrow-decimal FILL_KEY coverage, 2696df1749 decimal128/256 sink null fall-through fix, a986070e43 SampleByFillRecordCursorFactory clean-up); no code change
 
