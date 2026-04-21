@@ -79,6 +79,117 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBoundedBackfillDropsRowsOlderThanRetention() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        // Pre-populate the base table with rows spanning 2 hours. With RETENTION 10m,
+        // bootstrap must skip the first 4 rows (older than max_ts - 10m) and seed the
+        // view with only the last 2. Window functions see the retained horizon only,
+        // so row_number starts at 1 on the earliest retained row.
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:30:00.000000Z')," +
+                " ('AAPL', 102.0, '2024-01-01T01:00:00.000000Z')," +
+                " ('AAPL', 103.0, '2024-01-01T01:30:00.000000Z')," +
+                " ('AAPL', 104.0, '2024-01-01T01:55:00.000000Z')," +
+                " ('AAPL', 105.0, '2024-01-01T02:00:00.000000Z')");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_bb LAG 1s RETENTION 10m AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t104.0\t2024-01-01T01:55:00.000000Z\t1\n" +
+                        "AAPL\t105.0\t2024-01-01T02:00:00.000000Z\t2\n",
+                "SELECT * FROM live_bb",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_bb");
+    }
+
+    @Test
+    public void testBoundedBackfillEmptyBaseTable() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        // Base table is empty; bootstrap must succeed and leave the view empty.
+        execute("CREATE LIVE VIEW live_empty LAG 1s RETENTION 10m AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n",
+                "SELECT * FROM live_empty",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // A subsequent INSERT feeds the view through the incremental path.
+        execute("INSERT INTO trades VALUES ('AAPL', 150.0, '2024-01-01T00:00:00.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n",
+                "SELECT * FROM live_empty",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_empty");
+    }
+
+    @Test
+    public void testBoundedBackfillRetentionExceedsAvailableData() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        // Only 3 seconds of data exist; RETENTION 1h greatly exceeds it. Bootstrap
+        // must include every row (the lower bound falls below the minimum ts).
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:00:01.000000Z')," +
+                " ('AAPL', 102.0, '2024-01-01T00:00:02.000000Z')");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_all LAG 1s RETENTION 1h AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:01.000000Z\t2\n" +
+                        "AAPL\t102.0\t2024-01-01T00:00:02.000000Z\t3\n",
+                "SELECT * FROM live_all",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_all");
+    }
+
+    @Test
     public void testCannotAlterLiveView() throws Exception {
         createBaseTableAndLiveView();
         assertException(
@@ -190,7 +301,7 @@ public class LiveViewTest extends AbstractCairoTest {
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_rn LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
 
@@ -206,9 +317,9 @@ public class LiveViewTest extends AbstractCairoTest {
         execute("CREATE TABLE t1 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW lv1 LAG 1s AS SELECT val, ts, row_number() OVER () AS rn FROM t1");
+        execute("CREATE LIVE VIEW lv1 LAG 1s RETENTION 1h AS SELECT val, ts, row_number() OVER () AS rn FROM t1");
         // should not throw
-        execute("CREATE LIVE VIEW IF NOT EXISTS lv1 LAG 1s AS SELECT val, ts, row_number() OVER () AS rn FROM t1");
+        execute("CREATE LIVE VIEW IF NOT EXISTS lv1 LAG 1s RETENTION 1h AS SELECT val, ts, row_number() OVER () AS rn FROM t1");
 
         execute("DROP LIVE VIEW lv1");
     }
@@ -222,7 +333,7 @@ public class LiveViewTest extends AbstractCairoTest {
         // Incremental refresh reads the pre-dedup WAL row stream; rows dropped or replaced
         // at apply time would be double-counted, so DEDUP base tables are rejected for V1.
         assertException(
-                "CREATE LIVE VIEW lv_bad LAG 1s AS" +
+                "CREATE LIVE VIEW lv_bad LAG 1s RETENTION 1h AS" +
                         " SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades",
                 17,
                 "live view cannot be created over a base table with DEDUP keys"
@@ -239,7 +350,7 @@ public class LiveViewTest extends AbstractCairoTest {
         drainWalQueue();
 
         assertException(
-                "CREATE LIVE VIEW lv_bad LAG 1s AS" +
+                "CREATE LIVE VIEW lv_bad LAG 1s RETENTION 1h AS" +
                         " SELECT t.symbol, t.price, t.ts, row_number() OVER () AS rn" +
                         " FROM trades t JOIN refs r ON (symbol)",
                 17,
@@ -257,7 +368,7 @@ public class LiveViewTest extends AbstractCairoTest {
         // first_value(...) IGNORE NULLS OVER (PARTITION BY ...) is a TWO_PASS window function;
         // it cannot be maintained incrementally.
         assertException(
-                "CREATE LIVE VIEW lv_bad LAG 1s AS" +
+                "CREATE LIVE VIEW lv_bad LAG 1s RETENTION 1h AS" +
                         " SELECT symbol, ts, first_value(price) ignore nulls over (partition by symbol) AS fv FROM trades",
                 17,
                 "live view select may only use window functions that support incremental refresh"
@@ -276,7 +387,7 @@ public class LiveViewTest extends AbstractCairoTest {
         drainWalQueue();
 
         assertException(
-                "CREATE LIVE VIEW lv_bad LAG 1s AS" +
+                "CREATE LIVE VIEW lv_bad LAG 1s RETENTION 1h AS" +
                         " SELECT symbol, price, ts, row_number() OVER () AS rn" +
                         " FROM trades WHERE symbol = 'AAPL' AND price > 100",
                 17,
@@ -292,10 +403,10 @@ public class LiveViewTest extends AbstractCairoTest {
         drainWalQueue();
 
         assertException(
-                "CREATE LIVE VIEW lv_bad LAG 1s AS" +
+                "CREATE LIVE VIEW lv_bad LAG 1s RETENTION 1h AS" +
                         " SELECT symbol, price, ts, row_number() OVER () AS rn" +
                         " FROM (SELECT symbol, price, ts FROM trades)",
-                34,
+                47,
                 "live view requires a single base table in FROM clause"
         );
         Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
@@ -310,7 +421,7 @@ public class LiveViewTest extends AbstractCairoTest {
         // Ordering the window by a non-timestamp column forces the planner onto the cached
         // window path, which requires sorting the full base dataset on every refresh.
         assertException(
-                "CREATE LIVE VIEW lv_bad LAG 1s AS" +
+                "CREATE LIVE VIEW lv_bad LAG 1s RETENTION 1h AS" +
                         " SELECT symbol, price, ts, row_number() OVER (ORDER BY price) AS rn FROM trades",
                 17,
                 "live view select may only use window functions that support incremental refresh"
@@ -402,7 +513,7 @@ public class LiveViewTest extends AbstractCairoTest {
         drainWalQueue();
 
         execute(
-                "CREATE LIVE VIEW lv_all LAG 1s AS" +
+                "CREATE LIVE VIEW lv_all LAG 1s RETENTION 1h AS" +
                         " SELECT b, bt, sh, i, l, f, d, ch, sym, str, vc, dt, ts," +
                         " row_number() OVER () AS rn" +
                         " FROM all_types"
@@ -437,7 +548,7 @@ public class LiveViewTest extends AbstractCairoTest {
         execute("CREATE TABLE non_wal (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
 
         try {
-            execute("CREATE LIVE VIEW lv LAG 1s AS SELECT val, ts, row_number() OVER () AS rn FROM non_wal");
+            execute("CREATE LIVE VIEW lv LAG 1s RETENTION 1h AS SELECT val, ts, row_number() OVER () AS rn FROM non_wal");
             Assert.fail("expected SqlException");
         } catch (SqlException e) {
             Assert.assertTrue(e.getMessage().contains("WAL"));
@@ -450,7 +561,7 @@ public class LiveViewTest extends AbstractCairoTest {
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_filtered LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_filtered LAG 1s RETENTION 1h AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades WHERE price > 200");
 
@@ -503,7 +614,7 @@ public class LiveViewTest extends AbstractCairoTest {
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_rn LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
 
@@ -578,7 +689,7 @@ public class LiveViewTest extends AbstractCairoTest {
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_rn LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
 
@@ -600,7 +711,7 @@ public class LiveViewTest extends AbstractCairoTest {
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_rn LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
 
@@ -656,7 +767,7 @@ public class LiveViewTest extends AbstractCairoTest {
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_rn LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
 
@@ -700,7 +811,7 @@ public class LiveViewTest extends AbstractCairoTest {
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_rn LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
 
@@ -758,7 +869,7 @@ public class LiveViewTest extends AbstractCairoTest {
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_seq LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_seq LAG 1s RETENTION 1h AS" +
                 " SELECT val, ts, row_number() OVER () AS rn FROM events");
 
         // bootstrap
@@ -901,7 +1012,7 @@ public class LiveViewTest extends AbstractCairoTest {
         createBaseTableAndLiveView();
         assertSql(
                 "view_name\tbase_table_name\tlag\tlag_unit\tretention\tretention_unit\tview_status\tinvalidation_reason\tview_sql\tbuffered_row_count\tlate_row_count\n" +
-                        "live_rn\ttrades\t1\tSECOND\t0\t\tvalid\t\tSELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn FROM trades\t0\t0\n",
+                        "live_rn\ttrades\t1\tSECOND\t1\tHOUR\tvalid\t\tSELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn FROM trades\t0\t0\n",
                 "SELECT * FROM live_views()"
         );
         execute("DROP LIVE VIEW live_rn");
@@ -972,7 +1083,7 @@ public class LiveViewTest extends AbstractCairoTest {
         createBaseTableAndLiveView();
         assertSql(
                 "ddl\n" +
-                        "CREATE LIVE VIEW 'live_rn' LAG 1s AS (\n" +
+                        "CREATE LIVE VIEW 'live_rn' LAG 1s RETENTION 1h AS (\n" +
                         "SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn FROM trades\n" +
                         ");\n",
                 "SHOW CREATE LIVE VIEW live_rn"
@@ -1039,6 +1150,34 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveViewRejectsMissingRetention() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        assertException(
+                "CREATE LIVE VIEW lv_bad LAG 1s AS" +
+                        " SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades",
+                31,
+                "'retention' expected"
+        );
+    }
+
+    @Test
+    public void testCreateLiveViewRejectsRetentionLessThanLag() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        assertException(
+                "CREATE LIVE VIEW lv_bad LAG 10m RETENTION 5s AS" +
+                        " SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades",
+                42,
+                "retention must be greater than or equal to lag"
+        );
+    }
+
+    @Test
     public void testCreateLiveViewRejectsZeroLag() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -1053,12 +1192,26 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveViewRejectsZeroRetention() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        assertException(
+                "CREATE LIVE VIEW lv_bad LAG 1s RETENTION 0h AS" +
+                        " SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades",
+                41,
+                "retention must be positive"
+        );
+    }
+
+    @Test
     public void testLagHoldsBackRecentRows() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_lag LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_lag LAG 1s RETENTION 1h AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
 
@@ -1214,7 +1367,7 @@ public class LiveViewTest extends AbstractCairoTest {
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_timer LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_timer LAG 1s RETENTION 1h AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
 
@@ -1274,7 +1427,7 @@ public class LiveViewTest extends AbstractCairoTest {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
-        execute("CREATE LIVE VIEW live_rn LAG 1s AS" +
+        execute("CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
     }

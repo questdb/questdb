@@ -454,7 +454,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     " TIMESTAMP(ts) PARTITION BY HOUR WAL");
             drainWalQueue();
 
-            execute("CREATE LIVE VIEW live_rn LAG 1s AS" +
+            execute("CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
                     " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                     " FROM trades");
 
@@ -1357,7 +1357,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     " TIMESTAMP(ts) PARTITION BY HOUR WAL");
             drainWalQueue();
 
-            execute("CREATE LIVE VIEW live_rn LAG 1s AS" +
+            execute("CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
                     " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                     " FROM trades");
 

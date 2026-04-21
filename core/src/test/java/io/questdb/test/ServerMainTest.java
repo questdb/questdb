@@ -290,7 +290,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 );
 
                 serverMain.getEngine().execute(
-                        "CREATE LIVE VIEW live_rn LAG 1s AS" +
+                        "CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
                                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                                 " FROM trades",
                         sqlExecutionContext

@@ -32,6 +32,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
@@ -1301,18 +1302,29 @@ public class SqlParser {
         }
         builder.setLagValue(lagValue);
         builder.setLagUnit(lagUnit);
-        tok = tok(lexer, "'retention' or 'as'");
 
-        // optional RETENTION duration
-        if (isRetentionKeyword(tok)) {
-            CharSequence retTok = tok(lexer, "retention duration");
-            int retPos = lexer.lastTokenPosition();
-            builder.setRetentionValue(SqlUtil.expectIntervalValue(retTok, retPos));
-            builder.setRetentionUnit(SqlUtil.expectIntervalUnit(retTok, retPos));
-            tok = tok(lexer, "'as'");
+        // RETENTION duration (required, must be > 0, must be >= LAG)
+        tok = tok(lexer, "'retention'");
+        if (!isRetentionKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'retention' expected");
         }
+        CharSequence retTok = tok(lexer, "retention duration");
+        int retPos = lexer.lastTokenPosition();
+        long retentionValue = SqlUtil.expectIntervalValue(retTok, retPos);
+        char retentionUnit = SqlUtil.expectIntervalUnit(retTok, retPos);
+        if (retentionValue <= 0) {
+            throw SqlException.$(retPos, "retention must be positive");
+        }
+        long lagMicros = LiveViewDefinition.toMicros(lagValue, lagUnit);
+        long retentionMicros = LiveViewDefinition.toMicros(retentionValue, retentionUnit);
+        if (retentionMicros < lagMicros) {
+            throw SqlException.$(retPos, "retention must be greater than or equal to lag");
+        }
+        builder.setRetentionValue(retentionValue);
+        builder.setRetentionUnit(retentionUnit);
 
         // expect AS
+        tok = tok(lexer, "'as'");
         if (!isAsKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
         }

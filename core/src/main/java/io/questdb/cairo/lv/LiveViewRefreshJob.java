@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Function;
@@ -162,14 +163,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         try {
             windowFactory.resetWindowFunctions();
-            MergeBuffer mergeBuffer = ensureMergeBuffer(instance, baseFactory.getMetadata());
+            RecordMetadata baseMetadata = baseFactory.getMetadata();
+            MergeBuffer mergeBuffer = ensureMergeBuffer(instance, baseMetadata);
             mergeBuffer.reset();
+
+            // Bounded backfill: window functions see only the last RETENTION worth of
+            // data. maxBaseTs is captured from the base TableReader; rows with
+            // ts <= maxBaseTs - retention are skipped during backfill.
+            // TODO(live-view): replace the linear skip with a partition-aware interval
+            //  cursor so backfill cost is O(retained rows) rather than O(base rows).
+            TableToken baseToken = instance.getDefinition().getBaseTableToken();
+            long retentionMicros = instance.getDefinition().getRetentionMicros();
+            long lowerBound = Long.MIN_VALUE;
+            try (TableReader reader = engine.getReader(baseToken)) {
+                long maxTs = reader.getMaxTimestamp();
+                if (maxTs != Long.MIN_VALUE) {
+                    lowerBound = maxTs - retentionMicros;
+                }
+            }
+            final int baseTsIdx = baseMetadata.getTimestampIndex();
 
             RecordCursor baseCursor = baseFactory.getCursor(executionContext);
             try {
                 Record record = baseCursor.getRecord();
                 while (baseCursor.hasNext()) {
-                    mergeBuffer.addRow(record);
+                    if (record.getTimestamp(baseTsIdx) > lowerBound) {
+                        mergeBuffer.addRow(record);
+                    }
                 }
             } finally {
                 baseCursor.close();
