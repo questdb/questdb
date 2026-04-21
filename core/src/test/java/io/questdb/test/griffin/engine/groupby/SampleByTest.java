@@ -16382,6 +16382,59 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillValueTooMany() throws Exception {
+        assertException(
+                "SELECT sum(a), k FROM x SAMPLE BY 3h FILL(0, PREV)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                45,
+                "too many fill values for SAMPLE BY FILL: expected 1 value but 2 provided"
+        );
+    }
+
+    @Test
+    public void testSampleFillValueTooManyMultiAggregate() throws Exception {
+        assertException(
+                "select b, sum(a), sum(c), k from x sample by 3h fill(20.56, 0, 0, 0)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_float(0)*100 c," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                63,
+                "too many fill values for SAMPLE BY FILL: expected 2 values but 4 provided"
+        );
+    }
+
+    @Test
+    public void testSampleFillValueTooManyNotKeyed() throws Exception {
+        assertException(
+                "SELECT sum(a), k FROM x SAMPLE BY 3h FILL(0, PREV)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                45,
+                "too many fill values for SAMPLE BY FILL: expected 1 value but 2 provided"
+        );
+    }
+
+    @Test
     public void testSampleFillValueNotKeyed() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
