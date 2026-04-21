@@ -773,9 +773,20 @@ public class Decimal256 implements Sinkable, Decimal {
      */
     public static void toSink(@NotNull CharSink<?> sink, long hh, long hl, long lh, long ll, int scale, int precision) {
         if (isNull(hh, hl, lh, ll)) {
-            // (Long.MIN_VALUE, 0, 0, 0) is the DECIMAL256 null sentinel but also a valid
-            // stored bit pattern on NOT NULL columns. Two's-complement negation would
-            // overflow, so format via the canonical absolute string and apply scale.
+            return;
+        }
+        toSinkBits(sink, hh, hl, lh, ll, scale, precision);
+    }
+
+    /**
+     * Format the raw bit pattern, including the DECIMAL256 null sentinel
+     * {@code (Long.MIN_VALUE, 0, 0, 0)}. Used by {@link Decimals#appendNonNull(long, long, long, long, int, int, CharSink)}
+     * on the NOT NULL path; nullable callers must do their own null check first.
+     */
+    public static void toSinkBits(@NotNull CharSink<?> sink, long hh, long hl, long lh, long ll, int scale, int precision) {
+        if (isNull(hh, hl, lh, ll)) {
+            // Two's-complement negation of (Long.MIN_VALUE, 0, 0, 0) overflows; format
+            // via canonical absolute string and splice in the decimal point.
             appendDecimal256MinAsDecimal(sink, scale);
             return;
         }

@@ -141,7 +141,7 @@ public final class Decimals {
      * @param sink  to write the value to
      */
     public static void appendNonNull(long value, int precision, int scale, CharSink<?> sink) {
-        Decimal64.toSink(sink, value, scale, precision);
+        Decimal64.toSinkBits(sink, value, scale, precision);
     }
 
     /**
@@ -151,7 +151,7 @@ public final class Decimals {
      * @param sink  to write the value to
      */
     public static void appendNonNull(long hi, long lo, int precision, int scale, CharSink<?> sink) {
-        Decimal128.toSink(sink, hi, lo, scale, precision);
+        Decimal128.toSinkBits(sink, hi, lo, scale, precision);
     }
 
     /**
@@ -161,7 +161,7 @@ public final class Decimals {
      * @param sink  to write the value to
      */
     public static void appendNonNull(Decimal256 decimal256, int precision, int scale, CharSink<?> sink) {
-        Decimal256.toSink(
+        Decimal256.toSinkBits(
                 sink,
                 decimal256.getHh(),
                 decimal256.getHl(),
@@ -179,7 +179,7 @@ public final class Decimals {
      * @param sink  to write the value to
      */
     public static void appendNonNull(long hh, long hl, long lh, long ll, int precision, int scale, CharSink<?> sink) {
-        Decimal256.toSink(
+        Decimal256.toSinkBits(
                 sink,
                 hh,
                 hl,
@@ -197,7 +197,7 @@ public final class Decimals {
      * @param sink  to write the value to
      */
     public static void appendNonNull(Decimal128 decimal128, int precision, int scale, CharSink<?> sink) {
-        Decimal128.toSink(sink, decimal128.getHigh(), decimal128.getLow(), scale, precision);
+        Decimal128.toSinkBits(sink, decimal128.getHigh(), decimal128.getLow(), scale, precision);
     }
 
     public static int getDecimalTagPrecision(int tag) {

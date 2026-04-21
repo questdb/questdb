@@ -555,9 +555,20 @@ public class Decimal128 implements Sinkable, Decimal {
      */
     public static void toSink(@NotNull CharSink<?> sink, long high, long low, int scale, int precision) {
         if (isNull(high, low)) {
-            // (Long.MIN_VALUE, 0) is the DECIMAL128 null sentinel but also a valid stored
-            // bit pattern on NOT NULL columns. Two's-complement negation would overflow,
-            // so format via the canonical absolute string and splice in the decimal point.
+            return;
+        }
+        toSinkBits(sink, high, low, scale, precision);
+    }
+
+    /**
+     * Format the raw bit pattern, including the DECIMAL128 null sentinel
+     * {@code (Long.MIN_VALUE, 0)}. Used by {@link Decimals#appendNonNull(long, long, int, int, CharSink)}
+     * on the NOT NULL path; nullable callers must do their own null check first.
+     */
+    public static void toSinkBits(@NotNull CharSink<?> sink, long high, long low, int scale, int precision) {
+        if (isNull(high, low)) {
+            // Two's-complement negation of (Long.MIN_VALUE, 0) overflows; format via
+            // canonical absolute string and splice in the decimal point.
             appendDecimal128MinAsDecimal(sink, scale);
             return;
         }

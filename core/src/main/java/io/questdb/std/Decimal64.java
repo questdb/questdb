@@ -266,13 +266,23 @@ public class Decimal64 implements Sinkable, Decimal {
      * @param sink the CharSink to write to
      */
     public static void toSink(@NotNull CharSink<?> sink, long value, int scale, int precision) {
+        if (value == Decimals.DECIMAL64_NULL) {
+            return;
+        }
+        toSinkBits(sink, value, scale, precision);
+    }
+
+    /**
+     * Format the raw bit pattern, including the DECIMAL64_NULL sentinel. Used by
+     * {@link Decimals#appendNonNull(long, int, int, CharSink)} on the NOT NULL path,
+     * where the sentinel is a valid stored value that must surface as the scaled
+     * decimal representation of {@code Long.MIN_VALUE}. Callers on a nullable path
+     * must do their own null check first — prefer {@link #toSink(CharSink, long, int, int)}.
+     */
+    public static void toSinkBits(@NotNull CharSink<?> sink, long value, int scale, int precision) {
         if (value == Long.MIN_VALUE) {
-            // Long.MIN_VALUE is the DECIMAL64_NULL sentinel but also a valid stored
-            // value on NOT NULL columns (the result of INSERT NULL into such a column).
-            // Negating it overflows, so format it via its canonical absolute string and
-            // splice in the decimal point per scale. Per the NOT NULL preserve-bit-pattern
-            // policy the caller is responsible for skipping null on nullable columns
-            // before calling this method.
+            // Negating Long.MIN_VALUE overflows; format via canonical absolute string
+            // and splice in the decimal point per scale.
             appendLongMinValueAsDecimal(sink, scale);
             return;
         }

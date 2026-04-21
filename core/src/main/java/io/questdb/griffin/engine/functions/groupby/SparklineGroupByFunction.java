@@ -158,7 +158,12 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         cachedPairPtrA = 0;
         cachedPairPtrB = 0;
         final double value = arg.getDouble(record);
-        if (Double.isNaN(value)) {
+        // Skip non-finite values: NaN is the DOUBLE null sentinel, and +/-Infinity
+        // breaks effectiveMin/effectiveMax (range becomes +Inf and every finite value
+        // normalises to 0, producing an all-minimum-char bar). NOT NULL DOUBLE columns
+        // preserve Inf/-Inf as stored IEEE 754 values; sparkline renders only the
+        // finite subset.
+        if (!Double.isFinite(value)) {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
             mapValue.putLong(valueIndex + 2, 0);
@@ -175,7 +180,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Double.isNaN(value)) {
+        if (!Double.isFinite(value)) {
             return;
         }
         long count = mapValue.getLong(valueIndex + 1);
