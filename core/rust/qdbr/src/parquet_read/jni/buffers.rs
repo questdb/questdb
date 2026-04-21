@@ -4,15 +4,19 @@ use crate::parquet_read::{
 };
 use jni::objects::JClass;
 use jni::JNIEnv;
+use qdb_core::cairo::CairoException;
 use std::mem::{offset_of, size_of};
 
 #[no_mangle]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_create(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     allocator: *const QdbAllocator,
 ) -> *mut RowGroupBuffers {
+    if allocator.is_null() {
+        return CairoException::new("allocator pointer is null").throw(&mut env);
+    }
     let allocator = unsafe { &*allocator }.clone();
     Box::into_raw(Box::new(RowGroupBuffers::new(allocator)))
 }
@@ -86,10 +90,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 #[no_mangle]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_create(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     allocator: *const QdbAllocator,
 ) -> *mut RowGroupStatBuffers {
+    if allocator.is_null() {
+        return CairoException::new("allocator pointer is null").throw(&mut env);
+    }
     let allocator = unsafe { &*allocator }.clone();
     Box::into_raw(Box::new(RowGroupStatBuffers::new(allocator)))
 }
