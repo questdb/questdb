@@ -19,7 +19,7 @@ QuestDB's SAMPLE BY FILL queries now execute on the parallel GROUP BY fast path 
 - [x] **Phase 11: Hardening — Review Findings & Missing Test Coverage** — UUID FILL_KEY dispatch, geo/decimal null sentinels, NULL-key/CTE/sparse-DST tests
 - [x] **Phase 12: Replace safety-net reclassification with legacy fallback and tighten optimizer PREV gate** — Retro-fallback mechanism, Tier 1 gate tightening, FILL(PREV, PREV(...)) grammar rules, 19 regression tests, code-quality sweep (completed 2026-04-17)
 - [x] **Phase 13: Migrate FILL(PREV) snapshots from materialized values to rowId-based replay** — Replace per-type snapshot materialization in `SampleByFillRecordCursorFactory` with a single chain rowId per key, read lazily via `recordAt`. Ship prerequisite `SortedRecordCursor.chain.clear()` fix as its own commit. Borrowed from `sm_fill_prev_fast_all_types` branch (research verdict GO, candidate a) (completed 2026-04-19)
-- [ ] **Phase 15: Address PR #6946 review findings and retro-document post-phase-14 fixes** — Fix 3 critical `/review-pr 6946` findings (TIMESTAMP fill constant unit conversion, unquoted numeric rejection for TIMESTAMP columns, keyed-fill circuit-breaker); absorb three selected moderate findings (getLong256 sink null sentinel, timestampIndex type check, lost output assertion in testSampleByFromToParallelSampleByRewriteWithKeys); retroactively document three post-Phase-14 commits (narrow-decimal FILL_KEY coverage, decimal128/256 sink fix + -ea assert, SampleByFillRecordCursorFactory clean-up)
+- [x] **Phase 15: Address PR #6946 review findings and retro-document post-phase-14 fixes** — Fix 3 critical `/review-pr 6946` findings (TIMESTAMP fill constant unit conversion, unquoted numeric rejection for TIMESTAMP columns, keyed-fill circuit-breaker); absorb three selected moderate findings (getLong256 sink null sentinel, timestampIndex type check, lost output assertion in testSampleByFromToParallelSampleByRewriteWithKeys); retroactively document three post-Phase-14 commits (narrow-decimal FILL_KEY coverage, decimal128/256 sink fix + -ea assert, SampleByFillRecordCursorFactory clean-up) (completed 2026-04-21)
 
 ## Phase Details
 
@@ -248,7 +248,7 @@ Plans:
 | 12. Replace safety-net reclassification with legacy fallback | 4/4 | Complete    | 2026-04-17 |
 | 13. Migrate FILL(PREV) snapshots to rowId-based replay | 6/6 | Complete    | 2026-04-20 |
 | 14. Fix issues from moderate list for M5/M6 mention in PR | 4/4 | Complete | 2026-04-20 |
-| 15. Address PR #6946 review findings and retro-document post-phase-14 fixes | 3/4 | In Progress|  |
+| 15. Address PR #6946 review findings and retro-document post-phase-14 fixes | 4/4 | Complete   | 2026-04-21 |
 
 ### Phase 14: Fix issues from moderate list, for m5 and m6 just mention in the existing PR description under the right section. Borrow ideas for tests from minor findings.
 
@@ -281,13 +281,13 @@ Plans:
   7. Retro-document commits `6c2c44237c` (narrow-decimal FILL_KEY coverage), `2696df1749` (decimal128/256 sink null fall-through fix + `-ea` assert promotion + 2 regression tests), and `a986070e43` (SampleByFillRecordCursorFactory clean-up) under this phase's paper trail (SUMMARY per commit, no code changes — commits already landed).
   8. `/review-pr 6946` re-run after this phase shows 0 Critical findings and Moderate list reduced to items explicitly deferred (M-6 CairoException defensive guard coverage + multi-worker test) documented as Future Work in PR body.
 
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 - [x] 15-01-PLAN.md - Codegen cluster: C-1 + C-2 unified TIMESTAMP-target fix in generateFill (driver-aware re-parse + Chars.isQuoted rejection), M-5 timestampIndex non-TIMESTAMP guard, restore the four pinning tests (testTimestampFillNullAndValue + testTimestampFillValueUnquoted, micro and nano)
 - [x] 15-02-PLAN.md - Cursor cluster: C-3 SqlExecutionCircuitBreaker field + 2 check sites in SampleByFillCursor, M-4 FillRecord.getLong256 terminal sink.ofRawNull fallthrough, 2 new regression tests (testFillKeyedRespectsCircuitBreaker + testFillPrevLong256NoPrevYet)
 - [x] 15-03-PLAN.md - Test-only: M-7 upgrade testSampleByFromToParallelSampleByRewriteWithKeys with 4 bounded-variant assertQueryNoLeakCheck blocks replacing compile-only select().close() calls
-- [ ] 15-04-PLAN.md - Retro-doc: write 15-04-SUMMARY.md covering three post-Phase-14 commits (6c2c44237c narrow-decimal FILL_KEY coverage, 2696df1749 decimal128/256 sink null fall-through fix, a986070e43 SampleByFillRecordCursorFactory clean-up); no code change
+- [x] 15-04-PLAN.md - Retro-doc: write 15-04-SUMMARY.md covering three post-Phase-14 commits (6c2c44237c narrow-decimal FILL_KEY coverage, 2696df1749 decimal128/256 sink null fall-through fix, a986070e43 SampleByFillRecordCursorFactory clean-up); no code change
 
 **Not in scope (Future Work — mention in PR #6946 Trade-offs or defer to post-merge phase):**
 - M-6: Missing test for `CairoException.critical("sample by fill: data row timestamp ... precedes next bucket")` at SampleByFillRecordCursorFactory.java:483-488 — defense-in-depth guard has no pinning test. Requires crafting a bucket-grid-drift repro (sub-day TZ + FROM/offset misalignment or multi-worker non-determinism); larger scope than a single regression test.
