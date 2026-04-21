@@ -197,6 +197,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     while (blockBufferPos >= 0) {
                         long value = Unsafe.getUnsafe().getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
                         if (value < minValue) {
+                            blockBufferPos = -1;
                             return false;
                         }
                         blockBufferPos--;
@@ -233,7 +234,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
 
                 // Advance to previous generation
-                if (advanceToPrevRelevantGen()) {
+                if (!advanceToPrevRelevantGen()) {
                     return false;
                 }
             }
@@ -246,14 +247,13 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public long seekToLast() {
-            // For backward cursor, the first yielded row is the last row
             if (hasNext()) {
                 return next();
             }
             return -1;
         }
 
-        private boolean advancePrevImpl() {
+        private boolean advanceToPrevRelevantGen() {
             if (cursorReloadGeneration != reloadGeneration) {
                 return false;
             }
@@ -304,10 +304,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 genLookup.putCacheEntries(requestedKey, builderEntries);
             }
             return false;
-        }
-
-        private boolean advanceToPrevRelevantGen() {
-            return !advancePrevImpl();
         }
 
         private void clearBlockState() {
@@ -876,7 +872,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 cacheVersionAtOf = genLookup.getCacheVersion();
             }
 
-            if (advanceToPrevRelevantGen()) {
+            if (!advanceToPrevRelevantGen()) {
                 currentGen = -1;
                 encodedBlockCount = 0;
                 currentBlock = -1;

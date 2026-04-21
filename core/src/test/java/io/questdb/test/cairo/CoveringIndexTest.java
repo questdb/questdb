@@ -44,6 +44,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
@@ -8587,6 +8588,68 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSidecarMissingFileFallsBackToUnavailable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cov_missing_sidecar";
+                int plen = path.size();
+
+                int rowCount = 10;
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
+                    }
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr}, new long[]{0}, new int[]{3},
+                                new int[]{2}, new int[]{ColumnType.DOUBLE}, 1
+                        );
+                        for (int i = 0; i < rowCount; i++) {
+                            writer.add(0, i);
+                        }
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                    }
+
+                    FilesFacade ff = configuration.getFilesFacade();
+                    long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    LPSZ sidecarFile = PostingIndexUtils.coverDataFileName(
+                            path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, liveSealTxn);
+                    assertTrue("sidecar present before deletion", ff.exists(sidecarFile));
+                    assertTrue("sidecar removed", ff.removeQuiet(sidecarFile));
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                        try {
+                            assertTrue(cursor instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+
+                            int count = 0;
+                            while (cursor.hasNext()) {
+                                long rowId = cursor.next();
+                                assertEquals(count, rowId);
+                                assertFalse("missing sidecar must surface as unavailable",
+                                        cc.isCoveredAvailable(0));
+                                count++;
+                            }
+                            assertEquals(rowCount, count);
+                        } finally {
+                            Misc.free(cursor);
+                        }
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSidecarVersioningAcrossSeals() throws Exception {
         // Successive seals must create NEW versioned sidecar files
         // (.pc<N>.<C>.<S>) rather than truncating the previous sealed
@@ -8690,7 +8753,73 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 2: LATEST BY + residual filter through covering index ---
+    @Test
+    public void testSparseGenCoverWithLeadingBlockTrim() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cov_sparse_min";
+                int plen = path.size();
+                int rowCount = 600;
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    // Covered value == rowId so misalignment shows up as a different
+                    // numeric value rather than a crash.
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, (double) i);
+                    }
+
+                    PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
+                    writer.configureCovering(
+                            new long[]{colAddr}, new long[]{0}, new int[]{3},
+                            new int[]{1}, new int[]{ColumnType.DOUBLE}, 1
+                    );
+
+                    // Gen 0 (dense): introduces keys 0, 1, 2 so the writer's total keyCount=3.
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.add(2, 2);
+                    writer.setMaxValue(2);
+                    writer.commit();
+
+                    // Gen 1 (sparse): touches only keys 0 and 1 — key 2 inactive makes the gen sparse.
+                    // key 0: rows 100..399 (300 values → sidecarBase=300 in gen 1 for key 1)
+                    // key 1: rows 400..599 (200 values → 4 blocks of 64/64/64/8)
+                    for (int i = 100; i < 400; i++) writer.add(0, i);
+                    for (int i = 400; i < 600; i++) writer.add(1, i);
+                    writer.setMaxValue(rowCount - 1);
+                    writer.commit();
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
+                        // minValue=464 drops block 0 (rows 400..463); blocks 1..3 remain.
+                        final long minValue = 464;
+                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(1, minValue, Long.MAX_VALUE, new int[]{0});
+                        try {
+                            assertTrue(cc.hasCovering());
+                            int expectedRow = 464;
+                            while (cc.hasNext()) {
+                                // RowCursor.next() returns rowId relative to minValue.
+                                long actualRow = cc.next() + minValue;
+                                assertEquals(expectedRow, actualRow);
+                                double covered = cc.getCoveredDouble(0);
+                                assertEquals("row " + actualRow + " covered value",
+                                        (double) actualRow, covered, 0.0);
+                                expectedRow++;
+                            }
+                            assertEquals(600, expectedRow);
+                        } finally {
+                            Misc.free(cc);
+                        }
+                    }
+
+                    writer.close();
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
 
     @Test
     public void testStringPageFrameDataCorrectness() throws Exception {

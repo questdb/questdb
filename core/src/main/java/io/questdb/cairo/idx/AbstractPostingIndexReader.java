@@ -484,7 +484,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return (long) (count + 1) * (longOffsets ? Long.BYTES : Integer.BYTES);
     }
 
-
     protected void ensureSidecarOpen(int c) {
         MemoryMR mem = sidecarMems.getQuick(c);
         if (mem.size() > 0) {
@@ -499,6 +498,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     sidecarCovTs.getQuick(c),
                     valueFileTxn
             );
+            if (!ff.exists(pcFile)) {
+                return;
+            }
             mem.of(ff, pcFile, ff.getMapPageSize(), -1, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
         } finally {
             sidecarBasePath.trimTo(pLen);
@@ -784,11 +786,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
         @Override
         public long seekToLast() {
-            long lastRowId = -1;
-            while (hasNext()) {
-                lastRowId = next();
-            }
-            return lastRowId;
+            throw new UnsupportedOperationException(
+                    "seekToLast: use a backward index reader; forward iteration is O(n)");
         }
 
         private CharSequence decompressFsstStr(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectString view, boolean longOffsets) {
@@ -893,17 +892,25 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
             int sc = PostingIndexUtils.strideCount(genKeyCount);
-            if (stride >= sc) return 0;
+            if (stride >= sc) {
+                return 0;
+            }
             int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
-            if (localKey >= ks) return 0;
+            if (localKey >= ks) {
+                return 0;
+            }
 
             MemoryMR mem = sidecarMems.getQuick(memIdx);
             int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
             long strideIdxOffset = PostingIndexUtils.PC_HEADER_SIZE + (long) stride * Long.BYTES;
-            if (strideIdxOffset + Long.BYTES > mem.size()) return 0;
+            if (strideIdxOffset + Long.BYTES > mem.size()) {
+                return 0;
+            }
             long strideOff = mem.getLong(strideIdxOffset);
             long strideDataStart = siSize + strideOff;
-            if (strideDataStart >= mem.size()) return 0;
+            if (strideDataStart >= mem.size()) {
+                return 0;
+            }
             long keyOffsetsAddr = mem.addressOf(strideDataStart);
             long keyBlockOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) localKey * Long.BYTES);
             long keyBlockAddr = mem.addressOf(strideDataStart + (long) ks * Long.BYTES + keyBlockOff);

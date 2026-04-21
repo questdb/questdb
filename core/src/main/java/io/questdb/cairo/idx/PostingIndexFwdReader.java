@@ -178,7 +178,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     }
                     next = value;
                     if (coverCount > 0) {
-                        cachedSidecarIdx = sidecarStrideKeyStart + sidecarOrdinal;
+                        cachedSidecarIdx = isCurrentGenDense
+                                ? sidecarStrideKeyStart + sidecarOrdinal
+                                : sidecarOrdinal;
                         sidecarOrdinal++;
                     }
                     return true;
@@ -190,7 +192,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         this.next = Unsafe.getUnsafe().getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
                         blockBufferPos++;
                         if (coverCount > 0) {
-                            cachedSidecarIdx = sidecarStrideKeyStart + sidecarOrdinal;
+                            cachedSidecarIdx = isCurrentGenDense
+                                    ? sidecarStrideKeyStart + sidecarOrdinal
+                                    : sidecarOrdinal;
                             sidecarOrdinal++;
                         }
                         return true;
@@ -200,12 +204,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         long value = Unsafe.getUnsafe().getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
                         blockBufferPos++;
                         if (value > maxValue) {
+                            blockBufferPos = blockBufferEnd;
                             return false;
                         }
                         if (value >= minValue) {
                             this.next = value;
                             if (coverCount > 0) {
-                                cachedSidecarIdx = sidecarStrideKeyStart + sidecarOrdinal;
+                                cachedSidecarIdx = isCurrentGenDense
+                                        ? sidecarStrideKeyStart + sidecarOrdinal
+                                        : sidecarOrdinal;
                                 sidecarOrdinal++;
                             }
                             return true;

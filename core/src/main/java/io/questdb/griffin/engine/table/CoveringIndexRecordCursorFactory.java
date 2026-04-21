@@ -669,10 +669,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         Misc.free(bwdCursor);
                     }
                 } else {
-                    // No filter: use forward reader and seekToLast for covering data
-                    IndexReader fwdReader = tableReader.getIndexReader(
-                            partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
-                    RowCursor rowCursor = fwdReader.getCursor(indexKey, rowLo, rowHi, requiredIncludeIndices);
+                    IndexReader bwdReader = tableReader.getIndexReader(
+                            partitionIndex, indexColumnIndex, IndexReader.DIR_BACKWARD);
+                    RowCursor rowCursor = bwdReader.getCursor(indexKey, rowLo, rowHi, requiredIncludeIndices);
                     try {
                         if (rowCursor instanceof CoveringRowCursor crc) {
                             long lastRowId = crc.seekToLast();
@@ -684,7 +683,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                                     coveringRecord.of(crc);
                                     coveringRecord.setSymbolKey(rawSymbolKey);
                                     coveringRecord.setRowId(lastRowId);
-                                    // Keep fallbackRecord in sync for per-column delegation.
                                     fallbackRecord.of(tableReader, partitionIndex);
                                     fallbackRecord.setSymbolKey(rawSymbolKey);
                                     fallbackRecord.setRowId(lastRowId);
