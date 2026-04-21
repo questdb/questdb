@@ -25,60 +25,10 @@
 // JNI bridge to cwida/fsst (https://github.com/cwida/fsst).
 
 #include "fsst.h"
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <jni.h>
-
-namespace {
-
-// Per-thread reusable scratch for the per-string ptr+len arrays cwida expects.
-// Avoids malloc on every JNI call. Grows on demand and never shrinks; bounded
-// by the maximum stride size encountered.
-thread_local size_t *t_lensIn = nullptr;
-thread_local const unsigned char **t_ptrsIn = nullptr;
-thread_local size_t *t_lensOut = nullptr;
-thread_local unsigned char **t_ptrsOut = nullptr;
-thread_local size_t t_scratchCapacity = 0;
-
-bool ensureScratch(size_t count) {
-    if (count <= t_scratchCapacity) return true;
-    size_t newCap = t_scratchCapacity == 0 ? 256 : t_scratchCapacity;
-    while (newCap < count) newCap <<= 1;
-
-    auto *newLensIn = static_cast<size_t *>(std::realloc(t_lensIn, newCap * sizeof(size_t)));
-    if (!newLensIn) return false;
-    t_lensIn = newLensIn;
-
-    auto *newPtrsIn = static_cast<const unsigned char **>(
-            std::realloc(t_ptrsIn, newCap * sizeof(const unsigned char *)));
-    if (!newPtrsIn) return false;
-    t_ptrsIn = newPtrsIn;
-
-    auto *newLensOut = static_cast<size_t *>(std::realloc(t_lensOut, newCap * sizeof(size_t)));
-    if (!newLensOut) return false;
-    t_lensOut = newLensOut;
-
-    auto *newPtrsOut = static_cast<unsigned char **>(
-            std::realloc(t_ptrsOut, newCap * sizeof(unsigned char *)));
-    if (!newPtrsOut) return false;
-    t_ptrsOut = newPtrsOut;
-
-    t_scratchCapacity = newCap;
-    return true;
-}
-
-void buildBatchPtrs(jlong srcAddr, jlong srcOffsetsAddr, jint count) {
-    auto *base = reinterpret_cast<const unsigned char *>(srcAddr);
-    auto *offs = reinterpret_cast<const int64_t *>(srcOffsetsAddr);
-    for (jint i = 0; i < count; i++) {
-        int64_t lo = offs[i];
-        int64_t hi = offs[i + 1];
-        t_ptrsIn[i] = base + lo;
-        t_lensIn[i] = static_cast<size_t>(hi - lo);
-    }
-}
-
-}  // anonymous namespace
 
 extern "C" {
 
@@ -101,29 +51,47 @@ Java_io_questdb_cairo_idx_FSSTNative_importTable0(
 // Returns -1 on failure, else: bits 48..63 = tableLen, bits 0..47 = totalCompressed.
 // The 48-bit compressed span caps a single block at 256 TB — orders of magnitude
 // beyond any realistic sidecar stride.
+//
+// batchScratchAddr points to a Java-allocated scratch buffer of at least count*32
+// bytes, laid out as four count-sized sub-arrays: lensIn, ptrsIn, lensOut, ptrsOut.
+// Keeping the scratch Java-owned gives it a MemoryTag, avoids per-thread leaks on
+// worker exit, and sidesteps realloc partial-failure hazards.
 JNIEXPORT jlong JNICALL
 Java_io_questdb_cairo_idx_FSSTNative_trainAndCompressBlock0(
         JNIEnv *, jclass,
         jlong srcAddr, jlong srcOffsetsAddr, jint count,
         jlong cmpAddr, jlong cmpCap, jlong cmpOffsetsAddr,
-        jlong tableAddr) {
+        jlong tableAddr, jlong batchScratchAddr) {
     if (count <= 0 || cmpCap <= 0) return -1;
-    if (srcAddr == 0 || srcOffsetsAddr == 0 || cmpAddr == 0 || cmpOffsetsAddr == 0 || tableAddr == 0) return -1;
-    if (!ensureScratch(static_cast<size_t>(count))) return -1;
+    if (srcAddr == 0 || srcOffsetsAddr == 0 || cmpAddr == 0 || cmpOffsetsAddr == 0
+        || tableAddr == 0 || batchScratchAddr == 0) return -1;
 
-    buildBatchPtrs(srcAddr, srcOffsetsAddr, count);
+    const int64_t segStride = static_cast<int64_t>(count) * 8;
+    auto *lensIn = reinterpret_cast<size_t *>(batchScratchAddr);
+    auto *ptrsIn = reinterpret_cast<const unsigned char **>(batchScratchAddr + segStride);
+    auto *lensOut = reinterpret_cast<size_t *>(batchScratchAddr + segStride * 2);
+    auto *ptrsOut = reinterpret_cast<unsigned char **>(batchScratchAddr + segStride * 3);
+
+    auto *srcBase = reinterpret_cast<const unsigned char *>(srcAddr);
+    auto *srcOffs = reinterpret_cast<const int64_t *>(srcOffsetsAddr);
+    for (jint i = 0; i < count; i++) {
+        int64_t lo = srcOffs[i];
+        int64_t hi = srcOffs[i + 1];
+        ptrsIn[i] = srcBase + lo;
+        lensIn[i] = static_cast<size_t>(hi - lo);
+    }
 
     fsst_encoder_t *enc = fsst_create(
-            static_cast<size_t>(count), t_lensIn, t_ptrsIn, /*zeroTerminated=*/0);
+            static_cast<size_t>(count), lensIn, ptrsIn, /*zeroTerminated=*/0);
     if (!enc) return -1;
 
     size_t produced = fsst_compress(
             enc,
             static_cast<size_t>(count),
-            t_lensIn, t_ptrsIn,
+            lensIn, ptrsIn,
             static_cast<size_t>(cmpCap),
             reinterpret_cast<unsigned char *>(cmpAddr),
-            t_lensOut, t_ptrsOut);
+            lensOut, ptrsOut);
     if (produced != static_cast<size_t>(count)) {
         fsst_destroy(enc);
         return -1;
@@ -133,9 +101,9 @@ Java_io_questdb_cairo_idx_FSSTNative_trainAndCompressBlock0(
     auto *dstOffs = reinterpret_cast<int64_t *>(cmpOffsetsAddr);
     int64_t totalOut = 0;
     for (jint i = 0; i < count; i++) {
-        int64_t off = static_cast<int64_t>(t_ptrsOut[i] - dstBase);
+        int64_t off = static_cast<int64_t>(ptrsOut[i] - dstBase);
         dstOffs[i] = off;
-        totalOut = off + static_cast<int64_t>(t_lensOut[i]);
+        totalOut = off + static_cast<int64_t>(lensOut[i]);
     }
     dstOffs[count] = totalOut;
 

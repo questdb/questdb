@@ -28,6 +28,11 @@ import io.questdb.std.Os;
 
 public final class FSSTNative {
 
+    /**
+     * Per-value bytes the caller must provision in {@code batchScratchAddr} for
+     * {@link #trainAndCompressBlock}: four 8-byte slots (lensIn, ptrsIn, lensOut, ptrsOut).
+     */
+    public static final int BATCH_SCRATCH_BYTES_PER_VALUE = 32;
     public static final int DECODER_STRUCT_SIZE;
     /**
      * High bit on the var-block count header marks the block as FSST-compressed.
@@ -59,13 +64,17 @@ public final class FSSTNative {
      * Train + compress + export in a single call. Returns -1 on failure, else
      * a packed long: bits 0..47 = total compressed bytes, bits 48..63 = tableLen.
      * Use {@link #unpackCompressed} / {@link #unpackTableLen} to decode.
+     *
+     * @param batchScratchAddr native buffer of at least count*32 bytes, used by the
+     *                         JNI layer to build cwida's per-string len/ptr arrays
+     *                         (see {@link #BATCH_SCRATCH_BYTES_PER_VALUE})
      */
     public static long trainAndCompressBlock(
             long srcAddr, long srcOffsetsAddr, int count,
             long cmpAddr, long cmpCap, long cmpOffsetsAddr,
-            long tableAddr
+            long tableAddr, long batchScratchAddr
     ) {
-        return trainAndCompressBlock0(srcAddr, srcOffsetsAddr, count, cmpAddr, cmpCap, cmpOffsetsAddr, tableAddr);
+        return trainAndCompressBlock0(srcAddr, srcOffsetsAddr, count, cmpAddr, cmpCap, cmpOffsetsAddr, tableAddr, batchScratchAddr);
     }
 
     public static long unpackCompressed(long packed) {
@@ -90,7 +99,7 @@ public final class FSSTNative {
     private static native long trainAndCompressBlock0(
             long srcAddr, long srcOffsetsAddr, int count,
             long cmpAddr, long cmpCap, long cmpOffsetsAddr,
-            long tableAddr
+            long tableAddr, long batchScratchAddr
     );
 
     static {

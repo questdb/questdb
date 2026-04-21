@@ -6373,6 +6373,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             long trainBufSize = (long) totalLen * reps;
             long cmpCap = trainBufSize * 2 + 16;
             long decCap = trainBufSize + 32;
+            long batchScratchBytes = (long) trainCount * FSSTNative.BATCH_SCRATCH_BYTES_PER_VALUE;
 
             long trainBuf = Unsafe.malloc(trainBufSize, MemoryTag.NATIVE_DEFAULT);
             long srcOffsAddr = Unsafe.malloc(offsetsBytes, MemoryTag.NATIVE_DEFAULT);
@@ -6381,6 +6382,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             long decBuf = Unsafe.malloc(decCap, MemoryTag.NATIVE_DEFAULT);
             long decOffsAddr = Unsafe.malloc(offsetsBytes, MemoryTag.NATIVE_DEFAULT);
             long tableBuf = Unsafe.malloc(FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long batchScratchAddr = Unsafe.malloc(batchScratchBytes, MemoryTag.NATIVE_DEFAULT);
             long decoder = Unsafe.malloc(FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
             try {
                 long pos = 0;
@@ -6399,7 +6401,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long packed = FSSTNative.trainAndCompressBlock(
                         trainBuf, srcOffsAddr, trainCount,
                         cmpBuf, cmpCap, cmpOffsAddr,
-                        tableBuf);
+                        tableBuf, batchScratchAddr);
                 assertTrue("train+compress must succeed", packed >= 0);
                 long compressed = FSSTNative.unpackCompressed(packed);
                 assertTrue("repetitive data must compress smaller", compressed < pos);
@@ -6422,6 +6424,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 }
             } finally {
                 Unsafe.free(decoder, FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(batchScratchAddr, batchScratchBytes, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(tableBuf, FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(decOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(decBuf, decCap, MemoryTag.NATIVE_DEFAULT);

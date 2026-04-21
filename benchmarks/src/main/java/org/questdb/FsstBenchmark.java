@@ -105,7 +105,7 @@ public class FsstBenchmark {
         return FSSTNative.trainAndCompressBlock(
                 s.rawAddr, s.rawOffsetsAddr, s.valueCount,
                 s.cmpScratchAddr, s.cmpScratchCap, s.cmpScratchOffsetsAddr,
-                s.tableBufAddr
+                s.tableBufAddr, s.batchScratchAddr
         );
     }
 
@@ -127,6 +127,8 @@ public class FsstBenchmark {
 
         @Param({"20"})
         int avgLen;
+        long batchScratchAddr;
+        long batchScratchBytes;
         long cmpScratchAddr;
         long cmpScratchCap;
         long cmpScratchOffsetsAddr;
@@ -185,10 +187,12 @@ public class FsstBenchmark {
             compAddr = Unsafe.malloc(compCap, MemoryTag.NATIVE_DEFAULT);
             compOffsetsAddr = Unsafe.malloc(offsetsArrayBytes, MemoryTag.NATIVE_DEFAULT);
             tableBufAddr = Unsafe.malloc(FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            batchScratchBytes = (long) valueCount * FSSTNative.BATCH_SCRATCH_BYTES_PER_VALUE;
+            batchScratchAddr = Unsafe.malloc(batchScratchBytes, MemoryTag.NATIVE_DEFAULT);
             long packed = FSSTNative.trainAndCompressBlock(
                     rawAddr, rawOffsetsAddr, valueCount,
                     compAddr, compCap, compOffsetsAddr,
-                    tableBufAddr);
+                    tableBufAddr, batchScratchAddr);
             if (packed < 0) {
                 throw new IllegalStateException("FSST trainAndCompress failed");
             }
@@ -223,6 +227,8 @@ public class FsstBenchmark {
                 Unsafe.free(decoderAddr, FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
                 decoderAddr = 0;
             }
+            free(batchScratchAddr, batchScratchBytes);
+            batchScratchAddr = 0;
             free(tableBufAddr, FSSTNative.MAX_HEADER_SIZE);
             tableBufAddr = 0;
             free(cmpScratchOffsetsAddr, offsetsArrayBytes);

@@ -265,12 +265,14 @@ public class FSSTNativeTest extends AbstractCairoTest {
         assertTrue("payload must be non-empty", total > 0);
         long offsetsBytes = (long) (count + 1) * Long.BYTES;
         long cmpCap = total * 2 + 64;
+        long batchScratchBytes = (long) count * FSSTNative.BATCH_SCRATCH_BYTES_PER_VALUE;
 
         long srcAddr = 0;
         long srcOffsAddr = 0;
         long cmpAddr = 0;
         long cmpOffsAddr = 0;
         long tableAddr = 0;
+        long batchScratchAddr = 0;
         CompressedBlock result = null;
         try {
             srcAddr = Unsafe.malloc(total, MemoryTag.NATIVE_DEFAULT);
@@ -278,6 +280,7 @@ public class FSSTNativeTest extends AbstractCairoTest {
             cmpAddr = Unsafe.malloc(cmpCap, MemoryTag.NATIVE_DEFAULT);
             cmpOffsAddr = Unsafe.malloc(offsetsBytes, MemoryTag.NATIVE_DEFAULT);
             tableAddr = Unsafe.malloc(FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            batchScratchAddr = Unsafe.malloc(batchScratchBytes, MemoryTag.NATIVE_DEFAULT);
 
             long pos = 0;
             for (int i = 0; i < count; i++) {
@@ -291,12 +294,13 @@ public class FSSTNativeTest extends AbstractCairoTest {
             long packed = FSSTNative.trainAndCompressBlock(
                     srcAddr, srcOffsAddr, count,
                     cmpAddr, cmpCap, cmpOffsAddr,
-                    tableAddr);
+                    tableAddr, batchScratchAddr);
             assertTrue("train+compress", packed >= 0);
             result = new CompressedBlock(srcAddr, total, srcOffsAddr,
                     cmpAddr, cmpCap, cmpOffsAddr, offsetsBytes, tableAddr);
             return result;
         } finally {
+            if (batchScratchAddr != 0) Unsafe.free(batchScratchAddr, batchScratchBytes, MemoryTag.NATIVE_DEFAULT);
             if (result == null) {
                 if (tableAddr != 0) Unsafe.free(tableAddr, FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 if (cmpOffsAddr != 0) Unsafe.free(cmpOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);

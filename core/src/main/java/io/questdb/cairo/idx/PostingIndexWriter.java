@@ -122,6 +122,8 @@ public class PostingIndexWriter implements IndexWriter {
     private long currentPublishTableTxn = -1;
     private long flushHeaderBuf;
     private int flushHeaderBufCapacity;
+    private long fsstBatchScratchAddr;
+    private long fsstBatchScratchCap;
     private long fsstCmpAddr;
     private long fsstCmpCap;
     private long fsstCmpOffsAddr;
@@ -1935,6 +1937,11 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.free(fsstCmpOffsAddr, fsstCmpOffsCap, MemoryTag.NATIVE_INDEX_READER);
             fsstCmpOffsAddr = 0;
             fsstCmpOffsCap = 0;
+        }
+        if (fsstBatchScratchAddr != 0) {
+            Unsafe.free(fsstBatchScratchAddr, fsstBatchScratchCap, MemoryTag.NATIVE_INDEX_READER);
+            fsstBatchScratchAddr = 0;
+            fsstBatchScratchCap = 0;
         }
         if (fsstTableAddr != 0) {
             Unsafe.free(fsstTableAddr, FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_INDEX_READER);
@@ -4187,27 +4194,22 @@ public class PostingIndexWriter implements IndexWriter {
         long rawDataAddr = mem.addressOf(dataStart);
         long offsetsArrayBytes = (long) (totalCount + 1) * Long.BYTES;
         long cmpCap = rawDataLen * 2 + 16;
-
+        long batchScratchBytes = (long) totalCount * FSSTNative.BATCH_SCRATCH_BYTES_PER_VALUE;
         if (fsstSrcOffsCap < offsetsArrayBytes) {
-            if (fsstSrcOffsAddr != 0) {
-                Unsafe.free(fsstSrcOffsAddr, fsstSrcOffsCap, MemoryTag.NATIVE_INDEX_READER);
-            }
-            fsstSrcOffsAddr = Unsafe.malloc(offsetsArrayBytes, MemoryTag.NATIVE_INDEX_READER);
+            fsstSrcOffsAddr = Unsafe.realloc(fsstSrcOffsAddr, fsstSrcOffsCap, offsetsArrayBytes, MemoryTag.NATIVE_INDEX_READER);
             fsstSrcOffsCap = offsetsArrayBytes;
         }
         if (fsstCmpCap < cmpCap) {
-            if (fsstCmpAddr != 0) {
-                Unsafe.free(fsstCmpAddr, fsstCmpCap, MemoryTag.NATIVE_INDEX_READER);
-            }
-            fsstCmpAddr = Unsafe.malloc(cmpCap, MemoryTag.NATIVE_INDEX_READER);
+            fsstCmpAddr = Unsafe.realloc(fsstCmpAddr, fsstCmpCap, cmpCap, MemoryTag.NATIVE_INDEX_READER);
             fsstCmpCap = cmpCap;
         }
         if (fsstCmpOffsCap < offsetsArrayBytes) {
-            if (fsstCmpOffsAddr != 0) {
-                Unsafe.free(fsstCmpOffsAddr, fsstCmpOffsCap, MemoryTag.NATIVE_INDEX_READER);
-            }
-            fsstCmpOffsAddr = Unsafe.malloc(offsetsArrayBytes, MemoryTag.NATIVE_INDEX_READER);
+            fsstCmpOffsAddr = Unsafe.realloc(fsstCmpOffsAddr, fsstCmpOffsCap, offsetsArrayBytes, MemoryTag.NATIVE_INDEX_READER);
             fsstCmpOffsCap = offsetsArrayBytes;
+        }
+        if (fsstBatchScratchCap < batchScratchBytes) {
+            fsstBatchScratchAddr = Unsafe.realloc(fsstBatchScratchAddr, fsstBatchScratchCap, batchScratchBytes, MemoryTag.NATIVE_INDEX_READER);
+            fsstBatchScratchCap = batchScratchBytes;
         }
         if (fsstTableAddr == 0) {
             fsstTableAddr = Unsafe.malloc(FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_INDEX_READER);
@@ -4223,7 +4225,7 @@ public class PostingIndexWriter implements IndexWriter {
         long packed = FSSTNative.trainAndCompressBlock(
                 rawDataAddr, fsstSrcOffsAddr, totalCount,
                 fsstCmpAddr, fsstCmpCap, fsstCmpOffsAddr,
-                fsstTableAddr
+                fsstTableAddr, fsstBatchScratchAddr
         );
         if (packed < 0) {
             LOG.info().$("FSST compression skipped [covIdx=").$(covIdx)
