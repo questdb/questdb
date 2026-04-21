@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
+status: Not planned — ready for /gsd-plan-phase 15
 stopped_at: Completed 14-04-PLAN.md — Phase 14 ready for verification
-last_updated: "2026-04-20T16:14:50.354Z"
-last_activity: 2026-04-20
+last_updated: "2026-04-21T13:15:23.489Z"
+last_activity: 2026-04-21
 progress:
-  total_phases: 14
+  total_phases: 15
   completed_phases: 13
   total_plans: 24
   completed_plans: 24
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** SAMPLE BY FILL queries execute on the GROUP BY fast path with identical output to the cursor path, enabling parallel execution.
-**Current focus:** Phase 14 — fix-issues-from-moderate-list-for-m5-and-m6-just-mention-in-
+**Current focus:** Phase 15 — address-pr-6946-review-findings-and-retro-fixes
 
 ## Current Position
 
-Phase: 14
+Phase: 15
 Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-04-20
+Status: Not planned — ready for /gsd-plan-phase 15
+Last activity: 2026-04-21
 
-Progress: [##########] 100%
+Progress: [#########-] 93%
 
 ## Performance Metrics
 
@@ -153,6 +153,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - Phase 12 added: Replace safety-net reclassification with legacy fallback and tighten optimizer PREV gate. Driven by `/review-pr` finding that the codegen safety-net silently rewrites expression-argument aggregates with unsupported output types as `FILL_KEY`, producing duplicated fill rows (see `testSampleByFillNeedFix` regression vs master). Also closes LONG128/INTERVAL gap between `isUnsupportedPrevType` and `isFastPathPrevSupportedType`. Scope expanded to include missing regression tests for phase-11 production changes (UUID / Long256 / Decimal128 / Decimal256 key-column FILL_KEY dispatch, geo "no-prev-yet" null sentinels, selective `assertSql→assertQueryNoLeakCheck` conversions), removal of the redundant `anyPrev` detection loop, `hasExplicitTo` guard for runtime-null `TO`, alphabetizing FillRecord getters / SampleByFillCursor members / imports / `isKeyColumn`, replacing FQN signatures with plain imports, emitting `fill=` unconditionally in `toPlan`, and asserting on `Dates.parseOffset` failure. PR metadata (title, body tone, `.planning/` diff noise) excluded — tracked separately
 - Phase 13 added: Migrate FILL(PREV) snapshots from materialized values to rowId-based replay. Borrowed verbatim from branch `sm_fill_prev_fast_all_types` (their phase 12; research complete with GO verdict, candidate a). Replaces per-type `simplePrev[]`/MapValue snapshot dispatch in `SampleByFillRecordCursorFactory` with a single chain rowId per key, read lazily via `baseCursor.recordAt(prevRecord, prevRowId)`. Prerequisite `SortedRecordCursor.chain.clear()` fix ships as its own independent commit. Seeds SEED-001 and SEED-002 auto-surface during `/gsd-plan-phase 13` with trigger `rowId migration phase is planned` — bucket-1 plumbing follow-ups (WR-01..WR-04, Defect 3) to be re-sorted as either fixed-here-alongside or obsoleted-if-retro-fallback-deleted; bucket-2 cursor defects (toTop state corruption, CTE-wrap projection corruption) to be verified as absorbed by the rewrite
 - Phase 14 added: Fix Moderate-severity findings from `/review-pr 6946` (M-1..M-4, M-7, M-8, M-9; plus Mn-13 leak on success path). M-5 (SortedRecordCursor memory) and M-6 (triple-pass scan) are NOT in scope — surface as explicit Trade-offs / Future work items in PR #6946 description. Test ideas borrowed from Mn-11: per-type FILL(PREV) for BOOLEAN/BYTE/SHORT/INT/LONG/DATE/TIMESTAMP/IPv4/BINARY/INTERVAL, Decimal precision/scale mismatch rejection, ARRAY/GEOHASH dimensionality/bit-width rejection, rename or remove ghost test `testSampleByFromToIsDisallowedForKeyedQueries`, replace fuzzy 4-message assertion in `testFillPrevRejectNoArg`.
+- Phase 15 added: Address second-pass `/review-pr 6946` findings that surfaced after Phase 14 closed. In scope: 3 Critical findings (C-1 TIMESTAMP fill constant 1000× unit-conversion bug hidden by an altered test expectation in `testTimestampFillNullAndValue`; C-2 silent acceptance of unquoted numeric fill values for TIMESTAMP columns hidden by `testTimestampFillValueUnquoted` losing its `assertException`; C-3 missing `SqlExecutionCircuitBreaker` check in keyed fill emission — regression vs. legacy cursor-path cursors) plus 3 Moderate findings worth folding in (M-4 `getLong256(int, CharSink)` missing terminal `sink.ofRawNull()` fallthrough matching the getDecimal128/256 pattern; M-5 `timestampIndex` fallback in `generateFill` not verifying the resolved column is actually TIMESTAMP; M-7 `testSampleByFromToParallelSampleByRewriteWithKeys` lost its output assertion when the keyed FROM-TO behavior flipped from reject to succeed). Retro-documents 3 post-Phase-14 non-phase commits (`6c2c44237c` narrow-decimal FILL_KEY coverage, `2696df1749` decimal128/256 sink null fall-through fix + `-ea` assert + 2 tests, `a986070e43` SampleByFillRecordCursorFactory clean-up). Out of scope: M-6 (`CairoException.critical` guard test + multi-worker test — larger harness work) and Minor items (dead `isKeyColumn`, em-dashes, PR title, `.planning/` diff noise — house-keeping for merge time).
 
 ### Pending Todos
 
