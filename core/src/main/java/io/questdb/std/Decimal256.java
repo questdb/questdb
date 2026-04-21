@@ -773,6 +773,10 @@ public class Decimal256 implements Sinkable, Decimal {
      */
     public static void toSink(@NotNull CharSink<?> sink, long hh, long hl, long lh, long ll, int scale, int precision) {
         if (isNull(hh, hl, lh, ll)) {
+            // (Long.MIN_VALUE, 0, 0, 0) is the DECIMAL256 null sentinel but also a valid
+            // stored bit pattern on NOT NULL columns. Two's-complement negation would
+            // overflow, so format via the canonical absolute string and apply scale.
+            appendDecimal256MinAsDecimal(sink, scale);
             return;
         }
 
@@ -840,6 +844,34 @@ public class Decimal256 implements Sinkable, Decimal {
 
         if (!printed) {
             sink.put('0');
+        }
+    }
+
+    // abs((Long.MIN_VALUE, 0, 0, 0)) as 256-bit unsigned = 2^255.
+    private static final String DEC256_NULL_ABS =
+            "57896044618658097711785492504343953926634992332820282019728792003956564819968";
+
+    private static void appendDecimal256MinAsDecimal(@NotNull CharSink<?> sink, int scale) {
+        sink.put('-');
+        if (scale <= 0) {
+            sink.putAscii(DEC256_NULL_ABS);
+            return;
+        }
+        if (scale >= DEC256_NULL_ABS.length()) {
+            sink.putAscii("0.");
+            for (int i = 0, n = scale - DEC256_NULL_ABS.length(); i < n; i++) {
+                sink.put('0');
+            }
+            sink.putAscii(DEC256_NULL_ABS);
+            return;
+        }
+        final int dotPos = DEC256_NULL_ABS.length() - scale;
+        for (int i = 0; i < dotPos; i++) {
+            sink.put(DEC256_NULL_ABS.charAt(i));
+        }
+        sink.put('.');
+        for (int i = dotPos; i < DEC256_NULL_ABS.length(); i++) {
+            sink.put(DEC256_NULL_ABS.charAt(i));
         }
     }
 

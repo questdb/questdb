@@ -2426,10 +2426,14 @@ public class Decimal256Test {
 
     @Test
     public void testSinkNull() {
-        // Sinking a null value shouldn't print anything
+        // Decimal256.toSink prints the raw bit pattern, including the null sentinel.
+        // Null awareness lives in Decimals.append which emits "null" for nullable
+        // columns; NOT NULL columns preserve the sentinel as a valid stored value.
+        // NULL_VALUE has scale 0, so the sentinel prints as its unscaled representation
+        // (abs = 2^255).
         StringSink sink = new StringSink();
         Decimal256.NULL_VALUE.toSink(sink);
-        Assert.assertEquals("", sink.toString());
+        Assert.assertEquals("-57896044618658097711785492504343953926634992332820282019728792003956564819968", sink.toString());
     }
 
     @Test

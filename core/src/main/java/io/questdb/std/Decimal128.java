@@ -555,6 +555,10 @@ public class Decimal128 implements Sinkable, Decimal {
      */
     public static void toSink(@NotNull CharSink<?> sink, long high, long low, int scale, int precision) {
         if (isNull(high, low)) {
+            // (Long.MIN_VALUE, 0) is the DECIMAL128 null sentinel but also a valid stored
+            // bit pattern on NOT NULL columns. Two's-complement negation would overflow,
+            // so format via the canonical absolute string and splice in the decimal point.
+            appendDecimal128MinAsDecimal(sink, scale);
             return;
         }
 
@@ -601,6 +605,33 @@ public class Decimal128 implements Sinkable, Decimal {
 
         if (!printed) {
             sink.put('0');
+        }
+    }
+
+    // abs((Long.MIN_VALUE, 0)) as a 128-bit unsigned = 2^127 = 170141183460469231731687303715884105728.
+    private static final String DEC128_NULL_ABS = "170141183460469231731687303715884105728";
+
+    private static void appendDecimal128MinAsDecimal(@NotNull CharSink<?> sink, int scale) {
+        sink.put('-');
+        if (scale <= 0) {
+            sink.putAscii(DEC128_NULL_ABS);
+            return;
+        }
+        if (scale >= DEC128_NULL_ABS.length()) {
+            sink.putAscii("0.");
+            for (int i = 0, n = scale - DEC128_NULL_ABS.length(); i < n; i++) {
+                sink.put('0');
+            }
+            sink.putAscii(DEC128_NULL_ABS);
+            return;
+        }
+        final int dotPos = DEC128_NULL_ABS.length() - scale;
+        for (int i = 0; i < dotPos; i++) {
+            sink.put(DEC128_NULL_ABS.charAt(i));
+        }
+        sink.put('.');
+        for (int i = dotPos; i < DEC128_NULL_ABS.length(); i++) {
+            sink.put(DEC128_NULL_ABS.charAt(i));
         }
     }
 

@@ -1398,10 +1398,14 @@ public class Decimal128Test {
 
     @Test
     public void testSinkNull() {
-        // Sinking a null value shouldn't print anything
+        // Decimal128.toSink prints the raw bit pattern, including the null sentinel.
+        // Null awareness lives in Decimals.append which emits "null" for nullable
+        // columns; NOT NULL columns preserve the sentinel as a valid stored value.
+        // NULL_VALUE has scale 0, so the sentinel prints as its unscaled representation
+        // (abs = 2^127).
         StringSink sink = new StringSink();
         Decimal128.NULL_VALUE.toSink(sink);
-        Assert.assertEquals("", sink.toString());
+        Assert.assertEquals("-170141183460469231731687303715884105728", sink.toString());
     }
 
     @Test

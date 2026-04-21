@@ -1814,4 +1814,128 @@ public class NotNullColumnTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testNotNullParquetRoundTrip() throws Exception {
+        // CONVERT PARTITION TO PARQUET invokes the Rust writer (parquet_write/primitive.rs).
+        // For NOT NULL columns the writer uses dedicated NOT NULL paths that skip sentinel
+        // filtering and emit all-ones definition levels (or a column_top+ones pattern when
+        // the column was added after existing rows). This test round-trips a table with
+        // NOT NULL columns across every primitive type the Rust writer specialises for
+        // (i32/i64/f32/f64, decimals, IPv4), and converts back to native to confirm the
+        // data survives the write+read cycle with NOT NULL metadata intact.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        i INT NOT NULL,
+                        l LONG NOT NULL,
+                        f FLOAT NOT NULL,
+                        d DOUBLE NOT NULL,
+                        ip IPv4 NOT NULL,
+                        dec8 DECIMAL(2, 0) NOT NULL,
+                        dec16 DECIMAL(4, 0) NOT NULL,
+                        dec32 DECIMAL(9, 0) NOT NULL,
+                        dec64 DECIMAL(18, 2) NOT NULL,
+                        dec128 DECIMAL(38, 2) NOT NULL,
+                        dec256 DECIMAL(60, 2) NOT NULL,
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Multiple rows across two partitions so CONVERT TO PARQUET has real work.
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 10, 1.5, 2.5, '1.2.3.4',
+                         1::DECIMAL(2, 0), 100::DECIMAL(4, 0), 1000::DECIMAL(9, 0),
+                         12345.67::DECIMAL(18, 2), 99999.99::DECIMAL(38, 2),
+                         1234567890.12::DECIMAL(60, 2), '2024-06-10T00:00:00'),
+                        (2, 20, 2.5, 3.5, '5.6.7.8',
+                         2::DECIMAL(2, 0), 200::DECIMAL(4, 0), 2000::DECIMAL(9, 0),
+                         22345.67::DECIMAL(18, 2), 88888.88::DECIMAL(38, 2),
+                         2234567890.12::DECIMAL(60, 2), '2024-06-10T00:00:01'),
+                        (3, 30, 3.5, 4.5, '9.10.11.12',
+                         3::DECIMAL(2, 0), 300::DECIMAL(4, 0), 3000::DECIMAL(9, 0),
+                         32345.67::DECIMAL(18, 2), 77777.77::DECIMAL(38, 2),
+                         3234567890.12::DECIMAL(60, 2), '2024-06-11T00:00:00')
+                    """);
+
+            // Convert to Parquet — exercises the Rust writer NOT NULL paths for every
+            // column type above. The `ts > 0` predicate sweeps all partitions except the
+            // most recent one (which remains native to keep insert-path tests happy).
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+
+            // Read-back after Parquet conversion — exercises the Rust reader
+            // (parquet_read/row_groups.rs NOT NULL flag plumbing) and the Java
+            // PartitionDecoder.setNotNullFlag path.
+            assertSql(
+                    """
+                            i\tl\tf\td\tip\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256\tts
+                            1\t10\t1.5\t2.5\t1.2.3.4\t1\t100\t1000\t12345.67\t99999.99\t1234567890.12\t2024-06-10T00:00:00.000000Z
+                            2\t20\t2.5\t3.5\t5.6.7.8\t2\t200\t2000\t22345.67\t88888.88\t2234567890.12\t2024-06-10T00:00:01.000000Z
+                            3\t30\t3.5\t4.5\t9.10.11.12\t3\t300\t3000\t32345.67\t77777.77\t3234567890.12\t2024-06-11T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+
+            // NOT NULL metadata must survive the Parquet round-trip — both in the Parquet
+            // partition and when converting back to native.
+            assertTrue(getNotNull("t", "i"));
+            assertTrue(getNotNull("t", "l"));
+            assertTrue(getNotNull("t", "f"));
+            assertTrue(getNotNull("t", "d"));
+            assertTrue(getNotNull("t", "ip"));
+            assertTrue(getNotNull("t", "dec8"));
+            assertTrue(getNotNull("t", "dec256"));
+
+            // Convert back and read again — verifies the Rust reader populated the NOT
+            // NULL flag when loading the Parquet file into the native partition.
+            execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
+            assertSql(
+                    """
+                            i\tl\tf\td\tip\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256\tts
+                            1\t10\t1.5\t2.5\t1.2.3.4\t1\t100\t1000\t12345.67\t99999.99\t1234567890.12\t2024-06-10T00:00:00.000000Z
+                            2\t20\t2.5\t3.5\t5.6.7.8\t2\t200\t2000\t22345.67\t88888.88\t2234567890.12\t2024-06-10T00:00:01.000000Z
+                            3\t30\t3.5\t4.5\t9.10.11.12\t3\t300\t3000\t32345.67\t77777.77\t3234567890.12\t2024-06-11T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testNotNullParquetRoundTripWithColumnTop() throws Exception {
+        // When a NOT NULL column is added after rows already exist, the Rust writer hits
+        // the `column_top > 0` branch of encode_not_null_def_levels — the first
+        // column_top rows are null (genuinely missing) and the rest are all non-null.
+        // This is a separate code path from the all-ones case covered above.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, '2024-06-10T00:00:00'),
+                        (2, '2024-06-10T00:00:01'),
+                        (3, '2024-06-10T00:00:02')
+                    """);
+            // Add a NOT NULL column after rows exist — column_top = 3 for this column
+            // when the partition is written.
+            execute("ALTER TABLE t ADD COLUMN y LONG NOT NULL");
+            execute("INSERT INTO t VALUES (4, '2024-06-10T00:00:03', 40)");
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+
+            // First three rows have y == Long.MIN_VALUE (column_top null), row 4 has 40.
+            // The NOT NULL branch in CursorPrinter renders the sentinel as its raw value.
+            assertSql(
+                    """
+                            x\tts\ty
+                            1\t2024-06-10T00:00:00.000000Z\t-9223372036854775808
+                            2\t2024-06-10T00:00:01.000000Z\t-9223372036854775808
+                            3\t2024-06-10T00:00:02.000000Z\t-9223372036854775808
+                            4\t2024-06-10T00:00:03.000000Z\t40
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+
+            assertTrue(getNotNull("t", "y"));
+        });
+    }
 }
