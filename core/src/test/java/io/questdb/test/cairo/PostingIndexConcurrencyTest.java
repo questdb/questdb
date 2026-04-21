@@ -57,6 +57,64 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentEmptyCursor() throws Exception {
+        assertMemoryLeak(64, () -> {
+            final String dbRoot = configuration.getDbRoot();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final CountDownLatch writerDone = new CountDownLatch(1);
+            final AtomicInteger committed = new AtomicInteger(0);
+            final int missingKey = 99;
+
+            try (Path path = new Path().of(dbRoot)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "conc_empty", COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < BP_BATCH; v++) writer.add(0, v);
+                    writer.setMaxValue(BP_BATCH - 1);
+                    writer.commit();
+                    committed.set(1);
+
+                    Thread[] readers = new Thread[4];
+                    for (int r = 0; r < readers.length; r++) {
+                        final int id = r;
+                        readers[r] = new Thread(() -> {
+                            try (Path rPath = new Path().of(dbRoot);
+                                 PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                         configuration, rPath, "conc_empty", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                                while (!Thread.interrupted() && writerDone.getCount() > 0) {
+                                    reader.reloadConditionally();
+                                    RowCursor cursor = reader.getCursor(missingKey, 0, Long.MAX_VALUE);
+                                    if (cursor.hasNext()) {
+                                        throw new AssertionError("id " + id + ": missing key " + missingKey + " yielded a value");
+                                    }
+                                    Misc.free(cursor);
+                                }
+                            } catch (Throwable t) {
+                                error.compareAndSet(null, t);
+                            }
+                        });
+                        readers[r].setDaemon(true);
+                        readers[r].start();
+                    }
+
+                    for (int batch = 1; batch < COMMITS; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) writer.add(0, base + v);
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                        committed.incrementAndGet();
+                    }
+                    writerDone.countDown();
+
+                    joinReaders(readers);
+
+                    if (error.get() != null) {
+                        throw new AssertionError("Empty cursor reader failed", error.get());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testConcurrentFwdReadersWhileWriterCommits() throws Exception {
         runConcurrentTest("conc_fwd", 4, true, false);
     }
@@ -64,6 +122,69 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
     @Test
     public void testConcurrentMixedReadersWhileWriterCommits() throws Exception {
         runConcurrentTest("conc_mixed", 4, true, true);
+    }
+
+    @Test
+    public void testConcurrentMultiKeyBwdReaders() throws Exception {
+        runMultiKeyConcurrentTest("conc_mk_bwd", 32, 4, false);
+    }
+
+    @Test
+    public void testConcurrentMultiKeyFwdReaders() throws Exception {
+        runMultiKeyConcurrentTest("conc_mk_fwd", 32, 4, true);
+    }
+
+    @Test
+    public void testConcurrentReadersThroughSealCycle() throws Exception {
+        assertMemoryLeak(64, () -> {
+            final String dbRoot = configuration.getDbRoot();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final AtomicInteger committed = new AtomicInteger(0);
+            final CountDownLatch writerDone = new CountDownLatch(1);
+
+            try (Path path = new Path().of(dbRoot)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "conc_seal", COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < BP_BATCH; v++) writer.add(0, v);
+                    writer.setMaxValue(BP_BATCH - 1);
+                    writer.commit();
+                    writer.seal();
+                    committed.set(1);
+
+                    Thread[] readers = new Thread[3];
+                    for (int r = 0; r < readers.length; r++) {
+                        final int id = r;
+                        readers[r] = new Thread(() -> {
+                            try {
+                                readForward(dbRoot, "conc_seal", id, writerDone, committed);
+                            } catch (Throwable t) {
+                                error.compareAndSet(null, t);
+                            }
+                        });
+                        readers[r].setDaemon(true);
+                        readers[r].start();
+                    }
+
+                    for (int batch = 1; batch < COMMITS; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) writer.add(0, base + v);
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                        committed.incrementAndGet();
+                        if ((batch & 1) == 0) {
+                            writer.seal();
+                            committed.incrementAndGet();
+                        }
+                    }
+                    writerDone.countDown();
+
+                    joinReaders(readers);
+
+                    if (error.get() != null) {
+                        throw new AssertionError("Seal-cycle reader failed", error.get());
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -224,8 +345,88 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentReadersWithRowRange() throws Exception {
+        assertMemoryLeak(64, () -> {
+            final String dbRoot = configuration.getDbRoot();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final AtomicInteger committed = new AtomicInteger(0);
+            final CountDownLatch writerDone = new CountDownLatch(1);
+
+            try (Path path = new Path().of(dbRoot)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "conc_range", COLUMN_NAME_TXN_NONE)) {
+                    // Seed 3 blocks so readers with higher rowLo actually skip leading blocks.
+                    for (int v = 0; v < BP_BATCH * 3; v++) writer.add(0, v);
+                    writer.setMaxValue(BP_BATCH * 3 - 1);
+                    writer.commit();
+                    committed.set(1);
+
+                    Thread[] readers = new Thread[4];
+                    for (int r = 0; r < readers.length; r++) {
+                        final int id = r;
+                        final long rowLo = (long) r * BP_BATCH;
+                        readers[r] = new Thread(() -> {
+                            try (Path rPath = new Path().of(dbRoot);
+                                 PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                         configuration, rPath, "conc_range", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                                while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
+                                    reader.reloadConditionally();
+                                    RowCursor cursor = reader.getCursor(0, rowLo, Long.MAX_VALUE);
+                                    long prev = -1;
+                                    while (cursor.hasNext()) {
+                                        long delta = cursor.next();
+                                        if (delta < 0) {
+                                            throw new AssertionError("id " + id + ": negative delta " + delta);
+                                        }
+                                        long absolute = delta + rowLo;
+                                        if (absolute <= prev) {
+                                            throw new AssertionError("id " + id + ": non-ascending " + prev + " -> " + absolute);
+                                        }
+                                        prev = absolute;
+                                    }
+                                    Misc.free(cursor);
+                                }
+                            } catch (Throwable t) {
+                                error.compareAndSet(null, t);
+                            }
+                        });
+                        readers[r].setDaemon(true);
+                        readers[r].start();
+                    }
+
+                    for (int batch = 1; batch < COMMITS; batch++) {
+                        long base = (long) batch * BP_BATCH * 3;
+                        for (int v = 0; v < BP_BATCH * 3; v++) writer.add(0, base + v);
+                        writer.setMaxValue(base + BP_BATCH * 3 - 1);
+                        writer.commit();
+                        committed.incrementAndGet();
+                    }
+                    writerDone.countDown();
+
+                    joinReaders(readers);
+
+                    if (error.get() != null) {
+                        throw new AssertionError("Range reader failed", error.get());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHighContentionManyReaders() throws Exception {
         runConcurrentTest("conc_high", 16, true, false);
+    }
+
+    private static void joinReaders(Thread[] readers) throws InterruptedException {
+        for (Thread t : readers) {
+            t.join(JOIN_MS);
+            if (t.isAlive()) {
+                t.interrupt();
+            }
+        }
+        for (Thread t : readers) {
+            t.join(JOIN_MS);
+        }
     }
 
     private static void readBackward(String dbRoot, String name, int id,
@@ -290,6 +491,72 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
         }
     }
 
+    private static void readMultiKeyBackward(String dbRoot, String name, int id, int numKeys,
+                                             CountDownLatch writerDone, AtomicInteger committed) {
+        try (Path rPath = new Path().of(dbRoot);
+             PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
+            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
+                reader.reloadConditionally();
+                for (int k = 0; k < numKeys; k++) {
+                    RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                    long prev = Long.MAX_VALUE;
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        long val = cursor.next();
+                        if (val >= prev) {
+                            throw new AssertionError(
+                                    "bwd " + id + " key=" + k + ": non-descending " + prev + " -> " + val);
+                        }
+                        if (val % numKeys != k) {
+                            throw new AssertionError(
+                                    "bwd " + id + " key=" + k + ": value " + val + " belongs to key " + (val % numKeys));
+                        }
+                        prev = val;
+                        count++;
+                    }
+                    if (count == 0) {
+                        throw new AssertionError("bwd " + id + " key=" + k + ": zero values");
+                    }
+                    Misc.free(cursor);
+                }
+            }
+        }
+    }
+
+    private static void readMultiKeyForward(String dbRoot, String name, int id, int numKeys,
+                                            CountDownLatch writerDone, AtomicInteger committed) {
+        try (Path rPath = new Path().of(dbRoot);
+             PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
+                reader.reloadConditionally();
+                for (int k = 0; k < numKeys; k++) {
+                    RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                    long prev = -1;
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        long val = cursor.next();
+                        if (val <= prev) {
+                            throw new AssertionError(
+                                    "fwd " + id + " key=" + k + ": non-ascending " + prev + " -> " + val);
+                        }
+                        if (val % numKeys != k) {
+                            throw new AssertionError(
+                                    "fwd " + id + " key=" + k + ": value " + val + " belongs to key " + (val % numKeys));
+                        }
+                        prev = val;
+                        count++;
+                    }
+                    if (count == 0) {
+                        throw new AssertionError("fwd " + id + " key=" + k + ": zero values");
+                    }
+                    Misc.free(cursor);
+                }
+            }
+        }
+    }
+
     private void runConcurrentTest(String name, int numReaders, boolean useFwd, boolean useBwd) throws Exception {
         assertMemoryLeak(64, () -> {
             final String dbRoot = configuration.getDbRoot();
@@ -339,19 +606,65 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                     }
                     writerDone.countDown();
 
-                    for (Thread t : readers) {
-                        t.join(JOIN_MS);
-                        if (t.isAlive()) {
-                            t.interrupt();
-                        }
-                    }
-                    // Wait for interrupted threads to fully exit before writer closes
-                    for (Thread t : readers) {
-                        t.join(JOIN_MS);
-                    }
+                    joinReaders(readers);
 
                     if (error.get() != null) {
                         throw new AssertionError("Concurrent reader failed", error.get());
+                    }
+                }
+            }
+        });
+    }
+
+    private void runMultiKeyConcurrentTest(String name, int numKeys, int numReaders, boolean forward) throws Exception {
+        assertMemoryLeak(64, () -> {
+            final String dbRoot = configuration.getDbRoot();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final AtomicInteger committed = new AtomicInteger(0);
+            final CountDownLatch writerDone = new CountDownLatch(1);
+
+            try (Path path = new Path().of(dbRoot)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int k = 0; k < numKeys; k++) {
+                        writer.add(k, k);
+                    }
+                    writer.setMaxValue(numKeys - 1);
+                    writer.commit();
+                    committed.set(1);
+
+                    Thread[] readers = new Thread[numReaders];
+                    for (int r = 0; r < numReaders; r++) {
+                        final int id = r;
+                        readers[r] = new Thread(() -> {
+                            try {
+                                if (forward) {
+                                    readMultiKeyForward(dbRoot, name, id, numKeys, writerDone, committed);
+                                } else {
+                                    readMultiKeyBackward(dbRoot, name, id, numKeys, writerDone, committed);
+                                }
+                            } catch (Throwable t) {
+                                error.compareAndSet(null, t);
+                            }
+                        });
+                        readers[r].setDaemon(true);
+                        readers[r].start();
+                    }
+
+                    for (int batch = 1; batch < COMMITS; batch++) {
+                        long base = (long) batch * numKeys;
+                        for (int k = 0; k < numKeys; k++) {
+                            writer.add(k, base + k);
+                        }
+                        writer.setMaxValue(base + numKeys - 1);
+                        writer.commit();
+                        committed.incrementAndGet();
+                    }
+                    writerDone.countDown();
+
+                    joinReaders(readers);
+
+                    if (error.get() != null) {
+                        throw new AssertionError("Multi-key concurrent reader failed", error.get());
                     }
                 }
             }
