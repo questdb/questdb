@@ -183,6 +183,7 @@ import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.griffin.engine.groupby.vect.AvgDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgLongVectorAggregateFunction;
@@ -313,6 +314,7 @@ import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
+import io.questdb.griffin.engine.table.SubsampleRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
@@ -5858,6 +5860,181 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private RecordCursorFactory generateSubsampleFromModelChain(
+            RecordCursorFactory factory,
+            IQueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // Check current model first
+        ExpressionNode subsample = model.getSubsample();
+        int subsamplePos = model.getSubsamplePosition();
+
+        // If not on current model, check nested models (for CTE/subquery cases
+        // where the optimizer places SUBSAMPLE on a nested model).
+        // Only pull from nested models if the current factory HAS a timestamp,
+        // to avoid pulling SUBSAMPLE to a level where it can't be applied.
+        if (subsample == null && factory.getMetadata().getTimestampIndex() != -1) {
+            IQueryModel nested = model.getNestedModel();
+            while (nested != null) {
+                if (nested.getSubsample() != null) {
+                    subsample = nested.getSubsample();
+                    subsamplePos = nested.getSubsamplePosition();
+                    nested.setSubsample(null, 0);
+                    break;
+                }
+                nested = nested.getNestedModel();
+            }
+        } else if (subsample != null) {
+            if (factory.getMetadata().getTimestampIndex() == -1) {
+                // This model has SUBSAMPLE but the factory has no timestamp.
+                // If a nested model also has the timestamp, let that level handle it.
+                // If nothing has a timestamp, this is a genuine error.
+                boolean nestedHasTimestamp = false;
+                IQueryModel nested = model.getNestedModel();
+                while (nested != null) {
+                    if (nested.getTimestamp() != null) {
+                        nestedHasTimestamp = true;
+                        break;
+                    }
+                    nested = nested.getNestedModel();
+                }
+                if (!nestedHasTimestamp) {
+                    model.setSubsample(null, 0);
+                    throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                }
+                // Leave SUBSAMPLE on the model - will be picked up by nested level's
+                // search, or inner generateQuery0Inner will find it
+                return factory;
+            }
+            model.setSubsample(null, 0);
+        }
+
+        if (subsample == null) {
+            return factory;
+        }
+
+        return generateSubsample(factory, subsample, subsamplePos, model, executionContext);
+    }
+
+    private RecordCursorFactory generateSubsample(
+            RecordCursorFactory factory,
+            ExpressionNode subsample,
+            int subsamplePos,
+            IQueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final CharSequence methodName = subsample.token;
+
+        // Determine algorithm
+        int method;
+        if (Chars.equalsIgnoreCase(methodName, "lttb")) {
+            method = SubsampleRecordCursorFactory.METHOD_LTTB;
+        } else if (Chars.equalsIgnoreCase(methodName, "m4")) {
+            method = SubsampleRecordCursorFactory.METHOD_M4;
+        } else if (Chars.equalsIgnoreCase(methodName, "minmax")) {
+            method = SubsampleRecordCursorFactory.METHOD_MINMAX;
+        } else {
+            throw SqlException.$(subsample.position, "unknown subsample method: ").put(methodName)
+                    .put(". Supported methods: lttb, m4, minmax");
+        }
+
+        // Validate argument count: method(column, n)
+        if (subsample.paramCount < 2) {
+            throw SqlException.$(subsample.position, "SUBSAMPLE ")
+                    .put(methodName).put("() requires at least 2 arguments: column and target points");
+        }
+
+        // Args are in parse order: args[0]=column, args[1]=n, args[2]=gap (optional)
+        final ExpressionNode columnNode = subsample.args.get(0);
+        final ExpressionNode targetNode = subsample.args.get(1);
+
+        // Resolve value column index. First try factory metadata (direct column names),
+        // then try SELECT column aliases (needed for SAMPLE BY aggregates where the
+        // metadata name is e.g. "avg(price)" but the user references alias "avg").
+        final CharSequence columnName = columnNode.token;
+        int valueColumnIndex = factory.getMetadata().getColumnIndexQuiet(columnName);
+        if (valueColumnIndex == -1) {
+            // Try matching against SELECT column aliases
+            final ObjList<QueryColumn> selectColumns = model.getColumns();
+            for (int i = 0, n = selectColumns.size(); i < n; i++) {
+                final QueryColumn qc = selectColumns.getQuick(i);
+                if (Chars.equalsIgnoreCase(qc.getAlias(), columnName)
+                        || Chars.equalsIgnoreCase(qc.getName(), columnName)) {
+                    valueColumnIndex = i;
+                    break;
+                }
+            }
+        }
+        if (valueColumnIndex == -1) {
+            throw SqlException.$(columnNode.position, "column not found: ").put(columnName);
+        }
+        // Validate column type is numeric
+        final int columnType = ColumnType.tagOf(factory.getMetadata().getColumnType(valueColumnIndex));
+        if (columnType != ColumnType.DOUBLE && columnType != ColumnType.FLOAT
+                && columnType != ColumnType.INT && columnType != ColumnType.LONG
+                && columnType != ColumnType.SHORT && columnType != ColumnType.BYTE) {
+            throw SqlException.$(columnNode.position, "numeric column expected, got: ")
+                    .put(ColumnType.nameOf(factory.getMetadata().getColumnType(valueColumnIndex)));
+        }
+
+        // Compile target point count as a Function to support bind variables.
+        // The function must evaluate to an integer >= 2.
+        final Function targetFunc = functionParser.parseFunction(targetNode, EmptyRecordMetadata.INSTANCE, executionContext);
+        if (!targetFunc.isConstant() && !targetFunc.isRuntimeConstant()) {
+            Misc.free(targetFunc);
+            throw SqlException.$(targetNode.position, "target point count must be a constant or bind variable");
+        }
+        // Validate at compile time if the value is known
+        if (targetFunc.isConstant()) {
+            int targetPoints = targetFunc.getInt(null);
+            if (targetPoints < 2) {
+                Misc.free(targetFunc);
+                throw SqlException.$(targetNode.position, "target points must be at least 2");
+            }
+        }
+
+        // Parse optional gap threshold (3rd argument, LTTB only)
+        long gapThresholdMicros = 0;
+        if (subsample.paramCount >= 3 && method == SubsampleRecordCursorFactory.METHOD_LTTB) {
+            final ExpressionNode gapNode = subsample.args.get(2);
+            final CharSequence gapStr = gapNode.token;
+            // Remove quotes if present (e.g., '1h' -> 1h)
+            CharSequence interval = Chars.isQuoted(gapStr)
+                    ? Chars.toString(gapStr, 1, gapStr.length() - 1) : gapStr;
+            int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, gapNode.position, "gap threshold");
+            long n = TimestampSamplerFactory.parsePositiveInterval(
+                    interval, k, gapNode.position, "gap threshold", Numbers.INT_NULL, '?'
+            );
+            gapThresholdMicros = switch (interval.charAt(k)) {
+                case 's' -> n * Micros.SECOND_MICROS;
+                case 'm' -> n * Micros.MINUTE_MICROS;
+                case 'h' -> n * Micros.HOUR_MICROS;
+                case 'd' -> n * Micros.DAY_MICROS;
+                default ->
+                        throw SqlException.$(gapNode.position + k, "unsupported interval unit: ").put(interval.charAt(k))
+                                .put(". Supported: s, m, h, d");
+            };
+        }
+
+        // Find timestamp column index
+        int timestampIndex = factory.getMetadata().getTimestampIndex();
+        if (timestampIndex == -1) {
+            throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+        }
+
+        try {
+            return new SubsampleRecordCursorFactory(
+                    factory, method, targetFunc,
+                    valueColumnIndex, timestampIndex, subsamplePos,
+                    gapThresholdMicros,
+                    configuration.getSubsampleMaxRows()
+            );
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
+        }
+    }
+
     private RecordCursorFactory generateLimit(
             RecordCursorFactory factory,
             IQueryModel model,
@@ -6711,6 +6888,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0Inner(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
+        // Pull SUBSAMPLE from nested models to this level when it was placed
+        // on a nested model that also has SAMPLE BY or GROUP BY. The optimizer
+        // restructures aggregation queries, creating wrapper models. SUBSAMPLE
+        // needs to wrap the aggregated result, not the raw scan.
+        // No pull-up here - SUBSAMPLE is applied at the model level where it
+        // was set. For SAMPLE BY queries, it propagates via the optimizer's
+        // moveSubsampleFrom in rewriteSelectClause0.
+
         // Remember the last model with non-empty ORDER BY as we descend through nested models.
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.
@@ -6732,6 +6917,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             factory = generateFilter(factory, model, executionContext);
             factory = generateLatestBy(factory, model);
             factory = generateOrderBy(factory, model, executionContext);
+            factory = generateSubsampleFromModelChain(factory, model, executionContext);
             factory = generateLimit(factory, model, executionContext);
 
             return factory;

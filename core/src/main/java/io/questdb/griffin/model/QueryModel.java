@@ -180,6 +180,8 @@ public class QueryModel implements IQueryModel {
     private int sharedRefByParentCount = 0;
     private int showKind = -1;
     private boolean skipped;
+    private ExpressionNode subsample;
+    private int subsamplePosition;
     private boolean standaloneUnnest;
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
@@ -471,6 +473,8 @@ public class QueryModel implements IQueryModel {
         fillStride = null;
         fillValues = null;
         skipped = false;
+        subsample = null;
+        subsamplePosition = 0;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
         overridableDecls.clear();
@@ -1053,6 +1057,16 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getSubsample() {
+        return subsample;
+    }
+
+    @Override
+    public int getSubsamplePosition() {
+        return subsamplePosition;
+    }
+
+    @Override
     public int getTableId() {
         return tableId;
     }
@@ -1453,6 +1467,15 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void moveSubsampleFrom(IQueryModel baseModel) {
+        if (baseModel.getSubsample() != null) {
+            this.subsample = baseModel.getSubsample();
+            this.subsamplePosition = baseModel.getSubsamplePosition();
+            baseModel.setSubsample(null, 0);
+        }
+    }
+
+    @Override
     public void moveOrderByFrom(IQueryModel model) {
         orderBy.addAll(model.getOrderBy());
         orderByDirection.addAll(model.getOrderByDirection());
@@ -1820,6 +1843,12 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setShowKind(int showKind) {
         this.showKind = showKind;
+    }
+
+    @Override
+    public void setSubsample(ExpressionNode subsample, int position) {
+        this.subsample = subsample;
+        this.subsamplePosition = position;
     }
 
     @Override

@@ -7952,6 +7952,7 @@ public class SqlOptimiser implements Mutable {
             addPivotColumnsToOuterModel(totalCombinations, model, outerModel);
 
             emptyModel2.moveLimitFrom(model);
+            emptyModel2.moveSubsampleFrom(model);
             emptyModel2.moveOrderByFrom(model);
             model = emptyModel2;
         } else {
@@ -8963,6 +8964,33 @@ public class SqlOptimiser implements Mutable {
         }
 
         ObjList<IQueryModel> models = model.getJoinModels();
+
+        // Save SUBSAMPLE from join models or nested models before processing.
+        // The rewrite may lose it during model restructuring. We restore it
+        // on the final result after all processing.
+        ExpressionNode savedSubsample = null;
+        int savedSubsamplePos = 0;
+        for (int i = 0, n = models.size(); i < n; i++) {
+            final IQueryModel m = models.getQuick(i);
+            if (m.getSubsample() != null) {
+                savedSubsample = m.getSubsample();
+                savedSubsamplePos = m.getSubsamplePosition();
+                break;
+            }
+            IQueryModel nested = m.getNestedModel();
+            while (nested != null) {
+                if (nested.getSubsample() != null) {
+                    savedSubsample = nested.getSubsample();
+                    savedSubsamplePos = nested.getSubsamplePosition();
+                    break;
+                }
+                nested = nested.getNestedModel();
+            }
+            if (savedSubsample != null) {
+                break;
+            }
+        }
+
         for (int i = 0, n = models.size(); i < n; i++) {
             final IQueryModel m = models.getQuick(i);
             final boolean flatModel = m.getBottomUpColumns().size() == 0;
@@ -8999,8 +9027,14 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        IQueryModel result = models.getQuick(0);
+
+        // Restore saved SUBSAMPLE on the result model if it was lost during rewriting
+        if (savedSubsample != null && result.getSubsample() == null) {
+            result.setSubsample(savedSubsample, savedSubsamplePos);
+        }
         // "model" is always the first in its own list of join models
-        return replaceAndTransferDependents(model, models.getQuick(0));
+        return replaceAndTransferDependents(model, result);
     }
 
     @NotNull
@@ -9626,6 +9660,7 @@ public class SqlOptimiser implements Mutable {
             pushDownLimitAdvice(model, baseModel, (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0);
 
             translatingModel.moveLimitFrom(model);
+
             translatingModel.moveJoinAliasFrom(model);
             translatingModel.setSelectTranslation(true);
             translatingModel.copyHints(model.getHints());
@@ -9634,6 +9669,7 @@ public class SqlOptimiser implements Mutable {
         if ((rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) != 0) {
             innerVirtualModel.setNestedModel(root);
             innerVirtualModel.moveLimitFrom(limitSource);
+
             innerVirtualModel.moveJoinAliasFrom(limitSource);
             innerVirtualModel.copyHints(model.getHints());
 
@@ -9712,6 +9748,18 @@ public class SqlOptimiser implements Mutable {
         if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0) {
             windowModel.setNestedModel(root);
             windowModel.moveLimitFrom(limitSource);
+            windowModel.moveSubsampleFrom(limitSource);
+            // Also check nested models of limitSource for SUBSAMPLE
+            if (windowModel.getSubsample() == null) {
+                IQueryModel scan = limitSource.getNestedModel();
+                while (scan != null) {
+                    if (scan.getSubsample() != null) {
+                        windowModel.moveSubsampleFrom(scan);
+                        break;
+                    }
+                    scan = scan.getNestedModel();
+                }
+            }
             windowModel.moveJoinAliasFrom(limitSource);
             windowModel.copyHints(model.getHints());
             root = windowModel;
@@ -9719,6 +9767,19 @@ public class SqlOptimiser implements Mutable {
         } else if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
             groupByModel.setNestedModel(root);
             groupByModel.moveLimitFrom(limitSource);
+            groupByModel.moveSubsampleFrom(limitSource);
+            // Also check nested models of limitSource for SUBSAMPLE
+            // (the optimizer may have pushed it to a flat nested model)
+            if (groupByModel.getSubsample() == null) {
+                IQueryModel scan = limitSource.getNestedModel();
+                while (scan != null) {
+                    if (scan.getSubsample() != null) {
+                        groupByModel.moveSubsampleFrom(scan);
+                        break;
+                    }
+                    scan = scan.getNestedModel();
+                }
+            }
             groupByModel.moveJoinAliasFrom(limitSource);
             groupByModel.copyHints(model.getHints());
             root = groupByModel;
@@ -9735,6 +9796,7 @@ public class SqlOptimiser implements Mutable {
             assert translationIsRedundant : "Window join must not have translation model";
             windowJoinModel.setNestedModel(root);
             windowJoinModel.moveLimitFrom(limitSource);
+
             windowJoinModel.moveJoinAliasFrom(limitSource);
             windowJoinModel.copyHints(model.getHints());
             root = windowJoinModel;
@@ -9755,6 +9817,7 @@ public class SqlOptimiser implements Mutable {
             // Horizon join model wraps root so columns propagate to nested join models
             horizonJoinModel.setNestedModel(root);
             horizonJoinModel.moveLimitFrom(limitSource);
+
             horizonJoinModel.moveJoinAliasFrom(limitSource);
             horizonJoinModel.copyHints(model.getHints());
             root = horizonJoinModel;
@@ -9779,6 +9842,7 @@ public class SqlOptimiser implements Mutable {
         if ((rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0) {
             distinctModel.setNestedModel(root);
             distinctModel.moveLimitFrom(root);
+
             distinctModel.copyHints(model.getHints());
             root = distinctModel;
         }
@@ -9799,6 +9863,12 @@ public class SqlOptimiser implements Mutable {
             }
         }
         root.setCacheable(model.isCacheable());
+        // Ensure SUBSAMPLE propagates to the returned root model.
+        // When translation is redundant, SUBSAMPLE may remain on the original
+        // model (limitSource) and needs to move to root before it's returned.
+        if (root.getSubsample() == null && model.getSubsample() != null) {
+            root.moveSubsampleFrom(model);
+        }
         return replaceAndTransferDependents(model, root);
     }
 
