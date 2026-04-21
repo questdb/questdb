@@ -676,6 +676,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         @Override
         public void reopen() {
             super.reopen();
+            freeList.clear();
             nthValue = Double.NaN;
         }
 

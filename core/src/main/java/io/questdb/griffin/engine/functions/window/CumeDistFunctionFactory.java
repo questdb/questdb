@@ -124,7 +124,17 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                     throw t;
                 }
             } else {
-                return new CumeDistFunction();
+                MemoryARW memory = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
+                try {
+                    return new CumeDistFunction(memory);
+                } catch (Throwable t) {
+                    Misc.free(memory);
+                    throw t;
+                }
             }
         } else {
             // No ORDER BY: all rows are peers, cume_dist = totalRows / totalRows = 1.0
@@ -138,11 +148,14 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
     // cumulative distribution by detecting peer-group boundaries: when the rank
     // changes from r1 to r2, all rows in the previous group get (r2 - 1) / totalRows.
     // The last group is handled by writing a tentative 1.0 that is never overwritten.
+    // The deferred-offsets buffer lives in native memory to avoid on-heap growth when
+    // a single peer group spans the whole result set (e.g. ORDER BY constant_column).
     static class CumeDistFunction extends DoubleFunction implements Function, WindowFunction, Reopenable {
 
-        private final LongList deferredOffsets = new LongList();
+        private final MemoryARW deferredOffsets;
         private int columnIndex;
         private long count = 1;
+        private long deferredSize;
         private long lastRecordOffset;
         private long prevRank;
         private long rank;
@@ -150,10 +163,15 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         private RecordComparator recordComparator;
         private long totalRows;
 
+        public CumeDistFunction(MemoryARW deferredOffsets) {
+            this.deferredOffsets = deferredOffsets;
+        }
+
         @Override
         public void close() {
             super.close();
             Misc.freeObjList(rankMaps);
+            deferredOffsets.close();
         }
 
         @Override
@@ -207,16 +225,17 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             if (prevRank != 0 && storedRank != prevRank) {
                 // Peer group boundary: flush all deferred rows with (storedRank - 1) / totalRows
                 double cumeDist = (double) (storedRank - 1) / (double) totalRows;
-                for (int i = 0, n = deferredOffsets.size(); i < n; i++) {
-                    long offset = deferredOffsets.getQuick(i);
+                for (long i = 0; i < deferredSize; i++) {
+                    long offset = deferredOffsets.getLong(i * Long.BYTES);
                     Unsafe.getUnsafe().putDouble(spi.getAddress(offset, columnIndex), cumeDist);
                 }
-                deferredOffsets.clear();
+                deferredSize = 0;
             }
 
             // Write tentative 1.0 (correct for the last peer group: totalRows / totalRows)
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), 1.0);
-            deferredOffsets.add(recordOffset);
+            deferredOffsets.putLong(deferredSize * Long.BYTES, recordOffset);
+            deferredSize++;
             prevRank = storedRank;
         }
 
@@ -224,13 +243,13 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         public void preparePass2() {
             totalRows = count - 1; // count was incremented after each row
             prevRank = 0;
-            deferredOffsets.clear();
+            deferredSize = 0;
         }
 
         @Override
         public void reopen() {
             count = 1;
-            deferredOffsets.clear();
+            deferredSize = 0;
         }
 
         @Override
@@ -238,8 +257,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             count = 1;
             totalRows = 0;
             prevRank = 0;
-            deferredOffsets.clear();
+            deferredSize = 0;
             Misc.freeObjListAndKeepObjects(rankMaps);
+            deferredOffsets.close();
         }
 
         @Override
@@ -258,7 +278,8 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             count = 1;
             totalRows = 0;
             prevRank = 0;
-            deferredOffsets.clear();
+            deferredSize = 0;
+            deferredOffsets.truncate();
             super.toTop();
         }
     }

@@ -11450,6 +11450,54 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCumeDistLargeSinglePeerGroup() throws Exception {
+        // Regression for CumeDistFunction when the ORDER BY key produces a single peer
+        // group that spans every row. The deferred-offsets buffer is native-backed, so
+        // this large run must not leak or overflow on-heap storage.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, 1.0 from long_sequence(50_000)");
+
+            // Every row shares the same ORDER BY key, so cume_dist = 1.0 for all rows.
+            assertSql(
+                    "min\tmax\tcount\n" +
+                            "1.0\t1.0\t50000\n",
+                    "select min(cd) min, max(cd) max, count(*) count from (" +
+                            "select cume_dist() over (order by val) cd from tab)"
+            );
+
+            // Partitioned variant: many partitions, each with a single giant peer group.
+            // Exercises CumeDistOverPartitionFunction's per-partition deferred slice growth.
+            assertSql(
+                    "min\tmax\tcount\n" +
+                            "1.0\t1.0\t50000\n",
+                    "select min(cd) min, max(cd) max, count(*) count from (" +
+                            "select cume_dist() over (partition by (x % 20) order by val) cd " +
+                            "from (select x, 1.0 val from long_sequence(50_000)))"
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedManyPartitionsNoLeak() throws Exception {
+        // Partitioned cume_dist with many partitions goes through
+        // CumeDistOverPartitionFunction.initRecordComparator (which allocates a Map and
+        // rankMaps inside a try/catch). Running under assertMemoryLeak verifies the
+        // full lifecycle (init -> pass1 -> pass2 -> close) releases native resources.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x % 1_000, rnd_double() from long_sequence(10_000)");
+
+            assertSql(
+                    "min_cd\tmax_cd\tcount\n" +
+                            "true\t1.0\t10000\n",
+                    "select min(cd) > 0.0 min_cd, max(cd) max_cd, count(*) count from (" +
+                            "select cume_dist() over (partition by i order by val) cd from tab)"
+            );
+        });
+    }
+
+    @Test
     public void testNthValueBasic() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
@@ -12046,6 +12094,64 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "ts",
                     false,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrameCrossCheckRandomData() throws Exception {
+        // Cross-check nth_value over ROWS frames against first_value/row_number references
+        // using random data. Verifies frame sliding, NULL propagation, and the n-not-reached
+        // invariant on the unbounded-preceding ramp-up.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)",
+                    timestampType.getTypeName()
+            );
+            execute(
+                    "insert into tab " +
+                            "select x::timestamp, x % 7, " +
+                            "case when x % 11 = 0 then null else rnd_double() end " +
+                            "from long_sequence(2_000)"
+            );
+
+            // Partitioned ROWS frame [3 preceding, current row], n=1 must equal first_value.
+            assertSql(
+                    "mismatch\n0\n",
+                    "with w as (" +
+                            "  select ts, i, " +
+                            "  nth_value(val, 1) over (partition by i order by ts rows between 3 preceding and current row) nv, " +
+                            "  first_value(val) over (partition by i order by ts rows between 3 preceding and current row) fv " +
+                            "  from tab" +
+                            ") " +
+                            "select count(*) mismatch from w " +
+                            "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)"
+            );
+
+            // Non-partitioned ROWS frame [5 preceding, current row], n=1 must equal first_value.
+            assertSql(
+                    "mismatch\n0\n",
+                    "with w as (" +
+                            "  select ts, " +
+                            "  nth_value(val, 1) over (order by ts rows between 5 preceding and current row) nv, " +
+                            "  first_value(val) over (order by ts rows between 5 preceding and current row) fv " +
+                            "  from tab" +
+                            ") " +
+                            "select count(*) mismatch from w " +
+                            "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)"
+            );
+
+            // Partitioned unbounded preceding to current row: until the n-th row arrives,
+            // nth_value must stay NULL. After that it locks on the n-th seen value.
+            assertSql(
+                    "mismatch\n0\n",
+                    "with w as (" +
+                            "  select ts, i, " +
+                            "  nth_value(val, 3) over (partition by i order by ts rows between unbounded preceding and current row) nv, " +
+                            "  row_number() over (partition by i order by ts) rn " +
+                            "  from tab" +
+                            ") " +
+                            "select count(*) mismatch from w where rn < 3 and nv is not null"
             );
         });
     }
