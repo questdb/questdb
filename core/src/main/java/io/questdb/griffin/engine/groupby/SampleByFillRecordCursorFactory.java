@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.RecordSink;
@@ -153,7 +154,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 keysMapLocal = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
             }
             cursorLocal = new SampleByFillCursor(
-                    configuration, metadata, timestampSampler,
+                    metadata, timestampSampler,
                     fromFunc, toFunc, fillModes, constantFills,
                     timestampIndex, timestampType, localHasPrevFill,
                     keySink, keysMapLocal, keyColIndices, symbolTableColIndices,
@@ -178,11 +179,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.hasPrevFill = localHasPrevFill;
         this.keysMap = keysMapLocal;
         this.cursor = cursorLocal;
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return false;
     }
 
     @Override
@@ -289,14 +285,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
     private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
         private final long calendarOffset;
-        private final int columnCount;
         private final ObjList<Function> constantFills;
         private final IntList fillModes;
         private final FillRecord fillRecord = new FillRecord();
         private final FillTimestampConstant fillTimestampFunc;
         private final Function fromFunc;
         private final boolean hasPrevFill;
-        private final int keyPosOffset;
         private final RecordSink keySink;
         private final Map keysMap;
         private final int[] outputColToKeyPos;
@@ -326,7 +320,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private long simplePrevRowId = -1L;
 
         private SampleByFillCursor(
-                CairoConfiguration configuration,
                 RecordMetadata metadata,
                 TimestampSampler timestampSampler,
                 @NotNull Function fromFunc,
@@ -350,7 +343,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.constantFills = constantFills;
             this.timestampIndex = timestampIndex;
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
-            this.columnCount = metadata.getColumnCount();
             this.fillTimestampFunc = new FillTimestampConstant(timestampType);
             this.hasPrevFill = hasPrevFill;
             this.keySink = keySink;
@@ -361,11 +353,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // slots below KEY_POS_OFFSET are KEY_INDEX_SLOT, HAS_PREV_SLOT,
             // PREV_ROWID_SLOT. See populateMapValueTypes for the authoritative
             // header layout.
-            this.keyPosOffset = KEY_POS_OFFSET;
-            this.outputColToKeyPos = new int[columnCount];
+            this.outputColToKeyPos = new int[metadata.getColumnCount()];
             Arrays.fill(outputColToKeyPos, -1);
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
-                outputColToKeyPos[keyColIndices.getQuick(i)] = keyPosOffset + i;
+                outputColToKeyPos[keyColIndices.getQuick(i)] = KEY_POS_OFFSET + i;
             }
         }
 
@@ -479,32 +470,21 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     return true;
                 }
 
-                if (dataTs < nextBucketTimestamp && hasPendingRow) {
-                    // The async GROUP BY upstream emits exactly one row per (bucket, key),
-                    // so reaching here means the upstream contract is broken or the bucket
-                    // grid drifted out of sync with the data. Fail loudly under -ea so any
-                    // regression surfaces in test/dev; production keeps the defensive
-                    // fallback below to preserve cursor-contract semantics around DST
-                    // fall-back instead of corrupting query output.
-                    assert false : "out-of-order data row at " + dataTs
-                            + " precedes next bucket " + nextBucketTimestamp
-                            + "; async GROUP BY upstream contract violated";
-                    hasPendingRow = false;
-                    fillRecord.isGapFilling = false;
-                    if (hasPrevFill) {
-                        if (keysMap != null) {
-                            MapKey mapKey = keysMap.withKey();
-                            keySink.copy(baseRecord, mapKey);
-                            MapValue value = mapKey.findValue();
-                            if (value != null) {
-                                updateKeyPrevRowId(value, baseRecord);
-                            }
-                        } else {
-                            saveSimplePrevRowId(baseRecord);
-                        }
-                    }
-                    return true;
-                }
+                // A pending data row landed at a timestamp strictly before the current
+                // bucket boundary. The async GROUP BY upstream emits one row per
+                // (bucket, key) and the bucket sampler moves forward in lockstep with
+                // observed data, so this case implies an upstream contract violation or
+                // a bucket grid drift (e.g., DST fall-back interacting with the sampler
+                // or a FROM/offset misalignment between the sampler and floor_utc).
+                // Either way the row is already being emitted against a bucket grid
+                // that disagrees with the data, so silently passing it through would
+                // corrupt query output. Fail the query so the problem is visible
+                // instead of being absorbed into results.
+                throw CairoException.critical(0)
+                        .put("sample by fill: data row timestamp ")
+                        .put(dataTs)
+                        .put(" precedes next bucket ")
+                        .put(nextBucketTimestamp);
             }
             return false;
         }
@@ -641,7 +621,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     Arrays.fill(keyPresent, 0, keyCount, false);
                 }
                 baseCursor.toTop();
-                keysMapRecord = (MapRecord) keysMap.getRecord();
+                keysMapRecord = keysMap.getRecord();
                 keysMapRecord.setSymbolTableResolver(baseCursor, symbolTableColIndices);
                 keysMapCursor = keysMap.getCursor();
             } else {
