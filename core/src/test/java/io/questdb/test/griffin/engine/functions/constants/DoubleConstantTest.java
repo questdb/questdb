@@ -24,49 +24,46 @@
 
 package io.questdb.test.griffin.engine.functions.constants;
 
-import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class FloatConstantTest {
+public class DoubleConstantTest {
     @Test
     public void testConstant() {
-        FloatConstant constant = new FloatConstant(123.45f);
+        DoubleConstant constant = new DoubleConstant(123.45);
         Assert.assertTrue(constant.isConstant());
-        Assert.assertEquals(123.45f, constant.getFloat(null), 0.00001);
+        Assert.assertEquals(123.45, constant.getDouble(null), 0.00001);
     }
 
     @Test
     public void testIsEquivalentToDistinguishesPositiveAndNegativeZero() {
         // Bit-pattern equality: +0.0 and -0.0 differ even though == returns true.
-        FloatConstant posZero = new FloatConstant(0.0f);
-        FloatConstant negZero = new FloatConstant(-0.0f);
+        DoubleConstant posZero = new DoubleConstant(0.0);
+        DoubleConstant negZero = new DoubleConstant(-0.0);
         Assert.assertFalse(posZero.isEquivalentTo(negZero));
         Assert.assertFalse(negZero.isEquivalentTo(posZero));
-        // But each is equivalent to itself.
-        Assert.assertTrue(posZero.isEquivalentTo(new FloatConstant(0.0f)));
-        Assert.assertTrue(negZero.isEquivalentTo(new FloatConstant(-0.0f)));
+        Assert.assertTrue(posZero.isEquivalentTo(new DoubleConstant(0.0)));
+        Assert.assertTrue(negZero.isEquivalentTo(new DoubleConstant(-0.0)));
     }
 
     @Test
     public void testIsEquivalentToTreatsNaNAsEqual() {
-        // Bit-pattern equality: NaN == NaN at the bit level, whereas `Float.NaN == Float.NaN`
-        // returns false. Using raw bits lets the expression engine dedupe NaN constants.
-        FloatConstant nan1 = new FloatConstant(Float.NaN);
-        FloatConstant nan2 = new FloatConstant(Float.NaN);
+        // Raw-bit equality makes NaN constants dedupe-able even though == would return false.
+        DoubleConstant nan1 = new DoubleConstant(Double.NaN);
+        DoubleConstant nan2 = new DoubleConstant(Double.NaN);
         Assert.assertTrue(nan1.isEquivalentTo(nan2));
     }
 
     @Test
     public void testIsEquivalentToReflexiveIdentity() {
-        FloatConstant c = new FloatConstant(42f);
+        DoubleConstant c = new DoubleConstant(42.0);
         Assert.assertTrue(c.isEquivalentTo(c));
     }
 
     @Test
     public void testIsEquivalentToDifferentTypeReturnsFalse() {
-        FloatConstant c = new FloatConstant(1.0f);
-        // Non-FloatConstant argument — the instanceof check returns false.
+        DoubleConstant c = new DoubleConstant(1.0);
         Assert.assertFalse(c.isEquivalentTo(null));
     }
 }

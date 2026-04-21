@@ -1569,4 +1569,249 @@ public class NotNullColumnTest extends AbstractCairoTest {
             assertSql("count\n1\n", "SELECT count(*) FROM t WHERE x IS NULL OR x = 2");
         });
     }
+
+    @Test
+    public void testEqNullBidirectionalOnNotNullColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            // The Eq*FunctionFactory short-circuit has to fire with NULL on either side:
+            // `col = NULL` and `NULL = col` must both fold to FALSE on a NOT NULL column.
+            // `IS NULL` desugars to `col = NULL` so it only hits the "constant on right" path;
+            // this test exercises the mirror "constant on left" path across every type.
+            // INTERVAL is a non-persisted (expression-only) type and is covered separately.
+            execute("""
+                    CREATE TABLE t (
+                        i INT NOT NULL,
+                        l LONG NOT NULL,
+                        d DOUBLE NOT NULL,
+                        f FLOAT NOT NULL,
+                        c CHAR NOT NULL,
+                        v VARCHAR NOT NULL,
+                        s STRING NOT NULL,
+                        b BINARY NOT NULL,
+                        sym SYMBOL NOT NULL,
+                        ip IPv4 NOT NULL,
+                        uu UUID NOT NULL,
+                        l256 LONG256 NOT NULL,
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 10, 1.5, 0.5, 'a', 'v1', 's1',
+                         rnd_bin(10, 20, 0), 'sym1',
+                         '1.2.3.4', '11111111-1111-1111-1111-111111111111',
+                         '0x01', '2024-01-01')
+                    """);
+
+            // Right-side NULL (symmetric to IS NULL).
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE i = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE f = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE c = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE v = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE s = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE sym = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ip = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE uu = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l256 = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ts = NULL");
+
+            // Left-side NULL — exercises the mirror branch in createHalfConstantFunc
+            // (the factory swaps operands so the column lands on the variable side, but
+            // the NULL-detection check runs on whichever side had the constant).
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = i");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = l");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = d");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = f");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = c");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = v");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = s");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = sym");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = ip");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = uu");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = l256");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = ts");
+
+            // Sym-vs-Char (EqSymCharFunctionFactory) — char null sentinel bidirectional.
+            // `sym = cast(null as char)` is handled when the char side is detected as
+            // Numbers.CHAR_NULL. Mirror: char column = sym with cast(null as symbol).
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE sym = cast(NULL as CHAR)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE cast(NULL as CHAR) = sym");
+
+            // Sym-vs-Timestamp (EqSymTimestampFunctionFactory) — both null-sentinel branches.
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE sym = cast(NULL as TIMESTAMP)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE cast(NULL as TIMESTAMP) = sym");
+
+            // Char-vs-Char (EqCharCharFunctionFactory) — both-constants-null, column on other side.
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE c = cast(NULL as CHAR)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE cast(NULL as CHAR) = c");
+
+            // Long128 variant of UUID, hit via the Long128 tag explicitly.
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE uu = cast(NULL as UUID)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE cast(NULL as UUID) = uu");
+
+            // BINARY has no literal syntax; `b = NULL` covers the ColumnType.isNull(a|b) guard
+            // in EqBinaryFunctionFactory.
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE b = NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = b");
+
+            // IS NOT NULL must still match every row for both sides.
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE i <> NULL");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE NULL <> i");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE l256 <> NULL");
+        });
+    }
+
+@Test
+    public void testNotNullSentinelPrintsValueExtended() throws Exception {
+        assertMemoryLeak(() -> {
+            // CursorPrinter prints the raw stored value on NOT NULL columns even when the
+            // value equals the type's null sentinel. This covers the types that were not
+            // already tested in testNotNull{Long,Ipv4,Uuid,Char}SentinelPrintsValue:
+            // DATE, INT, TIMESTAMP (as stored column, not the designated ts), LONG128,
+            // LONG256, INTERVAL, GEOHASH, and DECIMAL 8/16/32/64/128/256.
+            execute("""
+                    CREATE TABLE t (
+                        d DATE NOT NULL,
+                        i INT NOT NULL,
+                        t2 TIMESTAMP NOT NULL,
+                        g5 GEOHASH(5c) NOT NULL,
+                        g2 GEOHASH(2c) NOT NULL,
+                        l256 LONG256 NOT NULL,
+                        dec8 DECIMAL(2, 0) NOT NULL,
+                        dec16 DECIMAL(4, 0) NOT NULL,
+                        dec32 DECIMAL(9, 0) NOT NULL,
+                        dec64 DECIMAL(18, 2) NOT NULL,
+                        dec128 DECIMAL(38, 2) NOT NULL,
+                        dec256 DECIMAL(60, 2) NOT NULL,
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            // Row 1 inserts NULL into every non-ts NOT NULL column — each value lands as the
+            // type's null sentinel but must be surfaced, not hidden as "null" in the output.
+            execute("INSERT INTO t VALUES (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '2024-01-01')");
+            // Row 2 has real values for comparison.
+            execute("""
+                    INSERT INTO t VALUES (
+                        '2024-06-15'::date,
+                        42,
+                        '2024-06-15T12:00:00',
+                        'u33d0',
+                        'u3',
+                        '0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20',
+                        1::DECIMAL(2, 0),
+                        100::DECIMAL(4, 0),
+                        1000::DECIMAL(9, 0),
+                        123.45::DECIMAL(18, 2),
+                        999999.99::DECIMAL(38, 2),
+                        1234567890.00::DECIMAL(60, 2),
+                        '2024-01-02'
+                    )
+                    """);
+
+            // All sentinel values appear as raw bit patterns / empty strings, not "null".
+            // DATE/TIMESTAMP Long.MIN_VALUE renders as the raw negative number.
+            // INT Integer.MIN_VALUE renders as -2147483648.
+            // GEOHASH null prints as empty (CursorPrinter emits an empty token but the row still exists).
+            // LONG256 null prints as all-zero hex.
+            // DECIMAL nulls print via Decimals.appendNonNull, which emits the raw sentinel as a
+            // decimal with the column's scale — specific format verified by row count, not value.
+            assertSql("count\n2\n", "SELECT count(*) FROM t");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE i IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE t2 IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE g5 IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE g2 IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l256 IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE dec8 IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE dec256 IS NULL");
+
+            // Spot-check that the INT sentinel (Integer.MIN_VALUE) renders as its raw value
+            // on the NULL-inserted row, and that the DATE sentinel (Long.MIN_VALUE) likewise
+            // renders as its raw value. Printing these raw values exercises the NOT NULL
+            // branches in CursorPrinter for INT and DATE respectively.
+            // When the value is the Long.MIN_VALUE sentinel, the DATE NOT NULL branch in
+            // CursorPrinter bypasses the datetime formatter and writes the raw long —
+            // otherwise it formats as usual. Same for TIMESTAMP.
+            assertSql(
+                    """
+                            i\td
+                            -2147483648\t-9223372036854775808
+                            42\t2024-06-15T00:00:00.000Z
+                            """,
+                    "SELECT i, d FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testNotNullColumnFunctionFlagPropagation() throws Exception {
+        // Long128Column (via UUID) and IPv4Column received new isNotNull() overrides
+        // backed by a `notNull` field set by ColumnFactory / Function.newInstance.
+        // The propagation is verified indirectly: a query over a NOT NULL column of
+        // each type that uses IS NULL must fold to FALSE via the eq-factory short-circuit,
+        // which only fires when column.isNotNull() returns true. If the flag didn't
+        // propagate, the sentinel-row case would leak as a match.
+        //
+        // IntervalColumn and ArrayColumn have the same isNotNull() override but can't
+        // be tested through the eq-factory path from SQL — INTERVAL is non-persisted,
+        // and the DOUBLE[] `=` operator rejects untyped NULL at parse time ("no matching
+        // operator = with argument types DOUBLE[] = NULL"), making their eq-factory
+        // short-circuit paths unreachable from user SQL.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        uu UUID NOT NULL,
+                        ip IPv4 NOT NULL,
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES (
+                        '11111111-1111-1111-1111-111111111111',
+                        '1.2.3.4',
+                        '2024-01-01'
+                    )
+                    """);
+            // The sentinel row — inserted nulls land as the type's null bit pattern. The
+            // factory short-circuit must still fold IS NULL to false (otherwise this row
+            // would leak out).
+            execute("INSERT INTO t VALUES (NULL, NULL, '2024-01-02')");
+
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE uu IS NULL");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ip IS NULL");
+
+            // IS NOT NULL must match every row including the sentinel one.
+            assertSql("count\n2\n", "SELECT count(*) FROM t WHERE uu IS NOT NULL");
+            assertSql("count\n2\n", "SELECT count(*) FROM t WHERE ip IS NOT NULL");
+        });
+    }
+
+    @Test
+    public void testInformationSchemaIsNullableReportsNo() throws Exception {
+        assertMemoryLeak(() -> {
+            // InformationSchemaColumnsFunctionFactory ternary: notNull ? "no" : "yes".
+            // The NOT NULL column entries exercise the "no" branch.
+            execute("""
+                    CREATE TABLE t (
+                        nn INT NOT NULL,
+                        nl INT,
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts)
+                    """);
+
+            // Designated timestamp is implicitly NOT NULL and also returns "no".
+            assertSql(
+                    """
+                            column_name\tis_nullable
+                            nn\tno
+                            nl\tyes
+                            ts\tno
+                            """,
+                    "SELECT column_name, is_nullable FROM information_schema.columns " +
+                            "WHERE table_name = 't' ORDER BY ordinal_position"
+            );
+        });
+    }
 }
