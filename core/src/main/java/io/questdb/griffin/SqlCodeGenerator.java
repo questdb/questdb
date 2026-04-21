@@ -3427,12 +3427,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     assert qc.getAlias() != null
                             && groupByMetadata.getColumnIndexQuiet(qc.getAlias()) >= 0
                             && groupByMetadata.getColumnIndexQuiet(qc.getAlias()) != timestampIndex
-                        : "generateFill: non-aggregate FUNCTION/OPERATION in bottomUpCols must resolve to a non-timestamp factory key";
+                            : "generateFill: non-aggregate FUNCTION/OPERATION in bottomUpCols must resolve to a non-timestamp factory key";
                     continue;
                 }
                 assert ast.type == ExpressionNode.FUNCTION
                         && functionParser.getFunctionFactoryCache().isGroupBy(ast.token)
-                    : "generateFill aggregate arm: expected aggregate FUNCTION, got type=" + ast.type + " token=" + ast.token;
+                        : "generateFill aggregate arm: expected aggregate FUNCTION, got type=" + ast.type + " token=" + ast.token;
                 // This bottomUp column is an aggregate and therefore consumes
                 // one slot in the user's fill-value list, regardless of whether
                 // the outer projection keeps the column in the factory metadata.
