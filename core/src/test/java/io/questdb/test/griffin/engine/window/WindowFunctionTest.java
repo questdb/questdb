@@ -11270,6 +11270,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNtileEachRowOwnBucket() throws Exception {
+        // n == totalRows: bucketSize=1, remainder=0, threshold=0. Every row falls into the
+        // else branch of computeNtile with bucketSize=1, producing a distinct bucket per row.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("""
+                    insert into tab values
+                    (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket
+                            1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\t2
+                            1970-01-01T00:00:00.000003Z\t3
+                            1970-01-01T00:00:00.000004Z\t4
+                            1970-01-01T00:00:00.000005Z\t5
+                            """),
+                    "select ts, ntile(5) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNtileRejectsZero() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
@@ -12611,38 +12639,54 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testNthValueRangeFrameBufferExpansion() throws Exception {
-        // Reduce the window store page size so the initial ring-buffer capacity is tiny and
-        // large partitions force expandRingBuffer in NthValueOverPartitionRangeFrameFunction
-        // and NthValueOverRangeFrameFunction. Asserts only a count so the test is resilient
-        // to data layout.
+        // Shrink the window store page and the initial range buffer so large partitions force
+        // multiple expandRingBuffer calls in NthValueOverPartitionRangeFrameFunction and
+        // NthValueOverRangeFrameFunction. Asserts the full value distribution so that a
+        // miscalculated memcpy size or stale startOffset during resize would produce wrong
+        // nth_value results instead of silently passing a count check.
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 256);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
         try {
             assertMemoryLeak(() -> {
                 executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
                 execute("insert into tab select (x * 1000000)::timestamp, x % 2, x::double from long_sequence(50)");
 
+                // Non-partitioned: all 50 rows fit in the 100-second frame, so after row 1 the
+                // frame always contains at least 2 rows and nth_value(val,2) locks onto row 2's
+                // value (2.0). Expected distribution: 49 occurrences of 2.0, 1 NaN (NaN sorts
+                // last in ascending order).
                 assertSql(
                         """
-                                cnt
-                                50
+                                nv\tcnt
+                                2.0\t49
+                                null\t1
                                 """,
-                        "select count(*) cnt from (" +
+                        "select nv, count(*) cnt from (" +
                                 "select nth_value(val, 2) over (" +
-                                "order by ts range between 100 second preceding and current row) nv from tab)"
+                                "order by ts range between 100 second preceding and current row) nv from tab" +
+                                ") group by nv order by nv"
                 );
 
+                // Partitioned by i (x%2). Each partition has 25 rows; the 100-second frame holds
+                // the whole partition. First row per partition -> NaN. Subsequent rows -> row-2
+                // value: 4.0 for partition 0 (even x), 3.0 for partition 1 (odd x). Expected
+                // distribution: 24 occurrences of 3.0, 24 occurrences of 4.0, 2 NaN.
                 assertSql(
                         """
-                                cnt
-                                50
+                                nv\tcnt
+                                3.0\t24
+                                4.0\t24
+                                null\t2
                                 """,
-                        "select count(*) cnt from (" +
+                        "select nv, count(*) cnt from (" +
                                 "select nth_value(val, 2) over (" +
-                                "partition by i order by ts range between 100 second preceding and current row) nv from tab)"
+                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
+                                ") group by nv order by nv"
                 );
             });
         } finally {
             node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 32);
         }
     }
 

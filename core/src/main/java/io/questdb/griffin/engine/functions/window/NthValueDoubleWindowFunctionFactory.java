@@ -113,14 +113,18 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             partitionByKeyTypes,
                             NTH_VALUE_COLUMN_TYPES
                     );
-
-                    return new NthValueOverPartitionFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            args.get(0),
-                            n
-                    );
+                    try {
+                        return new NthValueOverPartitionFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                args.get(0),
+                                n
+                        );
+                    } catch (Throwable t) {
+                        Misc.free(map);
+                        throw t;
+                    }
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
@@ -128,14 +132,18 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             partitionByKeyTypes,
                             NTH_VALUE_COLUMN_TYPES
                     );
-
-                    return new NthValueOverUnboundedPartitionRowsFrameFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            args.get(0),
-                            n
-                    );
+                    try {
+                        return new NthValueOverUnboundedPartitionRowsFrameFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                args.get(0),
+                                n
+                        );
+                    } catch (Throwable t) {
+                        Misc.free(map);
+                        throw t;
+                    }
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -170,18 +178,24 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                         throw t;
                     }
 
-                    return new NthValueOverPartitionRangeFrameFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            rowsLo,
-                            rowsHi,
-                            args.get(0),
-                            mem,
-                            initialBufferSize,
-                            timestampIndex,
-                            n
-                    );
+                    try {
+                        return new NthValueOverPartitionRangeFrameFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                rowsLo,
+                                rowsHi,
+                                args.get(0),
+                                mem,
+                                initialBufferSize,
+                                timestampIndex,
+                                n
+                        );
+                    } catch (Throwable t) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw t;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
@@ -191,14 +205,18 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             partitionByKeyTypes,
                             NTH_VALUE_COLUMN_TYPES
                     );
-
-                    return new NthValueOverUnboundedPartitionRowsFrameFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            args.get(0),
-                            n
-                    );
+                    try {
+                        return new NthValueOverUnboundedPartitionRowsFrameFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                args.get(0),
+                                n
+                        );
+                    } catch (Throwable t) {
+                        Misc.free(map);
+                        throw t;
+                    }
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
                     return new NthValueOverCurrentRowFunction(args.get(0), n);
@@ -209,14 +227,18 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             partitionByKeyTypes,
                             NTH_VALUE_COLUMN_TYPES
                     );
-
-                    return new NthValueOverPartitionFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            args.get(0),
-                            n
-                    );
+                    try {
+                        return new NthValueOverPartitionFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                args.get(0),
+                                n
+                        );
+                    } catch (Throwable t) {
+                        Misc.free(map);
+                        throw t;
+                    }
                 }
                 // unbounded preceding and K preceding (K > 0) -- no per-partition buffer needed.
                 else if (rowsLo == Long.MIN_VALUE) {
@@ -229,15 +251,19 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             partitionByKeyTypes,
                             columnTypes
                     );
-
-                    return new NthValueOverPartitionRowsFrameUnboundedFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            rowsHi,
-                            args.get(0),
-                            n
-                    );
+                    try {
+                        return new NthValueOverPartitionRowsFrameUnboundedFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                rowsHi,
+                                args.get(0),
+                                n
+                        );
+                    } catch (Throwable t) {
+                        Misc.free(map);
+                        throw t;
+                    }
                 }
                 // between X preceding and [Y preceding | current row]
                 else {
@@ -264,16 +290,22 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                         throw t;
                     }
 
-                    return new NthValueOverPartitionRowsFrameFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            rowsLo,
-                            rowsHi,
-                            args.get(0),
-                            mem,
-                            n
-                    );
+                    try {
+                        return new NthValueOverPartitionRowsFrameFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                rowsLo,
+                                rowsHi,
+                                args.get(0),
+                                mem,
+                                n
+                        );
+                    } catch (Throwable t) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw t;
+                    }
                 }
             }
         } else { // no partition key

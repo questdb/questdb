@@ -418,8 +418,13 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                     keyColumnTypes,
                     CUME_DIST_COLUMN_TYPES
             );
-            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
-            this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
+            try {
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
+                this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
+            } catch (Throwable t) {
+                map = Misc.free(map);
+                throw t;
+            }
         }
 
         @Override
