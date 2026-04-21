@@ -14239,9 +14239,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             execute("create table trade as (" +
                     "select timestamp_sequence_ns('2021-03-28T01:59:00.00000000Z', 3*24*3600*1000000000L) ts from long_sequence(6)" +
                     ") timestamp(ts)");
-            printSql("select ts, first(ts), last(ts) " +
-                    "from trade " +
-                    "sample by 1d fill(null, 1236) align to CALENDAR;");
+            assertException(
+                    "select ts, first(ts), last(ts) from trade sample by 1d fill(null, 1236) align to CALENDAR;",
+                    66,
+                    "Invalid fill value: '1236'. Timestamp fill value must be in quotes."
+            );
         });
     }
 

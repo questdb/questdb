@@ -3328,12 +3328,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
+            // The alias may resolve to a non-TIMESTAMP column after outer projection
+            // (e.g., SELECT ts::LONG AS ts, ...) -- reset so the fallback can try the
+            // raw timestamp token and the skip-fill guard at the next if-block fires
+            // cleanly when no TIMESTAMP column is reachable. Without this guard,
+            // getTimestampDriver(timestampType) below would trip its tag-assert under
+            // -ea or throw UnsupportedOperationException at runtime.
+            if (timestampIndex >= 0
+                    && !ColumnType.isTimestamp(groupByFactory.getMetadata().getColumnType(timestampIndex))) {
+                timestampIndex = -1;
+            }
             // When the same timestamp column appears multiple times (e.g. SELECT k, k),
             // the alias may resolve to a renamed duplicate. Fall back to the original
-            // timestamp token if it yields a valid, earlier column index.
+            // timestamp token if it yields a valid, earlier, TIMESTAMP-typed column index.
             if (!Chars.equalsIgnoreCase(alias, timestamp.token)) {
                 int origIndex = groupByFactory.getMetadata().getColumnIndexQuiet(timestamp.token);
-                if (origIndex >= 0 && (timestampIndex < 0 || origIndex < timestampIndex)) {
+                if (origIndex >= 0
+                        && ColumnType.isTimestamp(groupByFactory.getMetadata().getColumnType(origIndex))
+                        && (timestampIndex < 0 || origIndex < timestampIndex)) {
                     timestampIndex = origIndex;
                 }
             }
@@ -3622,6 +3634,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // because every broadcastable fill value (NULL or bare PREV)
                         // is handled by one of the branches above. Therefore
                         // fillIdx < fillValues.size() is guaranteed here.
+                        final int targetColType = groupByMetadata.getColumnType(col);
+                        if (ColumnType.isTimestamp(targetColType)) {
+                            // Mirror the legacy cursor path's createPlaceHolderFunction
+                            // TIMESTAMP branch (SampleByFillValueRecordCursorFactory:160-166)
+                            // so the fast path stores a unit-correct constant. The upstream
+                            // functionParser.parseFunction call produces a TIMESTAMP_NANO
+                            // typed constant for any string literal, which drifts by 1000x
+                            // when read back through a MICRO-target column.
+                            if (!Chars.isQuoted(fillExpr.token)) {
+                                throw SqlException.position(fillExpr.position)
+                                        .put("Invalid fill value: '").put(fillExpr.token)
+                                        .put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
+                            }
+                            final TimestampDriver targetDriver = ColumnType.getTimestampDriver(targetColType);
+                            try {
+                                final long parsed = targetDriver.parseQuotedLiteral(fillExpr.token);
+                                // Free the stale (wrong-unit) function parsed by
+                                // functionParser before replacing the slot. The existing
+                                // transfer below moves the unit-correct replacement into
+                                // constantFillFuncs.
+                                Misc.free(fillValues.getQuick(fillIdx));
+                                fillValues.setQuick(fillIdx, TimestampConstant.newInstance(parsed, targetColType));
+                            } catch (NumericException e) {
+                                throw SqlException.position(fillExpr.position)
+                                        .put("invalid fill value: ").put(fillExpr.token);
+                            }
+                        }
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                         constantFillFuncs.add(fillValues.getQuick(fillIdx));
                         fillValues.setQuick(fillIdx, null); // transfer ownership
