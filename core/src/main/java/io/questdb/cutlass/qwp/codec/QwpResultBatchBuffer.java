@@ -37,6 +37,7 @@ import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -245,12 +246,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         rowCount += rows;
     }
 
-    private static void fillNulls(QwpColumnScratch scratch, int n) {
-        for (int i = 0; i < n; i++) {
-            scratch.appendNull();
-        }
-    }
-
     /**
      * Appends one row's worth of values from the given record.
      */
@@ -327,9 +322,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
 
     @Override
     public void close() {
-        for (int i = 0, n = scratches.size(); i < n; i++) {
-            scratches.getQuick(i).close();
-        }
+        // Misc.freeObjListIfCloseable iterates and frees in a try/finally pattern,
+        // so a throwing close on element K does not strand elements K+1..n. The
+        // hand-rolled loop this replaced would skip the remainder on any throw.
+        Misc.freeObjListIfCloseable(scratches);
         scratches.clear();
         columns = null;
         rowCount = 0;
@@ -428,6 +424,92 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         for (int i = 0, n = scratches.size(); i < n; i++) {
             scratches.getQuick(i).resetForNewQuery();
         }
+    }
+
+    /**
+     * Serialises an array into {@code scratch.arrayHeapAddr} without allocating a {@code byte[]}.
+     * Format: {@code [nDims u8] [dim lengths: nDims x i32 LE] [values: product(dims) x 8 bytes LE]}.
+     * Throws if the element-count product overflows; the buffer state is unchanged in that case.
+     */
+    private static void appendArrayBytesDirect(QwpColumnScratch scratch, ArrayView av, byte wireType) {
+        int nDims = av.getDimCount();
+        long elements = 1;
+        for (int d = 0; d < nDims; d++) {
+            int dim = av.getDimLen(d);
+            if (dim < 0) {
+                throw CairoException.nonCritical()
+                        .put("QWP egress: ARRAY dim is negative [dim=").put(d).put(", value=").put(dim).put(']');
+            }
+            elements *= dim;
+            if (elements > MAX_ARRAY_ELEMENTS) {
+                throw CairoException.nonCritical()
+                        .put("QWP egress: ARRAY element count exceeds limit [elements=").put(elements)
+                        .put(", limit=").put(MAX_ARRAY_ELEMENTS).put(']');
+            }
+        }
+        int totalBytes = 1 + 4 * nDims + 8 * (int) elements;
+        scratch.ensureArrayHeapCapacity(scratch.arrayHeapPos + totalBytes);
+        long p = scratch.arrayHeapAddr + scratch.arrayHeapPos;
+        Unsafe.getUnsafe().putByte(p++, (byte) nDims);
+        for (int d = 0; d < nDims; d++) {
+            Unsafe.getUnsafe().putInt(p, av.getDimLen(d));
+            p += 4;
+        }
+        if (wireType == QwpConstants.TYPE_DOUBLE_ARRAY) {
+            for (int i = 0; i < elements; i++) {
+                Unsafe.getUnsafe().putLong(p, Double.doubleToRawLongBits(av.getDouble(i)));
+                p += 8;
+            }
+        } else {
+            for (int i = 0; i < elements; i++) {
+                Unsafe.getUnsafe().putLong(p, av.getLong(i));
+                p += 8;
+            }
+        }
+        scratch.arrayHeapPos += totalBytes;
+        scratch.markNonNullAndAdvanceRow();
+    }
+
+    private static long emitStringColumn(QwpColumnScratch scratch, long p, long wireLimit) {
+        int nonNull = scratch.nonNullCount;
+        long offsetsBytes = 4L * (nonNull + 1);
+        long bytesBytes = scratch.stringHeapPos;
+        if (p + offsetsBytes + bytesBytes > wireLimit) return -1;
+        // offset[0] = 0; offsets[1..nonNull] were populated during append.
+        Unsafe.getUnsafe().putInt(p, 0);
+        // Copy offsets[1..nonNull] from scratch.stringOffsetsAddr (which stores them at indices 1..nonNull)
+        // to p + 4 .. p + 4 * nonNull + 4.
+        Vect.memcpy(p + 4L, scratch.stringOffsetsAddr + 4L, 4L * nonNull);
+        Vect.memcpy(p + offsetsBytes, scratch.stringHeapAddr, bytesBytes);
+        return p + offsetsBytes + bytesBytes;
+    }
+
+    private static long emitSymbolColumn(QwpColumnScratch scratch, long p, long wireLimit) {
+        // Per-column dict is omitted -- bytes for new entries went out already in
+        // the message-level delta section. Per-row payload is just the connection
+        // dict ids, which appendRow already stored into symbolIdsAddr (no
+        // translation required).
+        final int nonNull = scratch.nonNullCount;
+        final long idsAddr = scratch.symbolIdsAddr;
+        for (int i = 0; i < nonNull; i++) {
+            if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
+            int connId = Unsafe.getUnsafe().getInt(idsAddr + 4L * i);
+            p = QwpVarint.encode(p, connId);
+        }
+        return p;
+    }
+
+    private static void fillNulls(QwpColumnScratch scratch, int n) {
+        for (int i = 0; i < n; i++) {
+            scratch.appendNull();
+        }
+    }
+
+    private static long readGeoBits(Record record, int col, int precisionBits) {
+        if (precisionBits <= 7) return record.getGeoByte(col);
+        if (precisionBits <= 15) return record.getGeoShort(col);
+        if (precisionBits <= 31) return record.getGeoInt(col);
+        return record.getGeoLong(col);
     }
 
     /**
@@ -607,104 +689,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Per-column fallback used by {@link #appendPageFrame} for wire types that
-     * don't have a columnar fast path yet (VARCHAR, STRING, BINARY, UUID, etc.).
-     * Walks rows in {@code [lo, hi)} and writes only column {@code ci}; other
-     * columns of the same frame are handled by the columnar dispatch.
-     */
-    private void perColumnRowLoop(PageFrameMemoryRecord record, long lo, long hi, int ci) {
-        final QwpColumnScratch scratch = scratchesArr[ci];
-        final byte wt = wireTypesArr[ci];
-        final int qt = qdbTypesArr[ci];
-        final QwpEgressColumnDef def = defsArr[ci];
-        final SymbolTable st = symbolTablesArr[ci];
-        for (long r = lo; r < hi; r++) {
-            record.setRowIndex(r);
-            appendCell(record, ci, scratch, wt, qt, def, st);
-        }
-    }
-
-    /**
-     * Serialises an array into {@code scratch.arrayHeapAddr} without allocating a {@code byte[]}.
-     * Format: {@code [nDims u8] [dim lengths: nDims x i32 LE] [values: product(dims) x 8 bytes LE]}.
-     * Throws if the element-count product overflows; the buffer state is unchanged in that case.
-     */
-    private static void appendArrayBytesDirect(QwpColumnScratch scratch, ArrayView av, byte wireType) {
-        int nDims = av.getDimCount();
-        long elements = 1;
-        for (int d = 0; d < nDims; d++) {
-            int dim = av.getDimLen(d);
-            if (dim < 0) {
-                throw CairoException.nonCritical()
-                        .put("QWP egress: ARRAY dim is negative [dim=").put(d).put(", value=").put(dim).put(']');
-            }
-            elements *= dim;
-            if (elements > MAX_ARRAY_ELEMENTS) {
-                throw CairoException.nonCritical()
-                        .put("QWP egress: ARRAY element count exceeds limit [elements=").put(elements)
-                        .put(", limit=").put(MAX_ARRAY_ELEMENTS).put(']');
-            }
-        }
-        int totalBytes = 1 + 4 * nDims + 8 * (int) elements;
-        scratch.ensureArrayHeapCapacity(scratch.arrayHeapPos + totalBytes);
-        long p = scratch.arrayHeapAddr + scratch.arrayHeapPos;
-        Unsafe.getUnsafe().putByte(p++, (byte) nDims);
-        for (int d = 0; d < nDims; d++) {
-            Unsafe.getUnsafe().putInt(p, av.getDimLen(d));
-            p += 4;
-        }
-        if (wireType == QwpConstants.TYPE_DOUBLE_ARRAY) {
-            for (int i = 0; i < elements; i++) {
-                Unsafe.getUnsafe().putLong(p, Double.doubleToRawLongBits(av.getDouble(i)));
-                p += 8;
-            }
-        } else {
-            for (int i = 0; i < elements; i++) {
-                Unsafe.getUnsafe().putLong(p, av.getLong(i));
-                p += 8;
-            }
-        }
-        scratch.arrayHeapPos += totalBytes;
-        scratch.markNonNullAndAdvanceRow();
-    }
-
-    private static long emitStringColumn(QwpColumnScratch scratch, long p, long wireLimit) {
-        int nonNull = scratch.nonNullCount;
-        long offsetsBytes = 4L * (nonNull + 1);
-        long bytesBytes = scratch.stringHeapPos;
-        if (p + offsetsBytes + bytesBytes > wireLimit) return -1;
-        // offset[0] = 0; offsets[1..nonNull] were populated during append.
-        Unsafe.getUnsafe().putInt(p, 0);
-        // Copy offsets[1..nonNull] from scratch.stringOffsetsAddr (which stores them at indices 1..nonNull)
-        // to p + 4 .. p + 4 * nonNull + 4.
-        Vect.memcpy(p + 4L, scratch.stringOffsetsAddr + 4L, 4L * nonNull);
-        Vect.memcpy(p + offsetsBytes, scratch.stringHeapAddr, bytesBytes);
-        return p + offsetsBytes + bytesBytes;
-    }
-
-    private static long emitSymbolColumn(QwpColumnScratch scratch, long p, long wireLimit) {
-        // Per-column dict is omitted -- bytes for new entries went out already in
-        // the message-level delta section. Per-row payload is just the connection
-        // dict ids, which appendRow already stored into symbolIdsAddr (no
-        // translation required).
-        final int nonNull = scratch.nonNullCount;
-        final long idsAddr = scratch.symbolIdsAddr;
-        for (int i = 0; i < nonNull; i++) {
-            if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-            int connId = Unsafe.getUnsafe().getInt(idsAddr + 4L * i);
-            p = QwpVarint.encode(p, connId);
-        }
-        return p;
-    }
-
-    private static long readGeoBits(Record record, int col, int precisionBits) {
-        if (precisionBits <= 7) return record.getGeoByte(col);
-        if (precisionBits <= 15) return record.getGeoShort(col);
-        if (precisionBits <= 31) return record.getGeoInt(col);
-        return record.getGeoLong(col);
-    }
-
-    /**
      * Copies the null flag + bitmap (if any) for this column to the wire. Also
      * memcpys the dense value bytes for the simple cases (BOOLEAN, fixed-width).
      */
@@ -807,6 +791,24 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         Unsafe.getUnsafe().putByte(p++, ENCODING_UNCOMPRESSED);
         Vect.memcpy(p, scratch.valuesAddr, rawBytes);
         return p + rawBytes;
+    }
+
+    /**
+     * Per-column fallback used by {@link #appendPageFrame} for wire types that
+     * don't have a columnar fast path yet (VARCHAR, STRING, BINARY, UUID, etc.).
+     * Walks rows in {@code [lo, hi)} and writes only column {@code ci}; other
+     * columns of the same frame are handled by the columnar dispatch.
+     */
+    private void perColumnRowLoop(PageFrameMemoryRecord record, long lo, long hi, int ci) {
+        final QwpColumnScratch scratch = scratchesArr[ci];
+        final byte wt = wireTypesArr[ci];
+        final int qt = qdbTypesArr[ci];
+        final QwpEgressColumnDef def = defsArr[ci];
+        final SymbolTable st = symbolTablesArr[ci];
+        for (long r = lo; r < hi; r++) {
+            record.setRowIndex(r);
+            appendCell(record, ci, scratch, wt, qt, def, st);
+        }
     }
 
 }

@@ -39,6 +39,8 @@ import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -69,6 +71,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * cached id even in this state; only net-new schemas are refused.
      */
     public static final int SCHEMA_ID_EXHAUSTED = -1;
+
+    private static final Log LOG = LogFactory.getLog(QwpEgressProcessorState.class);
 
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
@@ -210,9 +214,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * {@code volatile}: see the note on {@link #streamingActive}.
      */
     private volatile boolean streamingCreditSuspended;
-    private RecordCursor streamingCursor;
-    private RecordCursorFactory streamingFactory;
-    private boolean streamingFullSchemaSent;
     // PageFrame streaming state. streamingPageFrameCursor is the per-query cursor
     // (freed on endStreaming). streamingPageFrameIndex counts frames consumed since
     // the query started - used to key PageFrameAddressCache entries. row/rowHi track
@@ -222,6 +223,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // callers can emit column-at-a-time over the slice [streamingPageFrameRow,
     // streamingPageFrameRowHi). Cleared on {@link #endStreaming}.
     private PageFrame streamingCurrentPageFrame;
+    private RecordCursor streamingCursor;
+    private RecordCursorFactory streamingFactory;
+    private boolean streamingFullSchemaSent;
     private PageFrameCursor streamingPageFrameCursor;
     private int streamingPageFrameIndex;
     private long streamingPageFrameRow;
@@ -267,14 +271,22 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     /**
      * Adds the given number of bytes to the remaining credit. Called from the
      * CREDIT frame handler. Saturates at {@code Long.MAX_VALUE} to avoid
-     * overflow on pathological clients.
+     * overflow on pathological clients. {@code bytes} must be non-negative;
+     * negative inputs are rejected as a no-op rather than silently clamped to
+     * {@code Long.MAX_VALUE} (which the bare {@code sum < prev} guard would
+     * have done because the comparison can't distinguish signed overflow from
+     * a negative addend).
      */
     public void addStreamingCredit(long bytes) {
+        if (bytes <= 0L) {
+            // Caller (handleCredit) already filters this from the wire path,
+            // but the contract is enforced here so any future internal caller
+            // can't silently grant infinite credit by passing a negative.
+            return;
+        }
         // CAS loop so the saturating add stays atomic against a concurrent
-        // consumeStreamingCredit from the streamResults path. {@code bytes} is
-        // non-negative by protocol (CREDIT frame's additional_bytes varint);
-        // {@code sum < prev} therefore only fires on signed overflow, in which
-        // case we clamp to Long.MAX_VALUE.
+        // consumeStreamingCredit from the streamResults path. With bytes > 0,
+        // sum < prev fires only on signed overflow.
         while (true) {
             long prev = streamingCreditRemaining.get();
             long sum = prev + bytes;
@@ -636,6 +648,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return fd;
     }
 
+    /**
+     * Effective per-batch row cap for this connection, already clamped to the
+     * server's hard maximum. Read by {@link QwpEgressUpgradeProcessor}'s
+     * {@code streamResults} loop to size each batch.
+     */
+    public int getMaxBatchRows() {
+        return maxBatchRows;
+    }
+
     public byte getNegotiatedVersion() {
         return negotiatedVersion;
     }
@@ -646,15 +667,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public int getRecvBufferLen() {
         return recvBufferLen;
-    }
-
-    /**
-     * Effective per-batch row cap for this connection, already clamped to the
-     * server's hard maximum. Read by {@link QwpEgressUpgradeProcessor}'s
-     * {@code streamResults} loop to size each batch.
-     */
-    public int getMaxBatchRows() {
-        return maxBatchRows;
     }
 
     public SecurityContext getSecurityContext() {
@@ -677,14 +689,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingCursor;
     }
 
-    public long getStreamingRequestId() {
-        return streamingRequestId;
-    }
-
-    public long getStreamingRowsEmitted() {
-        return streamingRowsEmitted;
-    }
-
     /**
      * {@link PageFrameMemoryRecord} bound to the current page frame. Useful
      * for the per-column fallback inside the columnar emit when a column type
@@ -700,6 +704,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public long getStreamingPageFrameRowHi() {
         return streamingPageFrameRowHi;
+    }
+
+    public long getStreamingRequestId() {
+        return streamingRequestId;
+    }
+
+    public long getStreamingRowsEmitted() {
+        return streamingRowsEmitted;
     }
 
     public int getStreamingSchemaId() {
@@ -871,10 +883,16 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * Caller must already know compression is active (codec != COMPRESSION_NONE)
      * -- no null check is performed. Returns 0 if native allocation fails, which
      * {@code sendResultBatch} treats as "fall back to raw this batch".
+     * The 0 return is also logged once per occurrence so an operator notices
+     * silent compression downgrades caused by allocator pressure.
      */
     public long zstdCCtx() {
         if (zstdCCtx == 0) {
             zstdCCtx = Zstd.createCCtx(compressionLevel);
+            if (zstdCCtx == 0) {
+                LOG.error().$("zstd createCCtx returned 0 [level=").$(compressionLevel)
+                        .$("]; batches will ship raw until the next allocation attempt succeeds").$();
+            }
         }
         return zstdCCtx;
     }
@@ -883,21 +901,26 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * Grows (or allocates) the compression scratch buffer to at least
      * {@code minCapacity} bytes and returns its native address. The buffer is
      * owned by this state and freed in {@link #clear()} / {@link #close()}.
+     * <p>
+     * Growth is geometric (at least 2x previous) so a connection whose batch
+     * size drifts up over time amortises the realloc cost; without this, a
+     * monotonically growing batch size would re-malloc on every batch.
+     * {@link Unsafe#realloc} is used in place of {@code free + malloc} so the
+     * allocator can extend the existing mapping in place when possible.
      */
     public long zstdCompressScratch(int minCapacity) {
         if (zstdCompressScratchCapacity < minCapacity) {
-            if (zstdCompressScratchAddr != 0) {
-                Unsafe.free(zstdCompressScratchAddr, zstdCompressScratchCapacity, MemoryTag.NATIVE_DEFAULT);
-                // Clear before malloc so a throwing allocation leaves the state
-                // "not allocated" rather than pointing at a freed address, which
-                // would double-free on the next call or on close().
-                zstdCompressScratchAddr = 0;
-                zstdCompressScratchCapacity = 0;
-            }
             // Round up to next 4 KiB so small growths don't thrash when batch
-            // sizes drift slightly between queries.
-            int cap = (minCapacity + 4095) & ~4095;
-            zstdCompressScratchAddr = Unsafe.malloc(cap, MemoryTag.NATIVE_DEFAULT);
+            // sizes drift slightly between queries; combine with a 2x geometric
+            // term so larger growths amortise.
+            long doubled = (long) zstdCompressScratchCapacity * 2L;
+            long target = Math.max(doubled, minCapacity);
+            target = (target + 4095L) & ~4095L;
+            // Stay within int range; minCapacity is int so a 2x overflow is
+            // bounded by 2 * Integer.MAX_VALUE which still fits in long.
+            int cap = (int) Math.min(target, Integer.MAX_VALUE);
+            zstdCompressScratchAddr = Unsafe.realloc(
+                    zstdCompressScratchAddr, zstdCompressScratchCapacity, cap, MemoryTag.NATIVE_DEFAULT);
             zstdCompressScratchCapacity = cap;
         }
         return zstdCompressScratchAddr;

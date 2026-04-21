@@ -23,6 +23,7 @@ header, type system, and column encodings unchanged. The deltas are limited to:
 10. [CANCEL (0x14)](#10-cancel-0x14)
 11. [CREDIT (0x15)](#11-credit-0x15)
 11.5. [NULL Sentinel Conventions](#115-null-sentinel-conventions-inherited-from-questdb)
+11.5.1. [Array element NULLs](#1151-array-element-nulls)
 11.6. [EXEC_DONE (0x16)](#116-exec_done-0x16)
 12. [Schema and Symbol Dictionary Scope](#12-schema-and-symbol-dictionary-scope)
 13. [Cursor Lifecycle](#13-cursor-lifecycle)
@@ -82,6 +83,7 @@ are negotiated at the HTTP upgrade:
 | `X-QWP-Max-Version`      | C -> S    | No       | Maximum QWP version the client supports. Defaults to 1 if absent.                 |
 | `X-QWP-Client-Id`        | C -> S    | No       | Free-form client identifier (e.g., `java-egress/1.0.0`).                          |
 | `X-QWP-Accept-Encoding`  | C -> S    | No       | Comma-separated list of acceptable `RESULT_BATCH` body encodings (see below).     |
+| `X-QWP-Max-Batch-Rows`   | C -> S    | No       | Client-preferred per-batch row cap. Decimal integer; `0` or absent = server default. The server clamps to its own hard limit, so this only ever asks for *smaller* batches (lower latency to first row, more per-batch overhead). |
 | `X-QWP-Version`          | S -> C    | Yes      | Negotiated version = `min(clientMax, serverMax)`.                                 |
 | `X-QWP-Content-Encoding` | S -> C    | No       | Server's selected encoding from the client's accept list. Omitted means `raw`.    |
 
@@ -215,9 +217,18 @@ observed the terminator for the previous use.
 
 ### Concurrency
 
-A connection may have multiple in-flight queries. The server interleaves
-their `RESULT_BATCH` frames freely; clients demultiplex using `request_id`.
-The protocol does not constrain ordering between requests.
+The wire protocol allows a connection to have multiple in-flight queries:
+the server may interleave their `RESULT_BATCH` frames freely and clients
+demultiplex using `request_id`. The protocol does not constrain ordering
+between requests.
+
+**Phase 1 (current implementation): a single in-flight query per connection.**
+The server rejects any second `QUERY_REQUEST` that arrives before the active
+query has terminated (`RESULT_END`, `EXEC_DONE`, or `QUERY_ERROR`) with a
+`QUERY_ERROR` carrying `STATUS_PARSE_ERROR` and a message naming the
+limitation. Multi-query multiplexing requires a fair scheduler on the server
+and is tracked in the [Phase 2 backlog](QWP_EGRESS_PHASE2_BACKLOG.md). SDK authors targeting Phase 1 should
+serialise queries on a per-connection basis or open additional connections.
 
 ## 7. RESULT_BATCH (0x11)
 
@@ -366,6 +377,26 @@ indistinguishable from explicit NULL:
 Servers writing egress and clients reading it MUST agree on these sentinels. The
 spec does not introduce a separate "QWP NaN" representation — a row carrying
 `NaN` in the dense values array is simultaneously marked NULL in the null bitmap.
+
+### 11.5.1 Array element NULLs
+
+Array column types (`DOUBLE_ARRAY` 0x18, `LONG_ARRAY` 0x12) ship element bytes
+verbatim with **no per-element null bitmap**. Element-level NULL is encoded by
+re-using the element-type's row-level sentinel from the table above:
+
+| Array element type | NULL element value | Round-trip risk |
+|---|---|---|
+| `DOUBLE_ARRAY` element | `Double.NaN` | A non-null `NaN` element (e.g. from `0.0 / 0.0`) is indistinguishable from a NULL element on the wire. |
+| `LONG_ARRAY` element  | `Long.MIN_VALUE` (`Numbers.LONG_NULL`) | A non-null `Long.MIN_VALUE` element cannot be represented as non-null and round-trips as NULL. |
+
+This matches QuestDB's in-engine semantics — the engine itself treats these
+sentinels as NULL throughout — so the wire format does not lose information
+relative to the source. Clients writing array values they expect to round-trip
+as non-null MUST avoid the sentinel bit patterns.
+
+The row-level null bitmap bit (set for the whole array cell) signals "the array
+itself is NULL", distinct from "an array of zero or more elements, some of
+which may be element-NULL". A non-NULL empty array is a valid value.
 
 ## 11.6 EXEC_DONE (0x16)
 
@@ -536,7 +567,7 @@ additions and changes:
 
 | Limit                          | Default Value | Notes                            |
 |--------------------------------|---------------|----------------------------------|
-| Max in-flight queries          | 64            | Per connection                   |
+| Max in-flight queries          | 1 (Phase 1)   | Per connection. Wire protocol allows up to 64; the Phase 1 server rejects any second concurrent QUERY_REQUEST. See §6 Concurrency. |
 | Max SQL text length            | 1 MiB         | UTF-8 bytes                      |
 | Max bind parameters            | 1,024         | Per QUERY_REQUEST                |
 | Max RESULT_BATCH wire size     | 16 MiB        | Same as ingress batch ceiling    |
