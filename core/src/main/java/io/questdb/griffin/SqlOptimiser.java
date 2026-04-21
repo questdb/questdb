@@ -4601,17 +4601,6 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-    private boolean matchesWithOrWithoutTablePrefix(@NotNull CharSequence name, @NotNull CharSequence table, CharSequence target) {
-        if (target == null) {
-            return false;
-        }
-        final int dotIndex = Chars.indexOfLastUnquoted(name, '.');
-        return dotIndex > 0
-                ? Chars.equalsIgnoreCase(table, name, 0, dotIndex) && Chars.equalsIgnoreCase(target, name, dotIndex + 1, name.length())
-                : Chars.equalsIgnoreCase(name, target);
-    }
-
     private void mergeConstIntoPostJoinWhereClause(IQueryModel model) {
         ExpressionNode constWhere = model.getConstWhereClause();
         if (constWhere == null) {

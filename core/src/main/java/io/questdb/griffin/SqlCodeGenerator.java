@@ -168,7 +168,6 @@ import io.questdb.griffin.engine.functions.memoization.VarcharFunctionMemoizer;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.FillRangeRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
@@ -1201,23 +1200,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return model.getTableNameExpr() == null
                 && model.getNestedModel() == null
                 && model.getHorizonJoinContext().getAlias() != null;
-    }
-
-    /**
-     * Returns true if the column at output index {@code col} is a GROUP BY key
-     * column (as opposed to an aggregate function or the timestamp floor).
-     * A column is a key column if its AST node is a LITERAL (plain column
-     * reference) and it is not the timestamp floor function column.
-     */
-    private static boolean isKeyColumn(int col, ObjList<QueryColumn> bottomUpCols, int timestampIndex) {
-        if (col == timestampIndex) {
-            return false;
-        }
-        if (col < bottomUpCols.size()) {
-            final ExpressionNode ast = bottomUpCols.getQuick(col).getAst();
-            return ast.type == ExpressionNode.LITERAL;
-        }
-        return false;
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -3550,7 +3532,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // aggNonKeyCount <= fillValuesExprs.size() guarantees fillIdx
                     // is in range.
                     final ExpressionNode fillExpr = fillValuesExprs.getQuick(isBroadcastMode ? 0 : fillIdx);
-                    if (fillExpr != null && isPrevKeyword(fillExpr.token)) {
+                    if (isPrevKeyword(fillExpr.token)) {
                         // Bare PREV in per-column list means self-prev for this slot.
                         boolean isBarePrev = fillExpr.type == ExpressionNode.LITERAL;
                         boolean isPrevWithLiteralArg = fillExpr.type == ExpressionNode.FUNCTION
