@@ -306,8 +306,17 @@ public class WalLockerFuzzTest {
             writer.start();
             purge.start();
 
-            Assert.assertTrue("Iteration " + iter + " threads didn't start", ready.await(5, TimeUnit.SECONDS));
-            Assert.assertTrue("Iteration " + iter + " timed out", done.await(5, TimeUnit.SECONDS));
+            // On timeout, join the workers before tearDown() frees the native WalLock;
+            // otherwise a surviving thread would make JNI calls against a freed pointer
+            // and crash the JVM.
+            final boolean isReady = ready.await(5, TimeUnit.SECONDS);
+            final boolean isDone = isReady && done.await(5, TimeUnit.SECONDS);
+            if (!isDone) {
+                writer.join();
+                purge.join();
+            }
+            Assert.assertTrue("Iteration " + iter + " threads didn't start", isReady);
+            Assert.assertTrue("Iteration " + iter + " timed out", isDone);
 
             if (error.get() != null) {
                 error.get().printStackTrace();
