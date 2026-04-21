@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.http.ConnectionAware;
+import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
@@ -506,9 +507,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public void consumeBatchSeqCommit() {
         if (!streamingBatchSeqCommitted) {
-            throw new IllegalStateException(
-                    "sendResultBatch reached without a preceding onStreamingBatchSent "
-                            + "[seq=" + streamingBatchSeq + ']');
+            throw HttpException.instance("sendResultBatch reached without a preceding onStreamingBatchSent [seq=")
+                    .put(streamingBatchSeq)
+                    .put(']');
         }
         streamingBatchSeqCommitted = false;
     }
@@ -819,9 +820,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public void onStreamingBatchSent(int rowsEmittedInBatch) {
         if (streamingBatchSeqCommitted) {
-            throw new IllegalStateException(
-                    "onStreamingBatchSent called twice without an intervening sendResultBatch "
-                            + "[seq=" + streamingBatchSeq + ']');
+            throw HttpException.instance("onStreamingBatchSent called twice without an intervening sendResultBatch [seq=")
+                    .put(streamingBatchSeq)
+                    .put(']');
         }
         streamingBatchSeq++;
         streamingFullSchemaSent = true;
