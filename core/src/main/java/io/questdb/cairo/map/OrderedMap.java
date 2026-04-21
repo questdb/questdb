@@ -36,6 +36,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.table.GroupByMapFragment;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -287,6 +288,44 @@ public class OrderedMap implements Map, Reopenable {
         }
     }
 
+    @Override
+    public void countByFixedSizeColumn(long dataAddr, long rowCount, int countByteOffset) {
+        assert keySize > 0;
+        for (long p = 0; p < rowCount; p++) {
+            final long keyAddr = dataAddr + p * keySize;
+            insertOrIncrementFixedSizeKeyWithHash(keyAddr, Hash.hashMem64(keyAddr, keySize), countByteOffset);
+        }
+    }
+
+    @Override
+    public void countByFixedSizeColumnFiltered(long dataAddr, long rowsAddr, long rowCount, int countByteOffset) {
+        assert keySize > 0;
+        for (long p = 0; p < rowCount; p++) {
+            final long rowId = Unsafe.getUnsafe().getLong(rowsAddr + (p << 3));
+            final long keyAddr = dataAddr + rowId * keySize;
+            insertOrIncrementFixedSizeKeyWithHash(keyAddr, Hash.hashMem64(keyAddr, keySize), countByteOffset);
+        }
+    }
+
+    @Override
+    public void distinctByFixedSizeColumn(long dataAddr, long rowCount) {
+        assert keySize > 0;
+        for (long p = 0; p < rowCount; p++) {
+            final long keyAddr = dataAddr + p * keySize;
+            insertDistinctFixedSizeKeyWithHash(keyAddr, Hash.hashMem64(keyAddr, keySize));
+        }
+    }
+
+    @Override
+    public void distinctByFixedSizeColumnFiltered(long dataAddr, long rowsAddr, long rowCount) {
+        assert keySize > 0;
+        for (long p = 0; p < rowCount; p++) {
+            final long rowId = Unsafe.getUnsafe().getLong(rowsAddr + (p << 3));
+            final long keyAddr = dataAddr + rowId * keySize;
+            insertDistinctFixedSizeKeyWithHash(keyAddr, Hash.hashMem64(keyAddr, keySize));
+        }
+    }
+
     public long getAppendOffset() {
         return kPos;
     }
@@ -394,6 +433,52 @@ public class OrderedMap implements Map, Reopenable {
             throw CairoException.nonCritical().put("map capacity overflow");
         }
         rehash(Numbers.ceilPow2((int) requiredCapacity));
+    }
+
+    @Override
+    public void shardedCountByFixedSizeColumn(long dataAddr, long rowCount, int countByteOffset, GroupByMapFragment fragment) {
+        assert keySize > 0;
+        for (long p = 0; p < rowCount; p++) {
+            final long keyAddr = dataAddr + p * keySize;
+            final long hash = Hash.hashMem64(keyAddr, keySize);
+            final OrderedMap shard = (OrderedMap) fragment.getShardMap(hash);
+            shard.insertOrIncrementFixedSizeKeyWithHash(keyAddr, hash, countByteOffset);
+        }
+    }
+
+    @Override
+    public void shardedCountByFixedSizeColumnFiltered(long dataAddr, long rowsAddr, long rowCount, int countByteOffset, GroupByMapFragment fragment) {
+        assert keySize > 0;
+        for (long p = 0; p < rowCount; p++) {
+            final long rowId = Unsafe.getUnsafe().getLong(rowsAddr + (p << 3));
+            final long keyAddr = dataAddr + rowId * keySize;
+            final long hash = Hash.hashMem64(keyAddr, keySize);
+            final OrderedMap shard = (OrderedMap) fragment.getShardMap(hash);
+            shard.insertOrIncrementFixedSizeKeyWithHash(keyAddr, hash, countByteOffset);
+        }
+    }
+
+    @Override
+    public void shardedDistinctByFixedSizeColumn(long dataAddr, long rowCount, GroupByMapFragment fragment) {
+        assert keySize > 0;
+        for (long p = 0; p < rowCount; p++) {
+            final long keyAddr = dataAddr + p * keySize;
+            final long hash = Hash.hashMem64(keyAddr, keySize);
+            final OrderedMap shard = (OrderedMap) fragment.getShardMap(hash);
+            shard.insertDistinctFixedSizeKeyWithHash(keyAddr, hash);
+        }
+    }
+
+    @Override
+    public void shardedDistinctByFixedSizeColumnFiltered(long dataAddr, long rowsAddr, long rowCount, GroupByMapFragment fragment) {
+        assert keySize > 0;
+        for (long p = 0; p < rowCount; p++) {
+            final long rowId = Unsafe.getUnsafe().getLong(rowsAddr + (p << 3));
+            final long keyAddr = dataAddr + rowId * keySize;
+            final long hash = Hash.hashMem64(keyAddr, keySize);
+            final OrderedMap shard = (OrderedMap) fragment.getShardMap(hash);
+            shard.insertDistinctFixedSizeKeyWithHash(keyAddr, hash);
+        }
     }
 
     @Override
@@ -667,6 +752,96 @@ public class OrderedMap implements Map, Reopenable {
 
     private OrderedMapValue valueOf(long startAddr, long valueAddr, boolean newValue, OrderedMapValue value) {
         return value.of(startAddr, valueAddr, heapLimit, newValue);
+    }
+
+    /**
+     * Inserts the key bytes at {@code keyAddr} (with precomputed {@code hashCode})
+     * if not already present. Used by the no-aggregate (distinct) fast paths.
+     * Caller must ensure the map has a single fixed-size key column.
+     */
+    void insertDistinctFixedSizeKeyWithHash(long keyAddr, long hashCode) {
+        int hashCodeLo = Numbers.decodeLowInt(hashCode);
+        int index = hashCodeLo & mask;
+        long offsetAddr = offsetsAddr + ((long) index << 3);
+        long slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+        int rawOffset = Numbers.decodeLowInt(slotValue);
+        while (rawOffset > 0) {
+            if (hashCodeLo == Numbers.decodeHighInt(slotValue)) {
+                long offset = decompressOffset(rawOffset);
+                if (Vect.memeq(heapAddr + offset, keyAddr, keySize)) {
+                    return;
+                }
+            }
+            index = (index + 1) & mask;
+            offsetAddr = offsetsAddr + ((long) index << 3);
+            slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+            rawOffset = Numbers.decodeLowInt(slotValue);
+        }
+        final long entrySize = keySize + valueSize;
+        if (kPos + entrySize > heapLimit) {
+            resize(entrySize, kPos);
+        }
+        Vect.memcpy(kPos, keyAddr, keySize);
+        Unsafe.getUnsafe().putInt(offsetAddr, compressOffset(kPos - heapAddr));
+        Unsafe.getUnsafe().putInt(offsetAddr + 4, hashCodeLo);
+        kPos = Bytes.align8b(kPos + entrySize);
+        size++;
+        if (--free == 0) {
+            try {
+                rehash();
+            } catch (CairoException e) {
+                free = 1;
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Inserts the key bytes at {@code keyAddr} (with precomputed {@code hashCode})
+     * if not already present, or increments the LONG count slot at
+     * {@code countByteOffset} within the entry. Used by the {@code count(*)}
+     * fast paths. Caller must ensure the map has a single fixed-size key column
+     * and a LONG value column at {@code countByteOffset}.
+     */
+    void insertOrIncrementFixedSizeKeyWithHash(long keyAddr, long hashCode, int countByteOffset) {
+        int hashCodeLo = Numbers.decodeLowInt(hashCode);
+        int index = hashCodeLo & mask;
+        long offsetAddr = offsetsAddr + ((long) index << 3);
+        long slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+        int rawOffset = Numbers.decodeLowInt(slotValue);
+        while (rawOffset > 0) {
+            if (hashCodeLo == Numbers.decodeHighInt(slotValue)) {
+                long offset = decompressOffset(rawOffset);
+                long entryAddr = heapAddr + offset;
+                if (Vect.memeq(entryAddr, keyAddr, keySize)) {
+                    final long countAddr = entryAddr + countByteOffset;
+                    Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1L);
+                    return;
+                }
+            }
+            index = (index + 1) & mask;
+            offsetAddr = offsetsAddr + ((long) index << 3);
+            slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+            rawOffset = Numbers.decodeLowInt(slotValue);
+        }
+        final long entrySize = keySize + valueSize;
+        if (kPos + entrySize > heapLimit) {
+            resize(entrySize, kPos);
+        }
+        Vect.memcpy(kPos, keyAddr, keySize);
+        Unsafe.getUnsafe().putLong(kPos + countByteOffset, 1L);
+        Unsafe.getUnsafe().putInt(offsetAddr, compressOffset(kPos - heapAddr));
+        Unsafe.getUnsafe().putInt(offsetAddr + 4, hashCodeLo);
+        kPos = Bytes.align8b(kPos + entrySize);
+        size++;
+        if (--free == 0) {
+            try {
+                rehash();
+            } catch (CairoException e) {
+                free = 1;
+                throw e;
+            }
+        }
     }
 
     long keySize() {

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -43,6 +44,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -63,6 +65,24 @@ import java.io.Closeable;
 
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+    /**
+     * {@code count(*)} over a single fixed-size column key.
+     */
+    public static final int FAST_PATH_COUNT = 1;
+    /**
+     * No-aggregate {@code SELECT key FROM ... GROUP BY key} over a single fixed-size column key.
+     */
+    public static final int FAST_PATH_DISTINCT = 2;
+    /**
+     * No fast path applies.
+     */
+    public static final int FAST_PATH_NONE = 0;
+    // When fastPathMode != FAST_PATH_NONE, the base record column index of
+    // the single-column key. -1 otherwise.
+    private final int fastPathColumnIndex;
+    // Byte offset of the count value within an entry (used by FAST_PATH_COUNT).
+    private final int fastPathCountByteOffset;
+    private final int fastPathMode;
     private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
@@ -107,6 +127,41 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
+
+            // Detect fast-path eligibility: single fixed-size column key from
+            // the base record (no computed key) with either no aggregates
+            // (distinct) or only count(*). Fixed-size keys (INT, LONG, IPv4,
+            // SYMBOL, TIMESTAMP, DATE, LONG128, LONG256, etc.) end up in
+            // Unordered4Map, Unordered8Map, or OrderedMap, all of which
+            // implement the fast-path Map methods. The detection only matches
+            // count() / count(*) — other count() forms map to different
+            // GroupByFunction subclasses and stay on the slow path.
+            int fpMode = FAST_PATH_NONE;
+            int fpColumnIndex = -1;
+            int fpCountByteOffset = 0;
+            if (ownerKeyFunctions.size() == 0
+                    && listColumnFilter.size() == 1
+                    && keyTypes.getColumnCount() == 1
+                    && ColumnType.sizeOf(keyTypes.getColumnType(0)) > 0) {
+                final int keyType = keyTypes.getColumnType(0);
+                final int aggCount = ownerGroupByFunctions.size();
+                if (aggCount == 0) {
+                    fpMode = FAST_PATH_DISTINCT;
+                } else if (aggCount == 1 && ownerGroupByFunctions.getQuick(0) instanceof CountLongConstGroupByFunction) {
+                    fpMode = FAST_PATH_COUNT;
+                    // count(*) value lives at byte offset = key size within
+                    // each entry, since the key column comes first and there
+                    // are no other value columns.
+                    fpCountByteOffset = ColumnType.sizeOf(keyType);
+                }
+                if (fpMode != FAST_PATH_NONE) {
+                    // ListColumnFilter encodes 1-based column index with sign bit for sort order.
+                    fpColumnIndex = Math.abs(listColumnFilter.getQuick(0)) - 1;
+                }
+            }
+            this.fastPathMode = fpMode;
+            this.fastPathColumnIndex = fpColumnIndex;
+            this.fastPathCountByteOffset = fpCountByteOffset;
 
             this.filterCtx = new AsyncFilterContext(
                     configuration,
@@ -249,6 +304,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public ObjList<Map> getDestShards() {
         return shardingCtx.getDestShards();
+    }
+
+    public int getFastPathColumnIndex() {
+        return fastPathColumnIndex;
+    }
+
+    public int getFastPathCountByteOffset() {
+        return fastPathCountByteOffset;
+    }
+
+    public int getFastPathMode() {
+        return fastPathMode;
     }
 
     public AsyncFilterContext getFilterContext() {

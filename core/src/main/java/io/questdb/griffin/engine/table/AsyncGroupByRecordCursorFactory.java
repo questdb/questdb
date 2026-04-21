@@ -252,8 +252,30 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
+            final int fastPathMode = atom.getFastPathMode();
+            final boolean fastPathEligible = fastPathMode != AsyncGroupByAtom.FAST_PATH_NONE && !frameMemory.hasColumnTops();
             if (fragment.isNotSharded()) {
-                aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                if (fastPathEligible) {
+                    final Map map = fragment.reopenMap();
+                    final long dataAddr = frameMemory.getPageAddress(atom.getFastPathColumnIndex());
+                    if (fastPathMode == AsyncGroupByAtom.FAST_PATH_COUNT) {
+                        map.countByFixedSizeColumn(dataAddr, frameRowCount, atom.getFastPathCountByteOffset());
+                    } else {
+                        map.distinctByFixedSizeColumn(dataAddr, frameRowCount);
+                    }
+                } else {
+                    aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                }
+            } else if (fastPathEligible) {
+                // The first shard's map provides the polymorphic dispatch — its
+                // sharded fast-path method routes each row to the right shard.
+                final Map dispatcher = fragment.getShards().getQuick(0);
+                final long dataAddr = frameMemory.getPageAddress(atom.getFastPathColumnIndex());
+                if (fastPathMode == AsyncGroupByAtom.FAST_PATH_COUNT) {
+                    dispatcher.shardedCountByFixedSizeColumn(dataAddr, frameRowCount, atom.getFastPathCountByteOffset(), fragment);
+                } else {
+                    dispatcher.shardedDistinctByFixedSizeColumn(dataAddr, frameRowCount, fragment);
+                }
             } else {
                 aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
             }
@@ -456,8 +478,32 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
+            final int fastPathMode = atom.getFastPathMode();
+            final boolean fastPathEligible = fastPathMode != AsyncGroupByAtom.FAST_PATH_NONE && !frameMemory.hasColumnTops();
             if (fragment.isNotSharded()) {
-                aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                if (fastPathEligible) {
+                    final Map map = fragment.reopenMap();
+                    final long dataAddr = frameMemory.getPageAddress(atom.getFastPathColumnIndex());
+                    final long rowsAddr = rows.getAddress();
+                    final long rowCount = rows.size();
+                    if (fastPathMode == AsyncGroupByAtom.FAST_PATH_COUNT) {
+                        map.countByFixedSizeColumnFiltered(dataAddr, rowsAddr, rowCount, atom.getFastPathCountByteOffset());
+                    } else {
+                        map.distinctByFixedSizeColumnFiltered(dataAddr, rowsAddr, rowCount);
+                    }
+                } else {
+                    aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                }
+            } else if (fastPathEligible) {
+                final Map dispatcher = fragment.getShards().getQuick(0);
+                final long dataAddr = frameMemory.getPageAddress(atom.getFastPathColumnIndex());
+                final long rowsAddr = rows.getAddress();
+                final long rowCount = rows.size();
+                if (fastPathMode == AsyncGroupByAtom.FAST_PATH_COUNT) {
+                    dispatcher.shardedCountByFixedSizeColumnFiltered(dataAddr, rowsAddr, rowCount, atom.getFastPathCountByteOffset(), fragment);
+                } else {
+                    dispatcher.shardedDistinctByFixedSizeColumnFiltered(dataAddr, rowsAddr, rowCount, fragment);
+                }
             } else {
                 aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
             }

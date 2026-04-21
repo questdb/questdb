@@ -33,6 +33,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.table.GroupByMapFragment;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -208,6 +209,40 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     @Override
+    public void countByFixedSizeColumn(long dataAddr, long rowCount, int countByteOffset) {
+        for (long p = 0; p < rowCount; p++) {
+            final long k = Unsafe.getUnsafe().getLong(dataAddr + (p << 3));
+            insertOrIncrementWithHash(k, Hash.hashLong64(k), countByteOffset);
+        }
+    }
+
+    @Override
+    public void countByFixedSizeColumnFiltered(long dataAddr, long rowsAddr, long rowCount, int countByteOffset) {
+        for (long p = 0; p < rowCount; p++) {
+            final long rowId = Unsafe.getUnsafe().getLong(rowsAddr + (p << 3));
+            final long k = Unsafe.getUnsafe().getLong(dataAddr + (rowId << 3));
+            insertOrIncrementWithHash(k, Hash.hashLong64(k), countByteOffset);
+        }
+    }
+
+    @Override
+    public void distinctByFixedSizeColumn(long dataAddr, long rowCount) {
+        for (long p = 0; p < rowCount; p++) {
+            final long k = Unsafe.getUnsafe().getLong(dataAddr + (p << 3));
+            insertDistinctWithHash(k, Hash.hashLong64(k));
+        }
+    }
+
+    @Override
+    public void distinctByFixedSizeColumnFiltered(long dataAddr, long rowsAddr, long rowCount) {
+        for (long p = 0; p < rowCount; p++) {
+            final long rowId = Unsafe.getUnsafe().getLong(rowsAddr + (p << 3));
+            final long k = Unsafe.getUnsafe().getLong(dataAddr + (rowId << 3));
+            insertDistinctWithHash(k, Hash.hashLong64(k));
+        }
+    }
+
+    @Override
     public MapRecordCursor getCursor() {
         if (hasZero) {
             return cursor.init(memStart, memLimit, zeroMemStart, size + 1);
@@ -360,6 +395,48 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     @Override
+    public void shardedCountByFixedSizeColumn(long dataAddr, long rowCount, int countByteOffset, GroupByMapFragment fragment) {
+        for (long p = 0; p < rowCount; p++) {
+            final long k = Unsafe.getUnsafe().getLong(dataAddr + (p << 3));
+            final long hash = Hash.hashLong64(k);
+            final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hash);
+            shard.insertOrIncrementWithHash(k, hash, countByteOffset);
+        }
+    }
+
+    @Override
+    public void shardedCountByFixedSizeColumnFiltered(long dataAddr, long rowsAddr, long rowCount, int countByteOffset, GroupByMapFragment fragment) {
+        for (long p = 0; p < rowCount; p++) {
+            final long rowId = Unsafe.getUnsafe().getLong(rowsAddr + (p << 3));
+            final long k = Unsafe.getUnsafe().getLong(dataAddr + (rowId << 3));
+            final long hash = Hash.hashLong64(k);
+            final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hash);
+            shard.insertOrIncrementWithHash(k, hash, countByteOffset);
+        }
+    }
+
+    @Override
+    public void shardedDistinctByFixedSizeColumn(long dataAddr, long rowCount, GroupByMapFragment fragment) {
+        for (long p = 0; p < rowCount; p++) {
+            final long k = Unsafe.getUnsafe().getLong(dataAddr + (p << 3));
+            final long hash = Hash.hashLong64(k);
+            final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hash);
+            shard.insertDistinctWithHash(k, hash);
+        }
+    }
+
+    @Override
+    public void shardedDistinctByFixedSizeColumnFiltered(long dataAddr, long rowsAddr, long rowCount, GroupByMapFragment fragment) {
+        for (long p = 0; p < rowCount; p++) {
+            final long rowId = Unsafe.getUnsafe().getLong(rowsAddr + (p << 3));
+            final long k = Unsafe.getUnsafe().getLong(dataAddr + (rowId << 3));
+            final long hash = Hash.hashLong64(k);
+            final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hash);
+            shard.insertDistinctWithHash(k, hash);
+        }
+    }
+
+    @Override
     public long size() {
         return hasZero ? size + 1 : size;
     }
@@ -468,6 +545,83 @@ public class Unordered8Map implements Map, Reopenable {
 
     long entrySize() {
         return entrySize;
+    }
+
+    /**
+     * Inserts {@code k} (with precomputed {@code hash}) if not already
+     * present. Used by the no-aggregate (distinct) fast paths.
+     */
+    void insertDistinctWithHash(long k, long hash) {
+        if (k == 0) {
+            hasZero = true;
+            return;
+        }
+        long startAddress = memStart + (hash & mask) * entrySize;
+        for (; ; ) {
+            long existing = Unsafe.getUnsafe().getLong(startAddress);
+            if (existing == 0) {
+                Unsafe.getUnsafe().putLong(startAddress, k);
+                size++;
+                if (--free == 0) {
+                    try {
+                        rehash();
+                    } catch (CairoException e) {
+                        free = 1;
+                        throw e;
+                    }
+                }
+                return;
+            } else if (existing == k) {
+                return;
+            }
+            startAddress += entrySize;
+            if (startAddress >= memLimit) {
+                startAddress = memStart;
+            }
+        }
+    }
+
+    /**
+     * Inserts {@code k} (with precomputed {@code hash}) or increments its
+     * count slot by 1. Used by the {@code count(*)} fast paths.
+     */
+    void insertOrIncrementWithHash(long k, long hash, int countByteOffset) {
+        if (k == 0) {
+            final long zeroCountAddr = zeroMemStart + countByteOffset;
+            if (hasZero) {
+                Unsafe.getUnsafe().putLong(zeroCountAddr, Unsafe.getUnsafe().getLong(zeroCountAddr) + 1);
+            } else {
+                hasZero = true;
+                Unsafe.getUnsafe().putLong(zeroCountAddr, 1L);
+            }
+            return;
+        }
+        long startAddress = memStart + (hash & mask) * entrySize;
+        for (; ; ) {
+            long existing = Unsafe.getUnsafe().getLong(startAddress);
+            if (existing == 0) {
+                Unsafe.getUnsafe().putLong(startAddress, k);
+                Unsafe.getUnsafe().putLong(startAddress + countByteOffset, 1L);
+                size++;
+                if (--free == 0) {
+                    try {
+                        rehash();
+                    } catch (CairoException e) {
+                        free = 1;
+                        throw e;
+                    }
+                }
+                return;
+            } else if (existing == k) {
+                final long countAddr = startAddress + countByteOffset;
+                Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1);
+                return;
+            }
+            startAddress += entrySize;
+            if (startAddress >= memLimit) {
+                startAddress = memStart;
+            }
+        }
     }
 
     boolean isZeroKey(long startAddress) {
