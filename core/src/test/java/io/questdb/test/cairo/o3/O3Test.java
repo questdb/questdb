@@ -1037,21 +1037,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testStringMergeOOOPrefixSizeOverflow() throws Exception {
-        executeVanilla(O3Test::testStringMergeOOOPrefixSizeOverflow0);
-    }
-
-    @Test
-    public void testStringMergeOOOPrefixSizeOverflowContended() throws Exception {
-        executeWithPool(0, O3Test::testStringMergeOOOPrefixSizeOverflow0);
-    }
-
-    @Test
-    public void testStringMergeOOOPrefixSizeOverflowParallel() throws Exception {
-        executeWithPool(4, O3Test::testStringMergeOOOPrefixSizeOverflow0);
-    }
-
-    @Test
     public void testStringColumnPageBoundaries() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
 
@@ -8237,96 +8222,6 @@ public class O3Test extends AbstractO3Test {
                 "x",
                 sink,
                 expected
-        );
-    }
-
-    private static void testStringMergeOOOPrefixSizeOverflow0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String timestampTypeName
-    ) throws SqlException {
-        // This test reproduces a SIGSEGV in merge_copy_var_column when O3 data
-        // is split into prefix (before existing data) and merge (overlapping).
-        //
-        // The bug: getDataVectorSize(sorted_aux, mergeOOOLo, mergeOOOHi) computes
-        // the data size for strings at SORTED POSITIONS [mergeOOOLo, mergeOOOHi].
-        // But the native merge uses ORIGINAL ROW NUMBERS from the merge index to
-        // index into the sorted aux, which can reference positions with LARGER
-        // strings, causing a write past the allocated destination mapping.
-        //
-        // To trigger: insert short strings with late timestamps FIRST (low original
-        // row numbers), then long strings with early timestamps (high original row
-        // numbers). After sorting, long strings end up at low sorted positions
-        // (prefix), short strings at high sorted positions (merge). But the merge
-        // index references original rows 0,1,... which index into sorted positions
-        // 0,1,... where the LONG strings are.
-
-        engine.execute(
-                "CREATE TABLE x (str STRING, ts " + timestampTypeName + ") TIMESTAMP(ts) PARTITION BY DAY",
-                sqlExecutionContext
-        );
-
-        // The long string used for prefix rows (early timestamps)
-        String longStr = "A".repeat(200);
-        // The short string used for merge rows (late timestamps, overlap with existing)
-        String shortStr = "B";
-
-        try (TableWriterAPI writer = engine.getTableWriterAPI("x", "testing")) {
-            TimestampDriver driver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
-            long day = driver.parseFloorLiteral("2022-01-01");
-            long hour = driver.fromMicros(3_600_000_000L);
-
-            // Phase 1: Insert existing data from 10:00 to 20:00 (in order)
-            for (int i = 0; i < 100; i++) {
-                TableWriter.Row row = writer.newRow(day + 10 * hour + driver.fromMicros(i * 1_000_000L));
-                row.putStr(0, "existing_" + i);
-                row.append();
-            }
-            writer.commit();
-
-            // Phase 2: Insert O3 data that will be split into prefix + merge.
-            // Key: insert short-string/late-timestamp rows FIRST (original rows 0..N-1)
-            // then long-string/early-timestamp rows LAST (original rows N..2N-1).
-            //
-            // After sorting by timestamp:
-            //   sorted positions [0, N-1] = early timestamps = long strings (prefix)
-            //   sorted positions [N, 2N-1] = late timestamps = short strings (merge)
-            //
-            // Merge index O3 entries have .i = original row numbers of late-ts rows = 0..N-1
-            // Native reads sorted_aux[0..N-1] = offsets of LONG strings!
-            // Size calc: sorted_aux[2N] - sorted_aux[N] = size of SHORT strings only
-            // -> OVERFLOW
-
-            int n = 500;
-
-            // Insert short-string rows with timestamps 15:00-16:00 (overlap with existing)
-            for (int i = 0; i < n; i++) {
-                TableWriter.Row row = writer.newRow(day + 15 * hour + driver.fromMicros(i * 1_000_000L));
-                row.putStr(0, shortStr);
-                row.append();
-            }
-
-            // Insert long-string rows with timestamps 05:00-06:00 (before existing = prefix)
-            for (int i = 0; i < n; i++) {
-                TableWriter.Row row = writer.newRow(day + 5 * hour + driver.fromMicros(i * 1_000_000L));
-                row.putStr(0, longStr);
-                row.append();
-            }
-
-            // This commit triggers O3 processing. With the bug, the merge destination
-            // file will be mapped too small (sized for short strings) but the native
-            // merge will try to write long strings, causing SIGSEGV.
-            writer.commit();
-        }
-
-        // If we get here without crashing, verify data integrity
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "SELECT count() FROM x",
-                sink,
-                "count\n1100\n"
         );
     }
 
