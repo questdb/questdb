@@ -107,6 +107,18 @@ public final class Hash {
     public static long hashMem64(long p, long len) {
         long h = 0;
         long i = 0;
+        // Unroll main loop by factor of 4 for better ILP
+        for (; i + 31 < len; i += 32) {
+            long v1 = Unsafe.getUnsafe().getLong(p + i);
+            long v2 = Unsafe.getUnsafe().getLong(p + i + 8);
+            long v3 = Unsafe.getUnsafe().getLong(p + i + 16);
+            long v4 = Unsafe.getUnsafe().getLong(p + i + 24);
+            h = h * M2 + v1;
+            h = h * M2 + v2;
+            h = h * M2 + v3;
+            h = h * M2 + v4;
+        }
+        // Handle remaining 8-byte chunks
         for (; i + 7 < len; i += 8) {
             h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
         }
