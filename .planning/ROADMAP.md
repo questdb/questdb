@@ -20,6 +20,7 @@ QuestDB's SAMPLE BY FILL queries now execute on the parallel GROUP BY fast path 
 - [x] **Phase 12: Replace safety-net reclassification with legacy fallback and tighten optimizer PREV gate** — Retro-fallback mechanism, Tier 1 gate tightening, FILL(PREV, PREV(...)) grammar rules, 19 regression tests, code-quality sweep (completed 2026-04-17)
 - [x] **Phase 13: Migrate FILL(PREV) snapshots from materialized values to rowId-based replay** — Replace per-type snapshot materialization in `SampleByFillRecordCursorFactory` with a single chain rowId per key, read lazily via `recordAt`. Ship prerequisite `SortedRecordCursor.chain.clear()` fix as its own commit. Borrowed from `sm_fill_prev_fast_all_types` branch (research verdict GO, candidate a) (completed 2026-04-19)
 - [x] **Phase 15: Address PR #6946 review findings and retro-document post-phase-14 fixes** — Fix 3 critical `/review-pr 6946` findings (TIMESTAMP fill constant unit conversion, unquoted numeric rejection for TIMESTAMP columns, keyed-fill circuit-breaker); absorb three selected moderate findings (getLong256 sink null sentinel, timestampIndex type check, lost output assertion in testSampleByFromToParallelSampleByRewriteWithKeys); retroactively document three post-Phase-14 commits (narrow-decimal FILL_KEY coverage, decimal128/256 sink fix + -ea assert, SampleByFillRecordCursorFactory clean-up) (completed 2026-04-21)
+- [ ] **Phase 16: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys** — Close latent cartesian-drop bug in `SqlCodeGenerator.generateFill` classifier where non-aggregate FUNCTION grouping keys (`interval(lo, hi)`, `concat(a, b)`, `cast(x AS STRING)`) slip into the aggregate arm and are dispatched as FILL_PREV_SELF instead of FILL_KEY. Surfaced during Phase 15 defensive-assertion experiment; single-key `testFillPrevInterval` hides it.
 
 ## Phase Details
 
@@ -230,7 +231,7 @@ Plans:
 
 ## Progress
 
-**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15.
+**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -249,6 +250,7 @@ Plans:
 | 13. Migrate FILL(PREV) snapshots to rowId-based replay | 6/6 | Complete    | 2026-04-20 |
 | 14. Fix issues from moderate list for M5/M6 mention in PR | 4/4 | Complete | 2026-04-20 |
 | 15. Address PR #6946 review findings and retro-document post-phase-14 fixes | 4/4 | Complete   | 2026-04-21 |
+| 16. Fix multi-key FILL(PREV) with inline FUNCTION grouping keys | 0/0 | Not planned | |
 
 ### Phase 14: Fix issues from moderate list, for m5 and m6 just mention in the existing PR description under the right section. Borrow ideas for tests from minor findings.
 
@@ -293,3 +295,32 @@ Plans:
 - M-6: Missing test for `CairoException.critical("sample by fill: data row timestamp ... precedes next bucket")` at SampleByFillRecordCursorFactory.java:483-488 — defense-in-depth guard has no pinning test. Requires crafting a bucket-grid-drift repro (sub-day TZ + FROM/offset misalignment or multi-worker non-determinism); larger scope than a single regression test.
 - M-6b: No multi-worker parallel test — all existing test plans show `workers: 1`. Requires harness changes (set `CAIRO_SQL_SHARED_WORKER_COUNT` >1 under a dedicated suite); larger scope than a surgical fix.
 - Minor: dead `isKeyColumn` method at SqlCodeGenerator.java:1212-1221 (+2 stale comment references), non-ASCII em-dashes in comments, PR title narrowness, `.planning/` directory pollution in PR diff. Housekeeping; fold in at merge time via `/gsd-pr-branch`.
+
+### Phase 16: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys
+
+**Goal:** Close the latent correctness gap surfaced during Phase 15's defensive-assertion experiment: multi-key `SAMPLE BY ... FILL(PREV)` silently drops cartesian fill rows when the GROUP BY key is an inline non-aggregate FUNCTION (e.g., `interval(lo, hi) k`, `concat(a, b) k`, `cast(x AS STRING) k`). The classifier loop in `SqlCodeGenerator.generateFill` (~line 3406-3435) walks `bottomUpCols` and recognizes only three AST shapes as non-aggregate: LITERAL keys and `timestamp_floor` FUNCTION, treating everything else as aggregate. Non-aggregate FUNCTION grouping keys slip into the aggregate arm, `factoryColToUserFillIdx` maps them to FILL_PREV_SELF instead of FILL_KEY, and the keyed cartesian emission path drops the inline-function key from the effective key set. Single-key fixture `SampleByFillTest.testFillPrevInterval` hides the bug because FILL_PREV_SELF on the key reads the same value FILL_KEY would. Empirical probe (2 distinct interval keys, 3 buckets) produces 3 rows instead of the expected 6. Fix + regression coverage + land the defensive assertion as a final hardening touch.
+
+**Requirements**: Correctness bug fix. No new requirement IDs — strengthens COR-01..04, KEY-01..05, XPREV-01, FILL-02.
+
+**Depends on:** Phase 15
+
+**Success Criteria** (what must be TRUE):
+  1. `SELECT ts, interval(lo, hi) k, first(v) FROM t SAMPLE BY 1h FILL(PREV)` with two distinct interval keys at different buckets produces the full cartesian output (all keys x all buckets, matching legacy cursor-path semantics), not the current 3-row non-cartesian passthrough.
+  2. Same correctness holds for `concat(a, b)` and `cast(x AS STRING)` used as inline grouping keys.
+  3. Regression test(s) in `SampleByFillTest` pin the multi-key cartesian contract for inline-function grouping keys — at least one `interval`, one `concat`, one `cast` variant.
+  4. `SampleByFillTest.testFillPrevInterval` (single-key fixture) continues to pass unchanged.
+  5. A defensive assertion in `SqlCodeGenerator.generateFill` (drafted during Phase 15, reverted because it fired on `testFillPrevInterval` pre-fix) lands without firing, locking the canonicalization invariant for future upstream drift.
+  6. All existing `SampleByFillTest` / `SampleByTest` / `SampleByNanoTimestampTest` / `SqlOptimiserTest` / `ExplainPlanTest` tests still pass.
+
+**Fix options (to be decided at /gsd-discuss-phase 16):**
+- **Option 1 — Classifier fix (local to `SqlCodeGenerator.generateFill`):** widen the third arm to detect non-aggregate FUNCTION nodes whose alias resolves to a factory key column, treat as FILL_KEY. Verify cursor-side wiring (`keyColIndices`) includes the function-key factory index so `outputColToKeyPos[col] >= 0` and `FillRecord` dispatches FILL_KEY through `keysMapRecord`.
+- **Option 2 — Upstream canonicalization in `SqlOptimiser.rewriteSampleBy` (or column propagation):** lift inline-function grouping expressions into a virtual column projection so `bottomUpCols` only ever sees LITERAL references. Broader scope but removes the need for generateFill-side detection.
+
+Both options should also re-check FILL(NULL) and FILL(constant) equivalents on the same classifier path.
+
+**Source:** `.planning/todos/pending/2026-04-21-fix-multi-key-fill-prev-with-inline-function-grouping-keys.md` (captured during Phase 15 defensive-assertion experiment).
+
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 16 to break down)

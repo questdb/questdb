@@ -2,6 +2,8 @@
 created: 2026-04-21T15:33:00.103Z
 title: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys
 area: sql
+promoted_to: Phase 16
+promoted_at: 2026-04-21
 files:
   - core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java:3406-3435
   - core/src/main/java/io/questdb/griffin/SqlOptimiser.java (rewriteSampleBy — upstream canonicalization option)
