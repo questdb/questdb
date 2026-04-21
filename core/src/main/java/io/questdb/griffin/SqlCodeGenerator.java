@@ -122,6 +122,7 @@ import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
 import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
@@ -8126,6 +8127,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
                 assert m != null;
+                final ColumnFunction cf = ColumnFunction.unwrap(function);
+                if (cf != null) {
+                    final int baseColIdx = cf.getColumnIndex();
+                    if (baseColIdx >= 0) {
+                        m.setParquetEncodingConfig(
+                                priorityMetadata.getColumnMetadata(baseColIdx).getParquetEncodingConfig()
+                        );
+                    }
+                }
                 virtualMetadata.add(m);
                 priorityMetadata.add(m);
             }

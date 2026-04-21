@@ -62,7 +62,8 @@ impl<T: Copy + SimdEncodable> SimdMaxMin<T> {
     pub fn update(&mut self, x: T) {
         if x.ord(&self.max) == cmp::Ordering::Greater {
             self.max = x;
-        } else if x.ord(&self.min) == cmp::Ordering::Less {
+        }
+        if x.ord(&self.min) == cmp::Ordering::Less {
             self.min = x;
         }
     }
@@ -957,5 +958,57 @@ mod tests {
 
         mm.update_unsigned(i32::MIN); // 0x80000000 = 2147483648u32
         assert_eq!(mm.min, Some(0)); // 0 is still the smallest unsigned
+    }
+
+    /// Regression test for a bug where `SimdMaxMin::update` used an `else if`
+    /// that skipped the `min` branch whenever the `max` branch fired. On
+    /// strictly ascending input every value takes the max branch, leaving
+    /// `min` at its initial `T::max()` sentinel.
+    #[test]
+    fn test_simd_max_min_update_ascending_i32() {
+        let mut s: super::SimdMaxMin<i32> = super::SimdMaxMin::new();
+        for v in [1, 2, 3, 4, 5] {
+            s.update(v);
+        }
+        assert_eq!(s.min, 1);
+        assert_eq!(s.max, 5);
+    }
+
+    #[test]
+    fn test_simd_max_min_update_descending_i32() {
+        let mut s: super::SimdMaxMin<i32> = super::SimdMaxMin::new();
+        for v in [5, 4, 3, 2, 1] {
+            s.update(v);
+        }
+        assert_eq!(s.min, 1);
+        assert_eq!(s.max, 5);
+    }
+
+    #[test]
+    fn test_simd_max_min_update_mixed_i32() {
+        let mut s: super::SimdMaxMin<i32> = super::SimdMaxMin::new();
+        for v in [3, 1, 4, 1, 5, 9, 2, 6] {
+            s.update(v);
+        }
+        assert_eq!(s.min, 1);
+        assert_eq!(s.max, 9);
+    }
+
+    #[test]
+    fn test_simd_max_min_update_single_value_i32() {
+        let mut s: super::SimdMaxMin<i32> = super::SimdMaxMin::new();
+        s.update(42);
+        assert_eq!(s.min, 42);
+        assert_eq!(s.max, 42);
+    }
+
+    #[test]
+    fn test_simd_max_min_update_ascending_f64() {
+        let mut s: super::SimdMaxMin<f64> = super::SimdMaxMin::new();
+        for v in [1.0_f64, 2.0, 3.0] {
+            s.update(v);
+        }
+        assert_eq!(s.min, 1.0);
+        assert_eq!(s.max, 3.0);
     }
 }

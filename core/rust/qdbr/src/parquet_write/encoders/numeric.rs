@@ -354,10 +354,6 @@ pub(crate) fn build_statistics<P: NativeType>(
     serialize_statistics(statistics)
 }
 
-// =============================================================================
-// SIMD-optimized functions for common types
-// =============================================================================
-
 use crate::parquet_write::simd::{
     encode_f32_def_levels, encode_f64_def_levels, encode_i32_def_levels, encode_i64_def_levels,
     DefLevelResult,

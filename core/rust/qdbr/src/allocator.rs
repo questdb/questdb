@@ -239,7 +239,7 @@ impl QdbAllocator {
         let rss_mem_limit = self.rss_mem_limit().load(RSS_ORDERING);
         if rss_mem_limit > 0 {
             let rss_mem_used = self.rss_mem_used().load(RSS_ORDERING);
-            let new_rss_mem_used = rss_mem_used + requested_size;
+            let new_rss_mem_used = rss_mem_used.saturating_add(requested_size);
             if new_rss_mem_used > rss_mem_limit {
                 ALLOC_ERROR.with(|error| {
                     *error.borrow_mut() = Some(AllocFailure::MemoryLimitExceeded {

@@ -190,10 +190,6 @@ pub fn encode_boolean(
     )
 }
 
-// ---------------------------------------------------------------------------
-// Multi-partition single-pass page encoders
-// ---------------------------------------------------------------------------
-
 fn simd_segments_to_page<T: SimdEncodable>(
     columns: &[Column],
     first_partition_start: usize,
@@ -580,10 +576,6 @@ where
     )
     .map(Page::Data)
 }
-
-// ---------------------------------------------------------------------------
-// Boolean (special: bitpacked)
-// ---------------------------------------------------------------------------
 
 fn boolean_segments_to_page(
     columns: &[Column],

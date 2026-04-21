@@ -930,20 +930,39 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[cfg(test)]
 mod tests {
-    use super::questdb_encoding_id_to_parquet_encoding;
+    use super::{
+        questdb_encoding_id_to_parquet_encoding, PARQUET_ENCODING_BYTE_STREAM_SPLIT,
+        PARQUET_ENCODING_DELTA_BINARY_PACKED, PARQUET_ENCODING_DELTA_LENGTH_BYTE_ARRAY,
+        PARQUET_ENCODING_PLAIN, PARQUET_ENCODING_RLE_DICTIONARY,
+        QUESTDB_ENCODING_BYTE_STREAM_SPLIT, QUESTDB_ENCODING_DELTA_BINARY_PACKED,
+        QUESTDB_ENCODING_DELTA_LENGTH_BYTE_ARRAY, QUESTDB_ENCODING_PLAIN,
+        QUESTDB_ENCODING_RLE_DICTIONARY,
+    };
     use crate::parquet::error::ParquetErrorReason;
 
     #[test]
     fn encoding_id_to_parquet_encoding_maps_known_ids() {
-        // Each QuestDB encoding id maps to a specific parquet2 encoding byte.
-        // The bytes follow parquet's thrift Encoding enum: PLAIN=0,
-        // RLE_DICTIONARY=8, DELTA_LENGTH_BYTE_ARRAY=6, DELTA_BINARY_PACKED=5,
-        // BYTE_STREAM_SPLIT=9.
-        assert_eq!(questdb_encoding_id_to_parquet_encoding(1).unwrap(), 0);
-        assert_eq!(questdb_encoding_id_to_parquet_encoding(2).unwrap(), 8);
-        assert_eq!(questdb_encoding_id_to_parquet_encoding(3).unwrap(), 6);
-        assert_eq!(questdb_encoding_id_to_parquet_encoding(4).unwrap(), 5);
-        assert_eq!(questdb_encoding_id_to_parquet_encoding(5).unwrap(), 9);
+        assert_eq!(
+            questdb_encoding_id_to_parquet_encoding(QUESTDB_ENCODING_PLAIN).unwrap(),
+            PARQUET_ENCODING_PLAIN,
+        );
+        assert_eq!(
+            questdb_encoding_id_to_parquet_encoding(QUESTDB_ENCODING_RLE_DICTIONARY).unwrap(),
+            PARQUET_ENCODING_RLE_DICTIONARY,
+        );
+        assert_eq!(
+            questdb_encoding_id_to_parquet_encoding(QUESTDB_ENCODING_DELTA_LENGTH_BYTE_ARRAY)
+                .unwrap(),
+            PARQUET_ENCODING_DELTA_LENGTH_BYTE_ARRAY,
+        );
+        assert_eq!(
+            questdb_encoding_id_to_parquet_encoding(QUESTDB_ENCODING_DELTA_BINARY_PACKED).unwrap(),
+            PARQUET_ENCODING_DELTA_BINARY_PACKED,
+        );
+        assert_eq!(
+            questdb_encoding_id_to_parquet_encoding(QUESTDB_ENCODING_BYTE_STREAM_SPLIT).unwrap(),
+            PARQUET_ENCODING_BYTE_STREAM_SPLIT,
+        );
     }
 
     #[test]

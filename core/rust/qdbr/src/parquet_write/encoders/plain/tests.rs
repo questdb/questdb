@@ -11,6 +11,7 @@ use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPageHeader, Page};
 use parquet2::schema::types::{ParquetType, PrimitiveType};
+use parquet2::statistics::PrimitiveStatistics;
 use parquet2::write::Version;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
@@ -63,6 +64,34 @@ fn v2_header_with_def_levels(page: &Page) -> (i32, i32, i32, i32) {
     }
 }
 
+fn page_i32_min_max(page: &Page) -> (i32, i32) {
+    match page {
+        Page::Data(d) => {
+            let arc = d.statistics().expect("statistics present").expect("ok");
+            let stats = arc
+                .as_any()
+                .downcast_ref::<PrimitiveStatistics<i32>>()
+                .expect("PrimitiveStatistics<i32>");
+            (stats.min_value.unwrap(), stats.max_value.unwrap())
+        }
+        _ => panic!("expected data page"),
+    }
+}
+
+fn page_f32_min_max(page: &Page) -> (f32, f32) {
+    match page {
+        Page::Data(d) => {
+            let arc = d.statistics().expect("statistics present").expect("ok");
+            let stats = arc
+                .as_any()
+                .downcast_ref::<PrimitiveStatistics<f32>>()
+                .expect("PrimitiveStatistics<f32>");
+            (stats.min_value.unwrap(), stats.max_value.unwrap())
+        }
+        _ => panic!("expected data page"),
+    }
+}
+
 #[test]
 fn encode_simd_int_single_partition_round_trip() {
     let data: Vec<i32> = (0..100i32)
@@ -99,6 +128,8 @@ fn encode_simd_int_multi_partition_single_page() {
         "all-present chunks should use a single RLE run"
     );
     assert_eq!(enc, 0);
+    let (min, max) = page_i32_min_max(&pages[0]);
+    assert_eq!((min, max), (0, 99));
 }
 
 #[test]
@@ -722,10 +753,6 @@ fn varchar_to_page_unsupported_encoding_errors() {
 // alongside ENC_DELTA_LENGTH_BYTE_ARRAY for parity.
 const _: i32 = ENC_PLAIN;
 
-// ---------------------------------------------------------------------------
-// Legacy single-partition API coverage
-// ---------------------------------------------------------------------------
-
 #[test]
 fn bytes_to_page_no_reverse_round_trip() {
     let data: Vec<[u8; 16]> = (1u128..=5u128).map(|v| v.to_le_bytes()).collect();
@@ -816,10 +843,6 @@ fn boolean_to_page_no_stats() {
     assert_eq!(num_values, 2);
 }
 
-// ---------------------------------------------------------------------------
-// Multi-partition bloom filter and column-top branches
-// ---------------------------------------------------------------------------
-
 #[test]
 fn encode_simd_with_bloom_filter() {
     let data: Vec<i64> = vec![1, 2, 3, i64::MIN, 5];
@@ -868,6 +891,8 @@ fn encode_simd_multi_partition_with_column_top_and_nulls() {
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 5); // 3 top + 2 data
     assert_eq!(num_nulls, 4); // 3 column-top + 1 null sentinel
+    let (min, max) = page_i32_min_max(&pages[0]);
+    assert_eq!((min, max), (42, 42)); // the sole non-null value
 }
 
 #[test]
@@ -888,6 +913,8 @@ fn encode_simd_multi_partition_with_bloom() {
     )
     .expect("encode");
     assert_eq!(pages.len(), 1);
+    let (min, max) = page_i32_min_max(&pages[0]);
+    assert_eq!((min, max), (1, 5));
     let set = bloom.lock().expect("lock");
     assert_eq!(set.len(), 5);
 }
@@ -907,6 +934,44 @@ fn encode_simd_float_multi_partition() {
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 5);
     assert_eq!(num_nulls, 1);
+    // NaN is treated as null; stats are over the 4 non-null values.
+    let (min, max) = page_f32_min_max(&pages[0]);
+    assert_eq!((min, max), (1.0, 5.0));
+}
+
+/// Regression test for the `SimdMaxMin::update` bug: on strictly ascending
+/// input through the multi-partition Plain path (`simd_multi_view_page`) every
+/// value took the `max` branch, skipping the `else if` that updated `min`.
+/// The emitted page statistics had `min = i32::MAX` and `max = 99`.
+#[test]
+fn encode_simd_int_multi_partition_ascending_stats() {
+    let parts: Vec<Vec<i32>> = (0..4)
+        .map(|p| ((p * 25)..(p * 25 + 25)).collect())
+        .collect();
+    let columns: Vec<Column> = parts
+        .iter()
+        .map(|d| make_column_with_top("col", ColumnTypeTag::Int, d, 0, 0))
+        .collect();
+    let pt = primitive_type_for(ColumnTypeTag::Int);
+    let pages = encode_simd::<i32>(&columns, 0, 25, &pt, write_options(), None).expect("encode");
+    assert_eq!(pages.len(), 1);
+    let (min, max) = page_i32_min_max(&pages[0]);
+    assert_eq!((min, max), (0, 99));
+}
+
+/// Same regression test for the f32 branch of the multi-partition Plain path.
+#[test]
+fn encode_simd_float_multi_partition_ascending_stats() {
+    let data0: Vec<f32> = vec![1.0, 2.0, 3.0];
+    let data1: Vec<f32> = vec![4.0, 5.0];
+    let col0 = make_column_with_top("col", ColumnTypeTag::Float, &data0, 0, 0);
+    let col1 = make_column_with_top("col", ColumnTypeTag::Float, &data1, 0, 0);
+    let pt = primitive_type_for(ColumnTypeTag::Float);
+    let pages = encode_simd::<f32>(&[col0, col1], 0, data1.len(), &pt, write_options(), None)
+        .expect("encode");
+    assert_eq!(pages.len(), 1);
+    let (min, max) = page_f32_min_max(&pages[0]);
+    assert_eq!((min, max), (1.0, 5.0));
 }
 
 #[test]
@@ -1077,10 +1142,6 @@ fn encode_decimal_no_stats() {
     let pages = encode_decimal::<Decimal64>(&[col], 0, data.len(), &pt, opts, None).expect("ok");
     assert_eq!(pages.len(), 1);
 }
-
-// ---------------------------------------------------------------------------
-// Multi-partition varlen bloom and column-top branches
-// ---------------------------------------------------------------------------
 
 #[test]
 fn encode_string_with_column_top_and_bloom() {
@@ -1425,10 +1486,6 @@ fn encode_varchar_no_stats() {
     assert_eq!(pages.len(), 1);
 }
 
-// ---------------------------------------------------------------------------
-// Legacy varlen single-partition plain encoding + bloom
-// ---------------------------------------------------------------------------
-
 #[test]
 fn string_to_page_plain_round_trip() {
     let strings = ["hello", "world"];
@@ -1590,10 +1647,6 @@ fn varchar_to_page_delta_with_bloom() {
     assert_eq!(bloom.len(), 2);
 }
 
-// ---------------------------------------------------------------------------
-// Multi-partition fixed-len with bloom and column-top
-// ---------------------------------------------------------------------------
-
 #[test]
 fn encode_fixed_len_bytes_with_column_top_and_bloom() {
     let data: Vec<[u8; 16]> = (1u128..=3u128).map(|v| v.to_le_bytes()).collect();
@@ -1649,10 +1702,6 @@ fn encode_fixed_len_bytes_no_stats() {
         encode_fixed_len_bytes::<16>(&[col], 0, data.len(), &pt, opts, false, None).expect("ok");
     assert_eq!(pages.len(), 1);
 }
-
-// ---------------------------------------------------------------------------
-// Boolean multi-partition
-// ---------------------------------------------------------------------------
 
 #[test]
 fn encode_boolean_with_column_top() {
