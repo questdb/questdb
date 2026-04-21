@@ -196,7 +196,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
         // A SQL error during compile should come back as QUERY_ERROR, not
         // EXEC_DONE. Verifies the error path still works after the DDL split.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain ignored = startWithEnvVariables()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();

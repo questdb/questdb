@@ -172,6 +172,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         if (e instanceof io.questdb.griffin.SqlException) {
             return QwpConstants.STATUS_PARSE_ERROR;
         }
+        // QwpParseException signals a client-side protocol error (truncated frame,
+        // unknown bind type code, out-of-range scale/precision, etc). It originates
+        // entirely from client input so it belongs in the same bucket as SqlException
+        // rather than STATUS_INTERNAL_ERROR.
+        if (e instanceof QwpParseException) {
+            return QwpConstants.STATUS_PARSE_ERROR;
+        }
         if (e instanceof io.questdb.cairo.CairoException ce) {
             if (ce.isAuthorizationError()) {
                 return QwpConstants.STATUS_SECURITY_ERROR;

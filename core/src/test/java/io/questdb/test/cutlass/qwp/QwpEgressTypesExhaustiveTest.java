@@ -1064,13 +1064,6 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
         });
     }
 
-    // --- helpers ---
-
-    /**
-     * Common harness: create + insert, run a SELECT, collect per-row values via the supplied
-     * {@code rowExtractor}, then assert via {@code asserter}. Verifies the wire-type code
-     * surfaces as expected and the row count matches.
-     */
     /**
      * Rewrites {@code CREATE TABLE t(<cols>)} into a WAL table by appending a
      * trailing {@code part_ts TIMESTAMP} column and designating it. Every call
@@ -1120,6 +1113,11 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
         return sb.toString();
     }
 
+    /**
+     * Common harness: create + insert, run a SELECT, collect per-row values via the supplied
+     * {@code rowExtractor}, then assert via {@code asserter}. Verifies the wire-type code
+     * surfaces as expected and the row count matches.
+     */
     private void runRoundTrip(
             String createSql,
             String insertSql,
@@ -1185,7 +1183,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                 if (!segment.isEmpty()) {
                     int sp = firstWhitespace(segment);
                     String name = sp < 0 ? segment : segment.substring(0, sp);
-                    if (sb.length() > 0) sb.append(", ");
+                    if (!sb.isEmpty()) sb.append(", ");
                     sb.append(name);
                 }
                 start = i + 1;

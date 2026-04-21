@@ -151,7 +151,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows, Numbers.LONG_NULL);
+                        scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows);
                     }
                     break;
                 }

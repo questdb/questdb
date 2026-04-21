@@ -337,7 +337,7 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // handshake validation path but there's no dedicated egress test for
         // this case before now.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain ignored = startWithEnvVariables()) {
                 byte[] keyBytes = new byte[16];
                 for (int i = 0; i < 16; i++) {
                     keyBytes[i] = (byte) (i * 31);

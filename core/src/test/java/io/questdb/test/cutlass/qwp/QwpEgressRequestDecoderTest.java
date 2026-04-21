@@ -194,6 +194,28 @@ public class QwpEgressRequestDecoderTest {
     }
 
     /**
+     * Regression: DECIMAL128 scale byte must be validated against Decimals.MAX_SCALE.
+     * Prior to the fix the decoder forwarded the raw byte (0..255) into
+     * {@code ColumnType.getDecimalType}, which guards the range with {@code assert} only.
+     */
+    @Test
+    public void testDecodeDecimal128ScaleOutOfRange() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int totalLen = writeBindScaffold(buf, 1);
+            long p = buf + totalLen;
+            p = writeNullBind(p, QwpConstants.TYPE_DECIMAL128);
+            Unsafe.getUnsafe().putByte(p++, (byte) 200); // scale -- outside 0..76
+            try {
+                decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                Assert.fail("expected QwpParseException for DECIMAL128 scale=200");
+            } catch (QwpParseException expected) {
+                Assert.assertTrue("error must mention scale: " + expected.getFlyweightMessage(),
+                        expected.getFlyweightMessage().toString().contains("scale"));
+            }
+        });
+    }
+
+    /**
      * Regression for DECIMAL256 NULL bind: all four legs passing LONG_NULL produced a
      * different 256-bit value that {@link Decimal256#isNull()} does not recognise.
      */
@@ -213,6 +235,27 @@ public class QwpEgressRequestDecoderTest {
         });
     }
 
+    /**
+     * Regression: DECIMAL256 scale byte must be validated against Decimals.MAX_SCALE.
+     * See {@link #testDecodeDecimal128ScaleOutOfRange} for the underlying rationale.
+     */
+    @Test
+    public void testDecodeDecimal256ScaleOutOfRange() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int totalLen = writeBindScaffold(buf, 1);
+            long p = buf + totalLen;
+            p = writeNullBind(p, QwpConstants.TYPE_DECIMAL256);
+            Unsafe.getUnsafe().putByte(p++, (byte) 200); // scale -- outside 0..76
+            try {
+                decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                Assert.fail("expected QwpParseException for DECIMAL256 scale=200");
+            } catch (QwpParseException expected) {
+                Assert.assertTrue("error must mention scale: " + expected.getFlyweightMessage(),
+                        expected.getFlyweightMessage().toString().contains("scale"));
+            }
+        });
+    }
+
     @Test
     public void testDecodeDecimal64NullBind() throws Exception {
         runWithBuf(64, (buf, bindVars, decoder) -> {
@@ -223,6 +266,27 @@ public class QwpEgressRequestDecoderTest {
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
 
             Assert.assertEquals(Numbers.LONG_NULL, bindVars.getFunction(0).getDecimal64(null));
+        });
+    }
+
+    /**
+     * Regression: DECIMAL64 scale byte must be validated against Decimals.MAX_SCALE.
+     * See {@link #testDecodeDecimal128ScaleOutOfRange} for the underlying rationale.
+     */
+    @Test
+    public void testDecodeDecimal64ScaleOutOfRange() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int totalLen = writeBindScaffold(buf, 1);
+            long p = buf + totalLen;
+            p = writeNullBind(p, QwpConstants.TYPE_DECIMAL64);
+            Unsafe.getUnsafe().putByte(p++, (byte) 200); // scale -- outside 0..76
+            try {
+                decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                Assert.fail("expected QwpParseException for DECIMAL64 scale=200");
+            } catch (QwpParseException expected) {
+                Assert.assertTrue("error must mention scale: " + expected.getFlyweightMessage(),
+                        expected.getFlyweightMessage().toString().contains("scale"));
+            }
         });
     }
 
@@ -489,6 +553,7 @@ public class QwpEgressRequestDecoderTest {
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
             Assert.assertEquals(8L, decoder.requestId);
             io.questdb.std.str.Utf8Sequence got = bindVars.getFunction(0).getVarcharA(null);
+            Assert.assertNotNull("non-null VARCHAR bind must not decode as null", got);
             Assert.assertEquals(bindStr.length, got.size());
             for (int i = 0; i < bindStr.length; i++) {
                 Assert.assertEquals("byte " + i, bindStr[i], got.byteAt(i));

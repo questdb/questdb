@@ -301,7 +301,7 @@ final class QwpColumnScratch implements QuietCloseable {
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
             double v = Unsafe.getUnsafe().getDouble(srcAddr + i * 8L);
-            if (v != v) {
+            if (Double.isNaN(v)) {
                 setNullBit(startRow + i);
                 nullCount++;
             } else {
@@ -342,7 +342,7 @@ final class QwpColumnScratch implements QuietCloseable {
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
             float v = Unsafe.getUnsafe().getFloat(srcAddr + i * 4L);
-            if (v != v) {
+            if (Float.isNaN(v)) {
                 setNullBit(startRow + i);
                 nullCount++;
             } else {
@@ -390,7 +390,7 @@ final class QwpColumnScratch implements QuietCloseable {
      * as the null sentinel. Dense non-null values land in {@code valuesAddr};
      * null positions are marked in the null bitmap.
      */
-    void appendColumnLong8WithSentinel(long srcAddr, int n, long sentinel) {
+    void appendColumnLong8WithSentinel(long srcAddr, int n) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 8);
@@ -398,7 +398,7 @@ final class QwpColumnScratch implements QuietCloseable {
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
             long v = Unsafe.getUnsafe().getLong(srcAddr + i * 8L);
-            if (v == sentinel) {
+            if (v == Numbers.LONG_NULL) {
                 setNullBit(startRow + i);
                 nullCount++;
             } else {

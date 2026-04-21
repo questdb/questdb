@@ -690,10 +690,6 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         }
     }
 
-    // ========================================================================
-    // Generators
-    // ========================================================================
-
     /**
      * Walks a streamed QWP result, verifying every observed cell matches the
      * expected (row, col) hash and null flag per the query plan.
@@ -1155,8 +1151,6 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
         }
     }
 
-    // ---- Existence-only generators --------------------------------------
-
     private static final class LongGenerator implements ColumnGenerator {
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
@@ -1290,8 +1284,6 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
             return "TIMESTAMP";
         }
     }
-
-    // ---- shared helpers -------------------------------------------------
 
     private static final class TimestampNanosGenerator implements ColumnGenerator {
         @Override

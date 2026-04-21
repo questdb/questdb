@@ -99,28 +99,28 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                     client.execute(
                             "SELECT b, bt, sh, ch, i, l, f, d, dt, ts, s, v, sy FROM allp",
                             new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            Assert.assertEquals(13, batch.getColumnCount());
-                            Assert.assertEquals(2, batch.getRowCount());
-                            for (int r = 0; r < 2; r++) {
-                                Object[] cells = new Object[13];
-                                for (int c = 0; c < 13; c++) {
-                                    cells[c] = batch.isNull(c, r) ? null : batch.getValue(c, r);
+                                @Override
+                                public void onBatch(QwpColumnBatch batch) {
+                                    Assert.assertEquals(13, batch.getColumnCount());
+                                    Assert.assertEquals(2, batch.getRowCount());
+                                    for (int r = 0; r < 2; r++) {
+                                        Object[] cells = new Object[13];
+                                        for (int c = 0; c < 13; c++) {
+                                            cells[c] = batch.isNull(c, r) ? null : batch.getValue(c, r);
+                                        }
+                                        row[r] = cells;
+                                    }
                                 }
-                                row[r] = cells;
-                            }
-                        }
 
-                        @Override
-                        public void onEnd(long totalRows) {
-                        }
+                                @Override
+                                public void onEnd(long totalRows) {
+                                }
 
-                        @Override
-                        public void onError(byte status, String message) {
-                            Assert.fail("egress query error: " + message);
-                        }
-                    });
+                                @Override
+                                public void onError(byte status, String message) {
+                                    Assert.fail("egress query error: " + message);
+                                }
+                            });
                 }
 
                 // Row 0 assertions
@@ -1365,6 +1365,87 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     /**
+     * Regression: the server's per-HttpServer {@code selectCache} may hand back
+     * a factory whose {@code TableReader} is stale if the table was dropped and
+     * recreated between compile time and cursor open. That surfaces as
+     * {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} on
+     * {@code getCursor} / {@code getPageFrameCursor}. The server must catch it,
+     * discard the stale cached factory, recompile, and retry the query; the
+     * client should see the result as if the cache miss were the normal path.
+     */
+    @Test
+    public void testStaleCachedFactoryRetriesCompile() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO t VALUES (1, 0::TIMESTAMP)");
+                serverMain.awaitTable("t");
+
+                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                    client.connect();
+                    // First query warms the per-server select cache.
+                    long[] firstRows = {0};
+                    client.execute("SELECT id FROM t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            firstRows[0] += batch.getRowCount();
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("first query failed: " + message);
+                        }
+                    });
+                    Assert.assertEquals(1L, firstRows[0]);
+                }
+
+                // Drop and recreate the table with an identical schema. The cached
+                // factory's TableReader now points at a dead tableId.
+                serverMain.execute("DROP TABLE t");
+                serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO t VALUES (42, 0::TIMESTAMP)");
+                serverMain.awaitTable("t");
+
+                // Second query (new connection, but the server-wide select cache
+                // still carries the stale factory). Server must detect + retry.
+                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                    client.connect();
+                    long[] secondRows = {0};
+                    long[] secondSum = {0};
+                    client.execute("SELECT id FROM t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0, n = batch.getRowCount(); r < n; r++) {
+                                secondSum[0] += batch.getLong(0, r);
+                                secondRows[0]++;
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("stale-factory retry path failed to recover: " + message);
+                        }
+                    });
+                    Assert.assertEquals("retry must still produce the single row from the new table",
+                            1L, secondRows[0]);
+                    Assert.assertEquals("retry must read from the NEW table (id=42 from the re-inserted row)",
+                            42L, secondSum[0]);
+                }
+            }
+        });
+    }
+
+    /**
      * C1: spec divergence on symbol dictionaries. {@code docs/QWP_EGRESS_EXTENSION.md}
      * sec 12 says egress uses connection-scoped delta dictionaries; the Phase-1 implementation
      * sends an inline per-batch dict every time. This test pins the actual wire behavior
@@ -1613,78 +1694,6 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                     Assert.assertEquals("expected exactly one batch", 1, batches[0]);
                 } else {
                     Assert.assertTrue("expected > 1 batch, got " + batches[0], batches[0] > 1);
-                }
-            }
-        });
-    }
-
-    /**
-     * Regression: the server's per-HttpServer {@code selectCache} may hand back
-     * a factory whose {@code TableReader} is stale if the table was dropped and
-     * recreated between compile time and cursor open. That surfaces as
-     * {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} on
-     * {@code getCursor} / {@code getPageFrameCursor}. The server must catch it,
-     * discard the stale cached factory, recompile, and retry the query; the
-     * client should see the result as if the cache miss were the normal path.
-     */
-    @Test
-    public void testStaleCachedFactoryRetriesCompile() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
-                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO t VALUES (1, 0::TIMESTAMP)");
-                serverMain.awaitTable("t");
-
-                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
-                    client.connect();
-                    // First query warms the per-server select cache.
-                    long[] firstRows = {0};
-                    client.execute("SELECT id FROM t", new QwpColumnBatchHandler() {
-                        @Override public void onBatch(QwpColumnBatch batch) { firstRows[0] += batch.getRowCount(); }
-                        @Override public void onEnd(long totalRows) {}
-                        @Override public void onError(byte status, String message) {
-                            Assert.fail("first query failed: " + message);
-                        }
-                    });
-                    Assert.assertEquals(1L, firstRows[0]);
-                }
-
-                // Drop and recreate the table with an identical schema. The cached
-                // factory's TableReader now points at a dead tableId.
-                serverMain.execute("DROP TABLE t");
-                serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
-                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO t VALUES (42, 0::TIMESTAMP)");
-                serverMain.awaitTable("t");
-
-                // Second query (new connection, but the server-wide select cache
-                // still carries the stale factory). Server must detect + retry.
-                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
-                    client.connect();
-                    long[] secondRows = {0};
-                    long[] secondSum = {0};
-                    client.execute("SELECT id FROM t", new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            for (int r = 0, n = batch.getRowCount(); r < n; r++) {
-                                secondSum[0] += batch.getLong(0, r);
-                                secondRows[0]++;
-                            }
-                        }
-
-                        @Override
-                        public void onEnd(long totalRows) {}
-
-                        @Override
-                        public void onError(byte status, String message) {
-                            Assert.fail("stale-factory retry path failed to recover: " + message);
-                        }
-                    });
-                    Assert.assertEquals("retry must still produce the single row from the new table",
-                            1L, secondRows[0]);
-                    Assert.assertEquals("retry must read from the NEW table (id=42 from the re-inserted row)",
-                            42L, secondSum[0]);
                 }
             }
         });

@@ -396,6 +396,7 @@ public class QwpEgressRequestDecoder {
                 if (p >= limit)
                     throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL64 scale");
                 int scale = Unsafe.getUnsafe().getByte(p++) & 0xFF;
+                validateDecimalScale(index, scale);
                 if (isNull) {
                     bindVars.setDecimal(index, 0, 0, 0, Decimals.DECIMAL64_NULL,
                             ColumnType.getDecimalType(18, scale));
@@ -412,6 +413,7 @@ public class QwpEgressRequestDecoder {
                 if (p >= limit)
                     throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL128 scale");
                 int scale = Unsafe.getUnsafe().getByte(p++) & 0xFF;
+                validateDecimalScale(index, scale);
                 int decimalType = ColumnType.getDecimalType(38, scale);
                 if (isNull) {
                     // Canonical DECIMAL128 NULL is (HI=Long.MIN_VALUE, LO=0). The setDecimal
@@ -430,6 +432,7 @@ public class QwpEgressRequestDecoder {
                 if (p >= limit)
                     throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL256 scale");
                 int scale = Unsafe.getUnsafe().getByte(p++) & 0xFF;
+                validateDecimalScale(index, scale);
                 // DECIMAL256 stores values that fit in 76 digits of precision
                 // (see Decimals.MAX_PRECISION). getDecimalType asserts on > MAX_PRECISION.
                 int decimalType = ColumnType.getDecimalType(Decimals.MAX_PRECISION, scale);
@@ -481,6 +484,17 @@ public class QwpEgressRequestDecoder {
         byte bitmap = Unsafe.getUnsafe().getByte(p);
         bindIsNull = (bitmap & 0x01) != 0;
         return p + 1;
+    }
+
+    // ColumnType.getDecimalType asserts the range but does not enforce it at runtime.
+    // Reject out-of-range scales here so a client-supplied byte never reaches the
+    // assertion, which would otherwise surface as an uncategorised AssertionError.
+    private static void validateDecimalScale(int bindIndex, int scale) throws QwpParseException {
+        if (scale > Decimals.MAX_SCALE) {
+            throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
+                    .put("bind ").put(bindIndex).put(": DECIMAL scale out of range (0..")
+                    .put(Decimals.MAX_SCALE).put("): ").put(scale);
+        }
     }
 
 }

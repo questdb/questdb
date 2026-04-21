@@ -13,7 +13,7 @@ header, type system, and column encodings unchanged. The deltas are limited to:
 
 1. [Overview](#1-overview)
 2. [Transport and Endpoint](#2-transport-and-endpoint)
-3. [Version Negotiation](#3-version-negotiation)
+3. [Version and Compression Negotiation](#3-version-and-compression-negotiation)
 4. [Message Structure](#4-message-structure)
 5. [Message Kinds](#5-message-kinds)
 6. [QUERY_REQUEST (0x10)](#6-query_request-0x10)
@@ -22,6 +22,8 @@ header, type system, and column encodings unchanged. The deltas are limited to:
 9. [QUERY_ERROR (0x13)](#9-query_error-0x13)
 10. [CANCEL (0x14)](#10-cancel-0x14)
 11. [CREDIT (0x15)](#11-credit-0x15)
+11.5. [NULL Sentinel Conventions](#115-null-sentinel-conventions-inherited-from-questdb)
+11.6. [EXEC_DONE (0x16)](#116-exec_done-0x16)
 12. [Schema and Symbol Dictionary Scope](#12-schema-and-symbol-dictionary-scope)
 13. [Cursor Lifecycle](#13-cursor-lifecycle)
 14. [Flow Control](#14-flow-control)
@@ -70,22 +72,44 @@ The new endpoint exists for two reasons:
 
 Mixed-mode clients open one connection per direction.
 
-## 3. Version Negotiation
+## 3. Version and Compression Negotiation
 
-Egress shares the QWP version namespace with ingress. The same headers apply:
+Egress shares the QWP version namespace with ingress. Version and compression
+are negotiated at the HTTP upgrade:
 
-| Header              | Required | Description                                                                          |
-|---------------------|----------|--------------------------------------------------------------------------------------|
-| `X-QWP-Max-Version` | No       | Maximum QWP version the client supports. Defaults to 1 if absent.                    |
-| `X-QWP-Client-Id`   | No       | Free-form client identifier (e.g., `java-egress/1.0.0`).                             |
+| Header                   | Direction | Required | Description                                                                       |
+|--------------------------|-----------|----------|-----------------------------------------------------------------------------------|
+| `X-QWP-Max-Version`      | C -> S    | No       | Maximum QWP version the client supports. Defaults to 1 if absent.                 |
+| `X-QWP-Client-Id`        | C -> S    | No       | Free-form client identifier (e.g., `java-egress/1.0.0`).                          |
+| `X-QWP-Accept-Encoding`  | C -> S    | No       | Comma-separated list of acceptable `RESULT_BATCH` body encodings (see below).     |
+| `X-QWP-Version`          | S -> C    | Yes      | Negotiated version = `min(clientMax, serverMax)`.                                 |
+| `X-QWP-Content-Encoding` | S -> C    | No       | Server's selected encoding from the client's accept list. Omitted means `raw`.    |
 
-The server replies with `X-QWP-Version` selecting `min(clientMax, serverMax)`.
 Egress is introduced at version 1; future protocol changes bump the version
 on both endpoints together.
 
 The connection-level contract from the ingress spec applies: every message's
 header version byte must equal the negotiated version, and the server rejects
 mismatches with a parse error and closes the WebSocket.
+
+### Batch body compression
+
+`X-QWP-Accept-Encoding` is a comma-separated list of tokens. Each token is
+`name` or `name;param=value`. First match wins. Supported names:
+
+- `raw` (or `identity`) - no compression.
+- `zstd` - whole-`RESULT_BATCH`-body zstd compression. Optional parameter
+  `level=N` is a client-side hint; the server clamps to `[1, 9]` because
+  levels 10+ drop to `<20 MB/s` compress throughput. The default level is 3.
+
+The server echoes its choice in `X-QWP-Content-Encoding` (e.g.
+`zstd;level=3`). When `zstd` is negotiated, individual `RESULT_BATCH` frames
+set `FLAG_ZSTD` (§7) on a per-batch basis; a batch whose compressed form is
+larger than its raw form ships raw. The region before the payload (msg_kind +
+request_id + batch_seq) is never compressed so the client dispatcher can
+route frames without paying the decompress cost.
+
+Absent `X-QWP-Accept-Encoding` the server defaults to `raw`.
 
 ## 4. Message Structure
 
@@ -136,8 +160,9 @@ Endpoint disambiguation is sufficient because connections are direction-pure.
 | `0x13` | QUERY_ERROR       | S -> C    | Mid-stream error                      |
 | `0x14` | CANCEL            | C -> S    | Stop a running query                  |
 | `0x15` | CREDIT            | C -> S    | Extend the byte window                |
+| `0x16` | EXEC_DONE         | S -> C    | Non-SELECT statement acknowledgement  |
 
-`0x16` through `0x1F` are reserved for future egress kinds (prepared
+`0x17` through `0x1F` are reserved for future egress kinds (prepared
 statements, transactions, server-driven keepalives). `0x20+` is reserved for
 future protocol extensions.
 
@@ -212,8 +237,25 @@ Server to client. Carries one table block of result rows.
 ```
 
 The header's `table_count` field is `1`. The header's `flags` byte uses the
-same bit definitions as ingress (`FLAG_GORILLA = 0x04`,
-`FLAG_DELTA_SYMBOL_DICT = 0x08`).
+same bit definitions as ingress plus an egress-specific compression bit:
+
+| Bit    | Name                    | Meaning                                                                                      |
+|--------|-------------------------|----------------------------------------------------------------------------------------------|
+| `0x04` | `FLAG_GORILLA`          | The batch may use per-column Gorilla delta-of-delta encoding on TIMESTAMP / TIMESTAMP_NANOS / DATE columns. |
+| `0x08` | `FLAG_DELTA_SYMBOL_DICT`| The batch carries a connection-scoped delta symbol-dictionary section (§12).                 |
+| `0x10` | `FLAG_ZSTD`             | The payload region after the `msg_kind` / `request_id` / `batch_seq` prelude is zstd-compressed. |
+
+`FLAG_GORILLA` and `FLAG_DELTA_SYMBOL_DICT` are always set on `RESULT_BATCH`
+frames under Phase 1 (both features are unconditionally active). `FLAG_ZSTD`
+is set on a per-batch basis when compression has been negotiated (§3) and
+the compressed form is smaller than the raw form.
+
+When `FLAG_GORILLA` is set, every TIMESTAMP / TIMESTAMP_NANOS / DATE column
+carries a 1-byte encoding discriminator immediately before its value region:
+`0x00` = raw `int64` values; `0x01` = Gorilla bitstream. The server picks
+Gorilla when the column has at least three non-null values and the
+delta-of-delta bitstream is smaller than `nonNull * 8` bytes; unordered or
+jumpy columns fall back to raw.
 
 The schema section inside the table block follows the standard rules:
 
@@ -325,6 +367,29 @@ Servers writing egress and clients reading it MUST agree on these sentinels. The
 spec does not introduce a separate "QWP NaN" representation — a row carrying
 `NaN` in the dense values array is simultaneously marked NULL in the null bitmap.
 
+## 11.6 EXEC_DONE (0x16)
+
+Server to client. Terminates a non-SELECT `QUERY_REQUEST` (DDL, INSERT,
+UPDATE, ALTER, DROP, TRUNCATE, CREATE TABLE, CREATE MAT VIEW, and any
+parse-time-executed statement). No `RESULT_BATCH` frames are sent for these
+statements — the stream collapses to a single acknowledgement.
+
+```
++---------------------------------------------------------+
+| msg_kind:      uint8    0x16                            |
+| request_id:    int64                                     |
+| op_type:       uint8    CompiledQuery.TYPE_* discriminator |
+| rows_affected: varint   INSERT / UPDATE row count;      |
+|                         0 for statements without a row  |
+|                         count (DDL, TRUNCATE, etc.)     |
++---------------------------------------------------------+
+```
+
+`table_count` in the header is `0`. `EXEC_DONE` is terminal: the client must
+not expect any further frames for this `request_id`.
+
+If the statement fails, the server sends `QUERY_ERROR` (§9) instead.
+
 ## 12. Schema and Symbol Dictionary Scope
 
 ### Schema registry (per connection)
@@ -341,49 +406,33 @@ On disconnect, both sides reset the registry.
 
 ### Symbol dictionary (per connection)
 
-### Phase 1 — per-batch inline dictionary
-
-In Phase 1 the server uses **per-batch inline dictionary mode** (the same scheme
-as ingress §12 "Per-Table Dictionary Mode"). Each `RESULT_BATCH` carries its own
-SYMBOL dictionary inline, immediately before the per-row dict-index varints:
+Egress uses a **connection-scoped delta dictionary** (the `FLAG_DELTA_SYMBOL_DICT`
+mechanic from ingress). The server maintains a global mapping of symbol strings
+to sequential integer IDs starting at 0, shared across every query on the
+connection. Each `RESULT_BATCH` carries a delta section listing newly added
+symbols, placed between the `batch_seq` prelude and the table block:
 
 ```
-[ Null flag + bitmap (see ingress §11) ]
-dict_size: varint
-For each entry:
+delta_start: varint    First conn-id assigned in this batch
+delta_count: varint    Number of new entries (may be 0)
+For each new entry (in order):
   entry_length: varint
-  entry_data:   UTF-8 bytes
+  entry_bytes:  UTF-8 bytes
+
+Then, for every SYMBOL column in the table block's column-data section:
 For each non-null row:
-  dict_index:   varint
+  conn_id:      varint  Index into the connection-scoped dictionary
 ```
 
-The server's message header flags byte is **always `0`** for Phase 1 — neither
-`FLAG_GORILLA` nor `FLAG_DELTA_SYMBOL_DICT` is set. The client mirror does not
-maintain a connection-scoped symbol dict and does not inspect the flags byte
-for the dict bit.
+`FLAG_DELTA_SYMBOL_DICT` is always set on `RESULT_BATCH` in Phase 1. The
+client accumulates delta entries for the lifetime of the connection. On
+disconnect, both sides reset the dictionary.
 
-Trade-off: repeated queries on the same connection retransmit every distinct
-symbol string, which is bandwidth-suboptimal for BI dashboards refreshing the
-same SELECTs but keeps the wire format and both decoders simple.
-
-### Future — connection-scoped delta dictionary (Phase 2 backlog item)
-
-The `FLAG_DELTA_SYMBOL_DICT` mechanic from ingress is reserved for a future
-egress upgrade. When implemented:
-
-- The server will maintain a global mapping of symbol strings to sequential
-  integer IDs starting at 0.
-- Each `RESULT_BATCH` may carry a delta dictionary section at the start of the
-  payload (after the `msg_kind`/`request_id`/`batch_seq` header, immediately
-  before the table block) listing newly added symbols.
-- The client will accumulate the delta entries for the lifetime of the connection.
-- Symbol columns in result batches will contain varint-encoded global IDs.
-- On disconnect, both sides reset the dictionary.
-
-Per-connection scope pays off for repeated queries (BI dashboards) at the cost
-of unbounded growth on long-lived connections that surface high-cardinality
-symbols. The server will enforce the symbol-dictionary limit (§16) by failing
-queries that would push the connection's dictionary past the cap.
+Per-connection scope pays off for repeated queries (BI dashboards refreshing
+the same SELECTs) at the cost of unbounded growth on long-lived connections
+that surface high-cardinality symbols. The server enforces the
+symbol-dictionary limit (§16) by failing queries that would push the
+connection's dictionary past the cap.
 
 ## 13. Cursor Lifecycle
 

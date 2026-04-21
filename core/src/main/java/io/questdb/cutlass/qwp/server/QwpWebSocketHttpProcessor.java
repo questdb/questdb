@@ -79,6 +79,15 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     private static final String ERROR_MISSING_UPGRADE_HEADER = "Missing Upgrade header";
     private static final String ERROR_ORIGIN_HEADER_NOT_ALLOWED = "Origin header not allowed on QWP WebSocket";
     private static final String ERROR_UNSUPPORTED_WEBSOCKET_VERSION = "Unsupported WebSocket version (must be 13)";
+    // Sec-WebSocket-Key is defined by RFC 6455 as a 16-byte base64 value --
+    // exactly 24 ASCII bytes on the wire. 64 bytes leaves defensive headroom
+    // for callers that bypass {@link #isValidKey}.
+    private static final int KEY_SCRATCH_SIZE = 64;
+    // Per-thread scratch so the accept-key computation runs with zero byte[] allocs
+    // under sustained reconnect load. The String returned to the caller still
+    // allocates (28 chars) but that's the only irreducible cost without changing
+    // the writeResponse contract to consume raw bytes.
+    private static final ThreadLocal<byte[]> KEY_SCRATCH = ThreadLocal.withInitial(() -> new byte[KEY_SCRATCH_SIZE]);
     private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_CONTENT_ENCODING_PREFIX =
             "\r\nX-QWP-Content-Encoding: ".getBytes(StandardCharsets.US_ASCII);
@@ -86,21 +95,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
-    // Sec-WebSocket-Key is defined by RFC 6455 as a 16-byte base64 value --
-    // exactly 24 ASCII bytes on the wire. 64 bytes leaves defensive headroom
-    // for callers that bypass {@link #isValidKey}.
-    private static final int KEY_SCRATCH_SIZE = 64;
-    // SHA-1 output is always 20 bytes; 28 is the base64 length of a 20-byte input
-    // (ceil(20/3)*4 = 28, with no padding needed for inputs divisible by 3... but 20
-    // is not, so one '=' padding byte lands in slot 27). The exact 28 matches both.
-    private static final int SHA1_DIGEST_SIZE = 20;
     private static final int SHA1_BASE64_SIZE = 28;
-    // Per-thread scratch so the accept-key computation runs with zero byte[] allocs
-    // under sustained reconnect load. The String returned to the caller still
-    // allocates (28 chars) but that's the only irreducible cost without changing
-    // the writeResponse contract to consume raw bytes.
-    private static final ThreadLocal<byte[]> KEY_SCRATCH = ThreadLocal.withInitial(() -> new byte[KEY_SCRATCH_SIZE]);
-    private static final ThreadLocal<byte[]> HASH_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_DIGEST_SIZE]);
     private static final ThreadLocal<byte[]> BASE64_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
     private static final ThreadLocal<MessageDigest> SHA1_DIGEST = ThreadLocal.withInitial(() -> {
@@ -110,6 +105,11 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             throw new RuntimeException("SHA-1 not available", e);
         }
     });
+    // SHA-1 output is always 20 bytes; 28 is the base64 length of a 20-byte input
+    // (ceil(20/3)*4 = 28, with no padding needed for inputs divisible by 3... but 20
+    // is not, so one '=' padding byte lands in slot 27). The exact 28 matches both.
+    private static final int SHA1_DIGEST_SIZE = 20;
+    private static final ThreadLocal<byte[]> HASH_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_DIGEST_SIZE]);
     private static final byte[] WEBSOCKET_GUID_BYTES = WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII);
     private final QwpWebSocketUpgradeProcessor processor;
 

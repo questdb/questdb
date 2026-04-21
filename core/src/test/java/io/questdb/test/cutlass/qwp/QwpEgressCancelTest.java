@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -264,8 +265,6 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
         Assert.assertEquals(STATUS_SECURITY_ERROR, QwpEgressUpgradeProcessor.mapErrorStatus(ce));
     }
 
-    // -- Unit tests for mapErrorStatus ------------------------------------
-
     @Test
     public void testMapErrorStatusCancellation() {
         // Cancellation takes precedence over interruption (the cancellation
@@ -302,6 +301,15 @@ public class QwpEgressCancelTest extends AbstractBootstrapTest {
     public void testMapErrorStatusPlainException() {
         Assert.assertEquals(STATUS_INTERNAL_ERROR,
                 QwpEgressUpgradeProcessor.mapErrorStatus(new RuntimeException("boom")));
+    }
+
+    @Test
+    public void testMapErrorStatusQwpParseException() {
+        // Client-initiated protocol parse errors (bad bind type, truncated frame)
+        // must surface as STATUS_PARSE_ERROR, not STATUS_INTERNAL_ERROR.
+        QwpParseException e = QwpParseException.instance(
+                QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("truncated frame");
+        Assert.assertEquals(STATUS_PARSE_ERROR, QwpEgressUpgradeProcessor.mapErrorStatus(e));
     }
 
     @Test
