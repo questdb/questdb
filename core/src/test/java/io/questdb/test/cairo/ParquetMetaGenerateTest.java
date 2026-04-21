@@ -96,7 +96,7 @@ public class ParquetMetaGenerateTest extends AbstractCairoTest {
                 long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(parquetMetaAddr, parquetFileSize);
+                    reader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
 
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());

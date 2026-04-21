@@ -139,7 +139,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (!isStale) {
                 parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                 try {
-                    parquetMetaReader.of(parquetMetaAddr, parquetFileSize);
+                    parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
                 } catch (CairoException e) {
                     ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                     parquetMetaAddr = 0;
@@ -162,7 +162,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             .put("regenerated _pm is missing or invalid [path=").put(path).put(']');
                 }
                 parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                parquetMetaReader.of(parquetMetaAddr, parquetFileSize);
+                parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
             }
             parquetSize = parquetMetaReader.getParquetFileSize();
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
@@ -633,10 +633,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Rewrite mode: original is intact, new dir already removed by the inner catch.
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
+            // Release the reader's native handle (which borrows from the mmap) before munmap.
+            // See ParquetMetaFileReader lifecycle contract.
+            ctx.releaseResources();
             if (parquetMetaAddr != 0) {
                 ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
-            ctx.releaseResources();
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize - duplicateCount);

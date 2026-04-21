@@ -88,11 +88,13 @@ import io.questdb.std.str.Utf8s;
  * </pre>
  * <p>
  * Callers must never read the `_pm` file size from the filesystem (via
- * {@code ff.length()} or similar). Instead, map the header prefix, read
- * {@code PARQUET_META_FILE_SIZE} at offset 0, then remap to that size and
- * pass the address to {@link #of(long, long)}. The filesystem size may
- * include bytes from an in-progress, unpublished append and is not a
- * valid commit boundary — only {@code PARQUET_META_FILE_SIZE} is.
+ * {@code ff.length()} or similar). Instead, read the committed
+ * {@code PARQUET_META_FILE_SIZE} via
+ * {@link #readParquetMetaFileSize(FilesFacade, LPSZ)}, map that many
+ * bytes, then call {@link #of(long, long, long)} passing the same size
+ * as {@code parquetMetaFileSize}. The filesystem size may include bytes
+ * from an in-progress, unpublished append and is not a valid commit
+ * boundary — only {@code PARQUET_META_FILE_SIZE} is.
  */
 public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietCloseable {
 
@@ -122,6 +124,16 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int HEADER_COLUMN_COUNT_OFF = 24;
     private static final int HEADER_DESIGNATED_TS_OFF = 16;
     private static final int HEADER_FEATURE_FLAGS_OFF = 8;
+    // Stat flag bits within the column chunk stat_flags byte at COLUMN_CHUNK_STAT_FLAGS_OFF.
+    // Layout mirrors the Rust writer (see parquet_metadata::types::StatFlags):
+    //   bit 0 MIN_PRESENT, bit 1 MIN_INLINED, bit 2 MIN_EXACT,
+    //   bit 3 MAX_PRESENT, bit 4 MAX_INLINED, bit 5 MAX_EXACT.
+    // Reading the 8-byte inline stat at COLUMN_CHUNK_MIN_STAT_OFF / COLUMN_CHUNK_MAX_STAT_OFF is
+    // only meaningful when both PRESENT and INLINED are set for that side.
+    private static final int STAT_FLAG_MAX_INLINED = 1 << 4;
+    private static final int STAT_FLAG_MAX_PRESENT = 1 << 3;
+    private static final int STAT_FLAG_MIN_INLINED = 1 << 1;
+    private static final int STAT_FLAG_MIN_PRESENT = 1;
     public static final int HEADER_FIXED_SIZE = 32;
     // Header offsets (layout: parquet_meta_file_size(8) + feature_flags(8) + dts(4) + sorting(4) + col_count(4) + reserved(4))
     public static final int HEADER_PARQUET_META_FILE_SIZE_OFF = 0;
@@ -353,6 +365,19 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     }
 
     /**
+     * Returns the native reader handle, allocating it lazily on first call.
+     * The handle caches the parsed {@code _pm} header / footer / feature-flag
+     * layout so repeated JNI calls (filter pruning AND row-group decode) avoid
+     * reparsing. Freed by {@link #clear()} / {@link #close()}.
+     */
+    public long getOrCreateNativeReaderPtr() {
+        if (nativeReaderPtr == 0) {
+            nativeReaderPtr = createNativeReader(addr, fileSize);
+        }
+        return nativeReaderPtr;
+    }
+
+    /**
      * Derives the parquet file size from the _pm footer metadata.
      * parquetFileSize = PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8
      * (4B parquet footer length field + 4B PAR1 magic)
@@ -384,6 +409,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     /**
      * Returns the maximum timestamp from the specified row group's column chunk.
      * Reads the inline max_stat (i64) at offset 56 within the column chunk.
+     * <p>
+     * Assumes the column chunk has both {@code MAX_PRESENT} and {@code MAX_INLINED}
+     * bits set in its {@code stat_flags} byte. The designated-timestamp column is
+     * always written this way by the QuestDB writer, so this is an invariant. The
+     * assertion catches any violation in tests / CI (runs with {@code -ea}) without
+     * imposing branch overhead in production.
      *
      * @param rowGroupIndex        zero-based row group index
      * @param timestampColumnIndex column index of the designated timestamp
@@ -393,12 +424,21 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert timestampColumnIndex >= 0 && timestampColumnIndex < columnCount;
         long chunkAddr = columnChunkAddr(rowGroupIndex, timestampColumnIndex);
+        assert (Unsafe.getUnsafe().getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED))
+                == (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED)
+                : "max_stat absent or not inlined for row group " + rowGroupIndex + ", column " + timestampColumnIndex;
         return Unsafe.getUnsafe().getLong(chunkAddr + COLUMN_CHUNK_MAX_STAT_OFF);
     }
 
     /**
      * Returns the minimum timestamp from the specified row group's column chunk.
      * Reads the inline min_stat (i64) at offset 48 within the column chunk.
+     * <p>
+     * Assumes the column chunk has both {@code MIN_PRESENT} and {@code MIN_INLINED}
+     * bits set in its {@code stat_flags} byte. The designated-timestamp column is
+     * always written this way by the QuestDB writer, so this is an invariant. The
+     * assertion catches any violation in tests / CI (runs with {@code -ea}) without
+     * imposing branch overhead in production.
      *
      * @param rowGroupIndex        zero-based row group index
      * @param timestampColumnIndex column index of the designated timestamp
@@ -408,6 +448,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert timestampColumnIndex >= 0 && timestampColumnIndex < columnCount;
         long chunkAddr = columnChunkAddr(rowGroupIndex, timestampColumnIndex);
+        assert (Unsafe.getUnsafe().getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED))
+                == (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED)
+                : "min_stat absent or not inlined for row group " + rowGroupIndex + ", column " + timestampColumnIndex;
         return Unsafe.getUnsafe().getLong(chunkAddr + COLUMN_CHUNK_MIN_STAT_OFF);
     }
 
@@ -441,40 +484,51 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     }
 
     /**
-     * Initializes (or reinitializes) the reader over a {@code _pm} file that
-     * has already been mmapped at its committed size. The caller is
-     * responsible for sizing that mmap from {@code PARQUET_META_FILE_SIZE}
-     * in the header (see class Javadoc) — never from the filesystem length.
+     * Initializes (or reinitializes) the reader over a {@code _pm} file
+     * that has already been mmapped at its committed size.
+     * {@code parquetMetaFileSize} is the anchor for the MVCC chain walk
+     * and doubles as the upper bound on every dereference — the caller
+     * must pass the size it actually mapped with, derived from
+     * {@link #readParquetMetaFileSize}.
      * <p>
-     * The committed file size is read from the header at offset 0 and used
-     * to locate the trailer (which gives the footer length). The footer
-     * offset is then derived as {@code parquet_meta_file_size - 4 -
-     * footer_length}. If the latest footer's parquet file size exceeds
-     * {@code parquetFileSize}, the reader walks the MVCC chain via each
-     * footer's {@code prev_parquet_meta_file_size} — each step re-applies
-     * the size-then-trailer indirection, so the previous footer's location
+     * Locates the trailer at {@code parquetMetaFileSize - 4} and derives
+     * the footer offset as
+     * {@code parquetMetaFileSize - 4 - footer_length}. If the latest
+     * footer's derived parquet file size does not equal
+     * {@code parquetFileSize}, walks the MVCC chain via each footer's
+     * {@code prev_parquet_meta_file_size} until a match is found; each
+     * step re-applies the size-then-trailer indirection so its location
      * is re-validated through its own trailer.
      * <p>
-     * Calls {@link #clear()} first so that any previously allocated native
-     * handle from a prior {@code of()} call is released before storing the
-     * new state.
+     * Calls {@link #clear()} first so that any previously allocated
+     * native handle from a prior {@code of()} call is released before
+     * storing the new state.
      *
-     * @param addr            base address of the mmaped {@code _pm} file,
-     *                        sized to the header's
-     *                        {@code PARQUET_META_FILE_SIZE}
-     * @param parquetFileSize parquet file size from {@code _txn} field 3,
-     *                        used as MVCC version token; pass
-     *                        {@link Long#MAX_VALUE} to disable MVCC matching
-     * @throws CairoException if the format is unsupported or corrupt
+     * @param addr                 base address of the mmaped {@code _pm}
+     *                             file
+     * @param parquetMetaFileSize  size the caller mapped with; must equal
+     *                             the committed {@code PARQUET_META_FILE_SIZE}
+     *                             observed at map time
+     * @param parquetFileSize      parquet file size from {@code _txn} field
+     *                             3, used as MVCC version token; pass
+     *                             {@link Long#MAX_VALUE} to disable MVCC
+     *                             matching
+     * @throws CairoException if the format is unsupported, corrupt, or no
+     *                        footer matches {@code parquetFileSize}
      */
-    public void of(long addr, long parquetFileSize) {
+    public void of(long addr, long parquetMetaFileSize, long parquetFileSize) {
         clear();
 
-        // Read the committed parquet_meta_file_size from the header. A
-        // loadFence ensures subsequent reads of the footer/row group data
-        // observe the bytes the writer committed before patching this field.
-        long parquetMetaFileSize = Unsafe.getUnsafe().getLong(addr + HEADER_PARQUET_META_FILE_SIZE_OFF);
-        Unsafe.getUnsafe().loadFence();
+        // The caller's parquetMetaFileSize is the anchor for the MVCC walk
+        // and also the upper bound on every dereference. It must equal the
+        // size the caller actually mapped — derived from its own read of
+        // the committed PARQUET_META_FILE_SIZE via
+        // readParquetMetaFileSize(). We do NOT re-read offset 0 here: a
+        // newer value produced by a concurrent writer would correspond to
+        // parquet file sizes newer than the caller's _txn snapshot
+        // (parquetFileSize), so the MVCC walk would reject those footers
+        // anyway, and trusting the re-read would open a TOCTOU window
+        // whose dereferences would go out of the mapping.
         if (parquetMetaFileSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE) {
             throw CairoException.critical(0)
                     .put("invalid _pm parquet_meta_file_size [parquetMetaFileSize=").put(parquetMetaFileSize).put(']');

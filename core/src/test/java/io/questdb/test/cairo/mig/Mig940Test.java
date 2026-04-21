@@ -100,7 +100,7 @@ public class Mig940Test extends AbstractCairoTest {
                 long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(parquetMetaAddr, Long.MAX_VALUE);
+                    reader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
                     Assert.assertEquals(1, reader.getColumnCount());
                     Assert.assertEquals(2, reader.getRowGroupCount());
                     // MIN_PRESENT=bit0, MIN_INLINED=bit1, MAX_PRESENT=bit3, MAX_INLINED=bit4.
@@ -166,7 +166,7 @@ public class Mig940Test extends AbstractCairoTest {
                 long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(parquetMetaAddr, Long.MAX_VALUE);
+                    reader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                     Assert.assertTrue(reader.getParquetFileSize() > 0);
@@ -366,7 +366,7 @@ public class Mig940Test extends AbstractCairoTest {
                 long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(parquetMetaAddr, Long.MAX_VALUE);
+                    reader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                 } finally {

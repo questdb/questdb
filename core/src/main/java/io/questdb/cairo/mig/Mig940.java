@@ -63,6 +63,7 @@ public final class Mig940 {
     private static final int PARQUET_FORMAT_BIT = 61;
     private static final int PARTITION_MASKED_SIZE_IDX = 1;
     private static final int PARTITION_NAME_TX_IDX = 2;
+    private static final int PARTITION_PARQUET_FILE_SIZE_IDX = 3;
 
     public static void migrate(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();
@@ -141,8 +142,9 @@ public final class Mig940 {
 
                 long partitionTs = txMem.getLong(entryOffset);
                 long nameTxn = txMem.getLong(entryOffset + PARTITION_NAME_TX_IDX * Long.BYTES);
+                long parquetFileSizeFromTxn = txMem.getLong(entryOffset + PARTITION_PARQUET_FILE_SIZE_IDX * Long.BYTES);
 
-                if (!isParquetMetadataStale(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn)) {
+                if (!isParquetMetadataStale(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn, parquetFileSizeFromTxn)) {
                     continue;
                 }
                 generateParquetMetaForPartition(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn);
@@ -152,8 +154,16 @@ public final class Mig940 {
     }
 
     /**
-     * Returns true if the _pm file is missing or stale (its latest footer's
-     * derived parquet size does not match the actual data.parquet file size).
+     * Returns true if the {@code _pm} file is missing or no footer in its MVCC
+     * chain yields a parquet size that matches {@code parquetFileSizeFromTxn}
+     * (the authoritative value from {@code _txn} field 3).
+     * <p>
+     * Walks the footer chain via {@code prev_parquet_meta_file_size} (footer
+     * offset 24): for each footer computes
+     * {@code derivedSize = parquet_footer_offset + parquet_footer_length + 8}
+     * and returns {@code false} on the first match. Never consults
+     * {@code ff.length(data.parquet)} — the filesystem size is not a valid
+     * MVCC commit boundary.
      */
     private static boolean isParquetMetadataStale(
             FilesFacade ff,
@@ -162,10 +172,10 @@ public final class Mig940 {
             int timestampType,
             int partitionBy,
             long partitionTs,
-            long nameTxn
+            long nameTxn,
+            long parquetFileSizeFromTxn
     ) {
         TableUtils.setPathForNativePartition(path.trimTo(pathRootLen), timestampType, partitionBy, partitionTs, nameTxn);
-        int partitionDirLen = path.size();
 
         // Check if _pm exists.
         path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
@@ -182,39 +192,45 @@ public final class Mig940 {
         try {
             long mem = Unsafe.malloc(32, MemoryTag.NATIVE_MIG);
             try {
-                // Read parquet_meta_file_size from the header (8 bytes at offset 0).
-                // The filesystem size is not a valid commit boundary — only
-                // this header field is.
+                // Read the committed parquet_meta_file_size from the header (offset 0).
                 if (ff.read(parquetMetaFd, mem, 8, 0) != 8) {
                     return true;
                 }
-                long parquetMetaFileSize = Unsafe.getUnsafe().getLong(mem);
-                if (parquetMetaFileSize < 32 + 4) {
+                long currentSize = Unsafe.getUnsafe().getLong(mem);
+                if (currentSize < 32 + 4) {
                     return true;
                 }
 
-                // Derive footerOffset from the trailer at parquet_meta_file_size - 4.
-                if (ff.read(parquetMetaFd, mem, 4, parquetMetaFileSize - 4) != 4) {
-                    return true;
-                }
-                int footerLength = Unsafe.getUnsafe().getInt(mem);
-                long footerOffset = parquetMetaFileSize - 4 - Integer.toUnsignedLong(footerLength);
-                if (footerOffset < 32 || footerOffset >= parquetMetaFileSize) {
-                    return true;
-                }
+                // Walk the footer chain: currentSize strictly decreases each step
+                // (prev_size < currentSize), which bounds the loop.
+                while (true) {
+                    if (ff.read(parquetMetaFd, mem, 4, currentSize - 4) != 4) {
+                        return true;
+                    }
+                    int footerLength = Unsafe.getUnsafe().getInt(mem);
+                    long footerOffset = currentSize - 4 - Integer.toUnsignedLong(footerLength);
+                    if (footerOffset < 32 || footerOffset >= currentSize) {
+                        return true;
+                    }
 
-                // Read first 12 bytes of footer: parquet_footer_offset(8) + parquet_footer_length(4).
-                if (ff.read(parquetMetaFd, mem, 12, footerOffset) != 12) {
-                    return true;
+                    // Read footer prefix: parquet_footer_offset(8) + parquet_footer_length(4)
+                    // followed by 12 bytes of unused/row-group fields, then
+                    // prev_parquet_meta_file_size at offset 24.
+                    if (ff.read(parquetMetaFd, mem, 32, footerOffset) != 32) {
+                        return true;
+                    }
+                    long parquetFooterOffset = Unsafe.getUnsafe().getLong(mem);
+                    int parquetFooterLength = Unsafe.getUnsafe().getInt(mem + 8);
+                    long derivedParquetSize = parquetFooterOffset + Integer.toUnsignedLong(parquetFooterLength) + 8;
+                    if (derivedParquetSize == parquetFileSizeFromTxn) {
+                        return false;
+                    }
+                    long prevSize = Unsafe.getUnsafe().getLong(mem + 24);
+                    if (prevSize == 0 || prevSize >= currentSize) {
+                        return true;
+                    }
+                    currentSize = prevSize;
                 }
-                long parquetFooterOffset = Unsafe.getUnsafe().getLong(mem);
-                int parquetFooterLength = Unsafe.getUnsafe().getInt(mem + 8);
-                long derivedParquetSize = parquetFooterOffset + Integer.toUnsignedLong(parquetFooterLength) + 8;
-
-                // Compare against actual data.parquet size.
-                path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
-                long actualParquetSize = ff.length(path.$());
-                return derivedParquetSize != actualParquetSize;
             } finally {
                 Unsafe.free(mem, 32, MemoryTag.NATIVE_MIG);
             }

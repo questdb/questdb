@@ -640,7 +640,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             try {
                 final long parquetSize;
                 try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
-                    parquetMetaReader.of(parquetMetaAddr, parquetMetadataFileSize);
+                    parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetMetadataFileSize);
                     parquetSize = parquetMetaReader.getParquetFileSize();
                 }
 
@@ -716,14 +716,28 @@ public class TableSnapshotRestore implements QuietCloseable {
                 continue;
             }
 
+            // Use the committed parquet file size from _txn, not the on-disk size.
+            // A snapshot may capture data.parquet mid-append; bytes past the committed
+            // size are not part of the MVCC-visible state and must not be published.
+            long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
+
             // Open data.parquet to generate _pm from it.
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
-            long parquetFileSize = ff.length(tablePath.$());
             long parquetFd = ff.openRO(tablePath.$());
             if (parquetFd < 0) {
                 int errno = ff.errno();
                 tablePath.trimTo(plen);
                 throw CairoException.critical(errno).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
+            }
+            long onDiskSize = ff.length(parquetFd);
+            if (onDiskSize < parquetFileSize) {
+                ff.close(parquetFd);
+                tablePath.trimTo(plen);
+                throw CairoException.critical(0)
+                        .put("restored parquet file is shorter than committed size [path=").put(tablePath)
+                        .put(", committed=").put(parquetFileSize)
+                        .put(", onDisk=").put(onDiskSize)
+                        .put(']');
             }
 
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
@@ -738,7 +752,6 @@ public class TableSnapshotRestore implements QuietCloseable {
             try {
                 long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT);
                 long parquetMetaFileSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
-                txWriter.setPartitionParquetFormat(partitionTs, parquetFileSize);
                 LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", parquetMetaSize=").$(parquetMetaFileSize).I$();
             } catch (Throwable t) {
                 // Remove partially written _pm file so a retry regenerates it.

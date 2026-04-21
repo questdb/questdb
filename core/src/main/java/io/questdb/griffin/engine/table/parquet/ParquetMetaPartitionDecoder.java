@@ -96,8 +96,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
                 decodeContextPtr,
                 parquetAddr,
                 parquetSize,
-                parquetMetaAddr,
-                parquetMetaSize,
+                parquetMetaReader.getOrCreateNativeReaderPtr(),
                 rowGroupBuffers.ptr(),
                 columns.getAddress(),
                 (int) (columns.size() >>> 1),
@@ -121,7 +120,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         }
         decodeRowGroupWithRowFilter(
                 allocator, decodeContextPtr, parquetAddr, parquetSize,
-                parquetMetaAddr, parquetMetaSize, rowGroupBuffers.ptr(), columnOffset,
+                parquetMetaReader.getOrCreateNativeReaderPtr(), rowGroupBuffers.ptr(), columnOffset,
                 columns.getAddress(), (int) (columns.size() >>> 1),
                 rowGroupIndex, rowLo, rowHi,
                 filteredRows.getAddress(), filteredRows.size()
@@ -142,7 +141,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         }
         decodeRowGroupWithRowFilterFillNulls(
                 allocator, decodeContextPtr, parquetAddr, parquetSize,
-                parquetMetaAddr, parquetMetaSize, rowGroupBuffers.ptr(), columnOffset,
+                parquetMetaReader.getOrCreateNativeReaderPtr(), rowGroupBuffers.ptr(), columnOffset,
                 columns.getAddress(), (int) (columns.size() >>> 1),
                 rowGroupIndex, rowLo, rowHi,
                 filteredRows.getAddress(), filteredRows.size()
@@ -159,8 +158,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
                 allocator,
                 parquetAddr,
                 parquetSize,
-                parquetMetaAddr,
-                parquetMetaSize,
+                parquetMetaReader.getOrCreateNativeReaderPtr(),
                 timestamp,
                 rowLo,
                 rowHi,
@@ -232,7 +230,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         this.allocator = Unsafe.getNativeAllocator(memoryTag);
         // Long.MAX_VALUE disables MVCC footer matching — use the latest footer
         // as-is (caller already selected the _pm that matches its snapshot).
-        this.parquetMetaReader.of(parquetMetaAddr, Long.MAX_VALUE);
+        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
     }
 
     /**
@@ -249,7 +247,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         this.parquetAddr = other.parquetAddr;
         this.parquetSize = other.parquetSize;
         this.allocator = other.allocator;
-        this.parquetMetaReader.of(parquetMetaAddr, Long.MAX_VALUE);
+        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
     }
 
     public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
@@ -265,8 +263,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             long decodeContextPtr,
             long parquetFilePtr,
             long parquetFileSize,
-            long parquetMetaPtr,
-            long parquetMetaSize,
+            long parquetMetaReaderPtr,
             long rowGroupBufsPtr,
             long columnsPtr,
             int columnCount,
@@ -280,8 +277,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             long decodeContextPtr,
             long parquetFilePtr,
             long parquetFileSize,
-            long parquetMetaPtr,
-            long parquetMetaSize,
+            long parquetMetaReaderPtr,
             long rowGroupBufsPtr,
             int columnOffset,
             long columnsPtr,
@@ -298,8 +294,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             long decodeContextPtr,
             long parquetFilePtr,
             long parquetFileSize,
-            long parquetMetaPtr,
-            long parquetMetaSize,
+            long parquetMetaReaderPtr,
             long rowGroupBufsPtr,
             int columnOffset,
             long columnsPtr,
@@ -315,8 +310,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             long allocator,
             long parquetFilePtr,
             long parquetFileSize,
-            long parquetMetaPtr,
-            long parquetMetaSize,
+            long parquetMetaReaderPtr,
             long timestamp,
             long rowLo,
             long rowHi,

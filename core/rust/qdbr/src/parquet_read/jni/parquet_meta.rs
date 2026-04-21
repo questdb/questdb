@@ -2,6 +2,7 @@ use std::slice;
 
 use crate::allocator::QdbAllocator;
 use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet_metadata::jni::reader::JniParquetMetaReader;
 use crate::parquet_metadata::reader::ParquetMetaReader;
 use crate::parquet_read::jni::validate_jni_column_types;
 use crate::parquet_read::row_groups::ParquetColumnIndex;
@@ -26,8 +27,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
     ctx: *mut DecodeContext,
     parquet_file_ptr: *const u8,
     parquet_file_size: u64,
-    parquet_meta_ptr: *const u8,
-    parquet_meta_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
     row_group_bufs: *mut RowGroupBuffers,
     columns: *const (ParquetColumnIndex, ColumnType), // [index, type] pairs
     column_count: u32,
@@ -40,8 +40,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
         ctx,
         parquet_file_ptr,
         parquet_file_size,
-        parquet_meta_ptr,
-        parquet_meta_size,
+        parquet_meta_reader_ptr,
         row_group_bufs,
         columns,
         column_count,
@@ -66,8 +65,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
     ctx: *mut DecodeContext,
     parquet_file_ptr: *const u8,
     parquet_file_size: u64,
-    parquet_meta_ptr: *const u8,
-    parquet_meta_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
     row_group_bufs: *mut RowGroupBuffers,
     column_offset: u32,
     columns: *const (ParquetColumnIndex, ColumnType),
@@ -88,8 +86,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
         ctx,
         parquet_file_ptr,
         parquet_file_size,
-        parquet_meta_ptr,
-        parquet_meta_size,
+        parquet_meta_reader_ptr,
         row_group_bufs,
         column_offset as usize,
         columns,
@@ -114,8 +111,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
     ctx: *mut DecodeContext,
     parquet_file_ptr: *const u8,
     parquet_file_size: u64,
-    parquet_meta_ptr: *const u8,
-    parquet_meta_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
     row_group_bufs: *mut RowGroupBuffers,
     column_offset: u32,
     columns: *const (ParquetColumnIndex, ColumnType),
@@ -136,8 +132,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
         ctx,
         parquet_file_ptr,
         parquet_file_size,
-        parquet_meta_ptr,
-        parquet_meta_size,
+        parquet_meta_reader_ptr,
         row_group_bufs,
         column_offset as usize,
         columns,
@@ -162,8 +157,7 @@ fn pm_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
     ctx: *mut DecodeContext,
     parquet_file_ptr: *const u8,
     parquet_file_size: u64,
-    parquet_meta_ptr: *const u8,
-    parquet_meta_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
     row_group_bufs: *mut RowGroupBuffers,
     column_offset: usize,
     columns: *const (ParquetColumnIndex, ColumnType),
@@ -186,8 +180,11 @@ fn pm_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
     if filtered_rows_ptr.is_null() && filtered_rows_count > 0 {
         return Err(fmt_err!(InvalidType, "filtered rows pointer is null"));
     }
-    if parquet_meta_ptr.is_null() || parquet_meta_size == 0 {
-        return Err(fmt_err!(InvalidType, "_pm pointer is null or size is zero"));
+    if parquet_meta_reader_ptr.is_null() {
+        return Err(fmt_err!(
+            InvalidType,
+            "JniParquetMetaReader pointer is null"
+        ));
     }
     if parquet_file_ptr.is_null() || parquet_file_size == 0 {
         return Err(fmt_err!(
@@ -196,10 +193,7 @@ fn pm_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
         ));
     }
 
-    let parquet_meta_data =
-        unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
-    let parquet_meta_reader =
-        ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
+    let parquet_meta_reader: &ParquetMetaReader = unsafe { &*parquet_meta_reader_ptr }.reader();
     let file_data = unsafe { slice::from_raw_parts(parquet_file_ptr, parquet_file_size as usize) };
     let ctx = unsafe { &mut *ctx };
     let row_group_bufs = unsafe { &mut *row_group_bufs };
@@ -218,7 +212,7 @@ fn pm_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
         ctx,
         row_group_bufs,
         file_data,
-        &parquet_meta_reader,
+        parquet_meta_reader,
         column_offset,
         col_pairs,
         row_group_index as usize,
@@ -234,8 +228,7 @@ fn pm_decode_row_group_impl(
     ctx: *mut DecodeContext,
     parquet_file_ptr: *const u8,
     parquet_file_size: u64,
-    parquet_meta_ptr: *const u8,
-    parquet_meta_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
     row_group_bufs: *mut RowGroupBuffers,
     columns: *const (ParquetColumnIndex, ColumnType),
     column_count: u32,
@@ -256,8 +249,11 @@ fn pm_decode_row_group_impl(
         let col_pairs = unsafe { slice::from_raw_parts(columns, column_count as usize) };
         validate_jni_column_types(col_pairs)?;
     }
-    if parquet_meta_ptr.is_null() || parquet_meta_size == 0 {
-        return Err(fmt_err!(InvalidType, "_pm pointer is null or size is zero"));
+    if parquet_meta_reader_ptr.is_null() {
+        return Err(fmt_err!(
+            InvalidType,
+            "JniParquetMetaReader pointer is null"
+        ));
     }
     if parquet_file_ptr.is_null() || parquet_file_size == 0 {
         return Err(fmt_err!(
@@ -266,10 +262,7 @@ fn pm_decode_row_group_impl(
         ));
     }
 
-    let parquet_meta_data =
-        unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
-    let parquet_meta_reader =
-        ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
+    let parquet_meta_reader: &ParquetMetaReader = unsafe { &*parquet_meta_reader_ptr }.reader();
     let file_data = unsafe { slice::from_raw_parts(parquet_file_ptr, parquet_file_size as usize) };
     let ctx = unsafe { &mut *ctx };
     let row_group_bufs = unsafe { &mut *row_group_bufs };
@@ -283,7 +276,7 @@ fn pm_decode_row_group_impl(
         ctx,
         row_group_bufs,
         file_data,
-        &parquet_meta_reader,
+        parquet_meta_reader,
         col_pairs,
         row_group_index as usize,
         row_group_lo as usize,
@@ -303,8 +296,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
     allocator: *const QdbAllocator,
     parquet_file_ptr: *const u8,
     parquet_file_size: u64,
-    parquet_meta_ptr: *const u8,
-    parquet_meta_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
     timestamp: i64,
     row_lo: i64,
     row_hi: i64,
@@ -314,8 +306,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
         allocator,
         parquet_file_ptr,
         parquet_file_size,
-        parquet_meta_ptr,
-        parquet_meta_size,
+        parquet_meta_reader_ptr,
         timestamp,
         row_lo as usize,
         row_hi as usize,
@@ -335,28 +326,27 @@ fn pm_find_row_group_by_timestamp_impl(
     allocator: *const QdbAllocator,
     parquet_file_ptr: *const u8,
     parquet_file_size: u64,
-    parquet_meta_ptr: *const u8,
-    parquet_meta_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
     timestamp: i64,
     row_lo: usize,
     row_hi: usize,
     ts_col: usize,
 ) -> ParquetResult<u64> {
-    if parquet_meta_ptr.is_null() || parquet_meta_size == 0 {
-        return Err(fmt_err!(InvalidType, "_pm pointer is null or size is zero"));
+    if parquet_meta_reader_ptr.is_null() {
+        return Err(fmt_err!(
+            InvalidType,
+            "JniParquetMetaReader pointer is null"
+        ));
     }
 
-    let parquet_meta_data =
-        unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
-    let parquet_meta_reader =
-        ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
+    let parquet_meta_reader: &ParquetMetaReader = unsafe { &*parquet_meta_reader_ptr }.reader();
 
     let decode_ts = |rg_idx, ts_col, row_lo, row_hi| {
         decode_single_ts_from_pm(
             allocator,
             parquet_file_ptr,
             parquet_file_size,
-            &parquet_meta_reader,
+            parquet_meta_reader,
             rg_idx,
             ts_col,
             row_lo,
@@ -365,7 +355,7 @@ fn pm_find_row_group_by_timestamp_impl(
     };
 
     crate::parquet_read::parquet_meta_decode::find_row_group_by_timestamp(
-        &parquet_meta_reader,
+        parquet_meta_reader,
         timestamp,
         row_lo,
         row_hi,

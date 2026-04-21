@@ -415,7 +415,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 if (parquetMetaReader == null) {
                     parquetMetaReader = new ParquetMetaFileReader();
                 }
-                parquetMetaReader.of(addr, parquetFileSize);
+                parquetMetaReader.of(addr, parquetMetaFileSize, parquetFileSize);
             } catch (Throwable e) {
                 LOG.error().$("could not read parquet metadata [path=").$(partitionDirPath).$(", error=").$(e.getMessage()).I$();
                 closeParquetMeta();

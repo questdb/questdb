@@ -1241,6 +1241,121 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRegeneratesPmFromCommittedParquetSize() throws Exception {
+        // A snapshot may capture data.parquet mid-append: bytes past the
+        // committed size exist on disk but are not part of the MVCC-visible
+        // state. generateMissingParquetMetaFiles must rebuild _pm from the
+        // committed size stored in _txn, not from ff.length(), and must not
+        // clobber _txn's recorded size with the on-disk size.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T06:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-01T12:00:00.000000Z'),
+                    (4.0, 'B', '2024-01-01T18:00:00.000000Z'),
+                    (5.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            File dataParquet = new File(partDir, "data.parquet");
+            long committedSize = dataParquet.length();
+
+            // Simulate an uncommitted append captured by the snapshot: pad
+            // data.parquet with garbage past the committed boundary.
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(dataParquet, true)) {
+                byte[] garbage = new byte[4096];
+                java.util.Arrays.fill(garbage, (byte) 0xAB);
+                fos.write(garbage);
+            }
+            Assert.assertEquals(committedSize + 4096, dataParquet.length());
+
+            File pmFile = new File(partDir, "_pm");
+            Assert.assertTrue("failed to delete _pm", pmFile.delete());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("_pm not regenerated", pmFile.exists());
+            // The row count survives round-trip, which it only does if _pm
+            // was built over the committed prefix. If the fix regressed and
+            // _pm included the garbage tail, decode would fail or return
+            // wrong rows.
+            assertSql("count\n5\n", "SELECT count() FROM t");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRejectsTruncatedParquetFile() throws Exception {
+        // If data.parquet on disk is SHORTER than _txn's recorded committed
+        // size, the snapshot is truncated and the restore must fail with a
+        // clear diagnostic rather than silently generating a malformed _pm.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            File dataParquet = new File(partDir, "data.parquet");
+            // Truncate 32 bytes off to simulate a snapshot captured before the
+            // parquet append completed.
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(dataParquet, "rw")) {
+                raf.setLength(Math.max(0, dataParquet.length() - 32));
+            }
+
+            File pmFile = new File(partDir, "_pm");
+            Assert.assertTrue("failed to delete _pm", pmFile.delete());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                    Assert.fail("should have thrown CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "restored parquet file is shorter than committed size");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsBitmapIndexesOnParquetAfterDropColumn() throws Exception {
         // Exercises two bugs in the parquet bitmap index rebuild during
         // checkpoint/backup recovery: (a) getIndexedParquetColumnIndex

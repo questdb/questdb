@@ -49,7 +49,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFileWithBloomFilter(2, 100)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
                     Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
@@ -64,7 +64,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFileWithBloomFilter(2, 100)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 Assert.assertTrue(reader.isOpen());
                 Assert.assertEquals(2, reader.getColumnCount());
@@ -84,7 +84,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 0, 0, 10, 20, 30, 40, 50)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertEquals(5, reader.getRowGroupCount());
 
                 try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
@@ -102,7 +102,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 0, 0, 100, 200, 300)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                 try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
                     // No filters → never skip, regardless of row group index.
                     Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
@@ -119,7 +119,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 42)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertTrue(reader.isOpen());
 
                 reader.clear();
@@ -140,7 +140,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 100)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
                     Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
@@ -184,9 +184,10 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 try {
                     long dataPtr = ParquetMetaFileWriter.resultDataPtr(resultPtr);
                     long dataLen = ParquetMetaFileWriter.resultDataLen(resultPtr);
+                    long pmSize = ParquetMetaFileWriter.resultParquetMetaFileSize(resultPtr);
 
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(dataPtr, Long.MAX_VALUE);
+                    reader.of(dataPtr, pmSize, Long.MAX_VALUE);
 
                     Assert.assertEquals(3, reader.getColumnCount());
 
@@ -238,7 +239,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
-                    reader.of(file.dataPtr, Long.MAX_VALUE);
+                    reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("invalid _pm columnCount"));
@@ -261,7 +262,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
-                    reader.of(file.dataPtr, Long.MAX_VALUE);
+                    reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("invalid _pm footer length"));
@@ -279,7 +280,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
-                    reader.of(file.dataPtr, Long.MAX_VALUE);
+                    reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("invalid _pm footer offset"));
@@ -307,9 +308,10 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 try {
                     long dataPtr = ParquetMetaFileWriter.resultDataPtr(resultPtr);
                     long dataLen = ParquetMetaFileWriter.resultDataLen(resultPtr);
+                    long pmSize = ParquetMetaFileWriter.resultParquetMetaFileSize(resultPtr);
 
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(dataPtr, Long.MAX_VALUE);
+                    reader.of(dataPtr, pmSize, Long.MAX_VALUE);
                     Assert.assertEquals(0, reader.getDesignatedTimestampColumnIndex());
                 } finally {
                     ParquetMetaFileWriter.destroyResult(resultPtr);
@@ -326,7 +328,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             // Build without designated timestamp.
             try (PmTestFile file = buildFile(2, 100)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertEquals(-1, reader.getDesignatedTimestampColumnIndex());
             }
         });
@@ -343,7 +345,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
-                    reader.of(file.dataPtr, Long.MAX_VALUE);
+                    reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("unexpected _pm footer feature bytes"));
@@ -362,7 +364,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putLong(addr, 4L); // implausibly small
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
-                    reader.of(addr, Long.MAX_VALUE);
+                    reader.of(addr, 4L, Long.MAX_VALUE);
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("invalid _pm parquet_meta_file_size"));
@@ -428,20 +430,20 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
 
                     // Latest footer (parquet size 288) resolves directly.
-                    reader.of(newBuf, 288L);
+                    reader.of(newBuf, newTotalLen, 288L);
                     Assert.assertEquals(288L, reader.getParquetFileSize());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                     Assert.assertEquals(1000L, reader.getRowGroupSize(0));
 
                     // Old footer (parquet size 158) resolves via chain walk.
-                    reader.of(newBuf, 158L);
+                    reader.of(newBuf, newTotalLen, 158L);
                     Assert.assertEquals(158L, reader.getParquetFileSize());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                     Assert.assertEquals(1000L, reader.getRowGroupSize(0));
 
                     // Non-matching parquet size throws STALE_PARQUET_METADATA.
                     try {
-                        reader.of(newBuf, 9999L);
+                        reader.of(newBuf, newTotalLen, 9999L);
                         Assert.fail("Expected CairoException for stale _pm");
                     } catch (CairoException e) {
                         Assert.assertEquals(CairoException.STALE_PARQUET_METADATA, e.getErrno());
@@ -460,7 +462,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             // parquet file size = parquetFooterOffset + parquetFooterLength + 8
             try (PmTestFile file = buildFile(1, 4096, 256, 100)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 Assert.assertEquals(4096 + 256 + 8, reader.getParquetFileSize());
             }
@@ -476,7 +478,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             }
             try (PmTestFile file = buildFile(1, sizes)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 Assert.assertEquals(128, reader.getRowGroupCount());
                 for (int i = 0; i < 128; i++) {
@@ -491,7 +493,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 100)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
                     Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
@@ -523,7 +525,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 100)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertTrue(reader.isOpen());
                 // canSkipRowGroup is not called → the lazy native handle is
                 // never allocated → close() is a no-op for the native side.
@@ -543,7 +545,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 100)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 // Calling canSkipRowGroup with an empty filter list lazily
                 // allocates the native handle but always returns false.
@@ -576,7 +578,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             ) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
 
-                reader.of(file1.dataPtr, Long.MAX_VALUE);
+                reader.of(file1.dataPtr, file1.parquetMetaFileSize, Long.MAX_VALUE);
                 try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
                     // First skip call lazily allocates the native handle.
                     Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
@@ -584,7 +586,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
                 // Re-init via of(): the previous native handle must be freed
                 // by clear() inside of() before storing the new addr/size.
-                reader.of(file2.dataPtr, Long.MAX_VALUE);
+                reader.of(file2.dataPtr, file2.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertEquals(2, reader.getRowGroupCount());
 
                 try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
@@ -603,7 +605,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(50, 0, 0, 777, 888)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 Assert.assertEquals(50, reader.getColumnCount());
                 Assert.assertEquals(2, reader.getRowGroupCount());
@@ -618,7 +620,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, Long.MAX_VALUE)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 Assert.assertEquals(Long.MAX_VALUE, reader.getRowGroupSize(0));
             }
@@ -636,12 +638,12 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             ) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
 
-                reader.of(file1.dataPtr, Long.MAX_VALUE);
+                reader.of(file1.dataPtr, file1.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertEquals(1, reader.getColumnCount());
                 Assert.assertEquals(500, reader.getRowGroupSize(0));
                 Assert.assertEquals(600, reader.getRowGroupSize(1));
 
-                reader.of(file2.dataPtr, Long.MAX_VALUE);
+                reader.of(file2.dataPtr, file2.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertEquals(10, reader.getColumnCount());
                 Assert.assertEquals(500, reader.getRowGroupSize(0));
                 Assert.assertEquals(600, reader.getRowGroupSize(1));
@@ -657,7 +659,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(3, 0, 0, 100, 200, 500, 1_000_000)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 Assert.assertEquals(3, reader.getColumnCount());
                 Assert.assertEquals(4, reader.getRowGroupCount());
@@ -674,11 +676,11 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(2, 55)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                 reader.clear();
                 Assert.assertFalse(reader.isOpen());
 
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertTrue(reader.isOpen());
                 Assert.assertEquals(2, reader.getColumnCount());
                 Assert.assertEquals(1, reader.getRowGroupCount());
@@ -692,7 +694,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(2, 0, 0, 100, 200, 300)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertEquals(600, reader.getPartitionRowCount());
             }
         });
@@ -703,7 +705,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertEquals(0, reader.getPartitionRowCount());
             }
         });
@@ -718,11 +720,11 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             ) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
 
-                reader.of(file1.dataPtr, Long.MAX_VALUE);
+                reader.of(file1.dataPtr, file1.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertEquals(1, reader.getRowGroupCount());
                 Assert.assertEquals(42, reader.getRowGroupSize(0));
 
-                reader.of(file2.dataPtr, Long.MAX_VALUE);
+                reader.of(file2.dataPtr, file2.parquetMetaFileSize, Long.MAX_VALUE);
                 Assert.assertEquals(2, reader.getRowGroupCount());
                 Assert.assertEquals(99, reader.getRowGroupSize(0));
                 Assert.assertEquals(101, reader.getRowGroupSize(1));
@@ -735,7 +737,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(2, 1000)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 Assert.assertTrue(reader.isOpen());
                 Assert.assertEquals(2, reader.getColumnCount());
@@ -753,7 +755,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 1)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 Assert.assertEquals(1, reader.getRowGroupSize(0));
             }
@@ -768,7 +770,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 // Request parquet size 9999 — no footer matches.
                 try {
-                    reader.of(file.dataPtr, 9999);
+                    reader.of(file.dataPtr, file.parquetMetaFileSize, 9999);
                     Assert.fail("Expected CairoException for stale _pm");
                 } catch (CairoException e) {
                     Assert.assertEquals(CairoException.STALE_PARQUET_METADATA, e.getErrno());
@@ -788,7 +790,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
-                    reader.of(file.dataPtr, Long.MAX_VALUE);
+                    reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("unsupported required _pm feature flags"));
@@ -812,7 +814,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
-                    reader.of(file.dataPtr, Long.MAX_VALUE);
+                    reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("unsupported required _pm footer feature flags"));
@@ -826,7 +828,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(file.dataPtr, Long.MAX_VALUE);
+                reader.of(file.dataPtr, file.parquetMetaFileSize, Long.MAX_VALUE);
 
                 Assert.assertEquals(0, reader.getRowGroupCount());
             }

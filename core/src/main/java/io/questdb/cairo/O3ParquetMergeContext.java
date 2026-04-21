@@ -205,11 +205,18 @@ public class O3ParquetMergeContext implements Closeable {
     }
 
     /**
-     * Releases expensive native resources (file descriptors) held by the context
-     * while keeping the context pooled for reuse. Call this after each
-     * processParquetPartition() invocation to avoid lingering fds.
+     * Releases expensive native resources held by the context while keeping it
+     * pooled for reuse. Call after each processParquetPartition() invocation:
+     * <ul>
+     *   <li>closes the Rust-owned partition updater (file descriptors)</li>
+     *   <li>clears the {@link ParquetMetaFileReader}'s native handle so it no
+     *       longer references the mmap</li>
+     * </ul>
+     * Must run before the caller munmaps {@code parquetMetaAddr}; see the
+     * lifecycle contract on {@link ParquetMetaFileReader}.
      */
     public void releaseResources() {
         partitionUpdater.close();
+        parquetMetaReader.clear();
     }
 }

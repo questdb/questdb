@@ -7400,7 +7400,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (lastParquetMetaFileSize > 0) {
                 addr = mapRO(ff, path.$(), LOG, lastParquetMetaFileSize, memoryTag);
                 try {
-                    parquetMetaReader.of(addr, parquetFileSize);
+                    parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);
                     return addr;
                 } catch (CairoException e) {
                     ff.munmap(addr, lastParquetMetaFileSize, memoryTag);
@@ -7423,7 +7423,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             addr = mapRO(ff, path.$(), LOG, lastParquetMetaFileSize, memoryTag);
             try {
-                parquetMetaReader.of(addr, parquetFileSize);
+                parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);
                 return addr;
             } catch (CairoException e) {
                 ff.munmap(addr, lastParquetMetaFileSize, memoryTag);

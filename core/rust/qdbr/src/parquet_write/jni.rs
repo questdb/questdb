@@ -172,27 +172,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     existing_parquet_meta_file_size: jlong,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
-        // reader_fd and writer_fd must be distinct OS file descriptors.
-        // Both are closed by Rust when ParquetUpdater is dropped.
-        // Check before taking ownership to avoid double-close.
-        if reader_fd == writer_fd {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "reader_fd and writer_fd must be different file descriptors, got {}",
-                reader_fd
-            ));
-        }
-
-        // Take ownership of ALL fds so Rust closes them on any error path below.
-        // The Java caller must set its fd locals to -1 before this JNI call
-        // so that it never double-closes on the exception path.
-        let reader_file = unsafe { File::from_raw_fd_i32(reader_fd) };
-        let writer_file = unsafe { File::from_raw_fd_i32(writer_fd) };
-        let pm_fd = if parquet_meta_fd >= 0 {
-            Some(unsafe { crate::parquet::io::FromRawFdI32Ext::from_raw_fd_i32(parquet_meta_fd) })
-        } else {
-            None
-        };
+        let (reader_file, writer_file, pm_fd) =
+            take_partition_updater_fds(reader_fd, writer_fd, parquet_meta_fd)?;
 
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
@@ -638,6 +619,46 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             err.add_context("error in PartitionEncoder.encodePartition");
             err.into_cairo_exception().throw::<i64>(&mut env)
         }
+    }
+}
+
+/// Takes ownership of the raw fds passed by Java, returning (reader, writer,
+/// optional pm) `File` wrappers. Both `reader_fd` and `writer_fd` must be
+/// distinct OS file descriptors; aliased fds would otherwise be closed twice
+/// on Drop.
+///
+/// On any error, the fds that have already been wrapped are dropped here, so
+/// the caller does not need to clean them up. `parquet_meta_fd < 0` means
+/// "no pm file" (the Some/None toggle on the returned tuple element).
+fn take_partition_updater_fds(
+    reader_fd: i32,
+    writer_fd: i32,
+    parquet_meta_fd: i32,
+) -> ParquetResult<(File, File, Option<File>)> {
+    // Wrap in File FIRST so Drop closes every fd on any error path; Java has
+    // already detached these fds from its side. Avoid wrapping writer_fd when
+    // it aliases reader_fd, because dropping two File wrappers over the same
+    // fd would cause a double-close.
+    let reader_file = unsafe { File::from_raw_fd_i32(reader_fd) };
+    let writer_file_opt = if reader_fd == writer_fd {
+        None
+    } else {
+        Some(unsafe { File::from_raw_fd_i32(writer_fd) })
+    };
+    let pm_fd = if parquet_meta_fd >= 0 {
+        Some(unsafe { FromRawFdI32Ext::from_raw_fd_i32(parquet_meta_fd) })
+    } else {
+        None
+    };
+
+    match writer_file_opt {
+        Some(writer_file) => Ok((reader_file, writer_file, pm_fd)),
+        // reader_file and pm_fd drop here, closing their fds exactly once.
+        None => Err(fmt_err!(
+            InvalidLayout,
+            "reader_fd and writer_fd must be different file descriptors, got {}",
+            reader_fd
+        )),
     }
 }
 
@@ -1598,4 +1619,78 @@ fn convert_row_group_buffers_to_partition(
         new_partition.columns.push(column);
     }
     Ok(new_partition)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::io::AsRawFd;
+    use tempfile::NamedTempFile;
+
+    /// Returns true iff `fd` still refers to an open file descriptor in this
+    /// process.
+    fn fd_is_open(fd: i32) -> bool {
+        // SAFETY: fcntl(F_GETFD) returns -1 and sets errno=EBADF for a closed
+        // fd; the call has no side effects on still-open fds.
+        unsafe { libc::fcntl(fd, libc::F_GETFD) != -1 }
+    }
+
+    #[test]
+    fn reader_writer_fd_aliased_returns_err_and_closes_fd() {
+        let tmp = NamedTempFile::new().unwrap();
+        let fd = tmp.as_file().as_raw_fd();
+        // Leak the temp-file handle so we retain the fd after close detection;
+        // the Rust side is expected to close it on the error path.
+        let _file_retained = tmp.into_file();
+        std::mem::forget(_file_retained);
+
+        let result = take_partition_updater_fds(fd, fd, -1);
+        assert!(result.is_err(), "expected Err for aliased fds");
+        assert!(
+            !fd_is_open(fd),
+            "aliased reader/writer fd was not closed by the error path"
+        );
+    }
+
+    #[test]
+    fn reader_writer_fd_aliased_also_closes_pm_fd() {
+        let tmp1 = NamedTempFile::new().unwrap();
+        let tmp2 = NamedTempFile::new().unwrap();
+        let shared_fd = tmp1.as_file().as_raw_fd();
+        let pm_fd = tmp2.as_file().as_raw_fd();
+        // Retain both handles as owned fds and detach them.
+        std::mem::forget(tmp1.into_file());
+        std::mem::forget(tmp2.into_file());
+
+        let result = take_partition_updater_fds(shared_fd, shared_fd, pm_fd);
+        assert!(
+            result.is_err(),
+            "expected Err for aliased reader/writer fds"
+        );
+        assert!(!fd_is_open(shared_fd), "shared fd was not closed");
+        assert!(
+            !fd_is_open(pm_fd),
+            "parquet_meta fd was not closed on the error path"
+        );
+    }
+
+    #[test]
+    fn distinct_fds_return_ok_and_retain_ownership() {
+        let tmp_reader = NamedTempFile::new().unwrap();
+        let tmp_writer = NamedTempFile::new().unwrap();
+        let reader_fd = tmp_reader.as_file().as_raw_fd();
+        let writer_fd = tmp_writer.as_file().as_raw_fd();
+        std::mem::forget(tmp_reader.into_file());
+        std::mem::forget(tmp_writer.into_file());
+
+        let result = take_partition_updater_fds(reader_fd, writer_fd, -1);
+        let (reader_file, writer_file, pm_fd) = result.expect("distinct fds must succeed");
+        assert!(pm_fd.is_none());
+        // Drop the returned Files to close the fds; the helper must have
+        // given us ownership.
+        drop(reader_file);
+        drop(writer_file);
+        assert!(!fd_is_open(reader_fd));
+        assert!(!fd_is_open(writer_fd));
+    }
 }
