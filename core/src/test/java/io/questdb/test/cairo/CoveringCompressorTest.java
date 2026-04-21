@@ -51,9 +51,9 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
-                CoveringCompressor.compressDoubles(srcAddr, count, 3, destAddr);
+                compressDoubles(srcAddr, count, 3, destAddr);
                 double[] output = new double[count];
-                CoveringCompressor.decompressDoubles(destAddr, output);
+                decompressDoubles(destAddr, output);
                 for (int i = 0; i < count; i++) {
                     Assert.assertEquals("value " + i + " (" + input[i] + ")",
                             Double.doubleToRawLongBits(input[i]), Double.doubleToRawLongBits(output[i]));
@@ -77,10 +77,10 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
-                int compressedSize = CoveringCompressor.compressDoubles(srcAddr, count, 3, destAddr);
+                int compressedSize = compressDoubles(srcAddr, count, 3, destAddr);
                 Assert.assertEquals(CoveringCompressor.DOUBLE_HEADER_SIZE, compressedSize);
                 double[] output = new double[count];
-                CoveringCompressor.decompressDoubles(destAddr, output);
+                decompressDoubles(destAddr, output);
                 for (int i = 0; i < count; i++) {
                     Assert.assertEquals(42.5, output[i], 0.0);
                 }
@@ -138,10 +138,10 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
-                int compressedSize = CoveringCompressor.compressDoubles(srcAddr, count, 3, destAddr);
+                int compressedSize = compressDoubles(srcAddr, count, 3, destAddr);
                 Assert.assertTrue("compressed should be smaller", compressedSize < count * Double.BYTES);
                 double[] output = new double[count];
-                CoveringCompressor.decompressDoubles(destAddr, output);
+                decompressDoubles(destAddr, output);
                 for (int i = 0; i < count; i++) {
                     Assert.assertEquals(Double.doubleToRawLongBits(input[i]), Double.doubleToRawLongBits(output[i]));
                 }
@@ -165,9 +165,9 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putFloat(srcAddr + (long) i * Float.BYTES, input[i]);
                 }
-                CoveringCompressor.compressInts(srcAddr, count, destAddr);
+                compressInts(srcAddr, count, destAddr);
                 int[] output = new int[count];
-                CoveringCompressor.decompressInts(destAddr, output);
+                decompressInts(destAddr, output);
                 for (int i = 0; i < count; i++) {
                     float recovered = Float.intBitsToFloat(output[i]);
                     Assert.assertEquals("float " + i + " (" + input[i] + ")",
@@ -191,10 +191,10 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putInt(srcAddr + (long) i * Integer.BYTES, input[i]);
                 }
-                int compressedSize = CoveringCompressor.compressInts(srcAddr, count, destAddr);
+                int compressedSize = compressInts(srcAddr, count, destAddr);
                 Assert.assertTrue("compressed should be smaller", compressedSize < count * Integer.BYTES);
                 int[] output = new int[count];
-                CoveringCompressor.decompressInts(destAddr, output);
+                decompressInts(destAddr, output);
                 Assert.assertArrayEquals(input, output);
             } finally {
                 Unsafe.free(srcAddr, (long) count * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -217,11 +217,50 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 int compressedSize = CoveringCompressor.compressLongs(srcAddr, count, destAddr);
                 Assert.assertTrue("compressed should be smaller", compressedSize < count * Long.BYTES);
                 long[] output = new long[count];
-                CoveringCompressor.decompressLongs(destAddr, output);
+                decompressLongs(destAddr, output);
                 Assert.assertArrayEquals(input, output);
             } finally {
                 Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(count, ColumnType.LONG), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCompressFloatsRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            float[] input = {
+                    1.5f, 2.25f, 3.125f, -4.0625f, 0.0f, -0.0f,
+                    1e-3f, 1e3f, 42.0f, 42.0f, 42.0f, Float.MIN_NORMAL
+            };
+            int count = input.length;
+            int destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.FLOAT);
+            long srcAddr = Unsafe.malloc((long) count * Float.BYTES, MemoryTag.NATIVE_DEFAULT);
+            long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
+            long encAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            long excAddr = Unsafe.malloc(count, MemoryTag.NATIVE_DEFAULT);
+            long decAddr = Unsafe.malloc((long) count * Float.BYTES, MemoryTag.NATIVE_DEFAULT);
+            long decodeWsAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < count; i++) {
+                    Unsafe.getUnsafe().putFloat(srcAddr + (long) i * Float.BYTES, input[i]);
+                }
+                int sz = CoveringCompressor.compressFloats(srcAddr, count, destAddr, encAddr, excAddr);
+                Assert.assertTrue("compressed size must be positive", sz > 0);
+
+                CoveringCompressor.decompressFloatsToAddr(destAddr, decAddr, decodeWsAddr);
+                for (int i = 0; i < count; i++) {
+                    float actual = Unsafe.getUnsafe().getFloat(decAddr + (long) i * Float.BYTES);
+                    Assert.assertEquals("value " + i,
+                            Float.floatToRawIntBits(input[i]), Float.floatToRawIntBits(actual));
+                }
+            } finally {
+                Unsafe.free(decodeWsAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(decAddr, (long) count * Float.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(excAddr, count, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(encAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(srcAddr, (long) count * Float.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -241,11 +280,11 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
-                int compressedSize = CoveringCompressor.compressDoubles(srcAddr, count, 3, destAddr);
+                int compressedSize = compressDoubles(srcAddr, count, 3, destAddr);
                 double ratio = (double) (count * Double.BYTES) / compressedSize;
                 Assert.assertTrue("prices should compress at least 2x, got " + ratio + "x", ratio >= 2.0);
                 double[] output = new double[count];
-                CoveringCompressor.decompressDoubles(destAddr, output);
+                decompressDoubles(destAddr, output);
                 for (int i = 0; i < count; i++) {
                     Assert.assertEquals(Double.doubleToRawLongBits(input[i]), Double.doubleToRawLongBits(output[i]));
                 }
@@ -256,322 +295,62 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testDeltaCompressDecompressNanoTimestamps() throws Exception {
-        assertMemoryLeak(() -> {
-            // Sorted nanosecond timestamps — ~100ms intervals with jitter
-            int count = 256;
-            long[] input = new long[count];
-            long baseTs = 1_711_900_800_000_000_000L; // 2024-04-01 in nanos
-            Random rng = new Random(99);
-            for (int i = 0; i < count; i++) {
-                input[i] = baseTs + (long) i * 100_000_000L + rng.nextInt(10_000_000);
-            }
-            long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-            long workAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, input[i]);
-                }
-                int deltaSize = CoveringCompressor.compressLongsDelta(srcAddr, count, destAddr, workAddr);
-                long[] output = new long[count];
-                CoveringCompressor.decompressLongs(destAddr, output);
-                Assert.assertArrayEquals(input, output);
 
-                // Compare with plain FoR
-                int plainSize = CoveringCompressor.compressLongs(srcAddr, count, destAddr);
-                Assert.assertTrue("delta (" + deltaSize + ") should be much smaller than plain (" + plainSize + ")",
-                        deltaSize < plainSize);
+    @Test
+    public void testEmptyBlockBwIsZero() throws Exception {
+        assertMemoryLeak(() -> {
+            int destCap = CoveringCompressor.maxCompressedSize(1, ColumnType.LONG);
+            long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
+            try {
+                int sz = CoveringCompressor.compressLongs(0L, 0, destAddr);
+                Assert.assertTrue("header must fit", sz > 0);
+                Assert.assertEquals(0, Unsafe.getUnsafe().getInt(destAddr));
+                Assert.assertEquals(0, Unsafe.getUnsafe().getByte(destAddr + 4));
             } finally {
-                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(workAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
 
     @Test
-    public void testDeltaCompressDecompressSortedTimestamps() throws Exception {
+    public void testLinearPredFallbackOnBwOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            // Sorted microsecond timestamps — 1 second intervals over 4 minutes
-            int count = 256;
-            long[] input = new long[count];
-            long baseTs = 1_711_900_800_000_000L; // 2024-04-01 in micros
-            for (int i = 0; i < count; i++) {
-                input[i] = baseTs + (long) i * 1_000_000L;
-            }
-            long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-            long workAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, input[i]);
-                }
-                int compressedSize = CoveringCompressor.compressLongsDelta(srcAddr, count, destAddr, workAddr);
-                // Constant deltas → bitWidth=0, only header bytes (21 = count(4)+bw(1)+deltaBase(8)+firstValue(8))
-                Assert.assertEquals(21, compressedSize);
-                long[] output = new long[count];
-                CoveringCompressor.decompressLongs(destAddr, output);
-                Assert.assertArrayEquals(input, output);
-            } finally {
-                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(workAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testDeltaCompressDecompressToAddr() throws Exception {
-        assertMemoryLeak(() -> {
-            int count = 64;
-            long[] input = new long[count];
-            long baseTs = 1_711_900_800_000_000L;
-            Random rng = new Random(7);
-            for (int i = 0; i < count; i++) {
-                input[i] = baseTs + (long) i * 1_000_000L + rng.nextInt(500_000);
-            }
-            long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-            long workAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long outAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, input[i]);
-                }
-                CoveringCompressor.compressLongsDelta(srcAddr, count, destAddr, workAddr);
-                int decoded = CoveringCompressor.decompressLongsToAddr(destAddr, outAddr, workAddr);
-                Assert.assertEquals(count, decoded);
-                for (int i = 0; i < count; i++) {
-                    Assert.assertEquals("value " + i, input[i],
-                            Unsafe.getUnsafe().getLong(outAddr + (long) i * Long.BYTES));
-                }
-            } finally {
-                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(workAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(outAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testDeltaCompressEmptyInput() throws Exception {
-        // Verify that compressing a single value and decompressing it round-trips correctly
-        // (count=0 is not a valid input for the compressor — the minimum is 1)
-        assertMemoryLeak(() -> {
-            long srcAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(1, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-            long workAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try {
-                // Single-value compress/decompress round-trip
-                Unsafe.getUnsafe().putLong(srcAddr, 42L);
-                CoveringCompressor.compressLongsDelta(srcAddr, 1, destAddr, workAddr);
-                long[] output = new long[1];
-                CoveringCompressor.decompressLongs(destAddr, output);
-                Assert.assertEquals(42L, output[0]);
-            } finally {
-                Unsafe.free(srcAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(1, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(workAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testDeltaCompressExtremeValues() throws Exception {
-        // Test near Long.MAX_VALUE/MIN_VALUE — verify delta overflow is handled
-        assertMemoryLeak(() -> {
-            long[] input = {Long.MIN_VALUE + 1, 0, Long.MAX_VALUE - 1, Long.MAX_VALUE};
+            long[] input = {0L, Long.MIN_VALUE, Long.MAX_VALUE, 0L};
             int count = input.length;
+            int destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP);
             long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
+            long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
             long workAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, input[i]);
                 }
-                CoveringCompressor.compressLongsDelta(srcAddr, count, destAddr, workAddr);
+                int sz = CoveringCompressor.compressLongsLinearPred(srcAddr, count, destAddr, workAddr);
+                Assert.assertTrue("compressed size must be positive", sz > 0);
+
+                int flagByte = Unsafe.getUnsafe().getByte(destAddr + 4) & 0xFF;
+                Assert.assertNotEquals("expected plain FoR after fallback, got linear-pred",
+                        0xC0, flagByte & 0xC0);
+
                 long[] output = new long[count];
-                CoveringCompressor.decompressLongs(destAddr, output);
+                decompressLongs(destAddr, output);
                 Assert.assertArrayEquals(input, output);
             } finally {
-                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(workAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
 
     @Test
-    public void testDeltaCompressNegativeDeltas() throws Exception {
-        // Non-monotonic data (e.g., O3 reorder) produces negative deltas
-        assertMemoryLeak(() -> {
-            long[] input = {100, 95, 110, 90, 120, 85, 130, 80};
-            int count = input.length;
-            long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-            long workAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, input[i]);
-                }
-                CoveringCompressor.compressLongsDelta(srcAddr, count, destAddr, workAddr);
-                long[] output = new long[count];
-                CoveringCompressor.decompressLongs(destAddr, output);
-                Assert.assertArrayEquals(input, output);
-            } finally {
-                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(workAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testDeltaCompressSingleValue() throws Exception {
-        assertMemoryLeak(() -> {
-            // count <= 1 falls back to plain FoR
-            long[] input = {1_711_900_800_000_000L};
-            long srcAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(1, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-            long workAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try {
-                Unsafe.getUnsafe().putLong(srcAddr, input[0]);
-                CoveringCompressor.compressLongsDelta(srcAddr, 1, destAddr, workAddr);
-                long[] output = new long[1];
-                CoveringCompressor.decompressLongs(destAddr, output);
-                Assert.assertEquals(input[0], output[0]);
-            } finally {
-                Unsafe.free(srcAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(1, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(workAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testDeltaCompressTwoValues() throws Exception {
-        // count=2: smallest case that produces a delta (deltaCount=1)
-        assertMemoryLeak(() -> {
-            long[] input = {1_000_000L, 2_000_000L};
-            int count = input.length;
-            long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-            long workAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, input[i]);
-                }
-                CoveringCompressor.compressLongsDelta(srcAddr, count, destAddr, workAddr);
-                long[] output = new long[count];
-                CoveringCompressor.decompressLongs(destAddr, output);
-                Assert.assertArrayEquals(input, output);
-            } finally {
-                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(workAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testDeltaCompressionRatioBenchmark() throws Exception {
-        // Benchmark compression ratios across different timestamp scenarios
-        assertMemoryLeak(() -> {
-            int count = 256;
-            long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            int maxBuf = CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP);
-            long destAddr = Unsafe.malloc(maxBuf, MemoryTag.NATIVE_DEFAULT);
-            long workAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try {
-                int rawSize = count * Long.BYTES;
-                StringBuilder report = new StringBuilder("\n=== Delta FoR Compression Ratios (256 values) ===\n");
-                report.append(String.format("%-45s %8s %8s %8s %8s\n",
-                        "Scenario", "Raw", "Plain", "Delta", "Ratio"));
-                report.append("-".repeat(85)).append('\n');
-
-                // Scenario 1: Microsecond timestamps, 1-second intervals (constant delta)
-                long base = 1_711_900_800_000_000L;
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, base + (long) i * 1_000_000L);
-                }
-                appendRatioLine(report, "Micros, 1s intervals (constant delta)", rawSize, srcAddr, count, destAddr, workAddr);
-
-                // Scenario 2: Microsecond timestamps, 1-second intervals with jitter
-                Random rng = new Random(42);
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES,
-                            base + (long) i * 1_000_000L + rng.nextInt(500_000));
-                }
-                appendRatioLine(report, "Micros, 1s intervals + 500ms jitter", rawSize, srcAddr, count, destAddr, workAddr);
-
-                // Scenario 3: Nanosecond timestamps, 1-second intervals (constant delta)
-                long nanoBase = 1_711_900_800_000_000_000L;
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES,
-                            nanoBase + (long) i * 1_000_000_000L);
-                }
-                appendRatioLine(report, "Nanos, 1s intervals (constant delta)", rawSize, srcAddr, count, destAddr, workAddr);
-
-                // Scenario 4: Nanosecond timestamps, 100ms intervals with 10ms jitter
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES,
-                            nanoBase + (long) i * 100_000_000L + rng.nextInt(10_000_000));
-                }
-                appendRatioLine(report, "Nanos, 100ms intervals + 10ms jitter", rawSize, srcAddr, count, destAddr, workAddr);
-
-                // Scenario 5: Nanosecond timestamps, 1-hour span, irregular intervals
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES,
-                            nanoBase + (long) (rng.nextDouble() * 3_600_000_000_000L));
-                }
-                // Sort for realistic scenario
-                long[] tmp = new long[count];
-                for (int i = 0; i < count; i++) {
-                    tmp[i] = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
-                }
-                java.util.Arrays.sort(tmp);
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, tmp[i]);
-                }
-                appendRatioLine(report, "Nanos, 1hr span, sorted random", rawSize, srcAddr, count, destAddr, workAddr);
-
-                // Scenario 6: Microsecond timestamps, 1-hour span, sorted random
-                for (int i = 0; i < count; i++) {
-                    tmp[i] = base + (long) (rng.nextDouble() * 3_600_000_000L);
-                }
-                java.util.Arrays.sort(tmp);
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, tmp[i]);
-                }
-                appendRatioLine(report, "Micros, 1hr span, sorted random", rawSize, srcAddr, count, destAddr, workAddr);
-
-                // Scenario 7: Nanosecond timestamps, 1ms intervals (high-frequency)
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES,
-                            nanoBase + (long) i * 1_000_000L + rng.nextInt(100_000));
-                }
-                appendRatioLine(report, "Nanos, 1ms intervals + 100us jitter", rawSize, srcAddr, count, destAddr, workAddr);
-
-                LOG.info().$(report).$();
-
-                // Verify delta always compresses better than plain for sorted timestamps
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES,
-                            nanoBase + (long) i * 100_000_000L);
-                }
-                int plainSize = CoveringCompressor.compressLongs(srcAddr, count, destAddr);
-                int deltaSize = CoveringCompressor.compressLongsDelta(srcAddr, count, destAddr, workAddr);
-                Assert.assertTrue("delta (" + deltaSize + ") must beat plain (" + plainSize + ") for sorted nanos",
-                        deltaSize < plainSize);
-            } finally {
-                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(destAddr, maxBuf, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(workAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
+    public void testMaxCompressedSizeRejectsUnsupportedTypes() {
+        int[] unsupported = {ColumnType.VARCHAR, ColumnType.STRING, ColumnType.BINARY};
+        for (int type : unsupported) {
+            Assert.assertThrows("column type " + type,
+                    AssertionError.class,
+                    () -> CoveringCompressor.maxCompressedSize(100, type));
+        }
     }
 
     @Test
@@ -586,9 +365,9 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
-                CoveringCompressor.compressDoubles(srcAddr, count, 3, destAddr);
+                compressDoubles(srcAddr, count, 3, destAddr);
                 double[] output = new double[count];
-                CoveringCompressor.decompressDoubles(destAddr, output);
+                decompressDoubles(destAddr, output);
                 for (int i = 0; i < count; i++) {
                     Assert.assertEquals(Double.doubleToRawLongBits(input[i]), Double.doubleToRawLongBits(output[i]));
                 }
@@ -614,9 +393,9 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
-                CoveringCompressor.compressDoubles(srcAddr, count, 3, destAddr);
+                compressDoubles(srcAddr, count, 3, destAddr);
                 double[] output = new double[count];
-                CoveringCompressor.decompressDoubles(destAddr, output);
+                decompressDoubles(destAddr, output);
                 for (int i = 0; i < count; i++) {
                     Assert.assertEquals(Double.doubleToRawLongBits(input[i]), Double.doubleToRawLongBits(output[i]));
                 }
@@ -640,9 +419,9 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
-                CoveringCompressor.compressDoubles(srcAddr, count, 3, destAddr);
+                compressDoubles(srcAddr, count, 3, destAddr);
                 double[] output = new double[count];
-                CoveringCompressor.decompressDoubles(destAddr, output);
+                decompressDoubles(destAddr, output);
                 for (int i = 0; i < count; i++) {
                     Assert.assertEquals("value " + i + " (" + input[i] + ")",
                             Double.doubleToRawLongBits(input[i]), Double.doubleToRawLongBits(output[i]));
@@ -652,6 +431,71 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE), MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    private static int compressDoubles(long srcAddr, int count, int valueShift, long destAddr) {
+        long encAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long excAddr = Unsafe.malloc(count, MemoryTag.NATIVE_DEFAULT);
+        try {
+            return CoveringCompressor.compressDoubles(srcAddr, count, valueShift, destAddr, encAddr, excAddr);
+        } finally {
+            Unsafe.free(excAddr, count, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(encAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static int compressInts(long srcAddr, int count, long destAddr) {
+        long wsAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            return CoveringCompressor.compressInts(srcAddr, count, destAddr, wsAddr);
+        } finally {
+            Unsafe.free(wsAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void decompressDoubles(long srcAddr, double[] output) {
+        int count = output.length;
+        long outAddr = Unsafe.malloc((long) count * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long wsAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            CoveringCompressor.decompressDoublesToAddr(srcAddr, outAddr, wsAddr);
+            for (int i = 0; i < count; i++) {
+                output[i] = Unsafe.getUnsafe().getDouble(outAddr + (long) i * Double.BYTES);
+            }
+        } finally {
+            Unsafe.free(wsAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(outAddr, (long) count * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void decompressInts(long srcAddr, int[] output) {
+        int count = output.length;
+        long outAddr = Unsafe.malloc((long) count * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long wsAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            CoveringCompressor.decompressIntsToAddr(srcAddr, outAddr, wsAddr);
+            for (int i = 0; i < count; i++) {
+                output[i] = Unsafe.getUnsafe().getInt(outAddr + (long) i * Integer.BYTES);
+            }
+        } finally {
+            Unsafe.free(wsAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(outAddr, (long) count * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void decompressLongs(long srcAddr, long[] output) {
+        int count = output.length;
+        long outAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long wsAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            CoveringCompressor.decompressLongsToAddr(srcAddr, outAddr, wsAddr);
+            for (int i = 0; i < count; i++) {
+                output[i] = Unsafe.getUnsafe().getLong(outAddr + (long) i * Long.BYTES);
+            }
+        } finally {
+            Unsafe.free(wsAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(outAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private static int findParams(double[] values) {
@@ -664,14 +508,5 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(addr, (long) values.length * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
-    }
-
-    private void appendRatioLine(StringBuilder report, String scenario, int rawSize,
-                                 long srcAddr, int count, long destAddr, long workAddr) {
-        int plainSize = CoveringCompressor.compressLongs(srcAddr, count, destAddr);
-        int deltaSize = CoveringCompressor.compressLongsDelta(srcAddr, count, destAddr, workAddr);
-        double deltaRatio = (double) rawSize / deltaSize;
-        report.append(String.format("%-45s %6dB %6dB %6dB %6.1fx\n",
-                scenario, rawSize, plainSize, deltaSize, deltaRatio));
     }
 }

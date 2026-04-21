@@ -25,7 +25,6 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
@@ -50,8 +49,6 @@ public class CoveringCompressor {
     public static final int FLOAT_ALP_HEADER_SIZE = 15;
     // BYTE: valueCount(4) + bitWidth(1) + forBase(1) = 6
     static final int BYTE_HEADER_SIZE = 6;
-    // Bit 7 of the bitWidth byte indicates delta encoding (bw in bits 0-6, max 63)
-    static final int DELTA_FLAG = 0x80;
     // Pre-computed powers of 10 as doubles (ascending)
     static final double[] F10 = {
             1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9,
@@ -122,9 +119,10 @@ public class CoveringCompressor {
             if (val < forBase) forBase = val;
             if (val > forMax) forMax = val;
         }
-        if (forBase == Long.MAX_VALUE) forBase = 0;
-        long range = forMax - forBase;
-        int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
+        int bw = bitsRequired(forBase, forMax);
+        if (forBase == Long.MAX_VALUE) {
+            forBase = 0;
+        }
 
         long pos = destAddr;
         Unsafe.getUnsafe().putInt(pos, count);
@@ -149,17 +147,6 @@ public class CoveringCompressor {
      *
      * @return number of bytes written
      */
-    public static int compressDoubles(long srcAddr, int count, int valueShift, long destAddr) {
-        long encodedAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        long exceptionAddr = Unsafe.malloc(count, MemoryTag.NATIVE_INDEX_READER);
-        try {
-            return compressDoubles(srcAddr, count, valueShift, destAddr, encodedAddr, exceptionAddr);
-        } finally {
-            Unsafe.free(encodedAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.free(exceptionAddr, count, MemoryTag.NATIVE_INDEX_READER);
-        }
-    }
-
     public static int compressDoubles(long srcAddr, int count, int valueShift, long destAddr,
                                       long encodedAddr, long exceptionAddr) {
         int params = findBestAlpParams(srcAddr, count, valueShift);
@@ -208,10 +195,10 @@ public class CoveringCompressor {
             forBase = Math.min(forBase, v);
             forMax = Math.max(forMax, v);
         }
+        int bw = bitsRequired(forBase, forMax);
         if (forBase == Long.MAX_VALUE) {
             forBase = 0;
         }
-        int bw = (forMax == forBase) ? 0 : 64 - Long.numberOfLeadingZeros(forMax - forBase);
 
         // Write header
         long pos = destAddr;
@@ -250,6 +237,13 @@ public class CoveringCompressor {
         return (int) (pos - destAddr);
     }
 
+    /**
+     * Compress a stride of float values using ALP + FoR bitpacking.
+     *
+     * @param encodedAddr   workspace for count longs (stores ALP-encoded ints sign-extended to longs)
+     * @param exceptionAddr workspace for count bytes (exception bitmap)
+     * @return number of bytes written
+     */
     public static int compressFloats(long srcAddr, int count, long destAddr, long encodedAddr, long exceptionAddr) {
         int params = findBestAlpParamsFloat(srcAddr, count);
         int e = params >>> 16;
@@ -257,7 +251,7 @@ public class CoveringCompressor {
 
         Unsafe.getUnsafe().setMemory(exceptionAddr, count, (byte) 0);
         int excCount = 0;
-        int fillValue = 0;
+        long fillValue = 0;
         boolean fillFound = false;
 
         for (int i = 0; i < count; i++) {
@@ -273,7 +267,7 @@ public class CoveringCompressor {
                 Unsafe.getUnsafe().putByte(exceptionAddr + i, (byte) 1);
                 excCount++;
             } else {
-                Unsafe.getUnsafe().putInt(encodedAddr + (long) i * Integer.BYTES, enc);
+                Unsafe.getUnsafe().putLong(encodedAddr + (long) i * Long.BYTES, enc);
                 if (!fillFound) {
                     fillValue = enc;
                     fillFound = true;
@@ -283,22 +277,22 @@ public class CoveringCompressor {
 
         for (int i = 0; i < count; i++) {
             if (Unsafe.getUnsafe().getByte(exceptionAddr + i) != 0) {
-                Unsafe.getUnsafe().putInt(encodedAddr + (long) i * Integer.BYTES, fillValue);
+                Unsafe.getUnsafe().putLong(encodedAddr + (long) i * Long.BYTES, fillValue);
             }
         }
 
-        int forBase = Integer.MAX_VALUE;
-        int forMax = Integer.MIN_VALUE;
+        long forBase = Long.MAX_VALUE;
+        long forMax = Long.MIN_VALUE;
         for (int i = 0; i < count; i++) {
-            int v = Unsafe.getUnsafe().getInt(encodedAddr + (long) i * Integer.BYTES);
+            long v = Unsafe.getUnsafe().getLong(encodedAddr + (long) i * Long.BYTES);
             forBase = Math.min(forBase, v);
             forMax = Math.max(forMax, v);
         }
-        if (forBase == Integer.MAX_VALUE) forBase = 0;
-        long range = (long) forMax - (long) forBase;
-        int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
+        int bw = bitsRequired(forBase, forMax);
+        if (forBase == Long.MAX_VALUE) {
+            forBase = 0;
+        }
 
-        // Write header
         long pos = destAddr;
         Unsafe.getUnsafe().putInt(pos, count);
         pos += 4;
@@ -307,17 +301,11 @@ public class CoveringCompressor {
         Unsafe.getUnsafe().putByte(pos++, (byte) bw);
         Unsafe.getUnsafe().putInt(pos, excCount);
         pos += 4;
-        Unsafe.getUnsafe().putInt(pos, forBase);
+        Unsafe.getUnsafe().putInt(pos, (int) forBase);
         pos += 4;
 
-        // Pack encoded values (widen ints to longs in-place for BitpackUtils)
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
         if (bw > 0) {
-            // Widen in reverse to avoid overwriting unread ints (long stride > int stride)
-            for (int i = count - 1; i >= 0; i--) {
-                Unsafe.getUnsafe().putLong(encodedAddr + (long) i * Long.BYTES,
-                        Unsafe.getUnsafe().getInt(encodedAddr + (long) i * Integer.BYTES));
-            }
             PostingIndexNative.packValuesNativeFallback(encodedAddr, count, forBase, bw, pos);
         }
         pos += packedBytes;
@@ -344,15 +332,6 @@ public class CoveringCompressor {
      *
      * @return number of bytes written
      */
-    public static int compressInts(long srcAddr, int count, long destAddr) {
-        long workspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        try {
-            return compressInts(srcAddr, count, destAddr, workspaceAddr);
-        } finally {
-            Unsafe.free(workspaceAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        }
-    }
-
     public static int compressInts(long srcAddr, int count, long destAddr, long workspaceAddr) {
         int forBase = Integer.MAX_VALUE;
         int forMax = Integer.MIN_VALUE;
@@ -361,11 +340,10 @@ public class CoveringCompressor {
             forBase = Math.min(forBase, val);
             forMax = Math.max(forMax, val);
         }
+        int bw = bitsRequired(forBase, forMax);
         if (forBase == Integer.MAX_VALUE) {
             forBase = 0;
         }
-        long range = Integer.toUnsignedLong(forMax - forBase);
-        int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
 
         long pos = destAddr;
         Unsafe.getUnsafe().putInt(pos, count);
@@ -400,10 +378,10 @@ public class CoveringCompressor {
             forBase = Math.min(forBase, val);
             forMax = Math.max(forMax, val);
         }
+        int bw = bitsRequired(forBase, forMax);
         if (forBase == Long.MAX_VALUE) {
             forBase = 0;
         }
-        int bw = (forMax == forBase) ? 0 : 64 - Long.numberOfLeadingZeros(forMax - forBase);
 
         long pos = destAddr;
         Unsafe.getUnsafe().putInt(pos, count);
@@ -416,61 +394,6 @@ public class CoveringCompressor {
             PostingIndexNative.packValuesNativeFallback(srcAddr, count, forBase, bw, pos);
         }
         pos += BitpackUtils.packedDataSize(count, bw);
-
-        return (int) (pos - destAddr);
-    }
-
-    /**
-     * Compress longs using delta + FoR. Stores first value in the header, then
-     * FoR-compresses the deltas between consecutive values. Effective for
-     * sorted/monotonic data like timestamps.
-     * <p>
-     * Header: count(4B) + bitWidth|DELTA_FLAG(1B) + deltaBase(8B) + firstValue(8B) = 21 bytes.
-     * Bit 7 of the bitWidth byte distinguishes delta from plain FoR.
-     * Reuses {@link PostingIndexNative#packValuesNativeFallback} for the FoR step.
-     *
-     * @param longWorkspaceAddr workspace for count longs (used to store deltas)
-     * @return number of bytes written
-     */
-    public static int compressLongsDelta(long srcAddr, int count, long destAddr, long longWorkspaceAddr) {
-        if (count <= 1) {
-            return compressLongs(srcAddr, count, destAddr);
-        }
-        long firstValue = Unsafe.getUnsafe().getLong(srcAddr);
-        int deltaCount = count - 1;
-
-        // Compute deltas into workspace and find min/max
-        long deltaBase = Long.MAX_VALUE;
-        long deltaMax = Long.MIN_VALUE;
-        long prev = firstValue;
-        for (int i = 0; i < deltaCount; i++) {
-            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) (i + 1) * Long.BYTES);
-            long delta = val - prev;
-            prev = val;
-            Unsafe.getUnsafe().putLong(longWorkspaceAddr + (long) i * Long.BYTES, delta);
-            deltaBase = Math.min(deltaBase, delta);
-            deltaMax = Math.max(deltaMax, delta);
-        }
-        if (deltaBase == Long.MAX_VALUE) {
-            deltaBase = 0;
-        }
-        int bw = (deltaMax == deltaBase) ? 0 : 64 - Long.numberOfLeadingZeros(deltaMax - deltaBase);
-
-        // Write header: count + bitWidth|flag + deltaBase + firstValue
-        long pos = destAddr;
-        Unsafe.getUnsafe().putInt(pos, count);
-        pos += 4;
-        Unsafe.getUnsafe().putByte(pos++, (byte) (bw | DELTA_FLAG));
-        Unsafe.getUnsafe().putLong(pos, deltaBase);
-        pos += 8;
-        Unsafe.getUnsafe().putLong(pos, firstValue);
-        pos += 8;
-
-        // FoR-pack deltas using existing infrastructure
-        if (bw > 0) {
-            PostingIndexNative.packValuesNativeFallback(longWorkspaceAddr, deltaCount, deltaBase, bw, pos);
-        }
-        pos += BitpackUtils.packedDataSize(deltaCount, bw);
 
         return (int) (pos - destAddr);
     }
@@ -492,9 +415,9 @@ public class CoveringCompressor {
         // Caller guarantees sorted ascending, non-null values (designated timestamp).
         long firstValue = Unsafe.getUnsafe().getLong(srcAddr);
         long lastValue = Unsafe.getUnsafe().getLong(srcAddr + (long) (count - 1) * Long.BYTES);
+        assert lastValue >= firstValue : "linear-pred requires sorted ascending input";
         long stride = (lastValue - firstValue) / (count - 1);
 
-        // Compute residuals and find min/max
         long resMin = Long.MAX_VALUE;
         long resMax = Long.MIN_VALUE;
         for (int i = 0; i < count; i++) {
@@ -505,10 +428,13 @@ public class CoveringCompressor {
             resMin = Math.min(resMin, residual);
             resMax = Math.max(resMax, residual);
         }
+        int bw = bitsRequired(resMin, resMax);
+        if (bw > 63) {
+            return compressLongs(srcAddr, count, destAddr);
+        }
         if (resMin == Long.MAX_VALUE) {
             resMin = 0;
         }
-        int bw = (resMax == resMin) ? 0 : 64 - Long.numberOfLeadingZeros(resMax - resMin);
 
         long pos = destAddr;
         Unsafe.getUnsafe().putInt(pos, count);
@@ -539,9 +465,10 @@ public class CoveringCompressor {
             if (val < forBase) forBase = val;
             if (val > forMax) forMax = val;
         }
-        if (forBase == Long.MAX_VALUE) forBase = 0;
-        long range = forMax - forBase;
-        int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
+        int bw = bitsRequired(forBase, forMax);
+        if (forBase == Long.MAX_VALUE) {
+            forBase = 0;
+        }
 
         long pos = destAddr;
         Unsafe.getUnsafe().putInt(pos, count);
@@ -576,69 +503,6 @@ public class CoveringCompressor {
             }
         } else {
             Unsafe.getUnsafe().setMemory(outputAddr, count, (byte) forBase);
-        }
-    }
-
-    /**
-     * Decompress ALP-encoded doubles into a pre-allocated output buffer.
-     */
-    public static void decompressDoubles(long srcAddr, double[] output) {
-        int rawCount = Unsafe.getUnsafe().getInt(srcAddr);
-        int count = (rawCount & RAW_BLOCK_FLAG) != 0 ? rawCount & ~RAW_BLOCK_FLAG : rawCount;
-        long workspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        try {
-            decompressDoubles(srcAddr, output, workspaceAddr);
-        } finally {
-            Unsafe.free(workspaceAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        }
-    }
-
-    /**
-     * Decompress ALP-encoded doubles using a pre-allocated native workspace to avoid allocation.
-     * The workspace must have room for count longs (read from the header at srcAddr).
-     */
-    public static void decompressDoubles(long srcAddr, double[] output, long workspaceAddr) {
-        long pos = srcAddr;
-        int rawCount = Unsafe.getUnsafe().getInt(pos);
-        if ((rawCount & RAW_BLOCK_FLAG) != 0) {
-            int count = rawCount & ~RAW_BLOCK_FLAG;
-            for (int i = 0; i < count; i++) {
-                output[i] = Unsafe.getUnsafe().getDouble(pos + 4 + (long) i * Double.BYTES);
-            }
-            return;
-        }
-        pos += 4;
-        int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
-        int f = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
-        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
-        int excCount = Unsafe.getUnsafe().getInt(pos);
-        pos += 4;
-        long forBase = Unsafe.getUnsafe().getLong(pos);
-        pos += 8;
-
-        // Unpack FoR integers
-        int packedBytes = BitpackUtils.packedDataSize(rawCount, bw);
-        if (bw > 0) {
-            BitpackUtils.unpackAllValues(pos, rawCount, bw, forBase, workspaceAddr);
-        } else {
-            for (int i = 0; i < rawCount; i++) {
-                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
-            }
-        }
-        pos += packedBytes;
-
-        // ALP decode: integer -> double
-        for (int i = 0; i < rawCount; i++) {
-            output[i] = alpDecode(Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES), e, f);
-        }
-
-        // Patch exceptions
-        long excPosAddr = pos;
-        long excValAddr = pos + (long) excCount * 4;
-        for (int i = 0; i < excCount; i++) {
-            int excIdx = Unsafe.getUnsafe().getInt(excPosAddr + (long) i * 4);
-            double excVal = Unsafe.getUnsafe().getDouble(excValAddr + (long) i * 8);
-            output[excIdx] = excVal;
         }
     }
 
@@ -730,42 +594,6 @@ public class CoveringCompressor {
     }
 
     /**
-     * Decompress FoR-encoded ints.
-     */
-    public static void decompressInts(long srcAddr, int[] output) {
-        int count = Unsafe.getUnsafe().getInt(srcAddr);
-        long workspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        try {
-            decompressInts(srcAddr, output, workspaceAddr);
-        } finally {
-            Unsafe.free(workspaceAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        }
-    }
-
-    /**
-     * Decompress FoR-encoded ints using a pre-allocated native workspace to avoid allocation.
-     */
-    public static void decompressInts(long srcAddr, int[] output, long workspaceAddr) {
-        long pos = srcAddr;
-        int count = Unsafe.getUnsafe().getInt(pos);
-        pos += 4;
-        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
-        int forBase = Unsafe.getUnsafe().getInt(pos);
-        pos += 4;
-
-        if (bw > 0) {
-            BitpackUtils.unpackAllValues(pos, count, bw, 0, workspaceAddr);
-            for (int i = 0; i < count; i++) {
-                output[i] = forBase + (int) Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
-            }
-        } else {
-            for (int i = 0; i < count; i++) {
-                output[i] = forBase;
-            }
-        }
-    }
-
-    /**
      * Decompress FoR-encoded ints directly to native memory.
      * The workspace must have room for count longs (read from the header at srcAddr).
      */
@@ -792,105 +620,17 @@ public class CoveringCompressor {
     }
 
     /**
-     * Decompress FoR-encoded longs (allocates workspace internally).
-     * Transparently handles both plain FoR and delta FoR.
-     */
-    public static void decompressLongs(long srcAddr, long[] output) {
-        int count = Unsafe.getUnsafe().getInt(srcAddr);
-        long workspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        try {
-            decompressLongs(srcAddr, output, workspaceAddr);
-        } finally {
-            Unsafe.free(workspaceAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        }
-    }
-
-    /**
-     * Decompress FoR-encoded longs using a pre-allocated native workspace to avoid allocation.
-     * The workspace must have room for count longs (read from the header at srcAddr).
-     * Transparently handles both plain FoR and delta FoR (detected via bit 7 of bitWidth at offset 4).
-     */
-    public static void decompressLongs(long srcAddr, long[] output, long workspaceAddr) {
-        long pos = srcAddr;
-        int count = Unsafe.getUnsafe().getInt(pos);
-        pos += 4;
-        int rawBw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
-        boolean isLinearPred = (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG;
-        boolean isDelta = !isLinearPred && (rawBw & DELTA_FLAG) != 0;
-        int bw = isLinearPred ? (rawBw & BW_MASK_6BIT) : isDelta ? (rawBw & 0x7F) : rawBw;
-        long forBase = Unsafe.getUnsafe().getLong(pos);
-        pos += 8;
-
-        if (isLinearPred) {
-            long firstValue = Unsafe.getUnsafe().getLong(pos);
-            pos += 8;
-            long stride = Unsafe.getUnsafe().getLong(pos);
-            pos += 8;
-            if (bw > 0) {
-                BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
-            } else {
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
-                }
-            }
-            for (int i = 0; i < count; i++) {
-                output[i] = firstValue + (long) i * stride
-                        + Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
-            }
-        } else {
-            long firstValue = 0;
-            int packedCount;
-            if (isDelta) {
-                firstValue = Unsafe.getUnsafe().getLong(pos);
-                pos += 8;
-                packedCount = count - 1;
-            } else {
-                packedCount = count;
-            }
-
-            if (bw > 0) {
-                BitpackUtils.unpackAllValues(pos, packedCount, bw, forBase, workspaceAddr);
-            } else {
-                for (int i = 0; i < packedCount; i++) {
-                    Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
-                }
-            }
-
-            if (isDelta) {
-                output[0] = firstValue;
-                long current = firstValue;
-                for (int i = 0; i < packedCount; i++) {
-                    current += Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
-                    output[i + 1] = current;
-                }
-            } else {
-                for (int i = 0; i < count; i++) {
-                    output[i] = Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
-                }
-            }
-        }
-    }
-
-    // ==================================================================================
-    // Point-access decoders: decode a single value at a given index from compressed data.
-    // O(1) random access, zero allocation.
-    // ==================================================================================
-
-    /**
      * Decompress FoR-encoded longs directly to native memory.
      * The workspace must have room for count longs (read from the header at srcAddr).
-     * Transparently handles both plain FoR and delta FoR.
-     *
-     * @return number of values decoded
+     * Handles plain FoR and linear-prediction FoR.
      */
-    public static int decompressLongsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
+    public static void decompressLongsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
         int rawBw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         boolean isLinearPred = (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG;
-        boolean isDelta = !isLinearPred && (rawBw & DELTA_FLAG) != 0;
-        int bw = isLinearPred ? (rawBw & BW_MASK_6BIT) : isDelta ? (rawBw & 0x7F) : rawBw;
+        int bw = isLinearPred ? rawBw & BW_MASK_6BIT : rawBw;
         long forBase = Unsafe.getUnsafe().getLong(pos);
         pos += 8;
 
@@ -912,37 +652,15 @@ public class CoveringCompressor {
                                 + Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES));
             }
         } else {
-            long firstValue = 0;
-            int packedCount;
-            if (isDelta) {
-                firstValue = Unsafe.getUnsafe().getLong(pos);
-                pos += 8;
-                packedCount = count - 1;
-            } else {
-                packedCount = count;
-            }
-
             if (bw > 0) {
-                BitpackUtils.unpackAllValues(pos, packedCount, bw, forBase, workspaceAddr);
+                BitpackUtils.unpackAllValues(pos, count, bw, forBase, outputAddr);
             } else {
-                for (int i = 0; i < packedCount; i++) {
-                    Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
+                for (int i = 0; i < count; i++) {
+                    Unsafe.getUnsafe().putLong(outputAddr + (long) i * Long.BYTES, forBase);
                 }
-            }
-
-            if (isDelta) {
-                Unsafe.getUnsafe().putLong(outputAddr, firstValue);
-                long current = firstValue;
-                for (int i = 0; i < packedCount; i++) {
-                    current += Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
-                    Unsafe.getUnsafe().putLong(outputAddr + (long) (i + 1) * Long.BYTES, current);
-                }
-            } else {
-                Unsafe.getUnsafe().copyMemory(workspaceAddr, outputAddr, (long) count * Long.BYTES);
             }
         }
 
-        return count;
     }
 
     public static void decompressShortsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
@@ -1001,7 +719,7 @@ public class CoveringCompressor {
                 if (sampleCount - exceptions < 1) {
                     continue;
                 }
-                int bw = (maxEnc == minEnc) ? 0 : 64 - Long.numberOfLeadingZeros(maxEnc - minEnc);
+                int bw = bitsRequired(minEnc, maxEnc);
                 long cost = (long) sampleCount * bw + (long) exceptions * (64 + 16);
 
                 if (cost < bestCost) {
@@ -1043,8 +761,7 @@ public class CoveringCompressor {
                 }
 
                 if (sampleCount - exceptions < 1) continue;
-                long range = (long) maxEnc - (long) minEnc;
-                int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
+                int bw = bitsRequired(minEnc, maxEnc);
                 long cost = (long) sampleCount * bw + (long) exceptions * (32 + 16);
 
                 if (cost < bestCost) {
@@ -1082,21 +799,24 @@ public class CoveringCompressor {
                     SHORT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 16);
             case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
                     BYTE_HEADER_SIZE + BitpackUtils.packedDataSize(count, 8);
-            default ->
-                // UUID, DECIMAL128, LONG256, DECIMAL256:
-                // raw copy with count header (4B) + valueSize each
+            case ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256, ColumnType.DECIMAL256 ->
                     4 + count * ColumnType.sizeOf(columnType);
+            default -> throw new AssertionError("maxCompressedSize: unsupported column type " + columnType);
         };
     }
 
     public static byte readByteAt(long srcAddr, int index) {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
-        if (index < 0 || index >= count) return 0;
+        if (index < 0 || index >= count) {
+            return 0;
+        }
         pos += 4;
         int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         long forBase = Unsafe.getUnsafe().getByte(pos++); // sign-extend
-        if (bw == 0) return (byte) forBase;
+        if (bw == 0) {
+            return (byte) forBase;
+        }
         return (byte) (forBase + BitpackUtils.unpackValue(pos, index, bw, 0));
     }
 
@@ -1179,18 +899,22 @@ public class CoveringCompressor {
     public static int readIntAt(long srcAddr, int index) {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
-        if (index < 0 || index >= count) return Numbers.INT_NULL;
+        if (index < 0 || index >= count) {
+            return Numbers.INT_NULL;
+        }
         pos += 4;
         int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         int forBase = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
-        if (bw == 0) return forBase;
+        if (bw == 0) {
+            return forBase;
+        }
         return forBase + (int) BitpackUtils.unpackValue(pos, index, bw, 0);
     }
 
     /**
      * Read a single FoR-compressed long at the given index.
-     * Handles plain FoR, delta FoR (sequential fallback), and linear-prediction FoR.
+     * Handles plain FoR and linear-prediction FoR; both O(1).
      */
     public static long readLongAt(long srcAddr, int index) {
         long pos = srcAddr;
@@ -1199,8 +923,7 @@ public class CoveringCompressor {
         pos += 4;
         int rawBw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         boolean isLinearPred = (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG;
-        boolean isDelta = !isLinearPred && (rawBw & DELTA_FLAG) != 0;
-        int bw = isLinearPred ? (rawBw & BW_MASK_6BIT) : isDelta ? (rawBw & 0x7F) : rawBw;
+        int bw = isLinearPred ? rawBw & BW_MASK_6BIT : rawBw;
         long forBase = Unsafe.getUnsafe().getLong(pos);
         pos += 8;
 
@@ -1209,34 +932,34 @@ public class CoveringCompressor {
             pos += 8;
             long stride = Unsafe.getUnsafe().getLong(pos);
             pos += 8;
-            long residual = (bw > 0) ? BitpackUtils.unpackValue(pos, index, bw, forBase) : forBase;
+            long residual = bw > 0 ? BitpackUtils.unpackValue(pos, index, bw, forBase) : forBase;
             return firstValue + (long) index * stride + residual;
-        } else if (isDelta) {
-            // Delta FoR: must sum deltas sequentially — O(index) fallback for old data
-            long firstValue = Unsafe.getUnsafe().getLong(pos);
-            pos += 8;
-            if (index == 0) return firstValue;
-            long current = firstValue;
-            for (int i = 0; i < index; i++) {
-                long delta = (bw > 0) ? BitpackUtils.unpackValue(pos, i, bw, forBase) : forBase;
-                current += delta;
-            }
-            return current;
-        } else {
-            return (bw > 0) ? BitpackUtils.unpackValue(pos, index, bw, forBase) : forBase;
         }
+        return bw > 0 ? BitpackUtils.unpackValue(pos, index, bw, forBase) : forBase;
     }
 
     public static short readShortAt(long srcAddr, int index) {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
-        if (index < 0 || index >= count) return 0;
+        if (index < 0 || index >= count) {
+            return 0;
+        }
         pos += 4;
         int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         long forBase = Unsafe.getUnsafe().getShort(pos); // sign-extend
         pos += 2;
-        if (bw == 0) return (short) forBase;
+        if (bw == 0) {
+            return (short) forBase;
+        }
         return (short) (forBase + BitpackUtils.unpackValue(pos, index, bw, 0));
+    }
+
+    private static int bitsRequired(long min, long max) {
+        if (min > max) {
+            return 0;
+        }
+        long span = max - min;
+        return span == 0 ? 0 : 64 - Long.numberOfLeadingZeros(span);
     }
 
     /**
@@ -1244,6 +967,7 @@ public class CoveringCompressor {
      * is a non-double column (e.g., float stored in 4 bytes).
      */
     private static double readDouble(long srcAddr, int index, int shift) {
+        assert shift == 2 || shift == 3 : "readDouble: shift must be 2 (float) or 3 (double), got " + shift;
         if (shift == 3) { // Double.BYTES = 8 = 2^3
             return Unsafe.getUnsafe().getDouble(srcAddr + (long) index * Double.BYTES);
         } else { // Float.BYTES = 4 = 2^2

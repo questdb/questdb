@@ -786,8 +786,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.coveringRecord.setSymbolTable(indexSymbolTable);
             this.fallbackRecord.setSymbolTable(indexSymbolTable);
             if (symbolIncludeCols != null) {
-                for (int i = 0, n = symbolIncludeCols.length; i < n; i++) {
-                    int col = symbolIncludeCols[i];
+                for (int col : symbolIncludeCols) {
                     symTablesCache[col] = tableReader.getSymbolMapReader(columnIndexes.getQuick(col));
                 }
                 coveringRecord.setIncludeSymbolTables(symTablesCache);
