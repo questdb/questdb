@@ -706,8 +706,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                         // Payload declared in the frame header exceeds recv buffer capacity.
                         // Reject immediately instead of wasting bandwidth filling the buffer.
                         LOG.error().$("WebSocket frame too large [fd=").$(context.getFd())
+                                .$(", frameSize=").$(totalFrameSize)
                                 .$(", payloadLength=").$(frameParser.getPayloadLength())
-                                .$(", bufferSize=").$(recvBufferSize).I$();
+                                .$(", maxFrameSize=").$(recvBufferSize).I$();
                         if (state.isSendReady()) {
                             try {
                                 HttpRawSocket rawSocket = context.getRawResponseSocket();
@@ -716,7 +717,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                                 int written = WebSocketFrameWriter.writeCloseFrame(
                                         bufferAddr, bufferSize,
                                         WebSocketCloseCode.MESSAGE_TOO_BIG,
-                                        "frame payload exceeds maximum size"
+                                        frameTooLargeReason(totalFrameSize, recvBufferSize)
                                 );
                                 if (written > 0) {
                                     rawSocket.send(written);
@@ -961,6 +962,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     .$(", seq=").$(sequence).I$();
             throw e;
         }
+    }
+
+    private static String frameTooLargeReason(long frameSize, int maxFrameSize) {
+        return "frame too large [received=" + frameSize + " bytes, max=" + maxFrameSize + " bytes]; decrease batch size";
     }
 
     private enum FrameProcessResult {

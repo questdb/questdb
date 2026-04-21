@@ -75,6 +75,26 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testTooLargeWebSocketFrameReportsActionableSenderError() throws Exception {
+        final int recvBufferSize = 512;
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null, 0, 0, 0, 1, null)) {
+                sender.table("too_large_ws_frame")
+                        .stringColumn("payload", "x".repeat(recvBufferSize * 2))
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+                Assert.fail("Expected LineSenderException for too-large WebSocket frame");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("WebSocket closed"));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("frame too large"));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("received="));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("max=512 bytes"));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("decrease batch size"));
+            }
+        }, recvBufferSize);
+    }
+
+    @Test
     public void testAsyncModeLargeNumberOfRows() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
