@@ -47,6 +47,7 @@ import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.std.BoolList;
 import io.questdb.std.Decimal128;
@@ -108,6 +109,16 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             return ColumnType.VARCHAR;
         }
         return columnType;
+    }
+
+    // SqlCodeGenerator wraps a ColumnFunction in a *FunctionMemoizer when its alias is
+    // referenced more than once. Peel those wrappers so the per-column parquet encoding
+    // override survives memoization.
+    private static ColumnFunction unwrapToColumnFunction(Function f) {
+        while (f instanceof MemoizerFunction mf) {
+            f = mf.getArg();
+        }
+        return f instanceof ColumnFunction cf ? cf : null;
     }
 
     private final GenericRecordMetadata adjustedMetadata = new GenericRecordMetadata();
@@ -365,8 +376,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         for (int i = 0; i < outputColumnCount; i++) {
             int columnType = outputMeta.getColumnType(i);
             int parquetEncodingConfig = 0;
-            Function func = vfFunctions.getQuick(i);
-            if (func instanceof ColumnFunction cf) {
+            ColumnFunction cf = unwrapToColumnFunction(vfFunctions.getQuick(i));
+            if (cf != null) {
                 int baseColIdx = priorityMetadata.getBaseColumnIndex(cf.getColumnIndex());
                 if (baseColIdx >= 0) {
                     int sourceColumnType = baseMeta.getColumnType(baseColIdx);
@@ -410,10 +421,10 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         this.computedCount = 0;
 
         for (int i = 0; i < outputColumnCount; i++) {
-            Function func = functions.getQuick(i);
+            ColumnFunction cf = unwrapToColumnFunction(functions.getQuick(i));
             int baseColIdx = -1;
 
-            if (func instanceof ColumnFunction cf) {
+            if (cf != null) {
                 int joinSpaceIdx = cf.getColumnIndex();
                 // The column index in function space includes virtualColumnReservedSlots offset.
                 // For base columns, the index is >= virtualColumnReservedSlots.

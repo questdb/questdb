@@ -41,14 +41,22 @@ public final class ParquetTestUtils {
     }
 
     public static void assertColumnsDoNotUseDictionaryEncoding(String parquetFilePath, FilesFacade ff, int... columnIndexes) {
-        assertDictionaryEncoding(parquetFilePath, ff, false, columnIndexes);
+        assertEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_RLE_DICTIONARY, false, columnIndexes);
+    }
+
+    public static void assertColumnsDoNotUseEncoding(String parquetFilePath, FilesFacade ff, int encodingId, int... columnIndexes) {
+        assertEncoding(parquetFilePath, ff, encodingId, false, columnIndexes);
     }
 
     public static void assertColumnsUseDictionaryEncoding(String parquetFilePath, FilesFacade ff, int... columnIndexes) {
-        assertDictionaryEncoding(parquetFilePath, ff, true, columnIndexes);
+        assertEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_RLE_DICTIONARY, true, columnIndexes);
     }
 
-    private static void assertDictionaryEncoding(String parquetFilePath, FilesFacade ff, boolean expectDictionary, int... columnIndexes) {
+    public static void assertColumnsUseEncoding(String parquetFilePath, FilesFacade ff, int encodingId, int... columnIndexes) {
+        assertEncoding(parquetFilePath, ff, encodingId, true, columnIndexes);
+    }
+
+    private static void assertEncoding(String parquetFilePath, FilesFacade ff, int encodingId, boolean expectPresent, int... columnIndexes) {
         long fd = -1;
         long addr = 0;
         long fileSize = 0;
@@ -62,6 +70,7 @@ public final class ParquetTestUtils {
             final int rowGroupCount = decoder.metadata().getRowGroupCount();
             Assert.assertTrue("expected parquet file to contain at least one row group", rowGroupCount > 0);
 
+            final CharSequence encodingName = ParquetEncoding.getEncodingName(encodingId);
             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
                 for (int columnIndex : columnIndexes) {
                     Assert.assertTrue(
@@ -69,15 +78,11 @@ public final class ParquetTestUtils {
                             columnIndex >= 0 && columnIndex < decoder.metadata().getColumnCount()
                     );
                     Assert.assertEquals(
-                            (expectDictionary ? "expected" : "unexpected")
-                                    + " RLE_DICTIONARY encoding in row group " + rowGroupIndex
+                            (expectPresent ? "expected " : "unexpected ")
+                                    + encodingName + " encoding in row group " + rowGroupIndex
                                     + ", column " + columnIndex,
-                            expectDictionary,
-                            decoder.rowGroupColumnHasEncoding(
-                                    rowGroupIndex,
-                                    columnIndex,
-                                    ParquetEncoding.ENCODING_RLE_DICTIONARY
-                            )
+                            expectPresent,
+                            decoder.rowGroupColumnHasEncoding(rowGroupIndex, columnIndex, encodingId)
                     );
                 }
             }

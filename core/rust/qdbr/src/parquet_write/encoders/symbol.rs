@@ -243,7 +243,11 @@ fn build_symbol_validity(column_values: &[i32], column_top: usize) -> FlatValidi
 const UTF16_LEN_SIZE: usize = 4;
 
 fn get_symbol_utf16_bytes(chars: &[u8], qdb_global_offset: usize) -> Option<&[u8]> {
-    if qdb_global_offset + UTF16_LEN_SIZE > chars.len() {
+    // Use checked_add so a corrupt offset near usize::MAX can't wrap through the guard.
+    if qdb_global_offset
+        .checked_add(UTF16_LEN_SIZE)
+        .is_none_or(|end| end > chars.len())
+    {
         return None;
     }
 

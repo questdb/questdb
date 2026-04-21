@@ -35,15 +35,15 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.Job;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
@@ -1410,86 +1410,6 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRowGroupColumnHasEncodingRejectsInvalidEncodingId() throws Exception {
-        // The Rust JNI helper translates an integer encoding id into a parquet
-        // thrift encoding byte. Anything outside the supported set must surface
-        // as a CairoException whose message names the rejected id and includes
-        // the row-group/column context added by the JNI wrapper.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE dict_jni_src (
-                        metric INT PARQUET(RLE_DICTIONARY),
-                        ts TIMESTAMP
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            execute("""
-                    INSERT INTO dict_jni_src VALUES
-                        (10, '2020-01-01T00:00:00.000000Z'),
-                        (20, '2020-01-01T01:00:00.000000Z')
-                    """);
-
-            final String parquetPath = exportRoot + File.separator + "dict_jni_output.parquet";
-            final String query = "SELECT metric, ts FROM dict_jni_src";
-
-            CopyExportRunnable stmt = () ->
-                    runAndFetchCopyExportID(
-                            "COPY (" + query + ") TO 'dict_jni_output' WITH FORMAT parquet",
-                            sqlExecutionContext
-                    );
-
-            CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        parquetPath + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-
-                        final FilesFacade ff = configuration.getFilesFacade();
-                        final Log log = LogFactory.getLog(CopyExportTest.class);
-                        long fd = -1;
-                        long addr = 0;
-                        long fileSize = 0;
-                        try (Path path = new Path(); PartitionDecoder decoder = new PartitionDecoder()) {
-                            path.of(parquetPath).$();
-                            fd = TableUtils.openRO(ff, path.$(), log);
-                            fileSize = ff.length(fd);
-                            addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-
-                            try {
-                                decoder.rowGroupColumnHasEncoding(0, 0, 99);
-                                Assert.fail("expected CairoException for invalid encoding id");
-                            } catch (CairoException ex) {
-                                final String msg = ex.getMessage();
-                                Assert.assertTrue(
-                                        "error should mention 'unsupported parquet encoding id', got: " + msg,
-                                        msg.contains("unsupported parquet encoding id")
-                                );
-                                Assert.assertTrue(
-                                        "error should include the rejected id 99, got: " + msg,
-                                        msg.contains("99")
-                                );
-                                Assert.assertTrue(
-                                        "error should include the row-group/column context, got: " + msg,
-                                        msg.contains("row group 0") && msg.contains("column 0")
-                                );
-                            }
-                        } finally {
-                            if (addr != 0) {
-                                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                            }
-                            if (fd != -1) {
-                                ff.close(fd);
-                            }
-                        }
-                    });
-
-            testCopyExport(stmt, test);
-        });
-    }
-
-    @Test
     public void testCopyQueryCursorBackedPreservesDictionaryEncodingAcrossPartitions() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1633,6 +1553,61 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueryMemoizedColumnPreservesDictionaryEncoding() throws Exception {
+        // SqlCodeGenerator wraps a ColumnFunction in a *FunctionMemoizer when its projection
+        // alias is referenced more than once. The hybrid materializer must still discover
+        // the per-column parquet encoding override through the memoizer wrapper.
+        assertMemoryLeak(() -> {
+            allowFunctionMemoization();
+            execute("""
+                    CREATE TABLE dict_memo_src (
+                        metric INT PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_memo_src VALUES
+                        (10, '2020-01-01T00:00:00.000000Z'),
+                        (20, '2020-01-01T01:00:00.000000Z'),
+                        (10, '2020-01-02T00:00:00.000000Z')
+                    """);
+
+            // `metric` is referenced in two additional projections; the alias's ref count
+            // forces SqlCodeGenerator to wrap the ColumnFunction in an IntFunctionMemoizer.
+            final String query = """
+                    SELECT metric, metric + 1 AS metric_plus, metric - 1 AS metric_minus, ts
+                    FROM dict_memo_src
+                    """;
+            final String parquetPath = exportRoot + File.separator + "dict_memo_output.parquet";
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_memo_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        // Source col 0 (metric) must still be dict-encoded despite the memoizer wrap.
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                                parquetPath, configuration.getFilesFacade(), 0
+                        );
+                        // Computed cols 1, 2 are expressions; they must not inherit the override.
+                        ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
+                                parquetPath, configuration.getFilesFacade(), 1, 2
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyQuerySymbolWithDictionaryEncodingDropsOverride() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1673,10 +1648,11 @@ public class CopyExportTest extends AbstractCairoTest {
                         );
                         assertParquetMatchesQuery(query, parquetPath);
 
-                        // The label STRING column (col 0) must NOT be dictionary-encoded
-                        // because SYMBOL->STRING is a type-changing projection.
+                        // Col 0 (label, SYMBOL->STRING) is type-changed; col 2 (computed_label)
+                        // is a computed expression. Neither should inherit the RLE_DICTIONARY
+                        // override of the source symbol column.
                         ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
-                                parquetPath, configuration.getFilesFacade(), 0
+                                parquetPath, configuration.getFilesFacade(), 0, 2
                         );
                     });
 
@@ -3674,6 +3650,86 @@ public class CopyExportTest extends AbstractCairoTest {
                                         1970-01-01T00:00:00.000000Z
                                         """,
                                 "select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet')");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testRowGroupColumnHasEncodingRejectsInvalidEncodingId() throws Exception {
+        // The Rust JNI helper translates an integer encoding id into a parquet
+        // thrift encoding byte. Anything outside the supported set must surface
+        // as a CairoException whose message names the rejected id and includes
+        // the row-group/column context added by the JNI wrapper.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dict_jni_src (
+                        metric INT PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_jni_src VALUES
+                        (10, '2020-01-01T00:00:00.000000Z'),
+                        (20, '2020-01-01T01:00:00.000000Z')
+                    """);
+
+            final String parquetPath = exportRoot + File.separator + "dict_jni_output.parquet";
+            final String query = "SELECT metric, ts FROM dict_jni_src";
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_jni_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+
+                        final FilesFacade ff = configuration.getFilesFacade();
+                        final Log log = LogFactory.getLog(CopyExportTest.class);
+                        long fd = -1;
+                        long addr = 0;
+                        long fileSize = 0;
+                        try (Path path = new Path(); PartitionDecoder decoder = new PartitionDecoder()) {
+                            path.of(parquetPath).$();
+                            fd = TableUtils.openRO(ff, path.$(), log);
+                            fileSize = ff.length(fd);
+                            addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                            try {
+                                decoder.rowGroupColumnHasEncoding(0, 0, 99);
+                                Assert.fail("expected CairoException for invalid encoding id");
+                            } catch (CairoException ex) {
+                                final String msg = ex.getMessage();
+                                Assert.assertTrue(
+                                        "error should mention 'unsupported parquet encoding id', got: " + msg,
+                                        msg.contains("unsupported parquet encoding id")
+                                );
+                                Assert.assertTrue(
+                                        "error should include the rejected id 99, got: " + msg,
+                                        msg.contains("99")
+                                );
+                                Assert.assertTrue(
+                                        "error should include the row-group/column context, got: " + msg,
+                                        msg.contains("row group 0") && msg.contains("column 0")
+                                );
+                            }
+                        } finally {
+                            if (addr != 0) {
+                                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                            }
+                            if (fd != -1) {
+                                ff.close(fd);
+                            }
+                        }
                     });
 
             testCopyExport(stmt, test);

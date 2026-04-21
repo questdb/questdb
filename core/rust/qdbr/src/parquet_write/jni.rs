@@ -941,7 +941,11 @@ fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResu
         }
         write_pending_row_group(encoder)?;
         // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
-        let data_len = (encoder.current_buffer.len() - 16) as u64;
+        debug_assert!(
+            encoder.current_buffer.len() >= 16,
+            "streaming parquet writer must produce at least a 16-byte header",
+        );
+        let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         encoder.current_buffer[8..16]
             .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
@@ -1067,7 +1071,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
         // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
-        let data_len = (encoder.current_buffer.len() - 16) as u64;
+        debug_assert!(
+            encoder.current_buffer.len() >= 16,
+            "streaming parquet writer must produce at least a 16-byte header",
+        );
+        let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         encoder.current_buffer[8..16]
             .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());

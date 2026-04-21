@@ -486,9 +486,13 @@ pub fn build_plain_page(
 /// # Safety
 /// - `slice` must be properly aligned for `T`.
 /// - The bytes in `slice` must represent valid values of `T`.
+/// - The caller must ensure `slice.len()` is a multiple of `size_of::<T>()`.
+///   Any trailing bytes are dropped on the typed view, so an ill-sized slice
+///   would silently lose data; validate at the boundary (JNI/file read) before
+///   calling this function.
 pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
     let sizeof_t = mem::size_of::<T>();
-    assert_eq!(slice.len() % sizeof_t, 0);
+    debug_assert_eq!(slice.len() % sizeof_t, 0);
     if slice.is_empty() {
         &[]
     } else {
@@ -499,8 +503,7 @@ pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
             std::any::type_name::<T>(),
             mem::align_of::<T>(),
         );
-        // SAFETY: Caller guarantees alignment and valid content.
-        // Length divisibility is asserted above.
+        // SAFETY: Caller guarantees alignment, valid content, and length divisibility.
         slice::from_raw_parts(slice.as_ptr() as *const T, slice.len() / sizeof_t)
     }
 }

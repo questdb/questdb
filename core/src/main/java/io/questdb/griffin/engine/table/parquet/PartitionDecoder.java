@@ -421,7 +421,7 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroupIndex,
             int columnIndex,
             int encoding
-    );
+    ) throws CairoException;
 
     private static native long rowGroupCountOffset();
 
