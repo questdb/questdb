@@ -4879,24 +4879,119 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testSampleByFromToParallelSampleByRewriteWithKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
-            final String shouldSucceedKeyed = "select ts, avg(x), s from fromto\n" +
-                    "sample by 5d from '2017-12-20' fill(null) ";
+            // Keyed FILL(NULL) on FROM-TO was originally compile-only here because the
+            // result was unbounded without a TO clause. Phase 6 landed keyed FROM-TO
+            // fast-path support; Phase 15 Plan 03 (M-7) adds a bounded TO and a
+            // cardinality cap (WHERE x <= 4) so we can assert the output instead of
+            // just the compile step. The two literal-key variants below cover the
+            // plain and with-offset shapes.
+            final String shouldSucceedKeyedBounded = "select ts, avg(x), s from fromto\n" +
+                    "where x <= 4\n" +
+                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null) ";
 
-            final String shouldSucceedKeyedWithOffset = "select ts, avg(x), s from fromto\n" +
-                    "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
+            final String shouldSucceedKeyedWithOffsetBounded = "select ts, avg(x), s from fromto\n" +
+                    "where x <= 4\n" +
+                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null) align to calendar with offset '10:00'";
 
+            final String shouldSucceedKeyedBoundedResult = """
+                    ts\tavg\ts
+                    2017-12-20T00:00:00.000000Z\tnull\t1
+                    2017-12-20T00:00:00.000000Z\tnull\t2
+                    2017-12-20T00:00:00.000000Z\tnull\t3
+                    2017-12-20T00:00:00.000000Z\tnull\t4
+                    2017-12-25T00:00:00.000000Z\tnull\t1
+                    2017-12-25T00:00:00.000000Z\tnull\t2
+                    2017-12-25T00:00:00.000000Z\tnull\t3
+                    2017-12-25T00:00:00.000000Z\tnull\t4
+                    2017-12-30T00:00:00.000000Z\t1.0\t1
+                    2017-12-30T00:00:00.000000Z\t2.0\t2
+                    2017-12-30T00:00:00.000000Z\t3.0\t3
+                    2017-12-30T00:00:00.000000Z\t4.0\t4
+                    2018-01-04T00:00:00.000000Z\tnull\t1
+                    2018-01-04T00:00:00.000000Z\tnull\t2
+                    2018-01-04T00:00:00.000000Z\tnull\t3
+                    2018-01-04T00:00:00.000000Z\tnull\t4
+                    2018-01-09T00:00:00.000000Z\tnull\t1
+                    2018-01-09T00:00:00.000000Z\tnull\t2
+                    2018-01-09T00:00:00.000000Z\tnull\t3
+                    2018-01-09T00:00:00.000000Z\tnull\t4
+                    2018-01-14T00:00:00.000000Z\tnull\t1
+                    2018-01-14T00:00:00.000000Z\tnull\t2
+                    2018-01-14T00:00:00.000000Z\tnull\t3
+                    2018-01-14T00:00:00.000000Z\tnull\t4
+                    2018-01-19T00:00:00.000000Z\tnull\t1
+                    2018-01-19T00:00:00.000000Z\tnull\t2
+                    2018-01-19T00:00:00.000000Z\tnull\t3
+                    2018-01-19T00:00:00.000000Z\tnull\t4
+                    2018-01-24T00:00:00.000000Z\tnull\t1
+                    2018-01-24T00:00:00.000000Z\tnull\t2
+                    2018-01-24T00:00:00.000000Z\tnull\t3
+                    2018-01-24T00:00:00.000000Z\tnull\t4
+                    2018-01-29T00:00:00.000000Z\tnull\t1
+                    2018-01-29T00:00:00.000000Z\tnull\t2
+                    2018-01-29T00:00:00.000000Z\tnull\t3
+                    2018-01-29T00:00:00.000000Z\tnull\t4
+                    """;
 
+            final String shouldSucceedKeyedWithOffsetBoundedResult = """
+                    ts\tavg\ts
+                    2017-12-20T10:00:00.000000Z\tnull\t1
+                    2017-12-20T10:00:00.000000Z\tnull\t2
+                    2017-12-20T10:00:00.000000Z\tnull\t3
+                    2017-12-20T10:00:00.000000Z\tnull\t4
+                    2017-12-25T10:00:00.000000Z\tnull\t1
+                    2017-12-25T10:00:00.000000Z\tnull\t2
+                    2017-12-25T10:00:00.000000Z\tnull\t3
+                    2017-12-25T10:00:00.000000Z\tnull\t4
+                    2017-12-30T10:00:00.000000Z\t1.0\t1
+                    2017-12-30T10:00:00.000000Z\t2.0\t2
+                    2017-12-30T10:00:00.000000Z\t3.0\t3
+                    2017-12-30T10:00:00.000000Z\t4.0\t4
+                    2018-01-04T10:00:00.000000Z\tnull\t1
+                    2018-01-04T10:00:00.000000Z\tnull\t2
+                    2018-01-04T10:00:00.000000Z\tnull\t3
+                    2018-01-04T10:00:00.000000Z\tnull\t4
+                    2018-01-09T10:00:00.000000Z\tnull\t1
+                    2018-01-09T10:00:00.000000Z\tnull\t2
+                    2018-01-09T10:00:00.000000Z\tnull\t3
+                    2018-01-09T10:00:00.000000Z\tnull\t4
+                    2018-01-14T10:00:00.000000Z\tnull\t1
+                    2018-01-14T10:00:00.000000Z\tnull\t2
+                    2018-01-14T10:00:00.000000Z\tnull\t3
+                    2018-01-14T10:00:00.000000Z\tnull\t4
+                    2018-01-19T10:00:00.000000Z\tnull\t1
+                    2018-01-19T10:00:00.000000Z\tnull\t2
+                    2018-01-19T10:00:00.000000Z\tnull\t3
+                    2018-01-19T10:00:00.000000Z\tnull\t4
+                    2018-01-24T10:00:00.000000Z\tnull\t1
+                    2018-01-24T10:00:00.000000Z\tnull\t2
+                    2018-01-24T10:00:00.000000Z\tnull\t3
+                    2018-01-24T10:00:00.000000Z\tnull\t4
+                    2018-01-29T10:00:00.000000Z\tnull\t1
+                    2018-01-29T10:00:00.000000Z\tnull\t2
+                    2018-01-29T10:00:00.000000Z\tnull\t3
+                    2018-01-29T10:00:00.000000Z\tnull\t4
+                    """;
+
+            assertQueryNoLeakCheck(shouldSucceedKeyedBoundedResult, shouldSucceedKeyedBounded,
+                    "ts", false, false);
+            assertQueryNoLeakCheck(shouldSucceedKeyedWithOffsetBoundedResult, shouldSucceedKeyedWithOffsetBounded,
+                    "ts", false, false);
+
+            // Computed-key variants stay compile-only. Adding a TO clause (needed for
+            // assertQueryNoLeakCheck) surfaces a pre-existing defect in the keyed fast
+            // path for FUNCTION-typed projections like concat('1', s): the cursor trips
+            // the defensive "data row timestamp precedes next bucket" guard in
+            // SampleByFillCursor.hasNext() as soon as iteration starts. That guard
+            // fires because the fast path computes bucket boundaries for the
+            // computed-key shape differently from the sampler's view of the data.
+            // The defect is orthogonal to M-7 (test-only scope) and is tracked
+            // separately; for now the variants still pin that compilation succeeds
+            // on both paths.
             final String shouldSucceedKeyedExpr = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
-
-
             final String shouldSucceedKeyedExprWithOffset = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
-
-            // Keyed fill on FROM-TO compiles on both paths; results are unbounded without TO,
-            // so only the compile step runs here.
-            select(shouldSucceedKeyed).close();
-            select(shouldSucceedKeyedWithOffset).close();
             select(shouldSucceedKeyedExpr).close();
             select(shouldSucceedKeyedExprWithOffset).close();
 
