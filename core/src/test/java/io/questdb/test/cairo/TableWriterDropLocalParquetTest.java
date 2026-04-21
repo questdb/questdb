@@ -109,9 +109,16 @@ public class TableWriterDropLocalParquetTest extends AbstractCairoTest {
 
             try (TableWriter writer = getWriter(token)) {
                 writer.dropLocalParquetForColdPartition(targetTs);
-                // Second call must not throw and must leave state unchanged —
-                // the ff.exists guard in the method is the contract.
+                final long txnAfterFirstDrop = writer.getTxn();
+                // Second call must not throw, must leave state unchanged, and
+                // must not advance the transaction. The ff.exists guard in the
+                // method is the contract: no-op drops write no txn entry.
                 writer.dropLocalParquetForColdPartition(targetTs);
+                Assert.assertEquals(
+                        "no-op drop must not advance the transaction",
+                        txnAfterFirstDrop,
+                        writer.getTxn()
+                );
             }
 
             Assert.assertFalse(dataParquetExists(token, targetTs, nameTxn));

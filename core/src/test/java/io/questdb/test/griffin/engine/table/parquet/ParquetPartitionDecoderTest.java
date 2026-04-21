@@ -279,7 +279,8 @@ public class ParquetPartitionDecoderTest extends AbstractCairoTest {
                     } catch (CairoException e) {
                         Assert.assertTrue(
                                 "unexpected message: " + e.getMessage(),
-                                e.getMessage().contains("inline timestamp stats required")
+                                e.getMessage().contains("_pm is missing inline timestamp min/max stats")
+                                        && e.getMessage().contains("Rebuild _pm")
                         );
                     }
                 } finally {

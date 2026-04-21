@@ -28,37 +28,8 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public interface ParquetColumnChunkResolver {
-
-    /**
-     * Release the column chunks previously returned by {@link #resolve}.
-     * The list is owned by the decoder; the resolver must only release the
-     * underlying native buffers it allocated.
-     * <p>
-     * Must tolerate a partially populated {@code chunks} list: if {@link #resolve}
-     * threw mid-way, some slots may hold valid {@code [addr, size]} pairs while
-     * others remain zero. Implementations must free only the buffers they
-     * allocated and treat zero entries as no-ops.
-     */
     void release(DirectLongList chunks, int columnsSize);
 
-    /**
-     * Fetches the requested column-chunk byte ranges into native buffers
-     * and writes their addresses and sizes into {@code chunksOut}.
-     * <p>
-     * The decoder reads {@code _pm} to determine byte ranges and passes them
-     * in via {@code byteRanges}. The resolver only needs to fetch the bytes
-     * (typically from object storage) and report buffer addresses.
-     * <p>
-     * Each chunk buffer must contain exactly the column-chunk bytes
-     * starting at {@code byteRanges[2*i]} of length {@code byteRanges[2*i+1]}
-     * laid down at buffer offset 0. The output buffer's index in
-     * {@code chunksOut} matches the byte range's index in {@code byteRanges}.
-     *
-     * @param partitionPath path relative to the database dir of the partition using {@link io.questdb.cairo.TableUtils#setPathForParquetPartition}
-     * @param byteRanges    pre-filled list of {@code 2 * columnsSize} longs as {@code [byte_offset, byte_length]} pairs
-     * @param columnsSize   number of byte-range / chunk-out pairs
-     * @param chunksOut     pre-allocated list with {@code 2 * columnsSize} slots for {@code [address, size]} pairs
-     */
     void resolve(DirectUtf8Sequence partitionPath, DirectLongList byteRanges, int columnsSize, DirectLongList chunksOut);
 
     /**

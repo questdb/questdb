@@ -510,6 +510,11 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         byteRanges = Misc.free(byteRanges);
         chunks = Misc.free(chunks);
         coldPartitionPath = Misc.free(coldPartitionPath);
+        nameTxn = 0;
+        partitionBy = 0;
+        table = null;
+        timestamp = 0;
+        timestampType = 0;
     }
 
     private DirectLongList ensureByteRanges(int columnsSize) {
