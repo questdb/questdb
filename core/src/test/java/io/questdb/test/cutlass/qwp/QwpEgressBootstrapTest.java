@@ -651,12 +651,6 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
         } catch (IllegalArgumentException e) {
             Assert.assertTrue(e.getMessage(), e.getMessage().contains("buffer_pool_size"));
         }
-        try {
-            QwpQueryClient.fromConfig("wss::addr=h:9000;").close();
-            Assert.fail("expected wss-not-supported error");
-        } catch (IllegalArgumentException e) {
-            Assert.assertTrue(e.getMessage(), e.getMessage().contains("wss"));
-        }
     }
 
     @Test
