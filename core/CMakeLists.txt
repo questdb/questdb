@@ -345,12 +345,15 @@ target_compile_options(questdb-fsst PRIVATE
         $<$<CONFIG:DEBUG>:-g -O0>
 )
 
-if (NOT ARCH_AARCH64)
-    set_source_files_properties(${FSST_DIR}/fsst_avx512.cpp PROPERTIES
-            COMPILE_OPTIONS "-mavx2;-mfma;-mavx512f;-mavx512vl;-mavx512bw;-mavx512dq;-O1")
-else ()
+if (ARCH_AARCH64)
     set_source_files_properties(${FSST_DIR}/fsst_avx512.cpp PROPERTIES
             COMPILE_OPTIONS "-O1")
+elseif (OS_WINDOWS)
+    set_source_files_properties(${FSST_DIR}/fsst_avx512.cpp PROPERTIES
+            COMPILE_OPTIONS "-mavx2;-mfma;-mavx512f;-mavx512vl;-mavx512bw;-mavx512dq;-O1;-include;intrin.h")
+else ()
+    set_source_files_properties(${FSST_DIR}/fsst_avx512.cpp PROPERTIES
+            COMPILE_OPTIONS "-mavx2;-mfma;-mavx512f;-mavx512vl;-mavx512bw;-mavx512dq;-O1")
 endif ()
 
 #simdjson
