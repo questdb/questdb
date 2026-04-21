@@ -250,7 +250,7 @@ Plans:
 | 13. Migrate FILL(PREV) snapshots to rowId-based replay | 6/6 | Complete    | 2026-04-20 |
 | 14. Fix issues from moderate list for M5/M6 mention in PR | 4/4 | Complete | 2026-04-20 |
 | 15. Address PR #6946 review findings and retro-document post-phase-14 fixes | 4/4 | Complete   | 2026-04-21 |
-| 16. Fix multi-key FILL(PREV) with inline FUNCTION grouping keys | 0/0 | Not planned | |
+| 16. Fix multi-key FILL(PREV) with inline FUNCTION grouping keys | 0/1 | Planned | |
 
 ### Phase 14: Fix issues from moderate list, for m5 and m6 just mention in the existing PR description under the right section. Borrow ideas for tests from minor findings.
 
@@ -320,7 +320,7 @@ Both options should also re-check FILL(NULL) and FILL(constant) equivalents on t
 
 **Source:** `.planning/todos/pending/2026-04-21-fix-multi-key-fill-prev-with-inline-function-grouping-keys.md` (captured during Phase 15 defensive-assertion experiment).
 
-**Plans:** 0 plans
+**Plans:** 1 plan
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 16 to break down)
+- [ ] 16-01-PLAN.md — Widen generateFill classifier (D-02 FUNCTION/OPERATION predicate + D-05 aggregate-arm assert) + 5 multi-key regression tests (interval, concat FUNCTION, concat OPERATION, cast, FILL(NULL)); probe-and-freeze expected outputs; single commit
