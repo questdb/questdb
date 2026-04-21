@@ -171,7 +171,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 
 ### Pending Todos
 
-None.
+- Fix multi-key FILL(PREV) with inline FUNCTION grouping keys (interval/concat/cast) — `.planning/todos/pending/2026-04-21-fix-multi-key-fill-prev-with-inline-function-grouping-keys.md` (surfaced during Phase 15 defensive-assertion experiment; classifier in `SqlCodeGenerator.generateFill` misclassifies non-aggregate FUNCTION keys as aggregates → cartesian fill rows dropped for multi-key case; single-key `testFillPrevInterval` hides it)
 
 ### Blockers/Concerns
 
