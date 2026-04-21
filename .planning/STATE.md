@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 15-04-PLAN.md
-last_updated: "2026-04-21T15:04:08.659Z"
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-04-21T23:22:00.000Z"
 last_activity: 2026-04-21
 progress:
-  total_phases: 15
-  completed_phases: 14
-  total_plans: 28
-  completed_plans: 28
+  total_phases: 16
+  completed_phases: 15
+  total_plans: 29
+  completed_plans: 29
   percent: 100
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** SAMPLE BY FILL queries execute on the GROUP BY fast path with identical output to the cursor path, enabling parallel execution.
-**Current focus:** Phase 15 — address-pr-6946-review-findings-and-retro-fixes
+**Current focus:** Phase 16 — fix-multi-key-fill-prev-with-inline-function-grouping-keys
 
 ## Current Position
 
-Phase: 15 (address-pr-6946-review-findings-and-retro-fixes) — EXECUTING
-Plan: 4 of 4
+Phase: 16 (fix-multi-key-fill-prev-with-inline-function-grouping-keys) — EXECUTING
+Plan: 1 of 1
 Status: Phase complete — ready for verification
 Last activity: 2026-04-21
 
-Progress: [#########-] 93%
+Progress: [##########] 100%
 
 ## Performance Metrics
 
@@ -75,6 +75,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 15 P02 | 20min | 3 tasks | 2 files |
 | Phase 15 P03 | 20min | 1 tasks | 1 files |
 | Phase 15 P04 | 5min | 1 tasks | 1 files |
+| Phase 16 P01 | ~25min | 5 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -158,6 +159,11 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 15]: Plan 03 Rule 4 deviation: computed-key variants (concat('1', s)) stay compile-only because all four bounded shapes trip the SampleByFillCursor.hasNext() defensive guard at line 486; inline comment anchors the defect and keeps pre-Phase-15 coverage until a future phase fixes bucket-grid computation for FUNCTION-typed projections
 - [Phase 15]: Plan 04 retro-doc: 15-04-SUMMARY.md consolidates three post-Phase-14 commits (6c2c44237c narrow-decimal FILL_KEY, 2696df1749 decimal128/256 sink null + -ea assert + 2 tests, a986070e43 SampleByFillRecordCursorFactory cleanup); closes ROADMAP Success Criterion #7
 - [Phase 15]: Plan 04 cross-link: 2696df1749 established sink.ofRawNull() null contract for Decimal128/256; Plan 02 Task 2 M-4 closure determined CharSink<?> does NOT expose ofRawNull() so getLong256's null contract is 'leave the sink untouched' per NullMemoryCMR.getLong256(offset, CharSink) - recorded inline in SUMMARY to link the two commits
+- [Phase 16]: Plan 01: D-02 classifier widening landed verbatim — third continue branch `(FUNCTION || OPERATION) && !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)` slots between existing timestamp_floor continue and the aggregate fall-through; alias assert inside the branch confirms non-timestamp factory resolution under -ea
+- [Phase 16]: Plan 01: D-05 aggregate-arm -ea assertion placed immediately after the D-02 branch, before any aggregate-specific logic runs; did NOT fire across 1395 cross-suite tests — residual-arm invariant holds across the entire FILL test surface
+- [Phase 16]: Plan 01: D-06 cursor-side wiring verified unchanged per RESEARCH.md trace — SampleByFillRecordCursorFactory.java NOT modified; factoryColToUserFillIdx[-1] for function-key columns flows through both bare-FILL(PREV) and per-column branches to FILL_KEY, picked up by keyColIndices derivation at :3668 automatically
+- [Phase 16]: Plan 01: probe-and-freeze captured Interval.NULL rendering as literal `null` string (not empty text), disambiguating RESEARCH.md A2; row order within buckets matches testFillPrevKeyedIndependent precedent — new data row first, prior-discovered key forward-filled second
+- [Phase 16]: Plan 01: single commit 82865efbc0 per CONTEXT.md D-05 same-commit rule; 43-char title, no Conventional Commits prefix, long-form body per CLAUDE.md; 5 new regression tests alphabetically placed (testFillNullCastMultiKey, testFillPrevCastMultiKey, testFillPrevConcatMultiKey, testFillPrevConcatOperatorMultiKey, testFillPrevIntervalMultiKey)
 
 ### Roadmap Evolution
 
@@ -172,7 +178,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 
 ### Pending Todos
 
-- _Promoted 2026-04-21 to Phase 16_: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys — `.planning/todos/pending/2026-04-21-fix-multi-key-fill-prev-with-inline-function-grouping-keys.md`. See ROADMAP.md Phase 16 for Goal + Success Criteria + Fix options.
+- _Completed 2026-04-21 via Phase 16 Plan 01_: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys — landed in commit 82865efbc0.
 
 ### Blockers/Concerns
 
@@ -184,6 +190,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-21T15:03:59.698Z
-Stopped at: Completed 15-04-PLAN.md
+Last session: 2026-04-21T23:22:00.000Z
+Stopped at: Completed 16-01-PLAN.md
 Resume file: None

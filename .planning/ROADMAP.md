@@ -20,7 +20,7 @@ QuestDB's SAMPLE BY FILL queries now execute on the parallel GROUP BY fast path 
 - [x] **Phase 12: Replace safety-net reclassification with legacy fallback and tighten optimizer PREV gate** — Retro-fallback mechanism, Tier 1 gate tightening, FILL(PREV, PREV(...)) grammar rules, 19 regression tests, code-quality sweep (completed 2026-04-17)
 - [x] **Phase 13: Migrate FILL(PREV) snapshots from materialized values to rowId-based replay** — Replace per-type snapshot materialization in `SampleByFillRecordCursorFactory` with a single chain rowId per key, read lazily via `recordAt`. Ship prerequisite `SortedRecordCursor.chain.clear()` fix as its own commit. Borrowed from `sm_fill_prev_fast_all_types` branch (research verdict GO, candidate a) (completed 2026-04-19)
 - [x] **Phase 15: Address PR #6946 review findings and retro-document post-phase-14 fixes** — Fix 3 critical `/review-pr 6946` findings (TIMESTAMP fill constant unit conversion, unquoted numeric rejection for TIMESTAMP columns, keyed-fill circuit-breaker); absorb three selected moderate findings (getLong256 sink null sentinel, timestampIndex type check, lost output assertion in testSampleByFromToParallelSampleByRewriteWithKeys); retroactively document three post-Phase-14 commits (narrow-decimal FILL_KEY coverage, decimal128/256 sink fix + -ea assert, SampleByFillRecordCursorFactory clean-up) (completed 2026-04-21)
-- [ ] **Phase 16: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys** — Close latent cartesian-drop bug in `SqlCodeGenerator.generateFill` classifier where non-aggregate FUNCTION grouping keys (`interval(lo, hi)`, `concat(a, b)`, `cast(x AS STRING)`) slip into the aggregate arm and are dispatched as FILL_PREV_SELF instead of FILL_KEY. Surfaced during Phase 15 defensive-assertion experiment; single-key `testFillPrevInterval` hides it.
+- [x] **Phase 16: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys** — Widened `SqlCodeGenerator.generateFill` classifier with a third `continue` branch for non-aggregate FUNCTION/OPERATION grouping keys (`interval(lo, hi)`, `concat(a, b)`, `cast(x AS STRING)`, `a || b`) + D-05 aggregate-arm `-ea` assertion locking the residual arm; landed 5 regression tests pinning the 2-key x 3-bucket cartesian contract across interval / concat FUNCTION / concat OPERATION / cast / FILL(NULL) variants; single commit, no cursor-side wiring change (completed 2026-04-21)
 
 ## Phase Details
 
@@ -320,7 +320,7 @@ Both options should also re-check FILL(NULL) and FILL(constant) equivalents on t
 
 **Source:** `.planning/todos/pending/2026-04-21-fix-multi-key-fill-prev-with-inline-function-grouping-keys.md` (captured during Phase 15 defensive-assertion experiment).
 
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 16-01-PLAN.md — Widen generateFill classifier (D-02 FUNCTION/OPERATION predicate + D-05 aggregate-arm assert) + 5 multi-key regression tests (interval, concat FUNCTION, concat OPERATION, cast, FILL(NULL)); probe-and-freeze expected outputs; single commit
+- [x] 16-01-PLAN.md — Widen generateFill classifier (D-02 FUNCTION/OPERATION predicate + D-05 aggregate-arm assert) + 5 multi-key regression tests (interval, concat FUNCTION, concat OPERATION, cast, FILL(NULL)); probe-and-freeze expected outputs; single commit
