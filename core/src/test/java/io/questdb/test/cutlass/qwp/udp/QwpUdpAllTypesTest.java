@@ -731,6 +731,12 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                     "msg\nhello world\n",
                     "SELECT msg FROM t_str"
             );
+            // stringColumn() must send the VARCHAR wire type (0x0F), so the
+            // auto-created column type must be VARCHAR, not STRING.
+            assertSql(
+                    "column\ttype\nmsg\tVARCHAR\n",
+                    "SELECT \"column\", type FROM table_columns('t_str') WHERE \"column\" = 'msg'"
+            );
         });
     }
 
