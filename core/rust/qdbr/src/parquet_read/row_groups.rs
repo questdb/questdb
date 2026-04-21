@@ -449,16 +449,22 @@ impl ParquetDecoder {
             // Post-decode conversions that cannot be handled by the decode dispatch.
             post_convert(src_tag, to_column_type.tag(), column_chunk_bufs)?;
 
-            // Timestamp nano ↔ micro scaling (post_convert can't distinguish
-            // these since both have the same Timestamp tag).
-            if original_column_type != to_column_type
-                && src_tag == ColumnTypeTag::Timestamp
-                && to_column_type.tag() == ColumnTypeTag::Timestamp
-            {
-                let src_nano = original_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
-                let dst_nano = to_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
-                if src_nano != dst_nano {
-                    scale_i64_in_place(&mut column_chunk_bufs.data_vec, 1000, src_nano);
+            // Timestamp nano additional scaling after post_convert.
+            // post_convert handles μs↔ms (×/÷1000) for Timestamp↔Date.
+            // When the Timestamp side is nano, an additional ×/÷1000 is needed
+            // (TIMESTAMP_NANO↔TIMESTAMP or TIMESTAMP_NANO↔DATE).
+            if original_column_type != to_column_type {
+                let src_is_time = matches!(src_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
+                let dst_tag = to_column_type.tag();
+                let dst_is_time = matches!(dst_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
+                if src_is_time && dst_is_time {
+                    let src_nano = src_tag == ColumnTypeTag::Timestamp
+                        && original_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+                    let dst_nano = dst_tag == ColumnTypeTag::Timestamp
+                        && to_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+                    if src_nano != dst_nano {
+                        scale_i64_in_place(&mut column_chunk_bufs.data_vec, 1000, src_nano);
+                    }
                 }
             }
         }
@@ -674,16 +680,22 @@ impl ParquetDecoder {
             // Post-decode conversions that cannot be handled by the decode dispatch.
             post_convert(src_tag, to_column_type.tag(), column_chunk_bufs)?;
 
-            // Timestamp nano ↔ micro scaling (post_convert can't distinguish
-            // these since both have the same Timestamp tag).
-            if original_column_type != to_column_type
-                && src_tag == ColumnTypeTag::Timestamp
-                && to_column_type.tag() == ColumnTypeTag::Timestamp
-            {
-                let src_nano = original_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
-                let dst_nano = to_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
-                if src_nano != dst_nano {
-                    scale_i64_in_place(&mut column_chunk_bufs.data_vec, 1000, src_nano);
+            // Timestamp nano additional scaling after post_convert.
+            // post_convert handles μs↔ms (×/÷1000) for Timestamp↔Date.
+            // When the Timestamp side is nano, an additional ×/÷1000 is needed
+            // (TIMESTAMP_NANO↔TIMESTAMP or TIMESTAMP_NANO↔DATE).
+            if original_column_type != to_column_type {
+                let src_is_time = matches!(src_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
+                let dst_tag = to_column_type.tag();
+                let dst_is_time = matches!(dst_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
+                if src_is_time && dst_is_time {
+                    let src_nano = src_tag == ColumnTypeTag::Timestamp
+                        && original_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+                    let dst_nano = dst_tag == ColumnTypeTag::Timestamp
+                        && to_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+                    if src_nano != dst_nano {
+                        scale_i64_in_place(&mut column_chunk_bufs.data_vec, 1000, src_nano);
+                    }
                 }
             }
         }

@@ -171,7 +171,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testConvertPartitionToParquet() throws Exception {
-        Rnd rnd = generateRandom(LOG, 221167856567208L, 1776763673402L);
+        Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
 
         setFuzzProbabilities(

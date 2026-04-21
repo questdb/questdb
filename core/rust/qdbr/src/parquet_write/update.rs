@@ -122,6 +122,14 @@ pub struct ParquetUpdater {
     result_unused_bytes: u64,
     target_qdb_meta: Option<QdbMeta>,
     target_col_id_to_pos: Option<RapidHashMap<i32, usize>>,
+    /// Per-column ASCII flag from the old file's QDB metadata, read at construction.
+    /// Used to skip `is_column_ascii()` scans when the old flag is already `false`.
+    old_ascii: Vec<Option<bool>>,
+    /// Per-column ASCII flag computed from written (inserted/replaced) row groups.
+    /// `Some(true)` = all written values are ASCII, `Some(false)` = at least one
+    /// non-ASCII value, `None` = column not written (e.g., non-VARCHAR or no row
+    /// groups inserted/replaced).
+    written_ascii: Vec<Option<bool>>,
 }
 
 impl ParquetUpdater {
@@ -270,6 +278,18 @@ impl ParquetUpdater {
             (pf, accumulated_unused_bytes)
         };
 
+        let old_ascii = file_metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| {
+                kvs.iter()
+                    .find(|kv| kv.key == QDB_META_KEY)
+                    .and_then(|kv| kv.value.as_ref())
+                    .and_then(|v| QdbMeta::deserialize(v).ok())
+            })
+            .map(|m| m.schema.iter().map(|c| c.ascii).collect::<Vec<_>>())
+            .unwrap_or_default();
+
         Ok(ParquetUpdater {
             allocator,
             reader,
@@ -291,7 +311,46 @@ impl ParquetUpdater {
             result_unused_bytes: 0,
             target_qdb_meta: None,
             target_col_id_to_pos: None,
+            old_ascii,
+            written_ascii: Vec::new(),
         })
+    }
+
+    /// Computes the per-column ASCII flag from the partition's VARCHAR aux data
+    /// and ANDs it into `written_ascii`. Called for each inserted/replaced row group.
+    ///
+    /// Skips the aux scan when the result is already determined to be `false`
+    /// (from a previous row group or from the old file's metadata in update mode).
+    fn track_ascii(&mut self, partition: &Partition) {
+        let n = partition.columns.len();
+        if self.written_ascii.len() < n {
+            self.written_ascii.resize(n, None);
+        }
+        for (i, col) in partition.columns.iter().enumerate() {
+            if col.data_type.tag() != ColumnTypeTag::Varchar || col.secondary_data.is_empty() {
+                continue;
+            }
+            // Already determined non-ASCII from a previous row group — skip scan.
+            if self.written_ascii[i] == Some(false) {
+                continue;
+            }
+            // In update mode, if the old file's flag is already false the final
+            // result (old AND written) will be false regardless — skip scan.
+            if !self.is_rewrite {
+                if let Some(Some(false)) = self.old_ascii.get(i) {
+                    self.written_ascii[i] = Some(false);
+                    continue;
+                }
+            }
+            // SAFETY: secondary_data contains native VARCHAR aux entries (16 bytes each).
+            let aux: &[[u8; 16]] =
+                unsafe { super::util::transmute_slice(col.secondary_data) };
+            let is_ascii = super::varchar::is_column_ascii(aux);
+            self.written_ascii[i] = Some(match self.written_ascii[i] {
+                Some(prev) => prev && is_ascii,
+                None => is_ascii,
+            });
+        }
     }
 
     pub fn replace_row_group(
@@ -299,6 +358,7 @@ impl ParquetUpdater {
         partition: &Partition,
         row_group_id: i32,
     ) -> ParquetResult<()> {
+        self.track_ascii(partition);
         self.ensure_schema_matches_columns(partition)?;
         let row_count = partition
             .columns
@@ -366,6 +426,7 @@ impl ParquetUpdater {
     }
 
     pub fn insert_row_group(&mut self, partition: &Partition, position: i32) -> ParquetResult<()> {
+        self.track_ascii(partition);
         self.ensure_schema_matches_columns(partition)?;
         let row_count = partition
             .columns
@@ -706,7 +767,13 @@ impl ParquetUpdater {
         // When a target schema was set (ADD/DROP COLUMN), use the pre-built
         // target_qdb_meta which already has the correct column list with
         // column_top=0. Otherwise fall back to the old file's QDB metadata.
-        let mut qdb_meta = if let Some(target) = self.target_qdb_meta.take() {
+        let mut qdb_meta = if let Some(mut target) = self.target_qdb_meta.take() {
+            // Apply tracked ASCII flags from written row groups.
+            for (i, col) in target.schema.iter_mut().enumerate() {
+                if let Some(&Some(written)) = self.written_ascii.get(i) {
+                    col.ascii = Some(written);
+                }
+            }
             target
         } else {
             let mut meta = self
@@ -735,8 +802,19 @@ impl ParquetUpdater {
             // file-level column_top is therefore safe: the decoder will read
             // the (null) pages instead of skipping them, which is correct
             // albeit slightly less optimal.
-            for col in &mut meta.schema {
-                col.column_top = 0;
+            for (i, col) in meta.schema.iter_mut().enumerate() {
+                col.column_top = 0; // Update the ASCII flag from the actual data written in
+                // inserted/replaced row groups. For a full rewrite, the
+                // written_ascii value is the final answer. For an in-place
+                // update, AND the old flag (covering copied row groups) with
+                // the written flag (covering new row groups).
+                if let Some(&Some(written)) = self.written_ascii.get(i) {
+                    if self.is_rewrite {
+                        col.ascii = Some(written);
+                    } else {
+                        col.ascii = col.ascii.map(|old| old && written);
+                    }
+                }
             }
             meta
         };
