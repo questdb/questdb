@@ -46,19 +46,31 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 
+@RunWith(Parameterized.class)
 public class ParallelEarliestByTest extends AbstractTest {
     private final boolean convertToParquet;
     private final StringSink sink = new StringSink();
     private final TestTimestampType timestampType;
 
-    public ParallelEarliestByTest() {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        this.convertToParquet = rnd.nextBoolean();
-        this.timestampType = TestUtils.getTimestampType(rnd);
+    public ParallelEarliestByTest(TestTimestampType timestampType) {
+        this.convertToParquet = TestUtils.generateRandom(LOG).nextBoolean();
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
     }
 
     @Before

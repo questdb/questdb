@@ -41,6 +41,9 @@ import io.questdb.std.str.Sinkable;
 
 public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, Sinkable {
 
+    int EARLIEST_BY_DEPRECATED = 3;
+    int EARLIEST_BY_NEW = 4;
+    int EARLIEST_BY_NONE = 0;
     int JOIN_ASOF = 4;
     int JOIN_CROSS = 3;
     int JOIN_CROSS_FULL = 12;
@@ -60,9 +63,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int JOIN_UNNEST = 17;
     int JOIN_MAX = JOIN_UNNEST;
     int JOIN_WINDOW = 7;
-    int EARLIEST_BY_DEPRECATED = 3;
-    int EARLIEST_BY_NEW = 4;
-    int EARLIEST_BY_NONE = 0;
     int LATEST_BY_DEPRECATED = 1;
     int LATEST_BY_NEW = 2;
     int LATEST_BY_NONE = 0;
@@ -193,6 +193,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean addField(QueryColumn column);
 
+    void addEarliestBy(ExpressionNode earliestBy);
+
     void addGroupBy(ExpressionNode node);
 
     void addHint(CharSequence key, CharSequence value);
@@ -200,8 +202,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void addJoinColumn(ExpressionNode node);
 
     void addJoinModel(IQueryModel joinModel);
-
-    void addEarliestBy(ExpressionNode earliestBy);
 
     void addLatestBy(ExpressionNode latestBy);
 
@@ -285,6 +285,10 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     IntHashSet getDependencies();
 
+    ObjList<ExpressionNode> getEarliestBy();
+
+    int getEarliestByType();
+
     ObjList<ExpressionNode> getExpressionModels();
 
     ExpressionNode getFillFrom();
@@ -314,10 +318,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int getJoinType();
 
     ObjList<CharSequence> getLateralCountColumns();
-
-    ObjList<ExpressionNode> getEarliestBy();
-
-    int getEarliestByType();
 
     ObjList<ExpressionNode> getLatestBy();
 
@@ -561,6 +561,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setDistinct(boolean distinct);
 
+    void setEarliestByType(int earliestByType);
+
     void setExplicitTimestamp(boolean explicitTimestamp);
 
     void setFillFrom(ExpressionNode fillFrom);
@@ -582,8 +584,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setJoinKeywordPosition(int position);
 
     void setJoinType(int joinType);
-
-    void setEarliestByType(int earliestByType);
 
     void setLatestByType(int latestByType);
 

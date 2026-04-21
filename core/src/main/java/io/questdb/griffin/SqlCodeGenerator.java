@@ -291,6 +291,20 @@ import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
+import io.questdb.griffin.engine.table.EarliestByAllFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByAllIndexedRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByAllSymbolsFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByDeferredListValuesFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByLightRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestBySubQueryRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueDeferredFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueDeferredIndexedFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueDeferredIndexedRowCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueIndexedFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValueIndexedRowCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -304,20 +318,6 @@ import io.questdb.griffin.engine.table.LatestByValueDeferredIndexedRowCursorFact
 import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByAllFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByAllIndexedRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByAllSymbolsFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByDeferredListValuesFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestBySubQueryRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByLightRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByValueDeferredFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByValueDeferredIndexedFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByValueDeferredIndexedRowCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByValueFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByValueIndexedFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByValueIndexedRowCursorFactory;
-import io.questdb.griffin.engine.table.EarliestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecord;
@@ -5692,6 +5692,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 earliestByIndex,
                                 rcf,
                                 filter,
+                                indexed,
                                 func,
                                 columnIndexes,
                                 columnSizeShifts
@@ -5893,7 +5894,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         prepareByColumnIndexes(earliestBy, metadata, "EARLIEST ON");
 
         if (!factory.recordCursorSupportsRandomAccess()) {
-            return new io.questdb.griffin.engine.table.EarliestByRecordCursorFactory(
+            return new EarliestByRecordCursorFactory(
                     configuration,
                     factory,
                     RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),

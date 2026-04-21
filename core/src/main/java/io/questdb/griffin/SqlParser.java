@@ -2855,6 +2855,13 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
+        // Catch reversed order: EARLIEST followed by LATEST. The LATEST check
+        // above runs before EARLIEST parsing, so it would otherwise fall through
+        // to an unhelpful "unexpected token" error.
+        if (tok != null && isLatestKeyword(tok) && model.getEarliestBy().size() > 0) {
+            throw SqlException.$(lexer.lastTokenPosition(), "cannot use both LATEST and EARLIEST in the same query");
+        }
+
         // expect [pivot]
         // PIVOT operates on the result of a full subquery.
         // Syntax: SELECT ... FROM <subquery> WHERE <condition> PIVOT (agg FOR col IN (...))

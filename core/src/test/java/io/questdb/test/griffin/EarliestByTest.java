@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -39,6 +40,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -46,6 +48,7 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @RunWith(Parameterized.class)
 public class EarliestByTest extends AbstractCairoTest {
@@ -231,6 +234,58 @@ public class EarliestByTest extends AbstractCairoTest {
                     "ts\ts2\ts\n" +
                             "2025-01-01T00:00:00.000000" + suffix + "\t\t\n" +
                             "2025-01-04T00:00:00.000000" + suffix + "\tsymS2A\tsymSA\n",
+                    "select ts, s2, s from t earliest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    // Guards against reading uninitialised column-top regions as non-null keys when a column's
+    // type changes. Forward-scan EARLIEST visits the NULL-key partitions first, so the earliest
+    // row per key in the post-conversion data must be selected correctly.
+    @Test
+    public void testEarliestByMultipleChangedColSymbols() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, s string, s2 string) timestamp (ts) partition by month");
+            execute("insert into t values('2025-01-01', null, null), " +
+                    "('2025-01-02', null, null), " +
+                    "('2025-01-03', null, null), " +
+                    "('2025-01-04', 'symSA', 'symS2A')");
+            execute("alter table t alter column s type symbol");
+            execute("alter table t alter column s2 type symbol");
+            assertQuery(
+                    "ts\ts2\ts\n" +
+                            "2025-01-01T00:00:00.000000Z\t\t\n" +
+                            "2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA\n",
+                    "select ts, s2, s from t earliest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    // Guards against reading uninitialised column-top regions as non-null keys when a column is
+    // added to an existing table. Forward-scan EARLIEST lands on the pre-column-top partition
+    // first and must treat it as NULL keys, not as garbage.
+    @Test
+    public void testEarliestByMultipleColTopSymbols() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp) timestamp (ts) partition by month");
+            execute("insert into t values('2025-01-01'), " +
+                    "('2025-01-02'), " +
+                    "('2025-01-03'), " +
+                    "('2025-01-04')");
+            execute("alter table t add column s symbol, s2 symbol");
+            execute("insert into t values('2025-01-05', 'symSA', 'symS2A');");
+            assertQuery(
+                    "ts\ts2\ts\n" +
+                            "2025-01-01T00:00:00.000000Z\t\t\n" +
+                            "2025-01-05T00:00:00.000000Z\tsymS2A\tsymSA\n",
                     "select ts, s2, s from t earliest on ts partition by s, s2",
                     "ts",
                     true,
@@ -1079,6 +1134,21 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
+    // Symmetric with testEarliestAndLatestMixed: EARLIEST ON followed by LATEST ON must be
+    // rejected with the same dedicated message, not a generic "unexpected token".
+    @Test
+    public void testEarliestAndLatestMixedReversed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+
+            assertException(
+                    "SELECT s, ts FROM t EARLIEST ON ts PARTITION BY s LATEST ON ts PARTITION BY s",
+                    50,
+                    "cannot use both LATEST and EARLIEST in the same query"
+            );
+        });
+    }
+
     // Guards the reverse of testEarliestAndLatestMixed: deprecated EARLIEST BY followed by
     // new-syntax LATEST ON must also be rejected. See SqlParser's new-latest block guard.
     @Test
@@ -1224,6 +1294,60 @@ public class EarliestByTest extends AbstractCairoTest {
             // Execute twice to test cursor reuse
             assertSql(expected, "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s");
             assertSql(expected, "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    // Reuses the same factory across two cursor runs with a mid-scan failure on the first. The
+    // EarliestByLight cursor carries a map whose contents survive close() and are reused on the
+    // next of() call; a fix that only cleared the map on the happy path would let stale keys
+    // poison the second run. This test guards that invariant.
+    @Test
+    public void testEarliestByLightReentrantAfterException() throws Exception {
+        final AtomicBoolean failNext = new AtomicBoolean(true);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNext.get() && Utf8s.containsAscii(name, "1970-01-02")) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            // Three partitions. The earliest 'a' is at the start of partition 1, the earliest 'b'
+            // is at the start of partition 1. The data in partition 2/3 is there to force the
+            // subquery to try to open those partitions when no LIMIT prunes them.
+            execute("INSERT INTO t VALUES " +
+                    "('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T01:00:00'), " +
+                    "('a', '1970-01-02T00:00:00'), ('b', '1970-01-02T01:00:00'), " +
+                    "('a', '1970-01-03T00:00:00'), ('b', '1970-01-03T01:00:00')");
+
+            // Sub-query forces the EarliestByLight path rather than the direct table path.
+            try (RecordCursorFactory factory = select(
+                    "SELECT s, ts FROM (SELECT s, ts FROM t) EARLIEST ON ts PARTITION BY s"
+            )) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                        // consume until the FS layer throws
+                    }
+                    Assert.fail("Expected CairoException from injected FS failure");
+                } catch (CairoException expected) {
+                    // pass
+                }
+
+                failNext.set(false);
+                String suffix = getTimestampSuffix(timestampType.getTypeName());
+                assertCursor(
+                        "s\tts\n" +
+                                "a\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                                "b\t1970-01-01T01:00:00.000000" + suffix + "\n",
+                        factory,
+                        true,
+                        true,
+                        true
+                );
+            }
         });
     }
 
@@ -2065,6 +2189,81 @@ public class EarliestByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: keys\n" +
                             "    Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnExplainPlanSubQueryIndexed() throws Exception {
+        // Routes to EarliestBySubQueryRecordCursorFactory with indexed=true: WHERE s IN (subquery)
+        // on an indexed SYMBOL column switches to per-key bitmap lookups.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE keys (s SYMBOL)");
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM t WHERE s IN (SELECT s FROM keys) EARLIEST ON ts PARTITION BY s",
+                    "EarliestBySubQuery\n" +
+                            "    Subquery\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: keys\n" +
+                            "    Index forward scan on: s\n" +
+                            "    Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnInSubQueryIndexedReturnsCorrectRows() throws Exception {
+        // Exercises the indexed path in EarliestBySubQueryRecordCursorFactory. The data has two
+        // partitions, so the earliest row per matched symbol lives in the first partition and must
+        // be returned by the per-symbol bitmap lookup.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE keys (s SYMBOL)");
+            execute("INSERT INTO t VALUES " +
+                    "('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T01:00:00'), " +
+                    "('c', '1970-01-01T02:00:00'), ('a', '1970-01-02T03:00:00'), " +
+                    "('b', '1970-01-02T04:00:00'), ('c', '1970-01-02T05:00:00')");
+            execute("INSERT INTO keys VALUES ('a'), ('c')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T02:00:00.000000" + suffix + "\tc\n",
+                    "SELECT ts, s FROM t WHERE s IN (SELECT s FROM keys) EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnInSubQueryIndexedWithFilter() throws Exception {
+        // Indexed subquery path with a WHERE filter: uses EarliestByValuesIndexedFilteredRecordCursor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE keys (s SYMBOL)");
+            execute("INSERT INTO t VALUES " +
+                    "('a', 1, '1970-01-01T00:00:00'), ('b', 5, '1970-01-01T01:00:00'), " +
+                    "('c', 1, '1970-01-01T02:00:00'), ('a', 5, '1970-01-02T03:00:00'), " +
+                    "('b', 5, '1970-01-02T04:00:00'), ('c', 5, '1970-01-02T05:00:00')");
+            execute("INSERT INTO keys VALUES ('a'), ('c')");
+
+            // Filter excludes the earliest 'a' (v=1) and the earliest 'c' (v=1), so the
+            // earliest-matching rows land in the second partition.
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\tv\n" +
+                            "1970-01-02T03:00:00.000000" + suffix + "\ta\t5\n" +
+                            "1970-01-02T05:00:00.000000" + suffix + "\tc\t5\n",
+                    "SELECT ts, s, v FROM t WHERE s IN (SELECT s FROM keys) AND v = 5 EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
             );
         });
     }

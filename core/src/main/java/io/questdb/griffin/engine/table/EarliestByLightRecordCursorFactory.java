@@ -73,17 +73,20 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
         assert base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.recordSink = recordSink;
+        Map earliestByMap = null;
         try {
             ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
             mapValueTypes.add(ROW_ID_VALUE_IDX, ColumnType.LONG);
             if (!orderedByTimestampAsc) {
                 mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
             }
-            Map earliestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
+            earliestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
             this.cursor = new EarliestByLightRecordCursor(earliestByMap);
+            earliestByMap = null;
             this.timestampIndex = timestampIndex;
             this.orderedByTimestampAsc = orderedByTimestampAsc;
         } catch (Throwable th) {
+            Misc.free(earliestByMap);
             close();
             throw th;
         }

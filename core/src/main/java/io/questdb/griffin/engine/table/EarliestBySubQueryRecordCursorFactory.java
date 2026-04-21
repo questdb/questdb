@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -37,8 +38,10 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -47,13 +50,19 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Iterates table forwards and finds the earliest values for a single symbol column,
  * where the symbol values come from a subquery (e.g. WHERE s IN (SELECT ...)).
+ *
+ * <p>When the key column has a bitmap index, per-symbol index lookups are used via
+ * the {@code EarliestByValuesIndexed*} cursors. Otherwise a forward row scan with
+ * a map of included keys runs via {@link EarliestByValueListRecordCursor}.
  */
 public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
-    private final EarliestByValueListRecordCursor cursor;
+    private final AbstractPageFrameRecordCursor cursor;
     private final Function filter;
     private final Record.CharSequenceFunction func;
+    private final boolean indexed;
     private final RecordCursorFactory recordCursorFactory;
+    private final DirectLongList rows;
     private final IntHashSet symbolKeys;
 
     public EarliestBySubQueryRecordCursorFactory(
@@ -63,6 +72,7 @@ public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameReco
             int columnIndex,
             @NotNull RecordCursorFactory recordCursorFactory,
             @Nullable Function filter,
+            boolean indexed,
             @NotNull Record.CharSequenceFunction func,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
@@ -74,15 +84,31 @@ public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameReco
             this.columnIndex = columnIndex;
             this.recordCursorFactory = recordCursorFactory;
             this.func = func;
-            this.cursor = new EarliestByValueListRecordCursor(
-                    configuration,
-                    metadata,
-                    columnIndex,
-                    filter,
-                    configuration.getDefaultSymbolCapacity(),
-                    true,
-                    false
-            );
+            this.indexed = indexed;
+            if (indexed) {
+                this.rows = new DirectLongList(
+                        configuration.getSqlEarliestByRowCount(),
+                        MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST
+                );
+                if (filter != null) {
+                    this.cursor = new EarliestByValuesIndexedFilteredRecordCursor(
+                            configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
+                } else {
+                    this.cursor = new EarliestByValuesIndexedRecordCursor(
+                            configuration, metadata, columnIndex, symbolKeys, null, rows);
+                }
+            } else {
+                this.rows = null;
+                this.cursor = new EarliestByValueListRecordCursor(
+                        configuration,
+                        metadata,
+                        columnIndex,
+                        filter,
+                        configuration.getDefaultSymbolCapacity(),
+                        true,
+                        false
+                );
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -99,7 +125,15 @@ public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameReco
         sink.type("EarliestBySubQuery");
         sink.optAttr("filter", filter);
         sink.child("Subquery", recordCursorFactory);
+        if (indexed) {
+            sink.child(cursor);
+        }
         sink.child(partitionFrameCursorFactory);
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return indexed;
     }
 
     @Override
@@ -108,6 +142,7 @@ public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameReco
         Misc.free(recordCursorFactory);
         Misc.free(filter);
         Misc.free(cursor);
+        Misc.free(rows);
     }
 
     @Override
@@ -123,13 +158,21 @@ public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameReco
             while (baseCursor.hasNext()) {
                 int symbolKey = symbolTable.keyOf(func.get(record, 0, sink));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(symbolKey);
+                    // Indexed cursors feed these keys directly to BitmapIndexReader,
+                    // which expects +1-shifted keys (0 = NULL sentinel).
+                    symbolKeys.add(indexed ? TableUtils.toIndexKey(symbolKey) : symbolKey);
                 }
             }
         }
-        IntHashSet cursorKeys = cursor.getIncludedSymbolKeys();
-        cursorKeys.clear();
-        cursorKeys.addAll(symbolKeys);
+        if (!indexed) {
+            // Non-indexed path: the ValueList cursor maintains its own included-keys
+            // set (for restrictedByIncludedValues mode); mirror the subquery-resolved
+            // keys into it. Indexed cursors read symbolKeys directly.
+            EarliestByValueListRecordCursor valueListCursor = (EarliestByValueListRecordCursor) cursor;
+            IntHashSet cursorKeys = valueListCursor.getIncludedSymbolKeys();
+            cursorKeys.clear();
+            cursorKeys.addAll(symbolKeys);
+        }
         cursor.of(pageFrameCursor, executionContext);
         return cursor;
     }
