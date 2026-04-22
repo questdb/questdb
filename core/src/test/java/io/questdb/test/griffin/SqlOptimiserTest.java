@@ -4254,13 +4254,36 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByFromToKeyedQuery() throws Exception {
+        // D-31 finding 4.1: upgraded from a bare smoke-test (compile-and-run
+        // without inspection) to a plan assertion so the test catches silent
+        // regressions (cursor-path fallback, lost LIMIT pushdown, Async Group
+        // By parallelism drop).
+        // Probe-and-freeze per Phase 15 D-02: the captured plan pins Long Top
+        // K as the LIMIT 6 implementation above an Async Group By with a
+        // keyFunctions entry for the timestamp_floor_utc fast-path rewrite.
+        // Correctness is already covered by
+        // SampleByTest#testSampleByFromToIsAllowedForKeyedQueries; this test
+        // specifically locks the optimizer rewrite shape.
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
-            printSql("""
+            final String query = """
                     SELECT ts, count, s
                     FROM fromto
                     SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'
-                    LIMIT 6""");
+                    LIMIT 6""";
+            assertPlanNoLeakCheck(query, """
+                    Long Top K lo: 6
+                      keys: [ts asc]
+                        Async Group By workers: 1
+                          keys: [ts,s]
+                          keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')]
+                          values: [count(*)]
+                          filter: null
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: fromto
+                                  intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
+                    """);
         });
     }
 
