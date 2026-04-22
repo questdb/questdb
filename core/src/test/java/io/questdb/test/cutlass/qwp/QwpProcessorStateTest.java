@@ -128,11 +128,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAdvanceDurableWatermarkBlockedByEarliestTableInMultiTableCommit() throws Exception {
-        // A single QWP message can commit to multiple tables. The consumer is
-        // invoked once per table that committed. All segment entries from that
-        // message share the same clientSeq. The watermark must not advance past
-        // that clientSeq until ALL tables from that message are uploaded.
+    public void testCollectDurableProgressMultiTable() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -142,27 +138,25 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.setDurableAckEnabled(true);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
 
-                // msg 0 writes to two tables in one commit.
                 fake.queueCommit(
+                        new String[]{"t1", "t2"},
                         new String[]{"t1~1", "t2~1"},
-                        new int[]{1, 2},
-                        new int[]{0, 0},
                         new long[]{10L, 20L}
                 );
                 state.setHighestProcessedSequence(0);
-                state.commit(0);
+                state.commit();
 
-                // Only t1 is uploaded — t2 still pending.
                 FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
                 registry.set("t1~1", 10L);
-                state.advanceDurableWatermark(registry);
-                // t2's segment has firstClientSeq=0, so watermark = 0 - 1 = -1.
-                Assert.assertEquals(-1, state.getHighestDurableSequence());
+                io.questdb.std.CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(10L, progress.get("t1"));
 
-                // t2 catches up — both tables from msg 0 are now durable.
                 registry.set("t2~1", 20L);
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(0, state.getHighestDurableSequence());
+                progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(2, progress.size());
+                Assert.assertEquals(10L, progress.get("t1"));
+                Assert.assertEquals(20L, progress.get("t2"));
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -171,10 +165,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAdvanceDurableWatermarkCoalescesPerSegment() throws Exception {
-        // Multiple commits to the same WAL segment should coalesce into a single
-        // entry with the latest clientSeq. When that segment is uploaded, all
-        // coalesced clientSeqs become durable.
+    public void testCollectDurableProgressOnlyReportsNewProgress() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -184,167 +175,25 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.setDurableAckEnabled(true);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
 
-                // Three commits all land in the same segment (walId=1, segmentId=0).
-                fake.queueCommit(new String[]{"t~1"}, new int[]{1}, new int[]{0}, new long[]{10L});
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{10L});
                 state.setHighestProcessedSequence(0);
-                state.commit(0);
-                fake.queueCommit(new String[]{"t~1"}, new int[]{1}, new int[]{0}, new long[]{11L});
-                state.setHighestProcessedSequence(1);
-                state.commit(1);
-                fake.queueCommit(new String[]{"t~1"}, new int[]{1}, new int[]{0}, new long[]{12L});
-                state.setHighestProcessedSequence(2);
-                state.commit(2);
+                state.commit();
 
-                // Upload catches up — the single segment entry covers all three msgs.
-                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
-                registry.set("t~1", 12L);
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(2, state.getHighestDurableSequence());
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testAdvanceDurableWatermarkMultiTableMultiSegment() throws Exception {
-        // With multiple tables, the watermark is blocked by the earliest
-        // unuploaded segment's firstClientSeq.
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-                state.setDurableAckEnabled(true);
-                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
-
-                // msg 0: writes to T1 (walId=1, seg=0, seqTxn=10)
-                fake.queueCommit(new String[]{"t1~1"}, new int[]{1}, new int[]{0}, new long[]{10L});
-                state.setHighestProcessedSequence(0);
-                state.commit(0);
-
-                // msg 1: writes to T2 (walId=2, seg=0, seqTxn=5)
-                fake.queueCommit(new String[]{"t2~1"}, new int[]{2}, new int[]{0}, new long[]{5L});
-                state.setHighestProcessedSequence(1);
-                state.commit(1);
-
-                // T2 is uploaded but T1 is not.
-                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
-                registry.set("t2~1", 5L);
-                state.advanceDurableWatermark(registry);
-                // T1's segment has firstClientSeq=0, so watermark = 0 - 1 = -1.
-                // T2's entry is removed (uploaded), but T1 blocks progress.
-                Assert.assertEquals(-1, state.getHighestDurableSequence());
-
-                // T1 catches up.
-                registry.set("t1~1", 10L);
-                state.advanceDurableWatermark(registry);
-                // All segments uploaded → watermark = highestProcessedSequence = 1.
-                Assert.assertEquals(1, state.getHighestDurableSequence());
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testAdvanceDurableWatermarkCatchesUpWhenQueueEmpty() throws Exception {
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-                state.setDurableAckEnabled(true);
-                state.setHighestProcessedSequence(7);
-
-                // Empty pending queue — watermark jumps straight to highestProcessedSequence
-                // because every processed seq had its WAL already uploaded (or had no WAL).
-                state.advanceDurableWatermark(new FakeDurableAckRegistry());
-                Assert.assertEquals(7, state.getHighestDurableSequence());
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testAdvanceDurableWatermarkDrainsSatisfiedSegmentButStopsAtUnsatisfied() throws Exception {
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-                state.setDurableAckEnabled(true);
-                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
-
-                // clientSeq=0 commits orders~1 in segment 0 at seqTxn 10
-                fake.queueCommit(new String[]{"orders~1"}, new int[]{1}, new int[]{0}, new long[]{10L});
-                state.setHighestProcessedSequence(0);
-                state.commit(0);
-
-                // clientSeq=1 commits orders~1 in segment 1 at seqTxn 20
-                fake.queueCommit(new String[]{"orders~1"}, new int[]{1}, new int[]{1}, new long[]{20L});
-                state.setHighestProcessedSequence(1);
-                state.commit(1);
-
-                // Uploads only up to seqTxn=15: segment 0 satisfied, segment 1 not.
-                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
-                registry.set("orders~1", 15L);
-
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(0, state.getHighestDurableSequence());
-
-                // Upload catches up → segment 1 becomes satisfied.
-                registry.set("orders~1", 20L);
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(1, state.getHighestDurableSequence());
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testAdvanceDurableWatermarkDrainsSatisfiedSegmentAcrossWalIdChange() throws Exception {
-        // Writer eviction can assign a new walId to the same table mid-connection.
-        // Each (table, walId, segmentId) triple is a distinct DurableSegmentEntry;
-        // the watermark must track both independently.
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-                state.setDurableAckEnabled(true);
-                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
-
-                // msg 0: table t~1, walId=1, segmentId=0, seqTxn=10
-                fake.queueCommit(new String[]{"t~1"}, new int[]{1}, new int[]{0}, new long[]{10L});
-                state.setHighestProcessedSequence(0);
-                state.commit(0);
-
-                // msg 1: same table but new walId=2 (writer was evicted and re-opened)
-                fake.queueCommit(new String[]{"t~1"}, new int[]{2}, new int[]{0}, new long[]{11L});
-                state.setHighestProcessedSequence(1);
-                state.commit(1);
-
-                // Upload covers seqTxn=10 only — walId=1 segment satisfied, walId=2 not.
                 FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
                 registry.set("t~1", 10L);
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(0, state.getHighestDurableSequence());
 
-                // Upload catches up to seqTxn=11 — both segments satisfied.
-                registry.set("t~1", 11L);
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(1, state.getHighestDurableSequence());
+                io.questdb.std.CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+
+                state.onDurableAckSent();
+
+                progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(0, progress.size());
+
+                registry.set("t~1", 15L);
+                progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(15L, progress.get("t"));
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -353,7 +202,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAdvanceDurableWatermarkDrainsWholeQueueThenCatchesUp() throws Exception {
+    public void testCollectDurableProgressDroppedTableReportsMaxValue() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -363,91 +212,16 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.setDurableAckEnabled(true);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
 
-                fake.queueCommit(new String[]{"t~1"}, new int[]{1}, new int[]{0}, new long[]{10L});
+                fake.queueCommit(new String[]{"dropped"}, new String[]{"dropped~1"}, new long[]{42L});
                 state.setHighestProcessedSequence(0);
-                state.commit(0);
-                fake.queueCommit(new String[]{"t~1"}, new int[]{1}, new int[]{0}, new long[]{20L});
-                state.setHighestProcessedSequence(1);
-                state.commit(1);
+                state.commit();
 
-                // Two trailing empty messages — nothing added to pending.
-                state.setHighestProcessedSequence(3);
-
-                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
-                registry.set("t~1", 25L);
-
-                // Segment uploaded → catches up to processed=3.
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(3, state.getHighestDurableSequence());
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testAdvanceDurableWatermarkDroppedTableUnblocks() throws Exception {
-        // Regression test for C1: a dropped table must not permanently block
-        // the durable watermark. The DurableUploadRegistry sets MAX_VALUE on
-        // drop, which satisfies any pending DurableSegmentEntry.
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-                state.setDurableAckEnabled(true);
-                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
-
-                // msg 0 writes to t1 (seqTxn=10), msg 1 writes to t2 (seqTxn=5).
-                fake.queueCommit(new String[]{"t1~1"}, new int[]{1}, new int[]{0}, new long[]{10L});
-                state.setHighestProcessedSequence(0);
-                state.commit(0);
-                fake.queueCommit(new String[]{"t2~1"}, new int[]{2}, new int[]{0}, new long[]{5L});
-                state.setHighestProcessedSequence(1);
-                state.commit(1);
-
-                // t1 is dropped (registry returns MAX_VALUE), t2 is uploaded normally.
-                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
-                registry.set("t1~1", Long.MAX_VALUE);
-                registry.set("t2~1", 5L);
-
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(1, state.getHighestDurableSequence());
-
-                // Both entries satisfied — a durable ack is now pending delivery.
-                Assert.assertTrue(state.hasPendingDurableAck());
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testAdvanceDurableWatermarkDroppedTableBeforeAnyUpload() throws Exception {
-        // Edge case: table dropped before the uploader processes any segment.
-        // The registry sentinel (MAX_VALUE) must still unblock the watermark.
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-                state.setDurableAckEnabled(true);
-                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
-
-                fake.queueCommit(new String[]{"dropped~1"}, new int[]{1}, new int[]{0}, new long[]{42L});
-                state.setHighestProcessedSequence(0);
-                state.commit(0);
-
-                // No uploads happened, but the table was dropped → MAX_VALUE sentinel.
                 FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
                 registry.set("dropped~1", Long.MAX_VALUE);
 
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(0, state.getHighestDurableSequence());
+                io.questdb.std.CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(Long.MAX_VALUE, progress.get("dropped"));
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -456,19 +230,17 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAdvanceDurableWatermarkIsNoOpWhenDisabled() throws Exception {
+    public void testCollectDurableProgressIsEmptyWhenDisabled() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
             QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
-                // durableAckEnabled stays false.
                 state.setHighestProcessedSequence(5);
 
-                state.advanceDurableWatermark(new FakeDurableAckRegistry());
-                Assert.assertEquals(-1L, state.getHighestDurableSequence());
-                Assert.assertFalse(state.hasPendingDurableAck());
+                io.questdb.std.CharSequenceLongHashMap progress = state.collectDurableProgress(new FakeDurableAckRegistry());
+                Assert.assertEquals(0, progress.size());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -477,7 +249,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAdvanceDurableWatermarkPartialCreditsEmptyGap() throws Exception {
+    public void testHasPendingDurableAckDetectsProgress() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -487,19 +259,20 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.setDurableAckEnabled(true);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
 
-                // clientSeq=0 is empty (consumer not invoked), clientSeq=1 commits to t~1.
+                fake.queueCommit(new String[]{"t1", "t2"}, new String[]{"t1~1", "t2~1"}, new long[]{10L, 5L});
                 state.setHighestProcessedSequence(0);
-                fake.queueCommit(null, null, null, null);
-                state.commit(0);
-                state.setHighestProcessedSequence(1);
-                fake.queueCommit(new String[]{"t~1"}, new int[]{1}, new int[]{0}, new long[]{42L});
-                state.commit(1);
+                state.commit();
 
-                // Nothing uploaded. The segment has firstClientSeq=1 (empty commits
-                // produce no entries), so watermark = 1 - 1 = 0, crediting the empty msg.
                 FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(0, state.getHighestDurableSequence());
+                Assert.assertEquals(0, state.collectDurableProgress(registry).size());
+
+                registry.set("t1~1", 10L);
+                registry.set("t2~1", 5L);
+                Assert.assertEquals(2, state.collectDurableProgress(registry).size());
+
+                state.collectDurableProgress(registry);
+                state.onDurableAckSent();
+                Assert.assertEquals(0, state.collectDurableProgress(registry).size());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -508,11 +281,56 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAdvanceDurableWatermarkPingTriggeredDelivery() throws Exception {
-        // Simulates the exact sequence that handlePing executes:
-        // advanceDurableWatermark → hasPendingDurableAck → trySendDurableAck.
-        // Verifies that a PING arriving after uploads complete (but with no new
-        // binary messages) still produces a pending durable ack.
+    public void testPendingAckSeqTxnsPopulatedOnCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{10L});
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                io.questdb.std.CharSequenceLongHashMap pending = state.getPendingAckSeqTxns();
+                Assert.assertEquals(1, pending.size());
+                Assert.assertEquals(10L, pending.get("t"));
+
+                state.onAckSent(0);
+                Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testPendingAckSeqTxnsEmptyCommitProducesNoEntries() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                fake.queueCommit(null, null, null);
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testPingTriggeredDurableAckDelivery() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -522,35 +340,23 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.setDurableAckEnabled(true);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
 
-                // Client sends two messages that commit to different tables.
-                fake.queueCommit(new String[]{"t1~1"}, new int[]{1}, new int[]{0}, new long[]{10L});
+                fake.queueCommit(new String[]{"t1"}, new String[]{"t1~1"}, new long[]{10L});
                 state.setHighestProcessedSequence(0);
-                state.commit(0);
-                fake.queueCommit(new String[]{"t2~1"}, new int[]{2}, new int[]{0}, new long[]{5L});
+                state.commit();
+                fake.queueCommit(new String[]{"t2"}, new String[]{"t2~1"}, new long[]{5L});
                 state.setHighestProcessedSequence(1);
-                state.commit(1);
+                state.commit();
 
-                // No uploads yet — no pending durable ack.
                 FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
-                state.advanceDurableWatermark(registry);
-                Assert.assertFalse(state.hasPendingDurableAck());
+                Assert.assertEquals(0, state.collectDurableProgress(registry).size());
 
-                // Uploads complete between messages (server-side, async).
                 registry.set("t1~1", 10L);
                 registry.set("t2~1", 5L);
 
-                // PING arrives — the handler calls advanceDurableWatermark.
-                state.advanceDurableWatermark(registry);
-                Assert.assertEquals(1, state.getHighestDurableSequence());
-                Assert.assertTrue(
-                        "PING must trigger a pending durable ack after uploads complete",
-                        state.hasPendingDurableAck()
-                );
-
-                // Simulate the trySendDurableAck success.
-                state.onDurableAckSent(state.getHighestDurableSequence());
-                Assert.assertFalse(state.hasPendingDurableAck());
-                Assert.assertEquals(1, state.getLastDurablyAckedSequence());
+                io.questdb.std.CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(2, progress.size());
+                state.onDurableAckSent();
+                Assert.assertEquals(0, state.collectDurableProgress(registry).size());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -819,7 +625,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 ObjList<Utf8String> captured = new ObjList<>();
                 long[] capturedSeq = new long[]{Long.MIN_VALUE};
                 try {
-                    cache.commitAll((tableDirName, walId, segmentId, seqTxn) -> {
+                    cache.commitAll((tableName, tableDirName, seqTxn) -> {
                         captured.add(new Utf8String(tableDirName.toString()));
                         capturedSeq[0] = seqTxn;
                     });
@@ -1013,7 +819,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
 
                 boolean[] invoked = new boolean[]{false};
                 try {
-                    cache.commitAll((tableDirName, walId, segmentId, seqTxn) -> invoked[0] = true);
+                    cache.commitAll((tableName, tableDirName, seqTxn) -> invoked[0] = true);
                 } catch (Exception e) {
                     throw e;
                 } catch (Throwable t) {
@@ -1025,10 +831,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCommitReleasesDurableEntryOnEmptyCommit() throws Exception {
-        // A commit that advances nothing (consumer never called) must release the
-        // durable entry back to the pool rather than queueing it — otherwise the
-        // pending queue fills with empty entries and hasPendingDurableAck lies.
+    public void testCommitEmptyProducesNoPendingSeqTxns() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -1038,13 +841,11 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.setDurableAckEnabled(true);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
 
-                fake.queueCommit(null, null, null, null);
+                fake.queueCommit(null, null, null);
                 state.setHighestProcessedSequence(0);
-                state.commit(0);
+                state.commit();
 
-                // No segment entry should be created — advance sees empty and catches up.
-                state.advanceDurableWatermark(new FakeDurableAckRegistry());
-                Assert.assertEquals(0, state.getHighestDurableSequence());
+                Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -1053,9 +854,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCommitReleasesDurableEntryOnFailure() throws Exception {
-        // When commitAll throws, the partially-built pending entry must be released
-        // back to the pool — otherwise repeated commit failures leak entries.
+    public void testCommitFailureRejectsState() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -1067,13 +866,9 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
 
                 fake.queueCommitThrow(CairoException.nonCritical().put("simulated"));
                 state.setHighestProcessedSequence(0);
-                state.commit(0);
+                state.commit();
 
-                // State rejected the commit; no durable entry should remain queued.
                 Assert.assertFalse(state.isOk());
-                state.advanceDurableWatermark(new FakeDurableAckRegistry());
-                // Empty queue → watermark catches up to processed.
-                Assert.assertEquals(0, state.getHighestDurableSequence());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -1082,9 +877,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCommitWithDisabledDurableAckIsNoOp() throws Exception {
-        // When durable-ack is disabled, commit() must not acquire a durable entry,
-        // and hasPendingDurableAck stays false regardless of processed sequence.
+    public void testCommitAlwaysInvokesConsumer() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -1093,16 +886,12 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
 
-                // Consumer is passed as null when disabled — even if the fake had
-                // queued data, it would be ignored because the code path skips it.
-                fake.queueCommit(new String[]{"t~1"}, new int[]{1}, new int[]{0}, new long[]{10L});
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{10L});
                 state.setHighestProcessedSequence(5);
-                state.commit(5);
+                state.commit();
 
-                state.advanceDurableWatermark(new FakeDurableAckRegistry());
-                Assert.assertEquals(-1L, state.getHighestDurableSequence());
-                Assert.assertFalse(state.hasPendingDurableAck());
-                Assert.assertFalse(state.isDurableAckEnabled());
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(10L, state.getPendingAckSeqTxns().get("t"));
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -1385,15 +1174,12 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
-                // Durable ACK blocked → RESUME_DURABLE_ACK (=4)
-                state.onDurableAckBlocked(3);
+                state.onDurableAckBlocked();
                 Assert.assertEquals(4, state.getSendState());
 
-                // Error blocked while in RESUME_DURABLE_ACK → RESUME_DURABLE_ACK_THEN_ERROR (=5)
                 state.onErrorBlocked((byte) 1, 4, "boom");
                 Assert.assertEquals(5, state.getSendState());
 
-                // Another error while already in the compound state stays in the compound state.
                 state.onErrorBlocked((byte) 1, 5, "boom2");
                 Assert.assertEquals(5, state.getSendState());
             } finally {
@@ -1415,22 +1201,15 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
 
-                // Durable ACK blocked → RESUME_DURABLE_ACK (=4)
-                state.onDurableAckBlocked(7);
+                state.onDurableAckBlocked();
                 Assert.assertEquals(4, state.getSendState());
 
-                // Error arrives while the durable-ack frame is in flight →
-                // RESUME_DURABLE_ACK_THEN_ERROR (=5)
                 state.onErrorBlocked((byte) 6, 10, "write error");
                 Assert.assertEquals(5, state.getSendState());
 
-                // IO loop finishes the durable-ack send → should transition to
-                // READY so the deferred error can be sent next.
                 state.onResumeDurableAckComplete();
                 Assert.assertEquals(0, state.getSendState());
-                Assert.assertEquals(7, state.getLastDurablyAckedSequence());
 
-                // Deferred error is still pending.
                 Assert.assertEquals(10, state.getDeferredErrorSequence());
                 Assert.assertEquals(6, state.getDeferredErrorStatus());
             } finally {
@@ -1771,10 +1550,9 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
 
     private static final class FakeConsumerTudCache extends QwpTudCache {
         private CharSequence[] commitDirNames;
-        private int[] commitSegmentIds;
         private long[] commitSeqTxns;
+        private CharSequence[] commitTableNames;
         private Throwable commitThrow;
-        private int[] commitWalIds;
 
         FakeConsumerTudCache(io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig) {
             super(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);
@@ -1787,21 +1565,19 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 commitThrow = null;
                 throw t;
             }
-            if (consumer != null && commitDirNames != null) {
-                for (int i = 0; i < commitDirNames.length; i++) {
-                    consumer.accept(commitDirNames[i], commitWalIds[i], commitSegmentIds[i], commitSeqTxns[i]);
+            if (consumer != null && commitTableNames != null) {
+                for (int i = 0; i < commitTableNames.length; i++) {
+                    consumer.accept(commitTableNames[i], commitDirNames[i], commitSeqTxns[i]);
                 }
             }
+            commitTableNames = null;
             commitDirNames = null;
-            commitWalIds = null;
-            commitSegmentIds = null;
             commitSeqTxns = null;
         }
 
-        void queueCommit(CharSequence[] dirNames, int[] walIds, int[] segmentIds, long[] seqTxns) {
+        void queueCommit(CharSequence[] tableNames, CharSequence[] dirNames, long[] seqTxns) {
+            this.commitTableNames = tableNames;
             this.commitDirNames = dirNames;
-            this.commitWalIds = walIds;
-            this.commitSegmentIds = segmentIds;
             this.commitSeqTxns = seqTxns;
         }
 

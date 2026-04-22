@@ -107,15 +107,15 @@ public final class QwpConstants {
      */
     public static final byte SCHEMA_MODE_FULL = 0x00;
     /**
-     * Status: Cumulative durable-upload acknowledgment.
+     * Status: Per-table durable-upload acknowledgment.
      * <p>
      * Sent by the server (only when the client opted in via the
-     * {@code X-QWP-Request-Durable-Ack} handshake header) when the WAL
-     * containing the referenced client sequence has been uploaded to the
-     * configured object store. Payload layout matches {@link #STATUS_OK}:
-     * 1-byte status + 8-byte little-endian cumulative sequence.
-     * Not emitted on servers without primary replication enabled; in that
-     * case the handshake header is silently ignored.
+     * {@code X-QWP-Request-Durable-Ack} handshake header) when WAL segments
+     * have been uploaded to the configured object store. Payload:
+     * 1-byte status + 2-byte tableCount +
+     * [1-byte nameLen + nameLen bytes UTF-8 table name + 8-byte seqTxn] per table.
+     * Only tables whose durable seqTxn progressed since the last durable ack
+     * are included. Not emitted on servers without primary replication enabled.
      */
     public static final byte STATUS_DURABLE_ACK = 0x02;
     /**

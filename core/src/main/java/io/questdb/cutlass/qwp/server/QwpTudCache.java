@@ -194,9 +194,8 @@ public class QwpTudCache implements QuietCloseable {
                         tud.commit(false);
                         if (willAdvance && !tud.isDropped()) {
                             consumer.accept(
+                                    tud.getTableToken().getTableName(),
                                     tud.getTableToken().getDirName(),
-                                    tud.getWalId(),
-                                    tud.getSegmentId(),
                                     tud.getLastSeqTxn()
                             );
                         }
@@ -371,7 +370,7 @@ public class QwpTudCache implements QuietCloseable {
      */
     @FunctionalInterface
     public interface CommittedTxnConsumer {
-        void accept(CharSequence tableDirName, int walId, int segmentId, long seqTxn);
+        void accept(CharSequence tableName, CharSequence tableDirName, long seqTxn);
     }
 
     private static boolean isValidQwpSchemaColumnName(QwpColumnDef columnDef, int maxFileNameLength) {
