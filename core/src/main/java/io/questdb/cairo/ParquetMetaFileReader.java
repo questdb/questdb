@@ -87,14 +87,13 @@ import io.questdb.std.str.Utf8s;
  *   [..]  FOOTER_LENGTH                 u32  (total bytes from footer start through CRC)
  * </pre>
  * <p>
- * Callers must never read the `_pm` file size from the filesystem (via
- * {@code ff.length()} or similar). Instead, read the committed
- * {@code PARQUET_META_FILE_SIZE} via
- * {@link #readParquetMetaFileSize(FilesFacade, LPSZ)}, map that many
- * bytes, then call {@link #of(long, long)} passing the same size
- * as {@code parquetMetaFileSize}. The filesystem size may include bytes
- * from an in-progress, unpublished append and is not a valid commit
- * boundary — only {@code PARQUET_META_FILE_SIZE} is.
+ * Callers shouldn't read the `_pm` file size from the filesystem (via {@code ff.length()} or similar) when another
+ * writer might modify the file simultaneously. Instead, read the committed {@code PARQUET_META_FILE_SIZE} via
+ * {@link #readParquetMetaFileSize(FilesFacade, LPSZ)}, map that many bytes, then call {@link #of(long, long)} passing the same size
+ * as {@code parquetMetaFileSize}. The filesystem size may include bytes from an in-progress, unpublished append and is not a valid commit
+ * boundary — only {@code PARQUET_META_FILE_SIZE} is. You may also use {@link #openAndMapRO(FilesFacade, LPSZ)} to automatically open and
+ * map the file as expected. Note that after calling it, you need to call {@link #resolveFooter(long)} before accessing any fields other
+ * than {@code addr} or {@code fileSize}.
  */
 public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietCloseable {
 
@@ -149,60 +148,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     // the first canSkipRowGroup call and freed by clear()/close().
     private long nativeReaderPtr;
     private int rowGroupCount;
-
-    /**
-     * Maps a {@code _pm} file in two stages: first the fixed header prefix,
-     * then the full committed file size read from {@code PARQUET_META_FILE_SIZE} at
-     * offset 0. Never calls {@code ff.length()} — the filesystem size is not
-     * a valid commit boundary.
-     * <p>
-     * The returned address is mmaped at the committed size ({@code PARQUET_META_FILE_SIZE}).
-     * The caller must later {@code ff.munmap(addr, size, memoryTag)} with the
-     * same size, which is available via {@link #getFileSize()} after calling
-     * {@link #of(long, long)} on the address.
-     *
-     * @param ff        files facade
-     * @param path      path to the {@code _pm} file (full, null-terminated)
-     * @param log       logger for open-RO diagnostics
-     * @param memoryTag memory tag bucket for the final mapping
-     * @return the address of the mmaped {@code _pm} file, sized to the header's
-     * {@code PARQUET_META_FILE_SIZE}
-     * @throws CairoException if the file is missing, cannot be opened, or
-     *                        contains an invalid {@code PARQUET_META_FILE_SIZE}
-     */
-    public static long mapParquetMeta(FilesFacade ff, LPSZ path, Log log, int memoryTag) {
-        final long fd = TableUtils.openRO(ff, path, log);
-        try {
-            final long headerAddr = ff.mmap(fd, HEADER_FIXED_SIZE, 0, Files.MAP_RO, memoryTag);
-            if (headerAddr == FilesFacade.MAP_FAILED) {
-                throw CairoException.critical(ff.errno())
-                        .put("could not mmap _pm header [file=").put(path).put(']');
-            }
-            final long parquetMetaFileSize;
-            try {
-                parquetMetaFileSize = Unsafe.getUnsafe().getLong(headerAddr + HEADER_PARQUET_META_FILE_SIZE_OFF);
-                Unsafe.getUnsafe().loadFence();
-            } finally {
-                ff.munmap(headerAddr, HEADER_FIXED_SIZE, memoryTag);
-            }
-            if (parquetMetaFileSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE) {
-                throw CairoException.critical(0)
-                        .put("invalid _pm parquet_meta_file_size [file=").put(path)
-                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
-                        .put(']');
-            }
-            final long addr = ff.mmap(fd, parquetMetaFileSize, 0, Files.MAP_RO, memoryTag);
-            if (addr == FilesFacade.MAP_FAILED) {
-                throw CairoException.critical(ff.errno())
-                        .put("could not mmap _pm [file=").put(path)
-                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
-                        .put(']');
-            }
-            return addr;
-        } finally {
-            ff.close(fd);
-        }
-    }
 
     /**
      * Reads the committed {@code PARQUET_META_FILE_SIZE} field from a {@code _pm} file
