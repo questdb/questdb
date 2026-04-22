@@ -27,6 +27,7 @@ package io.questdb.cairo.mig;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
@@ -131,6 +132,7 @@ public final class Mig940 {
             long dataStart = partitionTableSizeOffset + Integer.BYTES;
             path.trimTo(plen);
 
+            final ParquetMetaFileReader reader = new ParquetMetaFileReader();
             for (int i = 0; i < partitionCount; i++) {
                 long entryOffset = dataStart + (long) i * LONGS_PER_PARTITION * Long.BYTES;
                 long maskedSize = txMem.getLong(entryOffset + PARTITION_MASKED_SIZE_IDX * Long.BYTES);
@@ -144,7 +146,7 @@ public final class Mig940 {
                 long nameTxn = txMem.getLong(entryOffset + PARTITION_NAME_TX_IDX * Long.BYTES);
                 long parquetFileSizeFromTxn = txMem.getLong(entryOffset + PARTITION_PARQUET_FILE_SIZE_IDX * Long.BYTES);
 
-                if (!isParquetMetadataStale(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn, parquetFileSizeFromTxn)) {
+                if (!isParquetMetadataStale(reader, ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn, parquetFileSizeFromTxn)) {
                     continue;
                 }
                 generateParquetMetaForPartition(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn);
@@ -154,18 +156,14 @@ public final class Mig940 {
     }
 
     /**
-     * Returns true if the {@code _pm} file is missing or no footer in its MVCC
-     * chain yields a parquet size that matches {@code parquetFileSizeFromTxn}
-     * (the authoritative value from {@code _txn} field 3).
-     * <p>
-     * Walks the footer chain via {@code prev_parquet_meta_file_size} (footer
-     * offset 24): for each footer computes
-     * {@code derivedSize = parquet_footer_offset + parquet_footer_length + 8}
-     * and returns {@code false} on the first match. Never consults
-     * {@code ff.length(data.parquet)} — the filesystem size is not a valid
-     * MVCC commit boundary.
+     * Returns true if the {@code _pm} file is missing, corrupt, or no footer
+     * in its MVCC chain yields a parquet size that matches
+     * {@code parquetFileSizeFromTxn} (the authoritative value from
+     * {@code _txn} field 3). Delegates the chain walk to
+     * {@link ParquetMetaFileReader#resolveFooter(long)}.
      */
     private static boolean isParquetMetadataStale(
+            ParquetMetaFileReader reader,
             FilesFacade ff,
             Path path,
             int pathRootLen,
@@ -176,66 +174,19 @@ public final class Mig940 {
             long parquetFileSizeFromTxn
     ) {
         TableUtils.setPathForNativePartition(path.trimTo(pathRootLen), timestampType, partitionBy, partitionTs, nameTxn);
-
-        // Check if _pm exists.
         path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-        if (!ff.exists(path.$())) {
-            path.trimTo(pathRootLen);
-            return true;
-        }
-
-        long parquetMetaFd = ff.openRO(path.$());
-        if (parquetMetaFd < 0) {
-            path.trimTo(pathRootLen);
-            return true;
-        }
         try {
-            long mem = Unsafe.malloc(32, MemoryTag.NATIVE_MIG);
+            reader.openAndMapRO(ff, path.$());
+            if (reader.getAddr() == 0) {
+                return true;
+            }
             try {
-                // Read the committed parquet_meta_file_size from the header (offset 0).
-                if (ff.read(parquetMetaFd, mem, 8, 0) != 8) {
-                    return true;
-                }
-                long currentSize = Unsafe.getUnsafe().getLong(mem);
-                if (currentSize < 32 + 4) {
-                    return true;
-                }
-
-                // Walk the footer chain: currentSize strictly decreases each step
-                // (prev_size < currentSize), which bounds the loop.
-                while (true) {
-                    if (ff.read(parquetMetaFd, mem, 4, currentSize - 4) != 4) {
-                        return true;
-                    }
-                    int footerLength = Unsafe.getUnsafe().getInt(mem);
-                    long footerOffset = currentSize - 4 - Integer.toUnsignedLong(footerLength);
-                    if (footerOffset < 32 || footerOffset >= currentSize) {
-                        return true;
-                    }
-
-                    // Read footer prefix: parquet_footer_offset(8) + parquet_footer_length(4)
-                    // followed by 12 bytes of unused/row-group fields, then
-                    // prev_parquet_meta_file_size at offset 24.
-                    if (ff.read(parquetMetaFd, mem, 32, footerOffset) != 32) {
-                        return true;
-                    }
-                    long parquetFooterOffset = Unsafe.getUnsafe().getLong(mem);
-                    int parquetFooterLength = Unsafe.getUnsafe().getInt(mem + 8);
-                    long derivedParquetSize = parquetFooterOffset + Integer.toUnsignedLong(parquetFooterLength) + 8;
-                    if (derivedParquetSize == parquetFileSizeFromTxn) {
-                        return false;
-                    }
-                    long prevSize = Unsafe.getUnsafe().getLong(mem + 24);
-                    if (prevSize == 0 || prevSize >= currentSize) {
-                        return true;
-                    }
-                    currentSize = prevSize;
-                }
-            } finally {
-                Unsafe.free(mem, 32, MemoryTag.NATIVE_MIG);
+                return !reader.resolveFooter(parquetFileSizeFromTxn);
+            } catch (CairoException ignored) {
+                return true;
             }
         } finally {
-            ff.close(parquetMetaFd);
+            reader.unmapAndClear(ff);
             path.trimTo(pathRootLen);
         }
     }
