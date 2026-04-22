@@ -12293,6 +12293,77 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueAcceptsLongConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tnv
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\t20.0
+                            1970-01-01T00:00:00.000003Z\t30.0\t20.0
+                            """),
+                    "select ts, val, nth_value(val, 2L) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsLongOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 5_000_000_000L) over (order by ts) from tab",
+                    22,
+                    "n must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileAcceptsLongConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10.0\t1
+                            1970-01-01T00:00:00.000002Z\t20.0\t1
+                            1970-01-01T00:00:00.000003Z\t30.0\t2
+                            1970-01-01T00:00:00.000004Z\t40.0\t2
+                            """),
+                    "select ts, val, ntile(2L) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsLongOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(5_000_000_000L) over (order by ts) from tab",
+                    13,
+                    "bucket count must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
     public void testCumeDistDescOrder() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
@@ -13070,9 +13141,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                             """
             );
-            // NthValueOverUnboundedPartitionRowsFrameFunction
+            // NthValueOverUnboundedPartitionRowsFrameFunction, RANGE variant -- default frame
+            // for "partition by x order by y" is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
             assertPlanNoLeakCheck(
                     "select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (partition by [i] range between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverUnboundedPartitionRowsFrameFunction, ROWS variant -- same class as
+            // the RANGE variant, but the plan must report "rows".
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) from tab",
                     """
                             Window
                               functions: [nth_value(val,2) over (partition by [i] rows between unbounded preceding and current row)]

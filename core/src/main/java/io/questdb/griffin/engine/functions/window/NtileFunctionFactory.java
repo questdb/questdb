@@ -60,7 +60,9 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
     public static final String NAME = "ntile";
     // Column types for partition-based function: row number within partition
     private static final ArrayColumnTypes NTILE_COLUMN_TYPES;
-    private static final String SIGNATURE = NAME + "(I)";
+    // LONG signature so both INT literals (auto-widened) and LONG literals resolve; the value is
+    // validated to fit in a positive int below.
+    private static final String SIGNATURE = NAME + "(L)";
 
     @Override
     public String getSignature() {
@@ -92,10 +94,11 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         if (!bucketCountFunc.isConstant()) {
             throw SqlException.$(argPositions.getQuick(0), "bucket count must be a constant");
         }
-        int bucketCount = bucketCountFunc.getInt(null);
-        if (bucketCount <= 0) {
+        long bucketCountLong = bucketCountFunc.getLong(null);
+        if (bucketCountLong <= 0 || bucketCountLong > Integer.MAX_VALUE) {
             throw SqlException.$(argPositions.getQuick(0), "bucket count must be a positive integer");
         }
+        int bucketCount = (int) bucketCountLong;
 
         if (windowContext.getPartitionByRecord() != null) {
             return new NtileOverPartitionFunction(

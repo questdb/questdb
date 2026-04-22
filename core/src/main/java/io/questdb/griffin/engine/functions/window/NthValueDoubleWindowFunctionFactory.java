@@ -59,7 +59,9 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
     public static final String NAME = "nth_value";
     private static final ArrayColumnTypes NTH_VALUE_COLUMN_TYPES;
-    private static final String SIGNATURE = NAME + "(DI)";
+    // LONG signature for n so both INT literals (auto-widened) and LONG literals resolve; the
+    // value is validated to fit in a positive int below.
+    private static final String SIGNATURE = NAME + "(DL)";
 
     @Override
     public String getSignature() {
@@ -81,10 +83,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         if (!nFunc.isConstant()) {
             throw SqlException.$(argPositions.getQuick(1), "n must be a constant");
         }
-        int n = nFunc.getInt(null);
-        if (n <= 0) {
+        long nLong = nFunc.getLong(null);
+        if (nLong <= 0 || nLong > Integer.MAX_VALUE) {
             throw SqlException.$(argPositions.getQuick(1), "n must be a positive integer");
         }
+        int n = (int) nLong;
 
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
@@ -138,7 +141,8 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                                 partitionByRecord,
                                 partitionBySink,
                                 args.get(0),
-                                n
+                                n,
+                                true
                         );
                     } catch (Throwable t) {
                         Misc.free(map);
@@ -211,7 +215,8 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                                 partitionByRecord,
                                 partitionBySink,
                                 args.get(0),
-                                n
+                                n,
+                                false
                         );
                     } catch (Throwable t) {
                         Misc.free(map);
@@ -1408,16 +1413,20 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     }
 
     // Handles:
-    // - nth_value(a, n) over (partition by x rows between unbounded preceding and [current row | x preceding])
-    // - nth_value(a, n) over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
+    // - nth_value(a, n) over (partition by x rows between unbounded preceding and current row)
+    // - nth_value(a, n) over (partition by x order by ts range between unbounded preceding and current row)
+    // The RANGE variant matches ROWS semantics here (frame ends at the current row without
+    // looking ahead to peers); the flag only affects the EXPLAIN output.
     static class NthValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
+        protected final boolean isRange;
         protected final int n;
         protected double value;
 
-        public NthValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int n) {
+        public NthValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int n, boolean isRange) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.n = n;
+            this.isRange = isRange;
         }
 
         @Override
@@ -1485,7 +1494,8 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row)");
+            sink.val(isRange ? " range" : " rows");
+            sink.val(" between unbounded preceding and current row)");
         }
     }
 
