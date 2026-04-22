@@ -71,7 +71,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
      * {@code [parquet_column_index, column_type]} pair format as
      * {@link PartitionDecoder#decodeRowGroup} for compatibility with
      * {@code PageFrameMemoryPool}. The column type from Java is used for
-     * Symbol→Varchar and Varchar→VarcharSlice overrides; the base type
+     * Symbol->Varchar and Varchar->VarcharSlice overrides; the base type
      * comes from the {@code _pm} file.
      *
      * @param rowGroupBuffers output buffers
@@ -266,8 +266,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         this.parquetAddr = other.parquetAddr;
         this.parquetSize = other.parquetSize;
         this.allocator = other.allocator;
-        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
-        this.parquetMetaReader.resolveFooter(Long.MAX_VALUE);
+        this.parquetMetaReader.of(other.parquetMetaReader);
     }
 
     public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
