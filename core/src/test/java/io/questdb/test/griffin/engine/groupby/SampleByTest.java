@@ -7028,7 +7028,7 @@ public class SampleByTest extends AbstractCairoTest {
         // bucket emits the full key set.
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\trows\tkeys
                             2017-12-20T00:00:00.000000Z\t479\t479
@@ -13621,11 +13621,6 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        // Using assertSql because the fill cursor treats all non-aggregate
-        // columns as GROUP BY keys. The BINARY column `m` on fill rows below
-        // shows the hex value from the data row where the same key first
-        // appeared — the FILL_KEY branch of FillRecord.getBin / getBinLen
-        // carries the key bytes through from keysMapRecord.
         assertMemoryLeak(() -> {
             execute("create table x as " +
                     "(" +
@@ -13649,7 +13644,7 @@ public class SampleByTest extends AbstractCairoTest {
                     " from" +
                     " long_sequence(5)" +
                     ") timestamp(k) partition by NONE");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             a\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tp\tvch\tsum\tk
                             1569490116\tfalse\tZ\tnull\t0.7611029\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\tjFxO]0L#Y\t0.15786635599554755\t1970-01-03T00:00:00.000000Z
@@ -13667,7 +13662,9 @@ public class SampleByTest extends AbstractCairoTest {
                             -283321892\tfalse\t\t0.8438459563914771\t0.13006097\t736\t2015-01-13T04:07:44.289Z\tPEHN\t5398991075259361292\t4\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93
                             00000010 46 fe\t1970-01-01T02:00:00.000000Z\tG -$}\t0.22631523434159562\t1970-01-03T03:00:00.000000Z
                             """,
-                    "select a,b,c,d,e,f,g,i,j,l,m,p,vch,sum(o), k from x sample by 3h fill(prev)"
+                    "select a,b,c,d,e,f,g,i,j,l,m,p,vch,sum(o), k from x sample by 3h fill(prev)",
+                    "k",
+                    false
             );
         });
     }
@@ -13831,9 +13828,6 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        // Using assertSql instead of assertQuery because duplicate timestamp columns (SELECT k, k)
-        // cause the SelectedRecord to report timestampIndex on the renamed column (k1) rather than the
-        // first (k). The data is correct; only the factory's timestampIndex property differs.
         assertMemoryLeak(() -> {
             execute("create table x as " +
                     "(" +
@@ -13846,7 +13840,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE");
 
             String query = "SELECT * FROM (select b, sum(a), k, k from x sample by 3h fill(prev)) ORDER BY k, b";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             b\tsum\tk\tk1
                             \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
@@ -13885,7 +13879,9 @@ public class SampleByTest extends AbstractCairoTest {
                             RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
                             VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
                             """,
-                    query
+                    query,
+                    "k1",
+                    false
             );
 
             execute("insert into x select * from (" +
@@ -13897,7 +13893,7 @@ public class SampleByTest extends AbstractCairoTest {
                     " long_sequence(5)" +
                     ") timestamp(k)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             b\tsum\tk\tk1
                             \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
@@ -13985,7 +13981,9 @@ public class SampleByTest extends AbstractCairoTest {
                             UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
                             VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
                             """,
-                    query
+                    query,
+                    "k1",
+                    false
             );
         });
     }
@@ -13995,9 +13993,6 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        // Using assertSql instead of assertQuery because duplicate timestamp columns (SELECT k k1, k)
-        // cause the SelectedRecord to report timestampIndex on the renamed column (k1) rather than the
-        // original (k). The data is correct; only the factory's timestampIndex property differs.
         assertMemoryLeak(() -> {
             execute("create table x as " +
                     "(" +
@@ -14010,7 +14005,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE");
 
             String query = "SELECT * FROM (select b, sum(a), k k1, k from x sample by 3h fill(prev)) ORDER BY k1, b";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             b\tsum\tk1\tk
                             \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
@@ -14049,7 +14044,9 @@ public class SampleByTest extends AbstractCairoTest {
                             RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
                             VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
                             """,
-                    query
+                    query,
+                    "k1",
+                    false
             );
 
             execute("insert into x select * from (" +
@@ -14061,7 +14058,7 @@ public class SampleByTest extends AbstractCairoTest {
                     " long_sequence(5)" +
                     ") timestamp(k)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             b\tsum\tk1\tk
                             \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
@@ -14149,7 +14146,9 @@ public class SampleByTest extends AbstractCairoTest {
                             UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
                             VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
                             """,
-                    query
+                    query,
+                    "k1",
+                    false
             );
         });
     }
@@ -17067,9 +17066,7 @@ public class SampleByTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: x
                             """);
-            // Using assertSql instead of assertQueryNoLeakCheck because the fill cursor
-            // does not support random access, and assertQueryNoLeakCheck checks that property.
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             s\tk\tkz
                             1\t2021-10-30T23:55:00.000000Z\t2021-10-31T05:40:00.000000Z
@@ -17148,7 +17145,9 @@ public class SampleByTest extends AbstractCairoTest {
                             9999\t2021-11-01T12:25:00.000000Z\t2021-11-01T18:10:00.000000Z
                             1\t2021-11-01T12:55:00.000000Z\t2021-11-01T18:40:00.000000Z
                             """,
-                    query
+                    query,
+                    "k",
+                    false
             );
         });
     }

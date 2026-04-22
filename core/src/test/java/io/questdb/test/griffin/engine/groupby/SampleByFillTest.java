@@ -1076,7 +1076,7 @@ public class SampleByFillTest extends AbstractCairoTest {
             // Verify completion without StackOverflowError and correct row count.
             // 2024 is a leap year (366 days). From Jan 1 00:00 to Dec 31 00:00
             // = 365 days = 8760 hours + the final bucket = 8761 hourly buckets.
-            assertSql(
+            assertQueryNoLeakCheck(
                     "count\n8761\n",
                     "SELECT count() FROM (" +
                             "SELECT ts, key, avg(val) FROM sparse " +
@@ -1267,7 +1267,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "(NULL, '2024-01-01T02:00:00.000000Z')," +
                     "(ARRAY[4.0, 5.0], '2024-01-01T04:00:00.000000Z')");
             final String query = "SELECT ts, first(a) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tfirst
                             2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]
@@ -1276,7 +1276,10 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\tnull
                             2024-01-01T04:00:00.000000Z\t[4.0,5.0]
                             """,
-                    query
+                    query,
+                    "ts",
+                    false,
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -1683,7 +1686,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "(NULL, '2024-01-01T02:00:00.000000Z')," +
                     "(56.78::DECIMAL(20, 2), '2024-01-01T04:00:00.000000Z')");
             final String query = "SELECT ts, first(d) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tfirst
                             2024-01-01T00:00:00.000000Z\t12.34
@@ -1707,7 +1710,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "(NULL, '2024-01-01T02:00:00.000000Z')," +
                     "(200.50::DECIMAL(40, 2), '2024-01-01T04:00:00.000000Z')");
             final String query = "SELECT ts, first(d) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tfirst
                             2024-01-01T00:00:00.000000Z\t100.25
@@ -1933,7 +1936,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     INSERT INTO t VALUES
                         ('2020-01-01T00:00:00.000Z'::TIMESTAMP, '2020-02-01T00:00:00.000Z'::TIMESTAMP, 10.0, '2024-01-01T00:00:00.000000Z'),
                         ('2020-01-01T00:00:00.000Z'::TIMESTAMP, '2020-02-01T00:00:00.000Z'::TIMESTAMP, 30.0, '2024-01-01T03:00:00.000000Z')""");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tk\tfirst
                             2024-01-01T00:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0
@@ -1985,9 +1988,6 @@ public class SampleByFillTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // ARRAY as key column — the FILL_KEY branch of FillRecord.getArray
             // must carry the key through gap rows via keysMapRecord.getArray.
-            // Use assertSql to match the rendering precedent at
-            // testFillPrevArrayDouble1D (a mixed-column cursor surfaces
-            // factory-property noise in assertQueryNoLeakCheck).
             execute("""
                     CREATE TABLE x (
                         k DOUBLE[],
@@ -1998,7 +1998,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                         (ARRAY[1.0, 2.0], 10.0, '2024-01-01T00:00:00.000000Z'),
                         (ARRAY[1.0, 2.0], 30.0, '2024-01-01T03:00:00.000000Z')""");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tk\tfirst
                             2024-01-01T00:00:00.000000Z\t[1.0,2.0]\t10.0
@@ -2006,7 +2006,11 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\t[1.0,2.0]\t10.0
                             2024-01-01T03:00:00.000000Z\t[1.0,2.0]\t30.0
                             """,
-                    "SELECT ts, k, first(v) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
+                    "SELECT ts, k, first(v) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
         });
     }
 
@@ -2132,7 +2136,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
                     "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
                     "('London', 12.0, '2024-01-01T02:00:00.000000Z')");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tcity\ta
                             2024-01-01T00:00:00.000000Z\tLondon\t10.0
@@ -2256,7 +2260,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('0x10', '2024-01-01T00:00:00.000000Z')," +
                     "('0xabcdef', '2024-01-01T04:00:00.000000Z')");
             final String query = "SELECT ts, sum(h) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tsum
                             2024-01-01T00:00:00.000000Z\t0x10
@@ -2735,7 +2739,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('K2', 'beta', '2024-01-01T00:00:00.000000Z')," +
                     "('K1', 'gamma', '2024-01-01T02:00:00.000000Z')");
             final String query = "SELECT ts, key, first(s) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tkey\tfirst
                             2024-01-01T00:00:00.000000Z\tK1\talpha
@@ -2761,7 +2765,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('', '2024-01-01T04:00:00.000000Z')," +
                     "('longer string that requires reallocation', '2024-01-01T06:00:00.000000Z')");
             final String query = "SELECT ts, first(s) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tfirst
                             2024-01-01T00:00:00.000000Z\talpha
@@ -2787,7 +2791,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('K2', 'B', '2024-01-01T00:00:00.000000Z')," +
                     "('K1', 'C', '2024-01-01T02:00:00.000000Z')");
             final String query = "SELECT ts, key, first(sym) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tkey\tfirst
                             2024-01-01T00:00:00.000000Z\tK1\tA
@@ -2812,7 +2816,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('B', '2024-01-01T02:00:00.000000Z')," +
                     "('C', '2024-01-01T06:00:00.000000Z')");
             final String query = "SELECT ts, first(sym) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tfirst
                             2024-01-01T00:00:00.000000Z\tA
@@ -2840,7 +2844,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('A', '2024-01-01T02:00:00.000000Z')," +
                     "(NULL, '2024-01-01T04:00:00.000000Z')");
             final String query = "SELECT ts, first(sym) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tfirst
                             2024-01-01T00:00:00.000000Z\t
@@ -2887,7 +2891,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('K2', '22222222-2222-2222-2222-222222222222', '2024-01-01T00:00:00.000000Z')," +
                     "('K1', '33333333-3333-3333-3333-333333333333', '2024-01-01T02:00:00.000000Z')");
             final String query = "SELECT ts, key, first(u) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tkey\tfirst
                             2024-01-01T00:00:00.000000Z\tK1\t11111111-1111-1111-1111-111111111111
@@ -2912,7 +2916,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "(NULL, '2024-01-01T02:00:00.000000Z')," +
                     "('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '2024-01-01T04:00:00.000000Z')");
             final String query = "SELECT ts, first(u) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tfirst
                             2024-01-01T00:00:00.000000Z\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
@@ -2936,7 +2940,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('K2', 'beta', '2024-01-01T00:00:00.000000Z')," +
                     "('K1', 'gamma', '2024-01-01T02:00:00.000000Z')");
             final String query = "SELECT ts, key, first(v) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tkey\tfirst
                             2024-01-01T00:00:00.000000Z\tK1\talpha
@@ -2961,7 +2965,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "(NULL, '2024-01-01T02:00:00.000000Z')," +
                     "('unicode: \u20ac \u00f1', '2024-01-01T06:00:00.000000Z')");
             final String query = "SELECT ts, first(v) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             ts\tfirst
                             2024-01-01T00:00:00.000000Z\tascii-only
@@ -3289,7 +3293,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                 // path whose codegen constructs SortedRecordCursorFactory. The
                 // sqlSortKeyMaxPages = -1 override causes RecordTreeChain to
                 // throw during SortedRecordCursorFactory construction.
-                assertSql("", "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
+                assertQueryNoLeakCheck("", "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
                 fail("expected LimitOverflowException from pathological sqlSortKeyMaxPages");
             } catch (CairoException ex) {
                 // D-30 finding 4.7: catch the LimitOverflowException superclass
