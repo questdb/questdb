@@ -522,6 +522,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.symbol.cache.flag\tQDB_CAIRO_DEFAULT_SYMBOL_CACHE_FLAG\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.symbol.capacity\tQDB_CAIRO_DEFAULT_SYMBOL_CAPACITY\t256\tdefault\tfalse\tfalse\n" +
+                                    "cairo.default.symbol.index.type\tQDB_CAIRO_DEFAULT_SYMBOL_INDEX_TYPE\tBITMAP\tdefault\tfalse\tfalse\n" +
                                     "cairo.detached.mkdir.mode\tQDB_CAIRO_DETACHED_MKDIR_MODE\t509\tdefault\tfalse\tfalse\n" +
                                     "dev.mode.enabled\tQDB_DEV_MODE_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.expression.pool.capacity\tQDB_CAIRO_EXPRESSION_POOL_CAPACITY\t8192\tdefault\tfalse\tfalse\n" +

@@ -322,6 +322,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public byte getDefaultSymbolIndexType() {
+        return getDelegate().getDefaultSymbolIndexType();
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return getDelegate().getDetachedMkDirMode();
     }
@@ -1554,6 +1559,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isPartitionO3OverwriteControlEnabled() {
         return getDelegate().isPartitionO3OverwriteControlEnabled();
+    }
+
+    @Override
+    public boolean isPostingIndexAutoIncludeTimestamp() {
+        return getDelegate().isPostingIndexAutoIncludeTimestamp();
     }
 
     @Override

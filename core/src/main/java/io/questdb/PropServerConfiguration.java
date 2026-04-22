@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
@@ -398,10 +399,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
     private final int poolSegmentSize;
-    private final boolean postingIndexAutoIncludeTimestamp;
-    private final byte postingIndexRowIdEncoding;
     private final String posthogApiKey;
     private final boolean posthogEnabled;
+    private final boolean postingIndexAutoIncludeTimestamp;
+    private final byte postingIndexRowIdEncoding;
     private final int preferencesStringPoolCapacity;
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
@@ -619,6 +620,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected long walSegmentRolloverSize;
     private int cairoSqlColumnAliasGeneratedMaxSize;
     private long cairoSqlCopyMaxIndexChunkSize;
+    private byte defaultSymbolIndexType;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int httpMinBindIPv4Address;
@@ -1486,6 +1488,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
+            String defaultSymbolIndexTypeName = getString(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, "BITMAP");
+            this.defaultSymbolIndexType = IndexType.valueOf(defaultSymbolIndexTypeName);
+            if (defaultSymbolIndexType == IndexType.NONE) {
+                log.info().$("invalid ").$(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE.getPropertyPath())
+                        .$(" value '").$safe(defaultSymbolIndexTypeName).$("', will use BITMAP").$();
+                this.defaultSymbolIndexType = IndexType.BITMAP;
+            }
             this.fileOperationRetryCount = getInt(properties, env, PropertyKey.CAIRO_FILE_OPERATION_RETRY_COUNT, 30);
             this.idleCheckInterval = getMillis(properties, env, PropertyKey.CAIRO_IDLE_CHECK_INTERVAL, 5 * 60 * 1000L);
             this.idGenerateBatchStep = getInt(properties, env, PropertyKey.CAIRO_ID_GENERATE_STEP, 512);
@@ -3616,6 +3625,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public byte getDefaultSymbolIndexType() {
+            return defaultSymbolIndexType;
+        }
+
+        @Override
         public int getDetachedMkDirMode() {
             return detachedMkdirMode;
         }
@@ -4078,6 +4092,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPoolSegmentSize() {
             return poolSegmentSize;
+        }
+
+        @Override
+        public byte getPostingIndexRowIdEncoding() {
+            return postingIndexRowIdEncoding;
         }
 
         @Override
@@ -4848,11 +4867,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPostingIndexAutoIncludeTimestamp() {
             return postingIndexAutoIncludeTimestamp;
-        }
-
-        @Override
-        public byte getPostingIndexRowIdEncoding() {
-            return postingIndexRowIdEncoding;
         }
 
         @Override

@@ -29,8 +29,8 @@ import io.questdb.std.str.CharSink;
 
 /**
  * Defines the types of column indexes supported by QuestDB.
- * The index type is stored as a 2-bit value in bits 0-1 of the column
- * metadata flags (values 0-3).
+ * The index type is stored as a 3-bit value in the column metadata flags
+ * (values 0-7).
  */
 public final class IndexType {
     /**
@@ -51,6 +51,11 @@ public final class IndexType {
      * Created via {@code INDEX TYPE POSTING DELTA}.
      */
     public static final byte POSTING_DELTA = 3;
+    /**
+     * Posting index with Elias-Fano row ID encoding only (no delta-FoR).
+     * Created via {@code INDEX TYPE POSTING EF}.
+     */
+    public static final byte POSTING_EF = 4;
 
     private IndexType() {
         // Utility class, no instances
@@ -67,7 +72,7 @@ public final class IndexType {
     }
 
     public static boolean isPosting(byte indexType) {
-        return indexType == POSTING || indexType == POSTING_DELTA;
+        return indexType == POSTING || indexType == POSTING_DELTA || indexType == POSTING_EF;
     }
 
     /**
@@ -85,6 +90,7 @@ public final class IndexType {
             case BITMAP -> "BITMAP";
             case POSTING -> "POSTING";
             case POSTING_DELTA -> "POSTING DELTA";
+            case POSTING_EF -> "POSTING EF";
             default -> "UNKNOWN";
         };
     }
@@ -95,6 +101,7 @@ public final class IndexType {
             case BITMAP -> sink.putAscii("BITMAP");
             case POSTING -> sink.putAscii("POSTING");
             case POSTING_DELTA -> sink.putAscii("POSTING DELTA");
+            case POSTING_EF -> sink.putAscii("POSTING EF");
             default -> sink.putAscii("UNKNOWN(").put(indexType).putAscii(')');
         }
     }
@@ -117,6 +124,9 @@ public final class IndexType {
         }
         if (Chars.equalsIgnoreCase(name, "POSTING DELTA") || Chars.equalsIgnoreCase(name, "POSTING_DELTA")) {
             return POSTING_DELTA;
+        }
+        if (Chars.equalsIgnoreCase(name, "POSTING EF") || Chars.equalsIgnoreCase(name, "POSTING_EF")) {
+            return POSTING_EF;
         }
         return NONE;
     }

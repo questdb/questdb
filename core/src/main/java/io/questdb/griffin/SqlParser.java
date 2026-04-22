@@ -2020,10 +2020,12 @@ public class SqlParser {
         }
 
         // Parse optional index type and/or capacity: INDEX(col TYPE POSTING) or INDEX(col CAPACITY n)
-        byte indexType = IndexType.BITMAP;
+        byte indexType = configuration.getDefaultSymbolIndexType();
+        boolean typeExplicit = false;
         int indexValueBlockSize = configuration.getIndexValueBlockSize();
         CharSequence tok = tok(lexer, "'type', 'capacity' or ')'");
         if (isTypeKeyword(tok)) {
+            typeExplicit = true;
             tok = tok(lexer, "index type name");
             int typePosition = lexer.lastTokenPosition();
             indexType = IndexType.valueOf(tok);
@@ -2031,19 +2033,21 @@ public class SqlParser {
                 throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
             }
             if (indexType == IndexType.POSTING) {
-                tok = tok(lexer, "'capacity' or ')'");
+                tok = tok(lexer, "'delta', 'ef' or ')'");
                 if (SqlKeywords.isDeltaKeyword(tok)) {
                     indexType = IndexType.POSTING_DELTA;
                 } else if (SqlKeywords.isEfKeyword(tok)) {
-                    // explicit EF — keep POSTING
+                    indexType = IndexType.POSTING_EF;
                 } else {
                     lexer.unparseLast();
                 }
             }
-            tok = tok(lexer, "'capacity' or ')'");
+            tok = tok(lexer, IndexType.isPosting(indexType) ? "')'" : "'capacity' or ')'");
         }
         if (isCapacityKeyword(tok)) {
-            if (indexType != IndexType.BITMAP) {
+            if (!typeExplicit) {
+                indexType = IndexType.BITMAP;
+            } else if (indexType != IndexType.BITMAP) {
                 throw SqlException.position(lexer.lastTokenPosition())
                         .put("CAPACITY is only supported for BITMAP index type");
             }
@@ -2070,13 +2074,15 @@ public class SqlParser {
         int indexColumnPosition = lexer.lastTokenPosition();
 
         if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
-            model.setIndexType(IndexType.BITMAP, indexColumnPosition, configuration.getIndexValueBlockSize());
+            model.setIndexType(configuration.getDefaultSymbolIndexType(), indexColumnPosition, configuration.getIndexValueBlockSize());
             return tok;
         }
 
         // Parse optional index type: INDEX TYPE POSTING
-        byte indexType = IndexType.BITMAP;
+        byte indexType = configuration.getDefaultSymbolIndexType();
+        boolean typeExplicit = false;
         if (isTypeKeyword(tok)) {
+            typeExplicit = true;
             tok = tok(lexer, "index type name");
             int typePosition = lexer.lastTokenPosition();
             indexType = IndexType.valueOf(tok);
@@ -2088,44 +2094,45 @@ public class SqlParser {
                 if (SqlKeywords.isDeltaKeyword(tok)) {
                     indexType = IndexType.POSTING_DELTA;
                 } else if (SqlKeywords.isEfKeyword(tok)) {
-                    // explicit EF — keep POSTING
+                    indexType = IndexType.POSTING_EF;
                 } else {
                     lexer.unparseLast();
                 }
             }
-
             tok = tok(lexer, ") | , expected");
             if (isFieldTerm(tok) || isParquetKeyword(tok)) {
                 model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
                 return tok;
             }
+        }
 
-            if (SqlKeywords.isIncludeKeyword(tok)) {
-                if (!IndexType.isPosting(indexType)) {
-                    throw SqlException.position(lexer.lastTokenPosition())
-                            .put("INCLUDE is only supported for POSTING index type");
-                }
-                expectTok(lexer, '(');
-                do {
-                    tok = tok(lexer, "column name");
-                    model.addCoveringColumnName(Chars.toString(tok));
-                    tok = tok(lexer, "',' or ')'");
-                } while (Chars.equals(tok, ','));
-                if (!Chars.equals(tok, ')')) {
-                    throw errUnexpected(lexer, tok);
-                }
-                model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
-                tok = optTok(lexer);
-                if (tok == null || isFieldTerm(tok) || isParquetKeyword(tok)) {
-                    return tok;
-                }
+        if (SqlKeywords.isIncludeKeyword(tok)) {
+            if (!typeExplicit) {
+                indexType = IndexType.POSTING;
+            } else if (!IndexType.isPosting(indexType)) {
+                throw SqlException.position(lexer.lastTokenPosition())
+                        .put("INCLUDE is only supported for POSTING index type");
+            }
+            expectTok(lexer, '(');
+            do {
+                tok = tok(lexer, "column name");
+                model.addCoveringColumnName(Chars.toString(tok));
+                tok = tok(lexer, "',' or ')'");
+            } while (Chars.equals(tok, ','));
+            if (!Chars.equals(tok, ')')) {
+                throw errUnexpected(lexer, tok);
+            }
+            model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
+            tok = optTok(lexer);
+            if (tok == null || isFieldTerm(tok) || isParquetKeyword(tok)) {
+                return tok;
             }
         }
 
         expectTok(lexer, tok, "capacity");
-
-        // CAPACITY only makes sense for BITMAP index type
-        if (indexType != IndexType.BITMAP) {
+        if (!typeExplicit) {
+            indexType = IndexType.BITMAP;
+        } else if (indexType != IndexType.BITMAP) {
             throw SqlException.position(lexer.lastTokenPosition())
                     .put("CAPACITY is only supported for BITMAP index type");
         }
@@ -3492,7 +3499,7 @@ public class SqlParser {
                             throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
                         case 1:
                             expr = expressionTreeBuilder.poll();
-
+                            assert expr != null;
                             if (expr.type == ExpressionNode.LITERAL) {
                                 do {
                                     joinModel.addJoinColumn(expr);

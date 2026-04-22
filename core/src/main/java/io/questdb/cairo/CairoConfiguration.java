@@ -257,6 +257,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    byte getDefaultSymbolIndexType();
+
     int getDetachedMkDirMode();
 
     default Map<String, String> getEnv() {
@@ -493,10 +495,6 @@ public interface CairoConfiguration {
 
     default double getPostingIndexAlignedBitWidthThreshold() {
         return 0.0;
-    }
-
-    default boolean isPostingIndexAutoIncludeTimestamp() {
-        return true;
     }
 
     default byte getPostingIndexRowIdEncoding() {
@@ -878,6 +876,8 @@ public interface CairoConfiguration {
     boolean isPartitionEncoderParquetStatisticsEnabled();
 
     boolean isPartitionO3OverwriteControlEnabled();
+
+    boolean isPostingIndexAutoIncludeTimestamp();
 
     boolean isQueryTracingEnabled();
 
