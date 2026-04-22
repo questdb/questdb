@@ -132,7 +132,7 @@ public final class ParquetRowGroupFilter {
                 // Skip pushdown for type-converted columns — parquet metadata
                 // (bloom filters, min/max stats, null counts) reflects the old column type.
                 int parquetColumnType = metadata.getColumnType(columnIndex);
-                if (ColumnType.tagOf(parquetColumnType) != ColumnType.tagOf(condition.getColumnType())) {
+                if (parquetColumnType != condition.getColumnType()) {
                     continue;
                 }
 
