@@ -1794,12 +1794,12 @@ public class CairoEngine implements Closeable, WriterSource {
     public void setUp() {
     }
 
-    public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {
-        this.walDirectoryPolicy = walDirectoryPolicy;
-    }
-
     public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
         this.durableAckRegistry = durableAckRegistry;
+    }
+
+    public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {
+        this.walDirectoryPolicy = walDirectoryPolicy;
     }
 
     public void setWalListener(@NotNull WalListener walListener) {

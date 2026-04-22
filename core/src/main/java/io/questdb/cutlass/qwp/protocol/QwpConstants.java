@@ -37,6 +37,7 @@ public final class QwpConstants {
      * Default maximum batch size in bytes (16 MB).
      */
     public static final int DEFAULT_MAX_BATCH_SIZE = 16 * 1024 * 1024;
+
     /**
      * Default maximum rows per table in a batch.
      */
