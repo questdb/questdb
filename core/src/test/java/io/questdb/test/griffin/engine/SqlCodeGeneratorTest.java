@@ -804,7 +804,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             ts\tsum
                             2024-03-07T05:00:00.000000Z\t1.0
                             2024-03-08T05:00:00.000000Z\t6.0
-                            2024-03-10T00:00:00.000000Z\t8.0
+                            2024-03-10T05:00:00.000000Z\t8.0
                             2024-03-11T04:00:00.000000Z\t48.0
                             """,
                     """

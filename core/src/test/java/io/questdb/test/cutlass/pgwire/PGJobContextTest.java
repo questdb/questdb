@@ -1603,6 +1603,32 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBadInitMessageLengthNegative() throws Exception {
+        // first message msgLen is 0xFFFFFFFF (-1); server must reject before any pointer arithmetic
+        // and close the connection.
+        assertHexScript("""
+                >ffffffff00030000
+                <!!""");
+    }
+
+    @Test
+    public void testBadInitMessageLengthTooLarge() throws Exception {
+        // msgLen=0x00200000 (2 MB) exceeds the 1 MB default receive buffer. The server
+        // must reject before pointer arithmetic can walk outside the buffer.
+        assertHexScript("""
+                >0020000000030000
+                <!!""");
+    }
+
+    @Test
+    public void testBadInitMessageLengthTooSmall() throws Exception {
+        // msgLen=4 is below the 8-byte protocol minimum (size + protocol fields).
+        assertHexScript("""
+                >0000000400030000
+                <!!""");
+    }
+
+    @Test
     public void testBadMessageLength() throws Exception {
         final String script =
                 """
@@ -1626,6 +1652,36 @@ if __name__ == "__main__":
                         >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                         <520000000800000003
                         >700000000464756e6e6f00
+                        <!!"""
+        );
+    }
+
+    @Test
+    public void testBadPasswordLengthNegative() throws Exception {
+        // PasswordMessage with msgLen 0xFFFFFFFF (-1); server must reject before
+        // computing msgLimit = recvBufReadPos + msgLen + 1.
+        assertHexScript(
+                """
+                        >0000000804d2162f
+                        <4e
+                        >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >70ffffffff
+                        <!!"""
+        );
+    }
+
+    @Test
+    public void testBadPasswordLengthTooLarge() throws Exception {
+        // PasswordMessage with msgLen 0x00200000 (2 MB) exceeds the 1 MB default receive buffer.
+        // Server must reject before computing msgLimit = recvBufReadPos + msgLen + 1.
+        assertHexScript(
+                """
+                        >0000000804d2162f
+                        <4e
+                        >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >7000200000
                         <!!"""
         );
     }
@@ -2203,6 +2259,172 @@ if __name__ == "__main__":
             ResultSet rs4 = statement4.executeQuery("select * from anothertab");
             assertResultSet(expected, sink, rs4);
         });
+    }
+
+    @Test
+    public void testBindBinaryArrayDimensionHeaderTruncated() throws Exception {
+        // Pins the up-front `valueSize < dimensions * 2 * Integer.BYTES` guard in
+        // setBindVariableAsArray: the Bind declares dims=2 but the value only carries
+        // enough bytes for dim[0]'s 8-byte header. After reading dims/hasNull/
+        // componentOid the parser has decremented valueSize to 8, below the 16 bytes
+        // required for two dimension headers, so the guard fires before any per-dim
+        // read runs. Without the guard, the per-dim reads would consume bytes from
+        // the following Execute message.
+        //
+        // Hex script = same handshake as testBindBinaryArrayFlatLengthOverflow
+        // (startup user=admin db=nabu_app -> AuthRequest(cleartext) -> PasswordMessage
+        // "quest" -> AuthOK + parameter messages + BackendKeyData + RFQ('I')),
+        // followed by:
+        //
+        //   Parse "P" len=0x2b=43: stmt="", SQL="select $1 from long_sequence(1)\0",
+        //                          1 param type, OID=0x000003fe (1022, _float8)
+        //   Bind  "B" len=0x26=38: portal="", stmt="", 1 format=binary(0x0001),
+        //                          1 value, valueSize=0x14 (20 bytes):
+        //                             00000002  dims         = 2  (declared)
+        //                             00000000  hasNull      = 0
+        //                             000002bd  componentOid = 701 (PG_FLOAT8)
+        //                             00000001  dim[0].size  = 1
+        //                             00000001  dim[0].lower = 1
+        //                             -- dim[1] header absent; valueSize = 8 when the
+        //                                up-front guard runs, short of 2*2*4 = 16 --
+        //                          0 result format codes
+        //   Execute "E" len=9 (portal="", maxRows=0) + Sync "S" len=4:
+        //                          450000000900000000005300000004
+        //
+        // Expected reply: ErrorResponse "E" len=0x55=85 with fields
+        //   C="00000",
+        //   M="malformed array dimension headers [dimensions=2, valueSize=8]",
+        //   S="ERROR", P="1", then ReadyForQuery "Z" len=5 state='I'.
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe42000000260000000100010001000000140000000200000000000002bd00000001000000010000450000000900000000005300000004
+                        <4500000055433030303030004d6d616c666f726d65642061727261792064696d656e73696f6e2068656164657273205b64696d656e73696f6e733d322c2076616c756553697a653d385d00534552524f5200503100005a0000000549"""
+        );
+    }
+
+    @Test
+    public void testBindBinaryArrayDimensionSizeNegative() throws Exception {
+        // Regression for a negative dimension size (0xFFFFFFFF) in a binary array BIND value.
+        // Without the dimensionSize < 0 guard, a negative size would feed into flat-length
+        // multiplication and pointer arithmetic in setPtrAndCalculateStrides. The server must
+        // reject cleanly and remain usable.
+        //
+        // Wire sequence mirrors testBindBinaryArrayFlatLengthOverflow, except the Bind value
+        // carries dims=1 with dim[0]=-1.
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe42000000260000000100010001000000140000000100000000000002bdffffffff000000010000450000000900000000005300000004
+                        <450000005b433030303030004d61727261792064696d656e73696f6e2073697a652063616e6e6f74206265206e65676174697665205b64696d656e73696f6e496e6465783d302c2073697a653d2d315d00534552524f5200503100005a0000000549"""
+        );
+    }
+
+    @Test
+    public void testBindBinaryArrayFlatLengthOverflow() throws Exception {
+        // Regression for the [65537, 65537] flat-length overflow: without Math.multiplyExact
+        // flatViewLength wraps to 131_073 while shape claims ~4.3B elements, which later
+        // feeds into pointer arithmetic in setPtrAndCalculateStrides. The server must reject
+        // the BIND with "array size overflow" and keep the connection usable (RFQ afterwards).
+        //
+        // Wire sequence:
+        //   startup (admin/quest) -> cleartext auth -> password "quest"
+        //   Parse  "select $1 from long_sequence(1)" with parameter OID 1022 (float8[])
+        //   Bind   1 param, binary format, dims=2 [65537, 65537], component OID 701
+        //   Execute + Sync
+        // Expected response: ErrorResponse("array size overflow") + ReadyForQuery('I')
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe420000002e00000001000100010000001c0000000200000000000002bd000100010000000100010001000000010000450000000900000000005300000004
+                        <450000002b433030303030004d61727261792073697a65206f766572666c6f7700534552524f5200503100005a0000000549"""
+        );
+    }
+
+    @Test
+    public void testBindVarcharArrayDimensionSizeNegative() throws Exception {
+        // Pins the `dimensionSize < 0` guard in setBindVariableAsVarcharArray. Bind
+        // declares a 1-D varchar array with dim[0].size = -1 (0xFFFFFFFF). Without
+        // the guard, setPtrAndBuildOffsetIndex would walk the element offset index
+        // past the value buffer.
+        //
+        // Hex script = same handshake as testBindBinaryArrayFlatLengthOverflow,
+        // followed by:
+        //
+        //   Parse "P" len=0x2b=43: stmt="", SQL="select $1 from long_sequence(1)\0",
+        //                          1 param type, OID=0x000003f7 (1015, _varchar)
+        //   Bind  "B" len=0x26=38: portal="", stmt="", 1 format=binary(0x0001),
+        //                          1 value, valueSize=0x14 (20 bytes):
+        //                             00000001  dims         = 1
+        //                             00000000  hasNull      = 0
+        //                             00000413  componentOid = 1043 (PG_VARCHAR)
+        //                             ffffffff  dim[0].size  = -1  <-- the test
+        //                             00000001  dim[0].lower = 1
+        //                          0 result format codes
+        //   Execute "E" len=9 (portal="", maxRows=0) + Sync "S" len=4:
+        //                          450000000900000000005300000004
+        //
+        // Expected reply: ErrorResponse "E" len=0x49=73 with fields
+        //   C="00000", M="array dimension size cannot be negative [size=-1]",
+        //   S="ERROR", P="1", then ReadyForQuery "Z" len=5 state='I'.
+        // Note: the varchar branch omits `dimensionIndex=` from the error text
+        // (the binary branch includes it).
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003f74200000026000000010001000100000014000000010000000000000413ffffffff000000010000450000000900000000005300000004
+                        <4500000049433030303030004d61727261792064696d656e73696f6e2073697a652063616e6e6f74206265206e65676174697665205b73697a653d2d315d00534552524f5200503100005a0000000549"""
+        );
+    }
+
+    @Test
+    public void testBindVarcharArrayHeaderTruncated() throws Exception {
+        // Pins the up-front `valueSize < 5 * Integer.BYTES` guard in
+        // setBindVariableAsVarcharArray. The Bind value is 16 bytes, one int short of
+        // the 20-byte minimum (dims + hasNull + componentOid + dim[0].size +
+        // dim[0].lower). Without the guard, the parser would synthesise dim[0] from
+        // bytes that belong to subsequent fields.
+        //
+        // Hex script = same handshake as testBindBinaryArrayFlatLengthOverflow,
+        // followed by:
+        //
+        //   Parse "P" len=0x2b=43: stmt="", SQL="select $1 from long_sequence(1)\0",
+        //                          1 param type, OID=0x000003f7 (1015, _varchar)
+        //   Bind  "B" len=0x22=34: portal="", stmt="", 1 format=binary(0x0001),
+        //                          1 value, valueSize=0x10 (16 bytes):
+        //                             00000001  dims         = 1
+        //                             00000000  hasNull      = 0
+        //                             00000413  componentOid = 1043 (PG_VARCHAR)
+        //                             00000000  padding -- the 5th int is absent;
+        //                                       the guard fires before any field is read
+        //                          0 result format codes
+        //   Execute "E" len=9 (portal="", maxRows=0) + Sync "S" len=4:
+        //                          450000000900000000005300000004
+        //
+        // Expected reply: ErrorResponse "E" len=0x45=69 with fields
+        //   C="00000", M="malformed varchar array header [valueSize=16]",
+        //   S="ERROR", P="1", then ReadyForQuery "Z" len=5 state='I'.
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003f74200000022000000010001000100000010000000010000000000000413000000000000450000000900000000005300000004
+                        <4500000045433030303030004d6d616c666f726d6564207661726368617220617272617920686561646572205b76616c756553697a653d31365d00534552524f5200503100005a0000000549"""
+        );
     }
 
     @Test

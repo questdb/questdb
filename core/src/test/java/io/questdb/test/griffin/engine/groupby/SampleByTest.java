@@ -5399,6 +5399,53 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByDayNoFromAlignToCalendarDSTNYSpringForwardGap() throws Exception {
+        // Regression for https://github.com/questdb/questdb/issues/4678
+        //
+        // America/New_York: UTC-5 (EST) -> UTC-4 (EDT)
+        // Spring forward: Mar 10, 2024 at 2:00 EST -> 3:00 EDT (= Mar 10 07:00 UTC)
+        //
+        // Day boundaries (midnight local -> UTC):
+        //   Mar  7 00:00 EST = Mar  7 05:00 UTC
+        //   Mar  8 00:00 EST = Mar  8 05:00 UTC
+        //   Mar 10 00:00 EST = Mar 10 05:00 UTC  (spring-forward day, 23h long)
+        //   Mar 11 00:00 EDT = Mar 11 04:00 UTC  (now in daylight time)
+        //
+        // The filter skips Mar 9 entirely and resumes after DST on Mar 10. Before the fix, the
+        // Mar 10 bucket was emitted as Mar 10 00:00 UTC because the cursor back-converted the
+        // bucket's local boundary with the current (post-DST, EDT) offset instead of the offset
+        // valid at the bucket start (EST, pre-DST).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (timestamp TIMESTAMP, amount DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-03-08T00:00:00.000000Z', 1.0),
+                        ('2024-03-08T12:00:00.000000Z', 2.0),
+                        ('2024-03-10T08:00:00.000000Z', 8.0),
+                        ('2024-03-10T09:00:00.000000Z', 8.0),
+                        ('2024-03-10T10:00:00.000000Z', 8.0),
+                        ('2024-03-11T10:00:00.000000Z', 16.0)""");
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\tsum
+                            2024-03-07T05:00:00.000000Z\t1.0
+                            2024-03-08T05:00:00.000000Z\t2.0
+                            2024-03-10T05:00:00.000000Z\t24.0
+                            2024-03-11T04:00:00.000000Z\t16.0
+                            """,
+                    "SELECT timestamp, sum(amount) FROM (" +
+                            " SELECT timestamp, amount FROM trades" +
+                            " WHERE timestamp IN '2024-03-08'" +
+                            " OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')" +
+                            ") SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "timestamp",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testSampleByDayFromAlignToCalendarDSTChathamFallBack() throws Exception {
         // Pacific/Chatham: UTC+12:45 (CHAST) / UTC+13:45 (CHADT)
         // Fall back: Apr 4, 2021 at 3:45am CHADT -> 2:45am CHAST (= Apr 3 14:00 UTC)
