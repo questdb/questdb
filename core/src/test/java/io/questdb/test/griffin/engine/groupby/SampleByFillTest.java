@@ -1410,6 +1410,37 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevCrossColumnTimestampUnitMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        a TIMESTAMP,
+                        b TIMESTAMP_NS
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000000Z'::TIMESTAMP_NS)""");
+            // Column layout: ts(0), a(1 TIMESTAMP_MICRO), b(2 TIMESTAMP_NANO).
+            // FILL(PREV, PREV(a)): col=2 (b) fills from source=a. Both columns
+            // share the TIMESTAMP tag (ColumnType.tagOf = type & 0xFF collapses
+            // MICRO/NANO to the same tag), so the old tag-equality compatibility
+            // path accepted the mix silently and silently fed MICRO longs into
+            // a NANO target. The widened needsExactTypeMatch predicate lifts
+            // TIMESTAMP into the exact-match set and rejects the cross-unit
+            // assignment. 9df205bac5 landed the sibling fix on the
+            // FILL_CONSTANT path for the same unit-drift class.
+            String sql = "SELECT ts, first(a) a, first(b) b FROM t SAMPLE BY 1h FILL(PREV, PREV(a)) ALIGN TO CALENDAR";
+            int prevArgPos = sql.indexOf("a", sql.indexOf("PREV(a)") + 5);
+            assertExceptionNoLeakCheck(
+                    sql,
+                    prevArgPos,
+                    "source type TIMESTAMP cannot fill target column of type TIMESTAMP_NS"
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevCrossColumnKeyed() throws Exception {
         assertMemoryLeak(() -> {
             // Two keys (A, B) with gaps at different times.

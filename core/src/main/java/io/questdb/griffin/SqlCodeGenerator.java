@@ -3605,7 +3605,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final boolean needsExactTypeMatch =
                                     ColumnType.isDecimal(targetType)
                                             || ColumnType.isGeoHash(targetType)
-                                            || targetTag == ColumnType.ARRAY;
+                                            || targetTag == ColumnType.ARRAY
+                                            || targetTag == ColumnType.TIMESTAMP
+                                            || targetTag == ColumnType.INTERVAL;
                             final boolean isTypeCompatible = needsExactTypeMatch
                                     ? targetType == sourceType
                                     : targetTag == sourceTag;
