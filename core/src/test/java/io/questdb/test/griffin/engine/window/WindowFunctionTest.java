@@ -68,7 +68,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -13207,10 +13206,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore("GROUP BY on a non-aggregate expression combined with a nested window in an aggregate; the non-aggregate branch in SqlOptimiser propagates only the group-by alias, not the underlying literal. See PR #6955 scope notes.")
     public void testWindowFunctionAsArgumentToAggregateWithGroupByExpression() throws Exception {
-        // Desired behavior: upper(cat) as GROUP BY key resolves through the inner window model.
-        // Currently fails with "Invalid column: cat".
+        // GROUP BY on a non-aggregate expression (upper(cat)) combined with a nested
+        // window inside an aggregate. The inner window model must expose the underlying
+        // literal (cat), not the GROUP BY alias (upper_cat).
         assertQuery(
                 """
                         upper_cat\tresult

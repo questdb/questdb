@@ -9759,7 +9759,7 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = groupByCols.size(); i < n; i++) {
                 QueryColumn col = groupByCols.getQuick(i);
                 ExpressionNode ast = col.getAst();
-                if (ast.type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
+                if (ast.type == LITERAL) {
                     for (int j = 0; j < nInner; j++) {
                         IQueryModel innerWm = innerWindowModels.getQuick(j);
                         if (innerWm.getAliasToColumnMap().excludes(col.getAlias())) {
@@ -9767,6 +9767,10 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
                 } else {
+                    // Covers both aggregates wrapping nested windows (sum(avg(x) OVER ...))
+                    // and non-aggregate GROUP BY expressions (GROUP BY upper(cat)). In both
+                    // cases the inner window model needs the underlying literal references,
+                    // not the outer column's alias, so walk the AST.
                     addLiteralPassThroughToInnerWindowModels(ast, innerWindowModels, nInner);
                 }
             }
