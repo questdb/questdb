@@ -73,6 +73,7 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
  */
 public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private static final long DEFAULT_PAGE_SIZE = 1024 * 1024L;
+    private final GenericRecordMetadata adjustedMetadata = new GenericRecordMetadata();
     // Per computed col: aux memory (for var-size) or null (for fixed-size)
     private final ObjList<MemoryCARWImpl> auxBuffers = new ObjList<>();
     // Per output col: base col index, or -1 if computed
@@ -95,13 +96,12 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final ObjList<MemoryCARWImpl> dataBuffers = new ObjList<>();
     private final Decimal128 decimal128A = new Decimal128();
     private final Decimal256 decimal256A = new Decimal256();
+    private final HybridSymbolTableSource hybridSymbolTableSource = new HybridSymbolTableSource();
+    private final ReusablePageFrameMemory pageFrameMemory = new ReusablePageFrameMemory();
     private final PageFrameMemoryRecord pageFrameRecord = new PageFrameMemoryRecord();
-    private final ReusablePageFrameMemory pfMemory = new ReusablePageFrameMemory();
     // Buffers that Rust still references (pending_partitions). Freed after row group flush.
     private final ObjList<MemoryCARWImpl> pinnedAuxBuffers = new ObjList<>();
     private final ObjList<MemoryCARWImpl> pinnedDataBuffers = new ObjList<>();
-    private final GenericRecordMetadata adjustedMetadata = new GenericRecordMetadata();
-    private final HybridSymbolTableSource hybridSymbolTableSource = new HybridSymbolTableSource();
     private int computedCount;
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
@@ -226,7 +226,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             Misc.free(auxBuffers.getQuick(i));
         }
         auxBuffers.clear();
-        pfMemory.clear();
+        pageFrameMemory.clear();
         baseColumnMap.clear();
         computedBufferIdx.clear();
         computedColumnIndices.clear();
@@ -244,7 +244,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     @Override
     public void close() {
         clear();
-        Misc.free(pfMemory);
+        Misc.free(pageFrameMemory);
         pageFrameRecord.close();
     }
 
@@ -478,8 +478,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     }
 
     private void populatePageFrameRecord(PageFrame frame) {
-        pfMemory.of(frame);
-        pageFrameRecord.init(pfMemory);
+        pageFrameMemory.of(frame);
+        pageFrameRecord.init(pageFrameMemory);
         pageFrameRecord.setRowIndex(0);
     }
 

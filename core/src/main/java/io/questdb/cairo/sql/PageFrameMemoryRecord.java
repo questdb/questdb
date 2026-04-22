@@ -559,17 +559,21 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.symbolTableSource = symbolTableSource;
     }
 
-    public void setRowIndex(long rowIndex) {
+    /**
+     * Positions the record at a row selected by a filter pass. The base class only needs the
+     * absolute row index; the compacted index is ignored. {@link PageFrameFilteredMemoryRecord}
+     * overrides this to keep the compacted index in sync so non-filter columns read from the
+     * compacted buffer.
+     * <p>
+     * Prefer this method over {@link #setRowIndex(long)} on any hot path that may run against a
+     * filtered record via polymorphic dispatch.
+     */
+    public void setFilteredRowIndex(long rowIndex, long compactedRowIndex) {
         this.rowIndex = rowIndex;
     }
 
-    /**
-     * Sets both the absolute row index and the compact row index for late-materialized
-     * non-filter columns. In the base class, the compact index is ignored. Overridden
-     * by {@link PageFrameFilteredMemoryRecord} to use the compact index for non-filter columns.
-     */
-    public void setRowIndex(long rowIndex, long compactRowIndex) {
-        setRowIndex(rowIndex);
+    public void setRowIndex(long rowIndex) {
+        this.rowIndex = rowIndex;
     }
 
     private @NotNull DirectString csViewA(int columnIndex) {

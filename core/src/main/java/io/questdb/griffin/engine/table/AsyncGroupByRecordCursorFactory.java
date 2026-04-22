@@ -61,6 +61,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -276,7 +277,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final Map map = fragment.reopenMap();
         for (long p = 0, n = rows.size(); p < n; p++) {
             long r = rows.get(p);
-            record.setRowIndex(r);
+            record.setFilteredRowIndex(r, p);
 
             final MapKey key = map.withKey();
             mapSink.copy(record, key);
@@ -301,7 +302,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final Map lookupShard = fragment.getShards().getQuick(0);
         for (long p = 0, n = rows.size(); p < n; p++) {
             long r = rows.get(p);
-            record.setRowIndex(r);
+            record.setFilteredRowIndex(r, p);
 
             final MapKey lookupKey = lookupShard.withKey();
             mapSink.copy(record, lookupKey);
@@ -453,8 +454,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 fragment.shard();
             }
 
-            record.setRowIndex(0);
-            long baseRowId = record.getRowId();
+            long baseRowId = Rows.toRowID(frameIndex, 0);
 
             if (fragment.isNotSharded()) {
                 aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
