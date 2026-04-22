@@ -435,6 +435,41 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillKeyedSingleRowFromTo() throws Exception {
+        assertMemoryLeak(() -> {
+            // m8b single-row keyed + FROM/TO: one data row for one key, with FROM
+            // strictly before and TO strictly after the row's bucket. The fill
+            // cursor emits leading NULL fill rows (hasKeyPrev()==false for every
+            // bucket before the data row), then the real row, then trailing
+            // forward-fill rows (hasKeyPrev()==true after the data row lands).
+            // This exercises the hasKeyPrev() false->true transition exactly
+            // once per key: it flips from false to true at the bucket holding
+            // the real data and stays true for the rest of the emission.
+            execute("CREATE TABLE t (key VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('A', 42.0, '2024-01-01T03:00:00.000000Z')");
+            final String sql = "SELECT ts, key, first(val) val FROM t " +
+                    "SAMPLE BY 1h FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-01T06:00:00.000000Z' " +
+                    "FILL(PREV) ALIGN TO CALENDAR";
+            // 3 leading null rows (no PREV available yet) + the real 42.0 row at
+            // 03:00 + 2 trailing PREV rows carrying 42.0. Key column carries 'A'
+            // on every row including the leading-null rows (FILL_KEY dispatch).
+            assertQueryNoLeakCheck(
+                    "ts\tkey\tval\n" +
+                            "2024-01-01T00:00:00.000000Z\tA\tnull\n" +
+                            "2024-01-01T01:00:00.000000Z\tA\tnull\n" +
+                            "2024-01-01T02:00:00.000000Z\tA\tnull\n" +
+                            "2024-01-01T03:00:00.000000Z\tA\t42.0\n" +
+                            "2024-01-01T04:00:00.000000Z\tA\t42.0\n" +
+                            "2024-01-01T05:00:00.000000Z\tA\t42.0\n",
+                    sql,
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFillKeyedUuid() throws Exception {
         assertMemoryLeak(() -> {
             // Keyed SAMPLE BY with a UUID key column. Covers FillRecord.getLong128Hi
@@ -2556,28 +2591,28 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevRejectNoArg() throws Exception {
         assertMemoryLeak(() -> {
-            // FILL(PREV()) — zero-argument function call. Either the parser
-            // rejects it as malformed syntax, or the grammar rule fires at
-            // codegen. Both produce an error with a useful message; what
-            // matters is that PREV() does not silently pass through as if it
-            // were bare FILL(PREV).
+            // FILL(PREV()) -- zero-argument function call. The PREV grammar
+            // rule in SqlCodeGenerator.generateFill rejects this at codegen
+            // time with "PREV argument must be a single column name" thrown
+            // at the PREV token's position (43 = sql.indexOf("PREV(")). This
+            // pins both the exact wording and the token position so a future
+            // refactor of the grammar rule cannot silently loosen the
+            // rejection (e.g. let PREV() pass through as if it were bare
+            // FILL(PREV) with no argument).
+            //
+            // Note: this message is the canonical PREV-grammar rejection
+            // shared with testFillPrevRejectFuncArg, testFillPrevRejectMultiArg
+            // and testFillPrevRejectBindVar. The grammar rule fires before the
+            // parser can raise "too few arguments" because PREV is classified
+            // as a fill-spec keyword whose argument shape is validated by
+            // generateFill, not by ExpressionParser's arity check.
             execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "(3.0, '2024-01-01T02:00:00.000000Z')");
-            try {
-                assertSql("", "SELECT ts, avg(v) FROM t SAMPLE BY 1h FILL(PREV()) ALIGN TO CALENDAR");
-                fail("expected SqlException for FILL(PREV())");
-            } catch (SqlException e) {
-                // Any error surfacing from the parser or the grammar rule is
-                // acceptable; the key guarantee is that FILL(PREV()) does not
-                // silently pass through as if it were bare FILL(PREV).
-                Assert.assertTrue(
-                        "expected error message to indicate malformed PREV, got: " + e.getMessage(),
-                        e.getMessage().contains("PREV") || e.getMessage().contains("argument")
-                                || e.getMessage().contains("empty") || e.getMessage().contains("found")
-                );
-            }
+            final String sql = "SELECT ts, avg(v) FROM t SAMPLE BY 1h FILL(PREV()) ALIGN TO CALENDAR";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf("PREV("),
+                    "PREV argument must be a single column name"
+            );
         });
     }
 
@@ -3432,6 +3467,46 @@ public class SampleByFillTest extends AbstractCairoTest {
                 // 00:00Z) and one NULL fill bucket between the two data points.
                 Assert.assertTrue("expected multiple buckets, got " + rowCount, rowCount >= 2);
             }
+        });
+    }
+
+    @Test
+    public void testFillWithOffsetAndTimezoneAcrossDstSpringForward() throws Exception {
+        assertMemoryLeak(() -> {
+            // m8a spring-forward companion to testFillWithOffsetAndTimezoneAcrossDst.
+            // Europe/Riga spring-forward fires on 2021-03-28 at 03:00 local:
+            // clocks jump from 03:00 EET to 04:00 EEST, so local times 03:00..03:59
+            // do not exist on that date. The UTC grid is linear and continuous --
+            // timestamp_floor_utc emits buckets at every UTC hour boundary (plus the
+            // 30-minute offset) regardless of the wall-clock discontinuity, so the
+            // test invariant is that the bucket sequence is strictly monotonic in
+            // UTC with no duplicate or extra bucket at the transition instant. The
+            // query must terminate (no infinite loop under DST spring-forward) and
+            // fill the gap between the pre- and post-transition data rows with
+            // NULLs.
+            execute("CREATE TABLE z (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 00:00Z = 02:00 EET pre-transition; 04:00Z = 07:00 EEST post-transition.
+            execute("INSERT INTO z VALUES " +
+                    "(1.0, '2021-03-28T00:00:00.000000Z')," +
+                    "(5.0, '2021-03-28T04:00:00.000000Z')");
+            // Buckets land at UTC :30 boundaries because of the 30-minute offset.
+            // Between the pre- and post-transition data rows (UTC 23:30 and 03:30)
+            // the cursor emits three NULL fills. No bucket corresponds to 03:xx EET
+            // wall-clock time because that hour does not exist; but the UTC
+            // grid is unaffected.
+            assertQueryNoLeakCheck(
+                    "ts\tsum\n" +
+                            "2021-03-27T23:30:00.000000Z\t1.0\n" +
+                            "2021-03-28T00:30:00.000000Z\tnull\n" +
+                            "2021-03-28T01:30:00.000000Z\tnull\n" +
+                            "2021-03-28T02:30:00.000000Z\tnull\n" +
+                            "2021-03-28T03:30:00.000000Z\t5.0\n",
+                    "SELECT ts, sum(val) FROM z SAMPLE BY 1h FILL(NULL) " +
+                            "ALIGN TO CALENDAR TIME ZONE 'Europe/Riga' WITH OFFSET '00:30'",
+                    "ts",
+                    false,
+                    false
+            );
         });
     }
 
