@@ -214,7 +214,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         int size = 9 + 2;
         ObjList<CharSequence> keys = pendingAckSeqTxns.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
-            size += 1 + keys.getQuick(i).length() + 8;
+            size += 2 + keys.getQuick(i).length() + 8;
         }
         return size;
     }
@@ -223,7 +223,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         int size = 1 + 2;
         ObjList<CharSequence> keys = durableProgressSnapshot.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
-            size += 1 + keys.getQuick(i).length() + 8;
+            size += 2 + keys.getQuick(i).length() + 8;
         }
         return size;
     }
@@ -546,9 +546,16 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
                 && highestProcessedSequence - lastAckedSequence >= batchSize;
     }
 
+    private static Status cairoExceptionStatus(CairoException e) {
+        if (e.isAuthorizationError()) {
+            return Status.SECURITY_ERROR;
+        }
+        return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
+    }
+
     /**
      * Writes per-table seqTxn entries from the given map to native memory.
-     * Format: tableCount(2) + [nameLen(1) + nameUtf8(N) + seqTxn(8)] * count
+     * Format: tableCount(2) + [nameLen(2) + nameUtf8(N) + seqTxn(8)] * count
      *
      * @return number of bytes written
      */
@@ -561,8 +568,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         for (int i = 0; i < count; i++) {
             CharSequence tableName = keys.getQuick(i);
             int nameLen = tableName.length();
-            Unsafe.getUnsafe().putByte(addr + offset, (byte) nameLen);
-            offset += 1;
+            Unsafe.getUnsafe().putShort(addr + offset, (short) nameLen);
+            offset += 2;
             for (int j = 0; j < nameLen; j++) {
                 Unsafe.getUnsafe().putByte(addr + offset + j, (byte) tableName.charAt(j));
             }
@@ -571,13 +578,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             offset += 8;
         }
         return offset;
-    }
-
-    private static Status cairoExceptionStatus(CairoException e) {
-        if (e.isAuthorizationError()) {
-            return Status.SECURITY_ERROR;
-        }
-        return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
     }
 
     private void clearDeferredError() {

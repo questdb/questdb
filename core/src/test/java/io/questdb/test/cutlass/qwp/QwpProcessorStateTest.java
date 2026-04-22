@@ -47,6 +47,7 @@ import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
+import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -1430,6 +1431,280 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
 
                 // Block ACK → sendState != READY
                 state.onAckBlocked(5);
+                Assert.assertFalse(state.shouldSendAck(1));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testWriteTableSeqTxnEntriesEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
+            long ptr = Unsafe.malloc(64, MemoryTag.NATIVE_DEFAULT);
+            try {
+                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                // Empty map: just tableCount(2) = 0
+                Assert.assertEquals(2, written);
+                Assert.assertEquals(0, Unsafe.getUnsafe().getShort(ptr) & 0xFFFF);
+            } finally {
+                Unsafe.free(ptr, 64, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteTableSeqTxnEntriesSingleEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
+            entries.put("trades", 42L);
+            long ptr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
+            try {
+                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                // tableCount(2) + nameLen(2) + "trades"(6) + seqTxn(8) = 18
+                Assert.assertEquals(18, written);
+                Assert.assertEquals(1, Unsafe.getUnsafe().getShort(ptr) & 0xFFFF);
+                Assert.assertEquals(6, Unsafe.getUnsafe().getShort(ptr + 2) & 0xFFFF);
+                Assert.assertEquals((byte) 't', Unsafe.getUnsafe().getByte(ptr + 4));
+                Assert.assertEquals(42L, Unsafe.getUnsafe().getLong(ptr + 10));
+            } finally {
+                Unsafe.free(ptr, 128, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteTableSeqTxnEntriesMultipleEntries() throws Exception {
+        assertMemoryLeak(() -> {
+            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
+            entries.put("t1", 10L);
+            entries.put("t2", 20L);
+            entries.put("abc", 30L);
+            long ptr = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT);
+            try {
+                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                // tableCount(2) + 3 * (nameLen(2) + name + seqTxn(8))
+                // "t1"(2), "t2"(2), "abc"(3) -> 2 + (2+2+8) + (2+2+8) + (2+3+8) = 39
+                Assert.assertEquals(39, written);
+                int tableCount = Unsafe.getUnsafe().getShort(ptr) & 0xFFFF;
+                Assert.assertEquals(3, tableCount);
+
+                // Verify all entries are readable by walking the wire format
+                int offset = 2;
+                for (int i = 0; i < tableCount; i++) {
+                    int nameLen = Unsafe.getUnsafe().getShort(ptr + offset) & 0xFFFF;
+                    offset += 2;
+                    StringBuilder sb = new StringBuilder();
+                    for (int j = 0; j < nameLen; j++) {
+                        sb.append((char) (Unsafe.getUnsafe().getByte(ptr + offset + j) & 0xFF));
+                    }
+                    offset += nameLen;
+                    long seqTxn = Unsafe.getUnsafe().getLong(ptr + offset);
+                    offset += 8;
+                    Assert.assertEquals(entries.get(sb), seqTxn);
+                }
+                Assert.assertEquals(written, offset);
+            } finally {
+                Unsafe.free(ptr, 256, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testComputeAckPayloadSizeMatchesWrittenBytes() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                fake.queueCommit(
+                        new String[]{"orders", "trades", "events"},
+                        new String[]{"orders~1", "trades~1", "events~1"},
+                        new long[]{10L, 20L, 30L}
+                );
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                int payloadSize = state.computeAckPayloadSize();
+                // Verify by writing: status(1) + sequence(8) + writeTableSeqTxnEntries
+                long ptr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putByte(ptr, (byte) 0x00); // STATUS_OK
+                    Unsafe.getUnsafe().putLong(ptr + 1, 0L);      // sequence
+                    int tableBytes = QwpProcessorState.writeTableSeqTxnEntries(ptr + 9, state.getPendingAckSeqTxns());
+                    Assert.assertEquals(payloadSize, 9 + tableBytes);
+                } finally {
+                    Unsafe.free(ptr, payloadSize, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testComputeDurableAckPayloadSizeMatchesWrittenBytes() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                fake.queueCommit(
+                        new String[]{"alpha", "beta"},
+                        new String[]{"alpha~1", "beta~1"},
+                        new long[]{5L, 15L}
+                );
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+                registry.set("alpha~1", 5L);
+                registry.set("beta~1", 15L);
+                CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(2, progress.size());
+
+                int payloadSize = state.computeDurableAckPayloadSize();
+                // Verify by writing: status(1) + writeTableSeqTxnEntries
+                long ptr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putByte(ptr, (byte) 0x02); // STATUS_DURABLE_ACK
+                    int tableBytes = QwpProcessorState.writeTableSeqTxnEntries(ptr + 1, progress);
+                    Assert.assertEquals(payloadSize, 1 + tableBytes);
+                } finally {
+                    Unsafe.free(ptr, payloadSize, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testHasPendingAckTrueWhenSequenceAdvanced() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                Assert.assertFalse(state.hasPendingAck());
+
+                state.setHighestProcessedSequence(5);
+                // lastAckedSequence defaults to -1, gap = 6 > 0
+                Assert.assertTrue(state.hasPendingAck());
+
+                state.onAckSent(5);
+                Assert.assertFalse(state.hasPendingAck());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testOnResumeAckCompleteLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{10L});
+                state.setHighestProcessedSequence(5);
+                state.commit();
+
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+
+                // ACK blocked
+                state.onAckBlocked(5);
+                Assert.assertEquals(1, state.getSendState());
+                // pendingAckSeqTxns cleared after snapshot
+                Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
+
+                // Resume completes
+                state.onResumeAckComplete();
+                Assert.assertEquals(0, state.getSendState());
+                Assert.assertEquals(5, state.getLastAckedSequence());
+                Assert.assertFalse(state.hasPendingAck());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testOnResumeAckThenErrorCompleteLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                state.setHighestProcessedSequence(5);
+
+                // ACK blocked
+                state.onAckBlocked(5);
+                Assert.assertEquals(1, state.getSendState());
+
+                // Error blocked while ACK in flight
+                state.onErrorBlocked((byte) 6, 10, "write error");
+                Assert.assertEquals(3, state.getSendState()); // SEND_STATE_RESUME_ACK_THEN_ERROR
+
+                // Resume ACK completes
+                state.onResumeAckComplete();
+                Assert.assertEquals(0, state.getSendState());
+                Assert.assertEquals(5, state.getLastAckedSequence());
+
+                // Deferred error is still pending
+                Assert.assertEquals(10, state.getDeferredErrorSequence());
+                Assert.assertEquals(6, state.getDeferredErrorStatus());
+
+                // Error sent
+                state.onErrorSent();
+                Assert.assertEquals(0, state.getSendState());
+                Assert.assertEquals(-1, state.getDeferredErrorSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testShouldSendAckReturnsTrueWhenThresholdMet() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // lastAckedSequence defaults to -1
+                state.setHighestProcessedSequence(9);
+                // gap = 9 - (-1) = 10
+                Assert.assertTrue(state.shouldSendAck(10));
+                Assert.assertTrue(state.shouldSendAck(1));
+                Assert.assertFalse(state.shouldSendAck(11));
+
+                state.onAckSent(9);
+                // gap = 9 - 9 = 0
                 Assert.assertFalse(state.shouldSendAck(1));
             } finally {
                 state.onDisconnected();
