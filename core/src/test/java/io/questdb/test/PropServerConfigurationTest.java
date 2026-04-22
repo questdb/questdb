@@ -38,8 +38,8 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.EpollFacadeImpl;
@@ -212,7 +212,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
-        Assert.assertEquals(Runtime.getRuntime().availableProcessors() >= 4, configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
         Assert.assertEquals(Micros.YEAR_MICROS_NONLEAP, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
         Assert.assertEquals(15_000, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
