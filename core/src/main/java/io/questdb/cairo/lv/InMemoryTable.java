@@ -69,6 +69,13 @@ public class InMemoryTable implements QuietCloseable {
     private int[] columnTypes;
     private boolean[] isVarLen;
     private RecordMetadata metadata;
+    // Physical first-visible-row index. Advanced by applyRetention to "evict" rows
+    // without rewriting the column buffers (ring-buffer style). Reset to 0 by
+    // copyFrom (which performs implicit compaction) and by clearRows.
+    private long readStart;
+    // Physical row count: total rows ever appended into the column buffers, including
+    // rows below readStart that have been logically evicted but not yet compacted.
+    // Visible rows are [readStart, rowCount); their count is rowCount - readStart.
     private long rowCount;
     private ObjList<ObjList<String>> symbolTables;
     private int timestampColumnIndex = -1;
@@ -129,36 +136,79 @@ public class InMemoryTable implements QuietCloseable {
             }
         }
         rowCount = 0;
+        readStart = 0;
     }
 
     /**
-     * Replaces this table's row state with an exact byte-level copy of {@code source}.
-     * Fixed-size and variable-length column regions are memcpy'd wholesale, aux vectors
-     * are reproduced verbatim (including sentinels), and symbol dictionaries are cloned
-     * entry-for-entry so that int keys in the copied data columns still resolve. The
-     * {@link RecordMetadata} of the two tables must match — callers are responsible for
+     * Replaces this table's row state with the live region of {@code source}, performing
+     * implicit compaction in the process. Only rows in {@code [source.readStart, source.rowCount)}
+     * are copied; the destination ends up with {@code readStart = 0} and {@code rowCount =
+     * srcVisibleCount}. Variable-length data is sliced to the live range and the aux vector
+     * is rewritten with offsets adjusted by {@code -srcDataStart} via the type driver, so
+     * the destination layout matches the standard on-disk format. Symbol dictionaries are
+     * cloned entry-for-entry so that int keys in the copied data columns still resolve.
+     * The {@link RecordMetadata} of the two tables must match — callers are responsible for
      * enforcing that (both buffers in a {@code DoubleBufferedTable} are initialized from
      * the same metadata).
+     * <p>
+     * This is the periodic-compaction trigger for the ring-buffer eviction model: every
+     * incremental refresh that goes through {@code DoubleBufferedTable} executes one
+     * {@code copyFrom}, which discards the prefix that {@link #applyRetention} marked
+     * evicted and brings the destination back to a packed layout.
      */
     public void copyFrom(InMemoryTable source) {
+        long srcReadStart = source.readStart;
+        long srcVisibleCount = source.rowCount - srcReadStart;
+
         for (int i = 0; i < columnCount; i++) {
             MemoryCARW srcData = source.columns.getQuick(i);
             MemoryCARW dstData = columns.getQuick(i);
-            long dataBytes = srcData.getAppendOffset();
             dstData.jumpTo(0);
-            if (dataBytes > 0) {
-                long dstAddr = dstData.appendAddressFor(dataBytes);
-                Vect.memcpy(dstAddr, srcData.getPageAddress(0), dataBytes);
-            }
 
-            MemoryCARW srcAux = source.auxColumns.getQuick(i);
-            if (srcAux != null) {
+            if (isVarLen[i]) {
+                MemoryCARW srcAux = source.auxColumns.getQuick(i);
                 MemoryCARW dstAux = auxColumns.getQuick(i);
-                long auxBytes = srcAux.getAppendOffset();
+                ColumnTypeDriver driver = ColumnType.getDriver(columnTypes[i]);
+
                 dstAux.jumpTo(0);
-                if (auxBytes > 0) {
-                    long dstAuxAddr = dstAux.appendAddressFor(auxBytes);
-                    Vect.memcpy(dstAuxAddr, srcAux.getPageAddress(0), auxBytes);
+                if (srcVisibleCount == 0) {
+                    // Re-prime the leading aux[0] = 0 sentinel for STRING/BINARY (no-op for VARCHAR/ARRAY).
+                    driver.configureAuxMemO3RSS(dstAux);
+                    continue;
+                }
+
+                long srcAuxAddr = srcAux.getPageAddress(0);
+                long dataStart = driver.getDataVectorOffset(srcAuxAddr, srcReadStart);
+                long dataEnd = driver.getDataVectorSizeAt(srcAuxAddr, srcReadStart + srcVisibleCount - 1);
+                long dataBytes = dataEnd - dataStart;
+
+                if (dataBytes > 0) {
+                    long dstDataAddr = dstData.appendAddressFor(dataBytes);
+                    Vect.memcpy(dstDataAddr, srcData.getPageAddress(0) + dataStart, dataBytes);
+                }
+
+                long dstAuxBytes = driver.getAuxVectorSize(srcVisibleCount);
+                long dstAuxAddr = dstAux.appendAddressFor(dstAuxBytes);
+                // Rewrite aux entries [srcReadStart..srcReadStart+srcVisibleCount-1] into dst with
+                // each data offset reduced by dataStart, so the first surviving row's aux entry
+                // becomes 0 (matching the STRING/BINARY leading sentinel) and subsequent entries
+                // point at the memcpy'd data slice. Per shiftCopyAuxVector's convention,
+                // dest = src - shift, so to subtract dataStart we pass +dataStart as the shift.
+                driver.shiftCopyAuxVector(
+                        dataStart,
+                        srcAuxAddr,
+                        srcReadStart,
+                        srcReadStart + srcVisibleCount - 1,
+                        dstAuxAddr,
+                        dstAuxBytes
+                );
+            } else {
+                int size = columnSizes[i];
+                if (size > 0 && srcVisibleCount > 0) {
+                    long bytesToCopy = srcVisibleCount * size;
+                    long srcOffset = srcReadStart * size;
+                    long dstAddr = dstData.appendAddressFor(bytesToCopy);
+                    Vect.memcpy(dstAddr, srcData.getPageAddress(0) + srcOffset, bytesToCopy);
                 }
             }
         }
@@ -176,7 +226,8 @@ public class InMemoryTable implements QuietCloseable {
             }
         }
 
-        this.rowCount = source.rowCount;
+        this.readStart = 0;
+        this.rowCount = srcVisibleCount;
     }
 
     /**
@@ -214,8 +265,32 @@ public class InMemoryTable implements QuietCloseable {
         return metadata;
     }
 
-    public long getRowCount() {
+    /**
+     * Returns the absolute row count, including rows below {@link #getReadStart()} that
+     * have been logically evicted but not yet compacted. Used internally by readers that
+     * compute aux/data bounds and by {@link #applyRetention}'s binary search; external
+     * consumers want {@link #getRowCount()} (visible count) instead.
+     */
+    public long getPhysicalRowCount() {
         return rowCount;
+    }
+
+    /**
+     * Returns the physical index of the first visible row. Reads address physical row
+     * {@code virtualRow + readStart}; the bytes below {@code readStart} remain allocated
+     * but are no longer reachable through the cursor.
+     */
+    public long getReadStart() {
+        return readStart;
+    }
+
+    /**
+     * Returns the visible row count, i.e. {@code getPhysicalRowCount() - getReadStart()}.
+     * This is the count cursors iterate over and the count
+     * {@link io.questdb.griffin.engine.lv.LiveViewRecordCursor#size} reports.
+     */
+    public long getRowCount() {
+        return rowCount - readStart;
     }
 
     public ObjList<String> getSymbolTable(int columnIndex) {
@@ -226,12 +301,17 @@ public class InMemoryTable implements QuietCloseable {
         return timestampColumnIndex;
     }
 
+    /**
+     * Returns the timestamp at the given visible row index (0-based, in
+     * {@code [0, getRowCount())}). The implementation translates to physical row
+     * {@code row + readStart}.
+     */
     public long getTimestampAt(long row) {
-        if (timestampColumnIndex < 0 || row < 0 || row >= rowCount) {
+        if (timestampColumnIndex < 0 || row < 0 || row >= rowCount - readStart) {
             return Numbers.LONG_NULL;
         }
         long address = columns.getQuick(timestampColumnIndex).getPageAddress(0);
-        return Unsafe.getUnsafe().getLong(address + row * Long.BYTES);
+        return Unsafe.getUnsafe().getLong(address + (row + readStart) * Long.BYTES);
     }
 
     public void init(RecordMetadata metadata) {
@@ -453,19 +533,26 @@ public class InMemoryTable implements QuietCloseable {
     }
 
     /**
-     * Evicts rows whose timestamp falls outside the retention window.
+     * Evicts rows whose timestamp falls outside the retention window. The eviction is
+     * logical: {@link #readStart} advances to the first physical row with
+     * {@code ts > maxTs - retentionMicros}, and the bytes below it stay allocated until
+     * the next {@link #copyFrom} (which compacts them out implicitly).
+     * <p>
+     * Cost: a single binary search over the timestamp column. No memmoves, no per-column
+     * work — the eviction touches one scalar field.
      */
     public void applyRetention(long retentionMicros) {
-        if (retentionMicros <= 0 || rowCount == 0 || timestampColumnIndex < 0) {
+        if (retentionMicros <= 0 || rowCount == readStart || timestampColumnIndex < 0) {
             return;
         }
 
-        long maxTs = getTimestampAt(rowCount - 1);
+        long tsAddr = columns.getQuick(timestampColumnIndex).getPageAddress(0);
+        long maxTs = Unsafe.getUnsafe().getLong(tsAddr + (rowCount - 1) * Long.BYTES);
         long cutoff = maxTs - retentionMicros;
 
-        long lo = 0;
+        // Binary search physical rows in [readStart, rowCount) for the first ts > cutoff.
+        long lo = readStart;
         long hi = rowCount - 1;
-        long tsAddr = columns.getQuick(timestampColumnIndex).getPageAddress(0);
         while (lo <= hi) {
             long mid = (lo + hi) >>> 1;
             long ts = Unsafe.getUnsafe().getLong(tsAddr + mid * Long.BYTES);
@@ -475,86 +562,8 @@ public class InMemoryTable implements QuietCloseable {
                 hi = mid - 1;
             }
         }
-        if (lo > 0) {
-            evictRows(lo);
-        }
-    }
-
-    private void evictRows(long rowsToEvict) {
-        long remaining = rowCount - rowsToEvict;
-        boolean hasVarLen = false;
-
-        for (int i = 0; i < columnCount; i++) {
-            if (isVarLen[i]) {
-                hasVarLen = true;
-                ColumnTypeDriver driver = ColumnType.getDriver(columnTypes[i]);
-                MemoryCARW aux = auxColumns.getQuick(i);
-                long auxAddr = aux.getPageAddress(0);
-                long srcOffset = driver.getAuxVectorOffset(rowsToEvict);
-                // getAuxVectorSize accounts for the trailing N+1 sentinel on STRING/BINARY
-                long bytesToMove = driver.getAuxVectorSize(remaining);
-                if (bytesToMove > 0 && srcOffset > 0) {
-                    Vect.memmove(auxAddr, auxAddr + srcOffset, bytesToMove);
-                }
-                aux.jumpTo(bytesToMove);
-            } else {
-                int size = columnSizes[i];
-                if (size > 0) {
-                    long pageAddr = columns.getQuick(i).getPageAddress(0);
-                    long srcOffset = rowsToEvict * size;
-                    long bytesToMove = remaining * size;
-                    if (bytesToMove > 0) {
-                        Vect.memmove(pageAddr, pageAddr + srcOffset, bytesToMove);
-                    }
-                    columns.getQuick(i).jumpTo(bytesToMove);
-                }
-            }
-        }
-
-        if (hasVarLen) {
-            for (int i = 0; i < columnCount; i++) {
-                if (!isVarLen[i]) {
-                    continue;
-                }
-                compactVarLenColumn(i, remaining);
-            }
-        }
-
-        rowCount = remaining;
-    }
-
-    /**
-     * Compacts a var-length column's data region after {@link #evictRows} shifted its
-     * aux entries. Uses the column type driver to locate the surviving data range,
-     * memmoves it to position 0, then rewrites the surviving offsets via
-     * {@link ColumnTypeDriver#shiftCopyAuxVector} so each driver handles its own
-     * descriptor format (simple long for STRING/BINARY, 48-bit packed for VARCHAR,
-     * 16-byte descriptor for ARRAY).
-     */
-    private void compactVarLenColumn(int col, long remaining) {
-        ColumnTypeDriver driver = ColumnType.getDriver(columnTypes[col]);
-        MemoryCARW data = columns.getQuick(col);
-        MemoryCARW aux = auxColumns.getQuick(col);
-        if (remaining == 0) {
-            data.jumpTo(0);
-            aux.jumpTo(0);
-            driver.configureAuxMemO3RSS(aux);
-            return;
-        }
-
-        long dataAddr = data.getPageAddress(0);
-        long auxAddr = aux.getPageAddress(0);
-        long dataStart = driver.getDataVectorOffset(auxAddr, 0);
-        long dataEnd = driver.getDataVectorSizeAt(auxAddr, remaining - 1);
-        long dataBytes = dataEnd - dataStart;
-
-        if (dataStart > 0 && dataBytes > 0) {
-            Vect.memmove(dataAddr, dataAddr + dataStart, dataBytes);
-        }
-        data.jumpTo(dataBytes);
-
-        if (dataStart > 0) {
-            driver.shiftCopyAuxVector(-dataStart, auxAddr, 0, remaining - 1, auxAddr, aux.size());
+        if (lo > readStart) {
+            readStart = lo;
         }
     }
 }

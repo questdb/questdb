@@ -44,6 +44,13 @@ import io.questdb.std.str.Utf8SplitString;
  * Record implementation that reads column values from the InMemoryTable's
  * native memory columns. Fixed-size columns use direct offset arithmetic.
  * Variable-length columns (STRING, VARCHAR) use a data+aux layout.
+ * <p>
+ * The {@link #row} field stores the <em>physical</em> row index into the table's
+ * column buffers. {@link #setRow} accepts a <em>virtual</em> row (0-based, matching
+ * the cursor's iteration index) and translates it to physical via the table's
+ * {@code readStart}; {@link #getRowId} reverses the translation. This keeps the
+ * external rowId space dense ({@code [0, getRowCount())}) while internal reads use
+ * the physical address directly with no per-getter arithmetic.
  */
 public class LiveViewRecord implements Record {
     private final BorrowedArray arrayView = new BorrowedArray();
@@ -63,7 +70,9 @@ public class LiveViewRecord implements Record {
     public ArrayView getArray(int col, int columnType) {
         long auxAddr = table.getAuxColumnAddress(col);
         long dataAddr = table.getColumnAddress(col);
-        long auxSize = ColumnType.getDriver(columnType).auxRowsToBytes(table.getRowCount());
+        // Bounds must encompass aux entries for every appended row (including any below
+        // readStart that have not been compacted yet), so use the physical row count.
+        long auxSize = ColumnType.getDriver(columnType).auxRowsToBytes(table.getPhysicalRowCount());
         long dataSize = table.getDataSize(col);
         arrayView.of(columnType, auxAddr, auxAddr + auxSize, dataAddr, dataAddr + dataSize, row);
         return arrayView;
@@ -189,11 +198,13 @@ public class LiveViewRecord implements Record {
 
     @Override
     public long getRowId() {
-        return row;
+        // External rowId is virtual (0-based); physical row stored internally.
+        return table != null ? row - table.getReadStart() : row;
     }
 
     public void setRow(long row) {
-        this.row = row;
+        // Translate virtual row to physical for direct addressing in the column getters.
+        this.row = row + (table != null ? table.getReadStart() : 0);
     }
 
     public void setTable(InMemoryTable table) {
@@ -214,7 +225,8 @@ public class LiveViewRecord implements Record {
     private Utf8Sequence getVarchar0(int col, Utf8SplitString view) {
         long auxAddr = table.getAuxColumnAddress(col);
         long dataAddr = table.getColumnAddress(col);
-        long auxLim = auxAddr + VarcharTypeDriver.INSTANCE.getAuxVectorSize(table.getRowCount());
+        // Same bound rationale as getArray: physical row count covers all aux entries.
+        long auxLim = auxAddr + VarcharTypeDriver.INSTANCE.getAuxVectorSize(table.getPhysicalRowCount());
         long dataLim = dataAddr + table.getDataSize(col);
         return VarcharTypeDriver.getSplitValue(auxAddr, auxLim, dataAddr, dataLim, row, view);
     }
