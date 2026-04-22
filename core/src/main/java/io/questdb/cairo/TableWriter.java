@@ -12008,6 +12008,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putSym(int columnIndex, CharSequence value) {
+            // SYMBOL stores -1 (SymbolTable.VALUE_IS_NULL) for null. That sentinel
+            // is the same encoding the IS NULL operator matches against, so an
+            // accepted explicit-NULL insert into a NOT NULL SYMBOL column would
+            // make `WHERE col IS NULL` match the row -- defeating the constraint
+            // user-side. Numeric NOT NULL types (per testEnforceNotNullSentinelValuesAccepted)
+            // accept explicit NULL because their sentinel value is distinct from
+            // the NULL semantic; SYMBOL has no such distinction.
+            if (value == null && TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+                throw CairoException.nonCritical()
+                        .put("NOT NULL constraint violation, column is required [column=")
+                        .put(metadata.getColumnName(columnIndex))
+                        .put(']');
+            }
             getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
             setRowValueNotNull(columnIndex);
         }
@@ -12020,6 +12033,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putSymIndex(int columnIndex, int key) {
+            // SymbolTable.VALUE_IS_NULL = -1 -- guard the same way as putSym(null).
+            if (key == SymbolTable.VALUE_IS_NULL && TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+                throw CairoException.nonCritical()
+                        .put("NOT NULL constraint violation, column is required [column=")
+                        .put(metadata.getColumnName(columnIndex))
+                        .put(']');
+            }
             putInt(columnIndex, key);
         }
 

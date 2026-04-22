@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -89,14 +90,16 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrA(Record rec) {
             sinkA.clear();
-            Numbers.appendLong256(arg.getLong256A(rec), sinkA);
+            Long256 l256 = arg.getLong256A(rec);
+            Numbers.appendLong256(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3(), sinkA, false);
             return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            Numbers.appendLong256(arg.getLong256A(rec), sinkB);
+            Long256 l256 = arg.getLong256A(rec);
+            Numbers.appendLong256(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3(), sinkB, false);
             return sinkB;
         }
     }

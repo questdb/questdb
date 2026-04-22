@@ -767,6 +767,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         try {
             lastSegmentTxn = events.appendSql(op.getCmdType(), op.getSqlText(), op.getSqlExecutionContext());
+            // Non-structural ALTERs that change metadata flags consumed during
+            // rowAppend (NOT NULL, parquet encoding) must update the WalWriter's
+            // local metadata immediately. Otherwise this writer keeps using the
+            // pre-ALTER metadata for new rows until reload, even though the
+            // WAL apply step on the receiver side will use the post-ALTER flag.
+            if (op instanceof AlterOperation) {
+                short cmd = ((AlterOperation) op).getCommand();
+                if (cmd == AlterOperation.SET_COLUMN_NOT_NULL || cmd == AlterOperation.DROP_COLUMN_NOT_NULL) {
+                    ((AlterOperation) op).apply(metaWriterSvc, true);
+                }
+            }
             return getSequencerTxn();
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
@@ -1978,6 +1989,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             .put(", column=").put(metadata.getColumnName(timestampIndex))
                             .put(']');
                 }
+                if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                    throw CairoException.nonCritical()
+                            .put("NOT NULL constraint violation, column is required [column=")
+                            .put(metadata.getColumnName(i))
+                            .put(']');
+                }
                 // Calculate how many nulls are needed
                 long nullsNeeded = lastExpectedRow - Math.max(lastWrittenRow, segmentRowCount - 1);
                 Runnable nullSetter = nullSetters.getQuick(i);
@@ -2596,6 +2613,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             tableToken = metadata.getTableToken().renamed(Chars.toString(toTableName));
             metadata.renameTable(tableToken);
         }
+
+        @Override
+        public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+            int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex < 0) {
+                throw CairoException.nonCritical().put("column does not exist [column=").put(columnName).put(']');
+            }
+            // Refresh the WalWriter's local metadata so subsequent rowAppend
+            // uses the new flag. The persistent meta update happens later when
+            // ApplyWal2TableJob materializes the ALTER through TableWriter; both
+            // paths must agree on the flag value.
+            metadata.getColumnMetadata(columnIndex).setNotNullFlag(isNotNull);
+        }
     }
 
     private class RowImpl implements TableWriter.Row {
@@ -2855,6 +2885,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         @Override
         public void putSymIndex(int columnIndex, int key) {
+            // SymbolTable.VALUE_IS_NULL = -1 -- guard symmetric with putSym(null).
+            if (key == SymbolTable.VALUE_IS_NULL && TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+                throw CairoException.nonCritical()
+                        .put("NOT NULL constraint violation, column is required [column=")
+                        .put(metadata.getColumnName(columnIndex))
+                        .put(']');
+            }
             putInt(columnIndex, key);
         }
 
@@ -2950,6 +2987,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     key = utf16Map.valueAt(index);
                 }
             } else {
+                // SYMBOL NOT NULL rejects explicit null even though numeric NOT NULL
+                // accepts sentinels: for SYMBOL the -1 sentinel IS the IS NULL match
+                // encoding, so accepting it would defeat the constraint user-side.
+                if (TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+                    throw CairoException.nonCritical()
+                            .put("NOT NULL constraint violation, column is required [column=")
+                            .put(metadata.getColumnName(columnIndex))
+                            .put(']');
+                }
                 key = SymbolTable.VALUE_IS_NULL;
                 if (!symbolMapNullFlags.get(columnIndex)) {
                     symbolMapNullFlags.set(columnIndex, true);
