@@ -1037,7 +1037,7 @@ public class SqlOptimiser implements Mutable {
     // itself is expected to already have X available through its own mechanism.
     private void addLiteralPassThroughToInnerWindowModels(
             ExpressionNode node,
-            ObjList<QueryModel> innerWindowModels,
+            ObjList<IQueryModel> innerWindowModels,
             int upToExclusive
     ) throws SqlException {
         if (node == null) {
@@ -1049,7 +1049,7 @@ public class SqlOptimiser implements Mutable {
                 if (node.type == LITERAL) {
                     int ownerIdx = findInnerWindowModelOwnerIdx(innerWindowModels, node.token);
                     for (int i = ownerIdx + 1; i < upToExclusive; i++) {
-                        QueryModel innerWm = innerWindowModels.getQuick(i);
+                        IQueryModel innerWm = innerWindowModels.getQuick(i);
                         if (innerWm.getAliasToColumnMap().excludes(node.token)) {
                             innerWm.addBottomUpColumn(nextColumn(node.token));
                         }
@@ -4030,7 +4030,7 @@ public class SqlOptimiser implements Mutable {
     // Returns the index of the first inner window model that owns the given token
     // (i.e., has it in its aliasToColumnMap), or -1 if no inner window model owns it
     // (token is either a base column or unresolvable).
-    private int findInnerWindowModelOwnerIdx(ObjList<QueryModel> innerWindowModels, CharSequence token) {
+    private int findInnerWindowModelOwnerIdx(ObjList<IQueryModel> innerWindowModels, CharSequence token) {
         for (int i = 0, n = innerWindowModels.size(); i < n; i++) {
             if (!innerWindowModels.getQuick(i).getAliasToColumnMap().excludes(token)) {
                 return i;
@@ -9771,7 +9771,7 @@ public class SqlOptimiser implements Mutable {
                 if (ast.type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
                     // GROUP BY key — add direct pass-through
                     for (int j = 0; j < nInner; j++) {
-                        QueryModel innerWm = innerWindowModels.getQuick(j);
+                        IQueryModel innerWm = innerWindowModels.getQuick(j);
                         if (innerWm.getAliasToColumnMap().excludes(col.getAlias())) {
                             innerWm.addBottomUpColumn(nextColumn(col.getAlias()));
                         }
@@ -9790,7 +9790,7 @@ public class SqlOptimiser implements Mutable {
             // can resolve them.
             if (nInner > 1) {
                 for (int i = 1; i < nInner; i++) {
-                    QueryModel laterModel = innerWindowModels.getQuick(i);
+                    IQueryModel laterModel = innerWindowModels.getQuick(i);
                     ObjList<QueryColumn> laterCols = laterModel.getBottomUpColumns();
                     for (int k = 0, m = laterCols.size(); k < m; k++) {
                         QueryColumn laterCol = laterCols.getQuick(k);
