@@ -297,21 +297,6 @@ public class PartitionDecoder implements ParquetDecoder, ParquetRowGroupSkipper,
         owned = false;
     }
 
-    public void readRowGroupStats(
-            RowGroupStatBuffers statBuffers,
-            DirectIntList columns,
-            int rowGroupIndex
-    ) {
-        assert ptr != 0;
-        readRowGroupStats( // throws CairoException on error
-                ptr,
-                statBuffers.ptr(),
-                columns.getAddress(),
-                (int) (columns.size() >>> 1),
-                rowGroupIndex
-        );
-    }
-
     public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
         assert ptr != 0;
         return rowGroupMaxTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
@@ -397,14 +382,6 @@ public class PartitionDecoder implements ParquetDecoder, ParquetRowGroupSkipper,
             long rowLo,
             long rowHi,
             int timestampIndex
-    ) throws CairoException;
-
-    private static native long readRowGroupStats(
-            long decoderPtr,
-            long statBuffersPtr,
-            long columnsPtr,
-            int columnCount,
-            int rowGroup
     ) throws CairoException;
 
     private static native long rowCountOffset();

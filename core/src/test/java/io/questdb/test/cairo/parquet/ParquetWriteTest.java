@@ -1949,9 +1949,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
         //   (stable), but ts is now at parquet position 1.
         // Round 2: second O3 merge reads the rewritten file.
         //   timestampIndex=2, timestampParquetIdx=1 — they differ.
-        //   readRowGroupStats with timestampIndex reads stats for parquet
-        //   column 2 (column 'b', not the timestamp), producing incorrect
-        //   row group bounds and a type mismatch error.
+        //   Reading row group stats with timestampIndex fetches stats for
+        //   parquet column 2 (column 'b', not the timestamp), producing
+        //   incorrect row group bounds and a type mismatch error.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(() -> {
             execute(
@@ -2009,8 +2009,8 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             // Round 2: O3 insert against the rewritten parquet file.
             // timestampIndex=2, timestampParquetIdx=1 — they now differ.
-            // With the bug, readRowGroupStats reads parquet column 2 ('b', LONG)
-            // with type TIMESTAMP → type mismatch → table suspended.
+            // With the bug, row group stat lookup reads parquet column 2
+            // ('b', LONG) with type TIMESTAMP → type mismatch → table suspended.
             execute(
                     """
                             INSERT INTO x(x, b, ts) VALUES
@@ -2054,9 +2054,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
     @Test
     public void testO3MergeWithStatisticsDisabled() throws Exception {
         // Disable parquet statistics and use small row groups to produce multiple row groups.
-        // O3 merge reads row group min/max timestamps via readRowGroupStats();
-        // when statistics are absent, the stat buffers are empty and the merge must
-        // still produce correct results without crashing or corrupting data.
+        // O3 merge reads row group min/max timestamps from _pm; when parquet
+        // statistics are absent the stats are missing from _pm and the merge
+        // must still produce correct results without crashing or corrupting data.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, false);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(() -> {

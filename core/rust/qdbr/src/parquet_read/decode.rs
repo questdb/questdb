@@ -24,7 +24,7 @@ use crate::parquet_read::slicer::{
     DataPageFixedSlicer, DataPageSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer,
     PlainVarSlicer,
 };
-use crate::parquet_read::{ColumnChunkBuffers, ColumnChunkStats, RowGroupStatBuffers};
+use crate::parquet_read::ColumnChunkBuffers;
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
@@ -41,25 +41,6 @@ mod array;
 mod decimal;
 
 use self::array::{decode_array_page, decode_array_page_filtered};
-
-impl RowGroupStatBuffers {
-    pub fn new(allocator: QdbAllocator) -> Self {
-        Self {
-            column_chunk_stats_ptr: ptr::null_mut(),
-            column_chunk_stats: AcVec::new_in(allocator),
-        }
-    }
-
-    pub fn ensure_n_columns(&mut self, required_cols: usize) -> ParquetResult<()> {
-        if self.column_chunk_stats.len() < required_cols {
-            let allocator = self.column_chunk_stats.allocator().clone();
-            self.column_chunk_stats
-                .resize_with(required_cols, || ColumnChunkStats::new(allocator.clone()))?;
-            self.column_chunk_stats_ptr = self.column_chunk_stats.as_mut_ptr();
-        }
-        Ok(())
-    }
-}
 
 impl ColumnChunkBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
@@ -96,19 +77,6 @@ impl ColumnChunkBuffers {
         self.aux_ptr = ptr::null_mut();
 
         self.page_buffers.clear();
-    }
-}
-
-impl ColumnChunkStats {
-    pub fn new(allocator: QdbAllocator) -> Self {
-        Self {
-            min_value_ptr: ptr::null_mut(),
-            min_value_size: 0,
-            min_value: AcVec::new_in(allocator.clone()),
-            max_value_ptr: ptr::null_mut(),
-            max_value_size: 0,
-            max_value: AcVec::new_in(allocator),
-        }
     }
 }
 

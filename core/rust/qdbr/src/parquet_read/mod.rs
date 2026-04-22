@@ -106,12 +106,6 @@ pub struct ColumnMeta {
     pub name_vec: AcVec<u16>,
 }
 
-#[repr(C)]
-pub struct RowGroupStatBuffers {
-    column_chunk_stats_ptr: *const ColumnChunkStats,
-    column_chunk_stats: AcVec<ColumnChunkStats>,
-}
-
 /// QuestDB-format Column Data
 ///
 /// The memory is owned by the Rust code, read by Java.
@@ -129,16 +123,6 @@ pub struct ColumnChunkBuffers {
     pub aux_vec: AcVec<u8>,
 
     pub page_buffers: Vec<Vec<u8>>,
-}
-
-#[repr(C)]
-pub struct ColumnChunkStats {
-    pub min_value_ptr: *mut u8,
-    pub min_value_size: usize,
-    pub min_value: AcVec<u8>,
-    pub max_value_ptr: *mut u8,
-    pub max_value_size: usize,
-    pub max_value: AcVec<u8>,
 }
 
 #[cfg(test)]

@@ -1,7 +1,5 @@
 use crate::allocator::QdbAllocator;
-use crate::parquet_read::{
-    ColumnChunkBuffers, ColumnChunkStats, RowGroupBuffers, RowGroupStatBuffers,
-};
+use crate::parquet_read::{ColumnChunkBuffers, RowGroupBuffers};
 use jni::objects::JClass;
 use jni::JNIEnv;
 use qdb_core::cairo::CairoException;
@@ -83,84 +81,4 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnChunkBuffers, aux_size)
-}
-
-// RowGroupStatsBuffers
-
-#[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_create(
-    mut env: JNIEnv,
-    _class: JClass,
-    allocator: *const QdbAllocator,
-) -> *mut RowGroupStatBuffers {
-    if allocator.is_null() {
-        return CairoException::new("allocator pointer is null").throw(&mut env);
-    }
-    let allocator = unsafe { &*allocator }.clone();
-    Box::into_raw(Box::new(RowGroupStatBuffers::new(allocator)))
-}
-
-#[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_destroy(
-    _env: JNIEnv,
-    _class: JClass,
-    stat_buffers: *mut RowGroupStatBuffers,
-) {
-    if stat_buffers.is_null() {
-        return;
-    }
-
-    unsafe {
-        drop(Box::from_raw(stat_buffers));
-    }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_buffersPtrOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(RowGroupStatBuffers, column_chunk_stats_ptr)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_buffersSize(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    size_of::<ColumnChunkStats>()
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_minValuePtrOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnChunkStats, min_value_ptr)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_minValueSizeOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnChunkStats, min_value_size)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_maxValuePtrOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnChunkStats, max_value_ptr)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_maxValueSizeOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnChunkStats, max_value_size)
 }

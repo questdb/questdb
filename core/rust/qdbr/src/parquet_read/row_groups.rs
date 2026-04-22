@@ -9,8 +9,8 @@ use crate::parquet_read::decode::{
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
-    RowGroupStatBuffers, FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT,
-    FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
+    FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT, FILTER_OP_IS_NOT_NULL,
+    FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
 };
 use nonmax::NonMaxU32;
 use parquet2::encoding::Encoding;
@@ -815,76 +815,6 @@ impl ParquetDecoder {
 
         column_chunk_bufs.refresh_ptrs();
         Ok(row_count)
-    }
-
-    pub fn read_column_chunk_stats(
-        &self,
-        row_group_stat_buffers: &mut RowGroupStatBuffers,
-        columns: &[(ParquetColumnIndex, ColumnType)],
-        row_group_index: u32,
-    ) -> ParquetResult<()> {
-        if row_group_index >= self.row_group_count {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "row group index {} out of range [0,{})",
-                row_group_index,
-                self.row_group_count
-            ));
-        }
-
-        row_group_stat_buffers.ensure_n_columns(columns.len())?;
-        let row_group_index = row_group_index as usize;
-        for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
-            let column_idx = column_idx as usize;
-            let column_type = self.columns[column_idx].column_type.ok_or_else(|| {
-                fmt_err!(
-                    InvalidType,
-                    "unknown column type, column index: {}",
-                    column_idx
-                )
-            })?;
-            // Allow Varchar->VarcharSlice and Symbol->Varchar/VarcharSlice remapping.
-            let types_match = column_type == to_column_type
-                || (column_type.tag() == ColumnTypeTag::Varchar
-                    && to_column_type.tag() == ColumnTypeTag::VarcharSlice)
-                || (column_type.tag() == ColumnTypeTag::Symbol
-                    && (to_column_type.tag() == ColumnTypeTag::Varchar
-                        || to_column_type.tag() == ColumnTypeTag::VarcharSlice));
-            if !types_match {
-                return Err(fmt_err!(
-                    InvalidType,
-                    "requested column type {} does not match file column type {}, column index: {}",
-                    to_column_type,
-                    column_type,
-                    column_idx
-                ));
-            }
-
-            let columns_meta = self.metadata.row_groups[row_group_index].columns();
-            let column_metadata = &columns_meta[column_idx];
-            let column_chunk = column_metadata.column_chunk();
-            let stats = &mut row_group_stat_buffers.column_chunk_stats[dest_col_idx];
-
-            stats.min_value.clear();
-            stats.max_value.clear();
-
-            if let Some(meta_data) = &column_chunk.meta_data {
-                if let Some(statistics) = &meta_data.statistics {
-                    if let Some(min) = statistics.min_value.as_ref() {
-                        stats.min_value.extend_from_slice(min)?;
-                    }
-                    if let Some(max) = statistics.max_value.as_ref() {
-                        stats.max_value.extend_from_slice(max)?;
-                    }
-                }
-            }
-
-            stats.min_value_ptr = stats.min_value.as_mut_ptr();
-            stats.min_value_size = stats.min_value.len();
-            stats.max_value_ptr = stats.max_value.as_mut_ptr();
-            stats.max_value_size = stats.max_value.len();
-        }
-        Ok(())
     }
 
     pub fn can_skip_row_group(

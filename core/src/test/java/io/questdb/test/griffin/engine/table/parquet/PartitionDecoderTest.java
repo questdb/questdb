@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -227,7 +226,6 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             try (
                     Path path = new Path();
                     RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                    RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                     DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                     PartitionDecoder partitionDecoder = new PartitionDecoder()
             ) {
@@ -246,14 +244,6 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 partitionDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 columns.add(0);
                 columns.add(ColumnType.LONG);
-
-                final CairoException badReadRowGroupStats = Assert.assertThrows(
-                        CairoException.class,
-                        () -> partitionDecoder.readRowGroupStats(rowGroupStatBuffers, columns, 1000)
-                );
-                TestUtils.assertContains(
-                        badReadRowGroupStats.getMessage(),
-                        "row group index 1000 out of range [0,1)");
 
                 final CairoException badDecodeRowGroup = Assert.assertThrows(
                         CairoException.class,

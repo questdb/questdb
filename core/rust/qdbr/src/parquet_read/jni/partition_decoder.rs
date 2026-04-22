@@ -7,7 +7,6 @@ use crate::parquet_read::jni::{validate_jni_column_types, DecodeMode};
 use crate::parquet_read::row_groups::ParquetColumnIndex;
 use crate::parquet_read::{
     ColumnFilterPacked, ColumnMeta, DecodeContext, ParquetDecoder, RowGroupBuffers,
-    RowGroupStatBuffers,
 };
 use jni::objects::JClass;
 use jni::JNIEnv;
@@ -335,52 +334,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         filtered_rows_ptr,
         filtered_rows_count,
     );
-}
-
-#[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readRowGroupStats(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *const ParquetDecoder,
-    row_group_stat_bufs: *mut RowGroupStatBuffers,
-    columns: *const (ParquetColumnIndex, ColumnType),
-    column_count: u32,
-    row_group_index: u32,
-) {
-    let res = (|| -> ParquetResult<()> {
-        if decoder.is_null() {
-            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
-        }
-        if row_group_stat_bufs.is_null() {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "row group stat buffers pointer is null"
-            ));
-        }
-        if columns.is_null() {
-            return Err(fmt_err!(InvalidLayout, "columns pointer is null"));
-        }
-
-        let decoder = unsafe { &*decoder };
-        let row_group_stat_bufs = unsafe { &mut *row_group_stat_bufs };
-        let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
-
-        validate_jni_column_types(columns).and_then(|()| {
-            decoder.read_column_chunk_stats(row_group_stat_bufs, columns, row_group_index)
-        })
-    })();
-
-    match res {
-        Ok(_) => {}
-        Err(mut err) => {
-            err.add_context(format!(
-                "could not get row group stats in row group {row_group_index}"
-            ));
-            err.add_context("error in PartitionDecoder.readRowGroupStats");
-            err.into_cairo_exception().throw(&mut env)
-        }
-    }
 }
 
 #[no_mangle]
