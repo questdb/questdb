@@ -2263,10 +2263,13 @@ if __name__ == "__main__":
 
     @Test
     public void testBindBinaryArrayDimensionHeaderTruncated() throws Exception {
-        // Pins the mid-loop `valueSize < 2 * Integer.BYTES` guard in
+        // Pins the up-front `valueSize < dimensions * 2 * Integer.BYTES` guard in
         // setBindVariableAsArray: the Bind declares dims=2 but the value only carries
-        // dim[0]'s 8-byte header. Without the guard, iteration j=1 would read past the
-        // value (into the following Execute) and feed garbage into addDimLen.
+        // enough bytes for dim[0]'s 8-byte header. After reading dims/hasNull/
+        // componentOid the parser has decremented valueSize to 8, below the 16 bytes
+        // required for two dimension headers, so the guard fires before any per-dim
+        // read runs. Without the guard, the per-dim reads would consume bytes from
+        // the following Execute message.
         //
         // Hex script = same handshake as testBindBinaryArrayFlatLengthOverflow
         // (startup user=admin db=nabu_app -> AuthRequest(cleartext) -> PasswordMessage
@@ -2282,13 +2285,15 @@ if __name__ == "__main__":
         //                             000002bd  componentOid = 701 (PG_FLOAT8)
         //                             00000001  dim[0].size  = 1
         //                             00000001  dim[0].lower = 1
-        //                             -- dim[1] header absent; valueSize hits 0 --
+        //                             -- dim[1] header absent; valueSize = 8 when the
+        //                                up-front guard runs, short of 2*2*4 = 16 --
         //                          0 result format codes
         //   Execute "E" len=9 (portal="", maxRows=0) + Sync "S" len=4:
         //                          450000000900000000005300000004
         //
-        // Expected reply: ErrorResponse "E" len=0x4b=75 with fields
-        //   C="00000", M="malformed array dimension header [dimensionIndex=1]",
+        // Expected reply: ErrorResponse "E" len=0x55=85 with fields
+        //   C="00000",
+        //   M="malformed array dimension headers [dimensions=2, valueSize=8]",
         //   S="ERROR", P="1", then ReadyForQuery "Z" len=5 state='I'.
         assertHexScript(
                 """
@@ -2297,7 +2302,7 @@ if __name__ == "__main__":
                         >700000000a717565737400
                         <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                         >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe42000000260000000100010001000000140000000200000000000002bd00000001000000010000450000000900000000005300000004
-                        <450000004b433030303030004d6d616c666f726d65642061727261792064696d656e73696f6e20686561646572205b64696d656e73696f6e496e6465783d315d00534552524f5200503100005a0000000549"""
+                        <4500000055433030303030004d6d616c666f726d65642061727261792064696d656e73696f6e2068656164657273205b64696d656e73696f6e733d322c2076616c756553697a653d385d00534552524f5200503100005a0000000549"""
         );
     }
 
