@@ -1663,7 +1663,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
         });
     }
 
-@Test
+    @Test
     public void testNotNullSentinelPrintsValueExtended() throws Exception {
         assertMemoryLeak(() -> {
             // CursorPrinter prints the raw stored value on NOT NULL columns even when the
