@@ -676,30 +676,46 @@ values in the column.
 
 ## 13. Response Format
 
-Every response includes a 1-byte status code and an 8-byte sequence number that
-correlates the response with the original request.
+Every response starts with a 1-byte status code. OK and error responses include
+an 8-byte sequence number that correlates the response with the original
+request. Durable-ack responses carry only per-table upload watermarks.
 
-### OK Response (9 bytes)
+### OK Response (11+ bytes)
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ status:    uint8   (0x00)                            │
-│ sequence:  int64          Request sequence number    │
+│ status:      uint8   (0x00)                          │
+│ sequence:    int64          Request sequence number   │
+│ tableCount:  uint16         Number of table entries   │
+│ ┌── repeated tableCount times ─────────────────────┐ │
+│ │ nameLen:   uint16         Table name length       │ │
+│ │ name:      bytes          UTF-8 table name        │ │
+│ │ seqTxn:    int64          Sequencer txn for table  │ │
+│ └──────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────┘
 ```
 
-### Durable-Ack Response (9 bytes)
+The per-table entries report the sequencer txn assigned to each table that
+committed data in the acknowledged batch. `tableCount` is 0 when no WAL
+tables committed (e.g., non-WAL tables or empty batches).
 
-Same layout as OK, with a distinct status byte. Emitted only when the client
-opted in at handshake time (see below) and only by servers where primary
-replication is configured. The sequence value is cumulative: every
-client-assigned sequence less than or equal to it has had its WAL segments
-written to the object store.
+### Durable-Ack Response (3+ bytes)
+
+Emitted only when the client opted in at handshake time (see below) and only
+by servers where primary replication is configured. Each per-table entry
+reports the highest sequencer txn whose WAL segments have been durably
+uploaded to the configured object store. Only tables whose durable watermark
+advanced since the last durable-ack are included.
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ status:    uint8   (0x02)                             │
-│ sequence:  int64          Highest durably-uploaded seq│
+│ status:      uint8   (0x02)                          │
+│ tableCount:  uint16         Number of table entries   │
+│ ┌── repeated tableCount times ─────────────────────┐ │
+│ │ nameLen:   uint16         Table name length       │ │
+│ │ name:      bytes          UTF-8 table name        │ │
+│ │ seqTxn:    int64          Durably-uploaded seqTxn  │ │
+│ └──────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────┘
 ```
 
