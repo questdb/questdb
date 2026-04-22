@@ -96,8 +96,7 @@ public class IndexBuilder extends RebuildColumnBase {
                 // this close() closes the underlying file, but ddlMem object remains reusable
                 ddlMem.close();
             }
-            // Fresh index file: sealTxn starts equal to columnNameTxn (no seal performed yet).
-            if (!ff.touch(IndexFactory.valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn))) {
+            if (!ff.touch(IndexFactory.valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, 0L))) {
                 LOG.error().$("could not create index [name=").$(path).I$();
                 throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
@@ -173,6 +172,7 @@ public class IndexBuilder extends RebuildColumnBase {
                         try {
                             indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
                             indexer.index(ff, columnDataFd, columnTop, partitionSize);
+                            indexer.seal();
                         } finally {
                             ff.close(columnDataFd);
                             indexer.clear();

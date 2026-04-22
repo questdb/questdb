@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalBwdPartitionFrameCursor;
@@ -84,6 +85,13 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 {false, TestTimestampType.MICRO},
                 {false, TestTimestampType.NANO},
         });
+    }
+
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
+        super.setUp();
     }
 
     @Test

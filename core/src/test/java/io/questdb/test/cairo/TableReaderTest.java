@@ -1268,6 +1268,12 @@ public class TableReaderTest extends AbstractCairoTest {
     private TimestampDriver timestampDriver;
     private int timestampType;
 
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
+        super.setUp();
+    }
+
     @Before
     public void setUp2() {
         timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;

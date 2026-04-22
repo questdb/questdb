@@ -67,6 +67,19 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
+    private final String defaultIndexTypeName;
+
+    public PageFrameRecordCursorImplFactoryTest() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        this.defaultIndexTypeName = rnd.nextBoolean() ? "BITMAP" : "POSTING";
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, defaultIndexTypeName);
+        super.setUp();
+    }
+
     @Test
     public void testFactory_FullPartitionFrameCursorFactory() throws Exception {
         assertMemoryLeak(() -> {

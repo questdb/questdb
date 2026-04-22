@@ -145,6 +145,8 @@ public class PostingIndexWriter implements IndexWriter {
     private long pendingPublishTableTxn = -1;
     private long pendingValuesAddr;
     private long prevPublishTableTxn = -1;
+    private long[] savedSidecarBufs;
+    private long[] savedSidecarSizes;
     private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
     private MemoryMARW sidecarInfoMem;
     private long sidecarTxn; // txn for sidecar file naming (.pk's txn, before VALUE_FILE_TXN override)
@@ -286,67 +288,35 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void close() {
         try {
-            // Flush + compact. Per-gen sidecars make covering work without
-            // seal, but sealing during close compacts multi-gen data into a
-            // single dense gen for optimal read performance. This is safe
-            // because rollback writes in-place (no txn bump).
-            if (keyMem.isOpen() && partitionPath.size() > 0) {
-                boolean hadCovering = coverCount > 0;
-                seal();
-                // If covering was configured but the seal ran without covered
-                // column data (memories were already closed by the TableWriter),
-                // stale per-gen sidecar files from flushAllPending remain on disk.
-                // Remove them so readers don't misinterpret per-gen raw data as
-                // stride format. Skip this for non-covering indexes (coverCount == 0)
-                // where .pd is the only auxiliary file and was just written by seal.
-                if (hadCovering && coveredColumnNames.size() == 0 && coveredColumnAddrs.size() == 0 && sidecarMems.size() == 0) {
-                    try (Path p = new Path().of(partitionPath)) {
-                        PostingIndexUtils.removeSidecarFiles(ff, p, p.size(), indexName, sidecarTxn);
-                    }
+            if (keyMem.isOpen()) {
+                try {
+                    keyMem.setSize(KEY_FILE_RESERVED);
+                } finally {
+                    Misc.free(keyMem);
                 }
-            } else if (keyMem.isOpen()) {
-                flushAllPending();
             }
         } finally {
             try {
-                if (keyMem.isOpen()) {
-                    try {
-                        keyMem.setSize(KEY_FILE_RESERVED);
-                    } finally {
-                        Misc.free(keyMem);
-                    }
+                Misc.free(sealValueMem);
+                if (valueMem.isOpen()) {
+                    valueMem.close(false, (byte) 0);
                 }
             } finally {
-                try {
-                    Misc.free(sealValueMem);
-                    // Close valueMem WITHOUT truncation. The .pv file contains
-                    // committed generation data that must not be destroyed.
-                    // The normal truncate-on-close uses appendOffset which can
-                    // be 0 when a writer opens a partition at the wrong path
-                    // (O3 new-partition directory mismatch). Skipping truncation
-                    // is safe: sealed .pv files are sized exactly by the seal,
-                    // and unsealed .pv files retain their mmap'd size (bounded
-                    // by dataIndexValueAppendPageSize, typically 1MB).
-                    if (valueMem.isOpen()) {
-                        valueMem.close(false, (byte) 0);
-                    }
-                } finally {
-                    closeSidecarMems();
-                    freeNativeBuffers();
-                    keyCount = 0;
-                    valueMemSize = 0;
-                    genCount = 0;
-                    hasPendingData = false;
-                    activeKeyCount = 0;
-                    coverCount = 0;
-                    sealTarget = null;
-                    releasePendingPurges();
-                    pendingPublishTableTxn = -1;
-                    currentPublishTableTxn = -1;
-                    prevPublishTableTxn = -1;
-                    partitionPath.clear();
-                    indexName.clear();
-                }
+                closeSidecarMems();
+                freeNativeBuffers();
+                keyCount = 0;
+                valueMemSize = 0;
+                genCount = 0;
+                hasPendingData = false;
+                activeKeyCount = 0;
+                coverCount = 0;
+                sealTarget = null;
+                releasePendingPurges();
+                pendingPublishTableTxn = -1;
+                currentPublishTableTxn = -1;
+                prevPublishTableTxn = -1;
+                partitionPath.clear();
+                indexName.clear();
             }
         }
     }
@@ -477,39 +447,6 @@ public class PostingIndexWriter implements IndexWriter {
             types.add(coveredColumnTypes[i]);
         }
         configureCovering(addrs, tops, shifts, indices, types, coverCount);
-    }
-
-    /**
-     * Close all resources without sealing. Used when the index is being dropped —
-     * sealing would create new files that become orphaned.
-     */
-    public void discard() {
-        try {
-            if (keyMem.isOpen()) {
-                try {
-                    keyMem.setSize(KEY_FILE_RESERVED);
-                } finally {
-                    Misc.free(keyMem);
-                }
-            }
-        } finally {
-            try {
-                Misc.free(sealValueMem);
-                if (valueMem.isOpen()) {
-                    valueMem.close(false, (byte) 0);
-                }
-            } finally {
-                closeSidecarMems();
-                freeNativeBuffers();
-                keyCount = 0;
-                valueMemSize = 0;
-                genCount = 0;
-                hasPendingData = false;
-                activeKeyCount = 0;
-                coverCount = 0;
-                sealTarget = null;
-            }
-        }
     }
 
     public long getColumnNameTxn() {
@@ -725,10 +662,10 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     public void of(Path path, CharSequence name, long columnNameTxn, boolean init) {
-        // Flush and close the current partition. close() flushes buffered
-        // add() calls to the mmap files so the data is not lost. Seal is
-        // NOT triggered here — it's an optimization done by TableWriter
-        // during syncColumns() where the txn bump can be published.
+        // close() releases resources but does NOT flush pending add() calls,
+        // so the caller must have already committed or sealed. On the
+        // TableWriter path this is guaranteed by commit() in switchPartition
+        // and syncColumns.
         close();
         partitionPath.clear();
         partitionPath.put(path);
@@ -899,9 +836,7 @@ public class PostingIndexWriter implements IndexWriter {
             final long oldSealTxn = columnNameTxn;
             final long newSealTxn = Math.max(1, columnNameTxn + 1);
             if (partitionPath.size() > 0) {
-                try (Path p = new Path().of(partitionPath)) {
-                    openSidecarFiles(p, indexName, sidecarTxn, newSealTxn);
-                }
+                openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, sidecarTxn, newSealTxn);
             }
             try {
                 sealFull(newSealTxn);
@@ -919,15 +854,9 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void rollbackConditionally(long row) {
-        if (row == 0) {
-            // Full partition rewrite — discard everything.
+        if (row == 0 && (genCount > 0 || hasPendingData)) {
             truncate();
         }
-        // Unlike BitmapIndexWriter, the posting index does NOT roll back
-        // committed generations for row > 0. Committed gens are immutable
-        // compressed blocks; in-place re-encode corrupts sidecar alignment
-        // and is prohibitively expensive. New data is simply appended as a
-        // fresh sparse generation and the next seal merges everything.
     }
 
     @Override
@@ -974,54 +903,50 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
 
-        // Allocate the new sealTxn up front. Both the new .pv and every new
-        // .pc<N> for this seal use it; no on-disk file is overwritten. The
-        // old .pv and .pc<N> at the previous sealTxn stay on disk so any
-        // reader still mmap'd to them remains valid; the purge job removes
-        // them out of band once the scoreboard says no reader is left.
         final long oldSealTxn = columnNameTxn;
         final long newSealTxn = Math.max(1, columnNameTxn + 1);
 
-        // Buffer old sidecar data from disk before we open the new files.
-        // Needed for incremental seal to copy clean stride sidecar blocks
-        // verbatim from the previous seal generation.
-        long[] savedSidecarBufs = null;
-        long[] savedSidecarSizes = null;
+        boolean haveSavedSidecars = false;
         if (coverCount > 0 && partitionPath.size() > 0) {
-            try (Path p = new Path().of(partitionPath)) {
-                int pp = p.size();
+            if (savedSidecarBufs == null || savedSidecarBufs.length < coverCount) {
                 savedSidecarBufs = new long[coverCount];
                 savedSidecarSizes = new long[coverCount];
-                for (int c = 0; c < coverCount; c++) {
-                    if (coveredColumnIndices.getQuick(c) < 0) {
-                        continue;
-                    }
-                    long covT = getCoveredColumnNameTxn(c);
-                    LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, covT, columnNameTxn);
-                    if (ff.exists(pcFile)) {
-                        long fileLen = ff.length(pcFile);
-                        if (fileLen > 0) {
-                            long fd = ff.openRO(pcFile);
-                            if (fd >= 0) {
-                                try {
-                                    long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-                                    if (mapped > 0) {
-                                        try {
-                                            savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_INDEX_READER);
-                                            savedSidecarSizes[c] = fileLen;
-                                            Unsafe.getUnsafe().copyMemory(mapped, savedSidecarBufs[c], fileLen);
-                                        } finally {
-                                            ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
-                                        }
+            } else {
+                Arrays.fill(savedSidecarBufs, 0, savedSidecarBufs.length, 0L);
+                Arrays.fill(savedSidecarSizes, 0, savedSidecarSizes.length, 0L);
+            }
+            haveSavedSidecars = true;
+            Path p = Path.getThreadLocal(partitionPath);
+            int pp = p.size();
+            for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
+                long covT = getCoveredColumnNameTxn(c);
+                LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, covT, columnNameTxn);
+                if (ff.exists(pcFile)) {
+                    long fileLen = ff.length(pcFile);
+                    if (fileLen > 0) {
+                        long fd = ff.openRO(pcFile);
+                        if (fd >= 0) {
+                            try {
+                                long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                                if (mapped > 0) {
+                                    try {
+                                        savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_INDEX_READER);
+                                        savedSidecarSizes[c] = fileLen;
+                                        Unsafe.getUnsafe().copyMemory(mapped, savedSidecarBufs[c], fileLen);
+                                    } finally {
+                                        ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
                                     }
-                                } finally {
-                                    ff.close(fd);
                                 }
+                            } finally {
+                                ff.close(fd);
                             }
                         }
                     }
-                    p.trimTo(pp);
                 }
+                p.trimTo(pp);
             }
             if (sidecarMems.size() > 0) {
                 closeSidecarMems();
@@ -1033,9 +958,7 @@ public class PostingIndexWriter implements IndexWriter {
             // disk yet, so the open creates them fresh — no truncation, no
             // racing with readers holding the previous-sealTxn files.
             if (coverCount > 0 && sidecarMems.size() == 0 && partitionPath.size() > 0) {
-                try (Path p = new Path().of(partitionPath)) {
-                    openSidecarFiles(p, indexName, sidecarTxn, newSealTxn);
-                }
+                openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, sidecarTxn, newSealTxn);
             }
 
             // Check if incremental seal is possible:
@@ -1057,25 +980,37 @@ public class PostingIndexWriter implements IndexWriter {
 
             if (isIncrementalCandidate && gen0KeyCount == keyCount) {
                 sealIncremental(newSealTxn, savedSidecarBufs, savedSidecarSizes);
-                savedSidecarBufs = null; // ownership transferred
+                // ownership of inner buffers transferred to sealIncremental;
+                // zero entries so the finally cleanup skips them.
+                if (haveSavedSidecars) {
+                    for (int c = 0; c < coverCount; c++) {
+                        savedSidecarBufs[c] = 0;
+                        savedSidecarSizes[c] = 0;
+                    }
+                }
             } else {
                 sealFull(newSealTxn);
             }
         } finally {
-            if (savedSidecarBufs != null) {
-                for (int c = 0; c < savedSidecarBufs.length; c++) {
+            if (haveSavedSidecars) {
+                for (int c = 0; c < coverCount; c++) {
                     if (savedSidecarBufs[c] != 0) {
                         Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
+                        savedSidecarBufs[c] = 0;
+                        savedSidecarSizes[c] = 0;
                     }
                 }
             }
-            // Record the purge whenever switchToSealedValueFile actually bumped
-            // columnNameTxn — even if a later step in seal threw. Skipping this
-            // would leave the previous-sealTxn .pv/.pc<N> as orphans recoverable
-            // only by the next of() reopen scan.
             if (columnNameTxn != oldSealTxn) {
                 recordPostingSealPurge(oldSealTxn);
             }
+        }
+    }
+
+    @Override
+    public void sealIfMultiGen(int threshold) {
+        if (keyMem.isOpen() && partitionPath.size() > 0 && genCount > threshold) {
+            seal();
         }
     }
 
@@ -1148,12 +1083,11 @@ public class PostingIndexWriter implements IndexWriter {
             // re-open them at the new sealTxn.
             closeSidecarMems();
             valueMem.close(false, (byte) 0);
-            try (Path p = new Path().of(partitionPath)) {
-                LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, sidecarTxn, newTxn);
-                valueMem.of(ff, fileName,
-                        configuration.getDataIndexValueAppendPageSize(), 0L,
-                        MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
-            }
+            Path p = Path.getThreadLocal(partitionPath);
+            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, sidecarTxn, newTxn);
+            valueMem.of(ff, fileName,
+                    configuration.getDataIndexValueAppendPageSize(), 0L,
+                    MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
             columnNameTxn = newTxn;
             initKeyMemory(keyMem, blockCapacity, columnNameTxn);
             recordPostingSealPurge(oldSealTxn);
@@ -1621,17 +1555,16 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             // Name-based: open files ourselves via mmap cache
-            try (Path p = new Path()) {
-                for (int c = 0; c < coverCount; c++) {
-                    if (coveredColumnIndices.getQuick(c) < 0) {
-                        continue;
-                    }
+            Path p = Path.getThreadLocal(coveredPartitionPath);
+            for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
+                mapColumnFile(p, coveredColumnNames.getQuick(c), coveredColumnNameTxns.getQuick(c),
+                        coveredColReadAddrs, coveredColReadSizes, c, false);
+                if (ColumnType.isVarSize(coveredColumnTypes.getQuick(c))) {
                     mapColumnFile(p, coveredColumnNames.getQuick(c), coveredColumnNameTxns.getQuick(c),
-                            coveredColReadAddrs, coveredColReadSizes, c, false);
-                    if (ColumnType.isVarSize(coveredColumnTypes.getQuick(c))) {
-                        mapColumnFile(p, coveredColumnNames.getQuick(c), coveredColumnNameTxns.getQuick(c),
-                                coveredAuxReadAddrs, coveredAuxReadSizes, c, true);
-                    }
+                            coveredAuxReadAddrs, coveredAuxReadSizes, c, true);
                 }
             }
         } else if (coveredColumnAddrs.size() > 0) {
@@ -2022,10 +1955,9 @@ public class PostingIndexWriter implements IndexWriter {
             Files.munmap(addr, size, MemoryTag.MMAP_INDEX_WRITER);
             coveredAuxReadAddrs[covIdx] = 0;
             if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
-                try (Path p = new Path()) {
-                    mapColumnFile(p, coveredColumnNames.getQuick(covIdx), coveredColumnNameTxns.getQuick(covIdx),
-                            coveredAuxReadAddrs, coveredAuxReadSizes, covIdx, true);
-                }
+                mapColumnFile(Path.getThreadLocal(coveredPartitionPath),
+                        coveredColumnNames.getQuick(covIdx), coveredColumnNameTxns.getQuick(covIdx),
+                        coveredAuxReadAddrs, coveredAuxReadSizes, covIdx, true);
             }
             addr = coveredAuxReadAddrs[covIdx];
             size = coveredAuxReadSizes[covIdx];
@@ -2058,10 +1990,9 @@ public class PostingIndexWriter implements IndexWriter {
             Files.munmap(addr, size, MemoryTag.MMAP_INDEX_WRITER);
             coveredColReadAddrs[covIdx] = 0;
             if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
-                try (Path p = new Path()) {
-                    mapColumnFile(p, coveredColumnNames.getQuick(covIdx), coveredColumnNameTxns.getQuick(covIdx),
-                            coveredColReadAddrs, coveredColReadSizes, covIdx, false);
-                }
+                mapColumnFile(Path.getThreadLocal(coveredPartitionPath),
+                        coveredColumnNames.getQuick(covIdx), coveredColumnNameTxns.getQuick(covIdx),
+                        coveredColReadAddrs, coveredColReadSizes, covIdx, false);
             }
             addr = coveredColReadAddrs[covIdx];
             size = coveredColReadSizes[covIdx];
@@ -2288,14 +2219,13 @@ public class PostingIndexWriter implements IndexWriter {
         if (partitionPath.size() == 0) {
             return;
         }
-        try (Path p = new Path().of(partitionPath)) {
-            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, sidecarTxn, newTxn);
-            sealValueMem.of(ff, fileName,
-                    configuration.getDataIndexValueAppendPageSize(),
-                    MemoryTag.MMAP_INDEX_WRITER,
-                    configuration.getWriterFileOpenOpts());
-            sealValueMem.jumpTo(0);
-        }
+        Path p = Path.getThreadLocal(partitionPath);
+        LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, sidecarTxn, newTxn);
+        sealValueMem.of(ff, fileName,
+                configuration.getDataIndexValueAppendPageSize(),
+                MemoryTag.MMAP_INDEX_WRITER,
+                configuration.getWriterFileOpenOpts());
+        sealValueMem.jumpTo(0);
         sealTarget = sealValueMem;
     }
 
@@ -3484,6 +3414,8 @@ public class PostingIndexWriter implements IndexWriter {
                 for (int c = 0; c < coverCount; c++) {
                     if (oldSidecarBufs[c] != 0) {
                         Unsafe.free(oldSidecarBufs[c], oldSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
+                        oldSidecarBufs[c] = 0;
+                        oldSidecarSizes[c] = 0;
                     }
                 }
             }
@@ -3525,13 +3457,12 @@ public class PostingIndexWriter implements IndexWriter {
         // Now reopen valueMem on the new file
         if (partitionPath.size() > 0) {
             Misc.free(valueMem); // close old .pv mapping (left on disk for readers)
-            try (Path p = new Path().of(partitionPath)) {
-                LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, sidecarTxn, newTxn);
-                valueMem.of(ff, fileName,
-                        configuration.getDataIndexValueAppendPageSize(), appendOffset,
-                        MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
-                valueMem.jumpTo(appendOffset);
-            }
+            Path p = Path.getThreadLocal(partitionPath);
+            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, sidecarTxn, newTxn);
+            valueMem.of(ff, fileName,
+                    configuration.getDataIndexValueAppendPageSize(), appendOffset,
+                    MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
+            valueMem.jumpTo(appendOffset);
         }
         columnNameTxn = newTxn;
     }
@@ -3968,9 +3899,7 @@ public class PostingIndexWriter implements IndexWriter {
         // sidecar from a prior seal). openSidecarFiles() truncates, which
         // is correct for seal but wrong here.
         if (sidecarMems.size() == 0 && partitionPath.size() > 0) {
-            try (Path p = new Path().of(partitionPath)) {
-                openSidecarFilesForAppend(p, indexName, sidecarTxn, columnNameTxn);
-            }
+            openSidecarFilesForAppend(Path.getThreadLocal(partitionPath), indexName, sidecarTxn, columnNameTxn);
         }
         if (sidecarMems.size() == 0) {
             return;
@@ -4280,17 +4209,16 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
-            try (Path p = new Path()) {
-                for (int c = 0; c < coverCount; c++) {
-                    if (coveredColumnIndices.getQuick(c) < 0) {
-                        continue;
-                    }
-                    try {
-                        mapCoveredColumn(p, c);
-                        writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
-                    } finally {
-                        unmapCoveredColumn(c);
-                    }
+            Path p = Path.getThreadLocal(coveredPartitionPath);
+            for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
+                try {
+                    mapCoveredColumn(p, c);
+                    writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
+                } finally {
+                    unmapCoveredColumn(c);
                 }
             }
         } else if (coveredColumnAddrs.size() > 0) {

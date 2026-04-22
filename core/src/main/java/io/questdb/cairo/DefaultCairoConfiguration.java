@@ -815,6 +815,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingSealGenThreshold() {
+        return 16;
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return 64;
     }

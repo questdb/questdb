@@ -52,6 +52,9 @@ public interface IndexWriter extends Closeable, Mutable {
      */
     void add(int key, long value);
 
+    default void clearCovering() {
+    }
+
     /**
      * Closes the index without truncating files.
      * Default implementation just calls close().
@@ -62,6 +65,27 @@ public interface IndexWriter extends Closeable, Mutable {
      * Commits the index to disk based on the configuration's commit mode.
      */
     void commit();
+
+    default void configureCovering(
+            ObjList<CharSequence> coveredColumnNames,
+            LongList coveredColumnNameTxns,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
+            int timestampColumnIndex
+    ) {
+    }
+
+    default void configureCovering(
+            LongList coveredColumnAddrs,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
+            int coverCount
+    ) {
+    }
 
     /**
      * Returns the index type for this writer.
@@ -143,6 +167,19 @@ public interface IndexWriter extends Closeable, Mutable {
         of(path, name, columnNameTxn);
     }
 
+    default void publishPendingPurges(
+            MessageBus messageBus,
+            TableToken tableToken,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy,
+            long currentTableTxn
+    ) {
+    }
+
+    default void rebuildSidecars() {
+    }
+
     /**
      * Rolls back values that are strictly greater than the given row.
      * <p>
@@ -163,50 +200,13 @@ public interface IndexWriter extends Closeable, Mutable {
      */
     void rollbackValues(long maxValue);
 
-    default void clearCovering() {
-    }
-
-    default void configureCovering(
-            ObjList<CharSequence> coveredColumnNames,
-            LongList coveredColumnNameTxns,
-            LongList coveredColumnTops,
-            IntList coveredColumnShifts,
-            IntList coveredColumnIndices,
-            IntList coveredColumnTypes,
-            int timestampColumnIndex
-    ) {
-    }
-
-    default void configureCovering(
-            LongList coveredColumnAddrs,
-            LongList coveredColumnTops,
-            IntList coveredColumnShifts,
-            IntList coveredColumnIndices,
-            IntList coveredColumnTypes,
-            int coverCount
-    ) {
-    }
-
-    default void discard() {
-    }
-
-    default void rebuildSidecars() {
-    }
-
     default void seal() {
     }
 
-    default void setCoveredColumnNameTxns(LongList txns) {
+    default void sealIfMultiGen(int threshold) {
     }
 
-    default void publishPendingPurges(
-            MessageBus messageBus,
-            TableToken tableToken,
-            long partitionTimestamp,
-            long partitionNameTxn,
-            int partitionBy,
-            long currentTableTxn
-    ) {
+    default void setCoveredColumnNameTxns(LongList txns) {
     }
 
     void setMaxValue(long maxValue);

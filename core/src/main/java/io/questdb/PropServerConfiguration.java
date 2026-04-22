@@ -403,6 +403,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean posthogEnabled;
     private final boolean postingIndexAutoIncludeTimestamp;
     private final byte postingIndexRowIdEncoding;
+    private final int postingSealGenThreshold;
     private final int preferencesStringPoolCapacity;
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
@@ -1562,6 +1563,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 case "delta" -> PostingIndexUtils.ENCODING_DELTA;
                 default -> PostingIndexUtils.ENCODING_ADAPTIVE;
             };
+            this.postingSealGenThreshold = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 16);
             this.sqlJoinMetadataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 16384);
             this.sqlJoinMetadataMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, Integer.MAX_VALUE);
             int sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY, 64);
@@ -4097,6 +4099,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public byte getPostingIndexRowIdEncoding() {
             return postingIndexRowIdEncoding;
+        }
+
+        @Override
+        public int getPostingSealGenThreshold() {
+            return postingSealGenThreshold;
         }
 
         @Override

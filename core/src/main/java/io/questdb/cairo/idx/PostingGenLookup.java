@@ -163,6 +163,13 @@ public class PostingGenLookup implements Closeable {
         cacheVersion++;
     }
 
+    public void reopen() {
+        keyToCacheSlot.reopen();
+        cacheEntries.reopen();
+        cacheUsedBytes = 0;
+        cacheVersion++;
+    }
+
     /**
      * Returns true when the SBBF proves K is absent from the gen. Returns false
      * for "maybe present" or when the gen has no SBBF (numBlocks == 0); in both

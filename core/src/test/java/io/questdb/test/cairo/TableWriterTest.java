@@ -43,8 +43,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -109,6 +109,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
         super.setUp();
         PRODUCT_FS = PRODUCT;
         if (configuration.mangleTableDirNames()) {
@@ -116,6 +117,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
         timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        super.setUp();
     }
 
     @Test

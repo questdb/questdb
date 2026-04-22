@@ -944,7 +944,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 int initialBatches = 5;
                 int totalInitialValues = initialBatches * BP_BATCH;
 
-                // Phase 1: write 5 batches normally, close (triggers seal + compact)
+                // Phase 1: write 5 batches normally, seal + compact before close
                 try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                     for (int batch = 0; batch < initialBatches; batch++) {
                         long base = (long) batch * BP_BATCH;
@@ -954,8 +954,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         writer.setMaxValue(base + BP_BATCH - 1);
                         writer.commit();
                     }
+                    writer.seal();
                 }
-                // After close: sealed to 1 gen, compacted
 
                 // Phase 2: corrupt the inactive page to simulate a partial next commit
                 try (MemoryCMARW keyMem = Vm.getCMARWInstance()) {
@@ -1054,7 +1054,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 final int plen = path.size();
                 String name = "crash_seal";
 
-                // Write 10 batches, close (which seals to 1 gen and compacts)
+                // Write 10 batches, seal (1 gen, compacted, value file trimmed).
                 try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                     for (int batch = 0; batch < 10; batch++) {
                         long base = (long) batch * BP_BATCH;
@@ -1064,8 +1064,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         writer.setMaxValue(base + BP_BATCH - 1);
                         writer.commit();
                     }
+                    writer.seal();
                 }
-                // After close: data is sealed (1 gen), compacted, value file is trimmed.
 
                 // Read the metadata-claimed value file size
                 long metadataValueMemSize;
@@ -1614,7 +1614,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             writer.setMaxValue(maxVal);
                             writer.commit();
                         }
-                    } // close triggers seal
+                        writer.seal();
+                    }
 
                     // Verify forward reader
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
@@ -1932,7 +1933,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             writer.setMaxValue(rowId - 1);
                             writer.commit();
                         }
-                    } // close triggers seal + truncate
+                        writer.seal();
+                    }
 
                     // Read phase: verify everything from value 0 to rowId-1
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
@@ -2934,7 +2936,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         writer.setMaxValue(rowId - 1);
                         writer.commit();
                     }
-                } // close triggers seal
+                    writer.seal();
+                }
 
                 // Verify data is readable
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
@@ -3705,8 +3708,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         writer.commit();
                     }
                     Assert.assertEquals("20 gens after commits", 20, writer.getGenCount());
+                    writer.seal();
                 }
-                // close() called seal() + compact: genCount is now 1
 
                 // Phase 2: re-open the writer on the same files (init=false)
                 try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {

@@ -1219,8 +1219,7 @@ public class CreateTableTest extends AbstractCairoTest {
             execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING EF, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             try (TableReader r = engine.getReader("tab")) {
                 int colIndex = r.getMetadata().getColumnIndex("s");
-                // EF is the default POSTING encoding, maps to IndexType.POSTING
-                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(colIndex));
+                assertEquals(IndexType.POSTING_EF, r.getMetadata().getColumnIndexType(colIndex));
             }
         });
     }
@@ -1242,7 +1241,7 @@ public class CreateTableTest extends AbstractCairoTest {
             execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING EF) TIMESTAMP(ts) PARTITION BY DAY");
             try (TableReader r = engine.getReader("tab")) {
                 int colIndex = r.getMetadata().getColumnIndex("s");
-                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(colIndex));
+                assertEquals(IndexType.POSTING_EF, r.getMetadata().getColumnIndexType(colIndex));
             }
         });
     }

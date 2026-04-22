@@ -40,6 +40,7 @@ import io.questdb.std.str.Path;
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private static final int MIN_BUFFER_CAPACITY = 4;
     private final ObjList<Cursor> freeCursors = new ObjList<>();
+    private final ObjList<NullCursor> freeNullCursors = new ObjList<>();
 
     public PostingIndexBwdReader(
             CairoConfiguration configuration,
@@ -62,6 +63,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             freeCursors.getQuick(i).releaseResources();
         }
         Misc.clear(freeCursors);
+        for (int i = 0, n = freeNullCursors.size(); i < n; i++) {
+            freeNullCursors.getQuick(i).releaseResources();
+        }
+        Misc.clear(freeNullCursors);
     }
 
     @Override
@@ -73,6 +78,20 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         if (key >= keyCount) {
             updateKeyCount();
+        }
+
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
+            NullCursor nc;
+            if (freeNullCursors.size() > 0) {
+                nc = freeNullCursors.popLast();
+                nc.isPooled = false;
+            } else {
+                nc = new NullCursor();
+            }
+            nc.of(key, minValue, maxValue);
+            final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
+            nc.nullCount = Math.min(columnTop, hi);
+            return nc;
         }
 
         if (key < keyCount) {
@@ -99,6 +118,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
     private class Cursor extends AbstractCoveringCursor {
         private final LongList builderEntries = new LongList();
+        protected long efRankDirAddr;
+        protected int efRankDirCapacity;
+        protected long maxValue;
+        protected long minValue;
+        protected long next;
+        boolean isPooled;
         private long blockBufferAddr = 0;
         private int blockBufferCapacity = 0;
         private int blockBufferPos;
@@ -117,8 +142,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private int efL;
         private long efLowMask;
         private long efLowOffset;
-        private long efRankDirAddr;
-        private int efRankDirCapacity;
         private int encodedBlockCount;
         private long flatBaseValue;
         private int flatBitWidth;
@@ -128,11 +151,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private boolean isCacheReplayMode;
         private boolean isEFMode;
         private boolean isFlatMode;
-        private boolean isPooled;
-        private long maxValue;
         private int minBlock;
-        private long minValue;
-        private long next;
         private long packedDataStartOffset;
         private int sparseGenLoadedIdx;
         private long srcBitWidthsOffset;
@@ -234,7 +253,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
 
                 // Advance to previous generation
-                if (!advanceToPrevRelevantGen()) {
+                if (advanceToPrevRelevantGen()) {
                     return false;
                 }
             }
@@ -255,17 +274,17 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         private boolean advanceToPrevRelevantGen() {
             if (cursorReloadGeneration != reloadGeneration) {
-                return false;
+                return true;
             }
             if (isCacheReplayMode && cacheVersionAtOf != genLookup.getCacheVersion()) {
-                return false;
+                return true;
             }
             currentGen--;
             while (currentGen >= 0) {
                 int gkc = genLookup.getGenKeyCount(currentGen);
                 if (gkc >= 0) {
                     loadDenseGenerationCached(currentGen);
-                    return true;
+                    return false;
                 }
                 if (isCacheReplayMode) {
                     if (cacheReplayEnd <= cacheReplayPos) {
@@ -280,7 +299,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     }
                     cacheReplayEnd--;
                     loadSparseGenDirect(currentGen, PostingGenLookup.unpackCachePosInGen(entry));
-                    return true;
+                    return false;
                 }
                 if (requestedKey < genLookup.getGenMinKey(currentGen)
                         || requestedKey > genLookup.getGenMaxKey(currentGen)) {
@@ -294,7 +313,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 loadSparseGenByPrefixSum(currentGen);
                 if (encodedBlockCount > 0 || isFlatMode || isEFMode) {
                     builderEntries.add(PostingGenLookup.packCacheEntry(currentGen, sparseGenLoadedIdx));
-                    return true;
+                    return false;
                 }
                 currentGen--;
             }
@@ -303,7 +322,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 builderEntries.reverse();
                 genLookup.putCacheEntries(requestedKey, builderEntries);
             }
-            return false;
+            return true;
         }
 
         private void clearBlockState() {
@@ -820,20 +839,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             this.blockBufferPos = -1;
         }
 
-        private void releaseResources() {
-            if (blockBufferAddr != 0) {
-                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockBufferAddr = 0;
-                blockBufferCapacity = 0;
-            }
-            if (efRankDirAddr != 0) {
-                Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                efRankDirAddr = 0;
-                efRankDirCapacity = 0;
-            }
-            closeCoveringResources();
-        }
-
         void of(int key, long minValue, long maxValue) {
             this.cursorReloadGeneration = reloadGeneration;
             clearBlockState();
@@ -842,6 +847,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             isCacheReplayMode = false;
             cacheReplayPos = 0;
             cacheReplayEnd = 0;
+            this.minValue = minValue;
+            this.maxValue = maxValue;
 
             if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
                 this.requestedKey = -1;
@@ -850,8 +857,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             }
 
             this.requestedKey = key;
-            this.minValue = minValue;
-            this.maxValue = maxValue;
 
             // Fast path: sealed single-generation dense index. No advance machinery
             // needed; cache offers no win because there is no SBBF skip to amortize
@@ -872,12 +877,64 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 cacheVersionAtOf = genLookup.getCacheVersion();
             }
 
-            if (!advanceToPrevRelevantGen()) {
+            if (advanceToPrevRelevantGen()) {
                 currentGen = -1;
                 encodedBlockCount = 0;
                 currentBlock = -1;
                 blockBufferPos = -1;
             }
+        }
+
+        protected void releaseResources() {
+            if (blockBufferAddr != 0) {
+                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockBufferAddr = 0;
+                blockBufferCapacity = 0;
+            }
+            if (efRankDirAddr != 0) {
+                Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                efRankDirAddr = 0;
+                efRankDirCapacity = 0;
+            }
+            closeCoveringResources();
+        }
+    }
+
+    private class NullCursor extends Cursor {
+        private long nullCount;
+
+        @Override
+        public void close() {
+            if (!isPooled && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                isPooled = true;
+                closeCoveringResources();
+                if (efRankDirAddr != 0) {
+                    Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    efRankDirAddr = 0;
+                    efRankDirCapacity = 0;
+                }
+                resetCoveringState();
+                freeNullCursors.add(this);
+                return;
+            }
+            releaseResources();
+        }
+
+        @Override
+        public boolean hasCovering() {
+            return false;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (super.hasNext()) {
+                return true;
+            }
+            if (--nullCount >= minValue) {
+                next = nullCount;
+                return true;
+            }
+            return false;
         }
     }
 }

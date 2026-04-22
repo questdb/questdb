@@ -38,6 +38,7 @@ import io.questdb.std.str.Path;
 public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     private static final int MIN_BUFFER_CAPACITY = 4;
     private final ObjList<Cursor> freeCursors = new ObjList<>();
+    private final ObjList<NullCursor> freeNullCursors = new ObjList<>();
 
     public PostingIndexFwdReader(
             CairoConfiguration configuration,
@@ -71,6 +72,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             freeCursors.getQuick(i).releaseResources();
         }
         Misc.clear(freeCursors);
+        for (int i = 0, n = freeNullCursors.size(); i < n; i++) {
+            freeNullCursors.getQuick(i).releaseResources();
+        }
+        Misc.clear(freeNullCursors);
     }
 
     @Override
@@ -82,6 +87,21 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         if (key >= keyCount) {
             updateKeyCount();
+        }
+
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
+            NullCursor nc;
+            if (freeNullCursors.size() > 0) {
+                nc = freeNullCursors.popLast();
+                nc.isPooled = false;
+            } else {
+                nc = new NullCursor();
+            }
+            nc.of(key, minValue, maxValue);
+            nc.nullPos = minValue;
+            final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
+            nc.nullCount = Math.min(columnTop, hi);
+            return nc;
         }
 
         if (key < keyCount) {
@@ -108,6 +128,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
     private class Cursor extends AbstractCoveringCursor {
         private final LongList builderEntries = new LongList();
+        protected long maxValue;
+        protected long minValue;
+        protected long next;
+        boolean isPooled;
         private long blockBufferAddr = 0;
         private int blockBufferCapacity = 0;
         private int blockBufferEnd;
@@ -140,10 +164,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private boolean isCacheReplayMode;
         private boolean isEFMode;
         private boolean isFlatMode;
-        private boolean isPooled;
-        private long maxValue;
-        private long minValue;
-        private long next;
         private long packedDataOffset;
         private int sparseGenLoadedIdx;
         private long srcBitWidthsOffset;
@@ -800,15 +820,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.blockBufferEnd = 0;
         }
 
-        private void releaseResources() {
-            if (blockBufferAddr != 0) {
-                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockBufferAddr = 0;
-                blockBufferCapacity = 0;
-            }
-            closeCoveringResources();
-        }
-
         void of(int key, long minValue, long maxValue) {
             this.cursorReloadGeneration = reloadGeneration;
             clearBlockState();
@@ -817,6 +828,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             isCacheReplayMode = false;
             cacheReplayPos = 0;
             cacheReplayEnd = 0;
+            this.minValue = minValue;
+            this.maxValue = maxValue;
 
             if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
                 this.requestedKey = -1;
@@ -825,8 +838,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
 
             this.requestedKey = key;
-            this.minValue = minValue;
-            this.maxValue = maxValue;
 
             // Fast path: sealed single-generation dense index. No advance machinery
             // needed; cache offers no win because there is no SBBF skip to amortize
@@ -848,6 +859,46 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
 
             advanceToNextRelevantGen();
+        }
+
+        protected void releaseResources() {
+            if (blockBufferAddr != 0) {
+                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockBufferAddr = 0;
+                blockBufferCapacity = 0;
+            }
+            closeCoveringResources();
+        }
+    }
+
+    private class NullCursor extends Cursor {
+        private long nullCount;
+        private long nullPos;
+
+        @Override
+        public void close() {
+            if (!isPooled && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                isPooled = true;
+                closeCoveringResources();
+                resetCoveringState();
+                freeNullCursors.add(this);
+                return;
+            }
+            releaseResources();
+        }
+
+        @Override
+        public boolean hasCovering() {
+            return false;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (nullPos < nullCount) {
+                next = nullPos++;
+                return true;
+            }
+            return super.hasNext();
         }
     }
 }

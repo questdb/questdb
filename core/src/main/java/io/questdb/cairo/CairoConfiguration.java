@@ -501,6 +501,8 @@ public interface CairoConfiguration {
         return PostingIndexUtils.ENCODING_ADAPTIVE;
     }
 
+    int getPostingSealGenThreshold();
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();

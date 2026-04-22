@@ -1289,7 +1289,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // open new column files
                 long transientRowCount = txWriter.getTransientRowCount();
                 int lastPartitionIndex = txWriter.getPartitionCount() - 1;
-                if (transientRowCount > 0 && lastPartitionIndex >= 0 && !txWriter.isPartitionParquet(lastPartitionIndex)) {
+                boolean skipForPosting = metadata.isIndexed(columnIndex)
+                        && IndexType.isPosting(metadata.getColumnIndexType(columnIndex));
+                if (!skipForPosting && transientRowCount > 0 && lastPartitionIndex >= 0 && !txWriter.isPartitionParquet(lastPartitionIndex)) {
                     long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                     setStateForTimestamp(path, partitionTimestamp);
                     int plen = path.size();
@@ -4635,8 +4637,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 ddlMem.close();
             }
-            // Fresh index file: sealTxn starts equal to columnNameTxn (no seal performed yet).
-            if (!ff.touch(valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn))) {
+            if (!ff.touch(valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, 0L))) {
                 LOG.error().$("could not create index [name=").$(path)
                         .$(", errno=").$(ff.errno())
                         .I$();
@@ -6218,6 +6219,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
                 configureCoveringIfNeeded(indexer, columnIndex, timestamp);
                 indexer.index(ff, columnDataFd, columnTop, partitionSize);
+                indexer.seal();
             } finally {
                 ff.close(columnDataFd);
             }
@@ -6295,6 +6297,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     rowCount += rowGroupSize;
                 }
                 indexWriter.setMaxValue(partitionSize - 1);
+                indexer.seal();
             }
         } finally {
             if (parquetAddr != 0) {
@@ -9795,6 +9798,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexWriter.add(key, row);
                         }
                         indexWriter.setMaxValue(partitionRowCount - 1);
+                        indexWriter.seal();
                     } finally {
                         ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
                         Misc.free(indexWriter);
@@ -11119,8 +11123,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Any unflushed pending/spill data still holds row IDs from the
         // current partition, so we must write the sidecar gen block now,
         // while the MemoryMA still points to the correct file.
+        final int sealThreshold = configuration.getPostingSealGenThreshold();
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
-            denseIndexers.getQuick(i).getWriter().commit();
+            IndexWriter writer = denseIndexers.getQuick(i).getWriter();
+            try {
+                writer.commit();
+                writer.sealIfMultiGen(sealThreshold);
+            } catch (CairoException e) {
+                throwDistressException(e);
+            }
         }
         txWriter.switchPartitions(timestamp);
         openPartition(timestamp, 0);
@@ -11140,7 +11151,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             ColumnIndexer indexer = denseIndexers.getQuick(i);
             indexer.getWriter().setPendingPublishTableTxn(publishTxn);
-            indexer.getWriter().commit();
+            try {
+                indexer.getWriter().commit();
+            } catch (CairoException e) {
+                throwDistressException(e);
+            }
         }
         if (commitMode != CommitMode.NOSYNC) {
             final boolean async = commitMode == CommitMode.ASYNC;

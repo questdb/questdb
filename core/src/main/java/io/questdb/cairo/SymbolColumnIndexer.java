@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
-import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -112,21 +111,6 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public void rebuildSidecars() {
-        writer.rebuildSidecars();
-    }
-
-    @Override
-    public void seal() {
-        writer.seal();
-    }
-
-    @Override
-    public void setCoveredColumnNameTxns(LongList txns) {
-        writer.setCoveredColumnNameTxns(txns);
-    }
-
-    @Override
     public void configureFollowerAndWriter(
             Path path,
             CharSequence name,
@@ -160,7 +144,6 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public void discardAndClose() {
         writer.clearCovering();
-        writer.discard();
         Misc.free(writer);
         if (buffer != 0) {
             fd = -1;
@@ -233,6 +216,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void rebuildSidecars() {
+        writer.rebuildSidecars();
+    }
+
+    @Override
     public void refreshSourceAndIndex(long loRow, long hiRow) {
         index(ff, fd, loRow, hiRow);
     }
@@ -249,6 +237,16 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public void rollback(long maxRow) {
         this.writer.rollbackValues(maxRow);
+    }
+
+    @Override
+    public void seal() {
+        writer.seal();
+    }
+
+    @Override
+    public void setCoveredColumnNameTxns(LongList txns) {
+        writer.setCoveredColumnNameTxns(txns);
     }
 
     @Override

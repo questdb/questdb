@@ -824,8 +824,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             throw e;
         }
 
-        // Create empty .v file. Fresh index: sealTxn starts equal to columnNameTxn (no seal yet).
-        LPSZ valueFileName = IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, columnNameTxn);
+        // Create empty .v file. Fresh index: POSTING sealTxn starts at 0
+        // (pre-seal state); BITMAP ignores the sealTxn arg.
+        LPSZ valueFileName = IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, 0L);
         if (!ff.touch(valueFileName)) {
             int errno = ff.errno();
             LOG.error().$("could not create index value file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(errno).I$();

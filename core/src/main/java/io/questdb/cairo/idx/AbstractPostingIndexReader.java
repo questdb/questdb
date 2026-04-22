@@ -100,6 +100,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         Misc.free(valueMem);
         closeSidecarMems();
         Misc.free(sidecarBasePath);
+        keyCount = 0;
+        keyCountIncludingNulls = 0;
+        genCount = 0;
+        valueMemSize = -1;
+        keyFileSequence = -1;
     }
 
     @Override
@@ -194,6 +199,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         this.ff = configuration.getFilesFacade();
         this.indexColumnName = columnName;
         this.sidecarBasePath.of(path);
+        genLookup.reopen();
         final int pLen = path.size();
 
         try {

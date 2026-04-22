@@ -206,14 +206,10 @@ public final class TableUtils {
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     public static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
-    static final int META_FLAG_BIT_INDEXED = 1;
-    // Index type values 0-3 fit in 2 bits (bits 0-1). No split encoding needed.
-    // Backward-compatible: old tables with META_FLAG_BIT_INDEXED=1 decode as
-    // IndexType.BITMAP (1).
-    static final int META_FLAG_INDEX_TYPE_MASK_LO = 0x03; // bits 0-1: index type
-    static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
+    static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 3;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
     static final int META_FLAG_BIT_COVERING = META_FLAG_BIT_DEDUP_KEY << 1;
+    static final int META_FLAG_INDEX_TYPE_MASK = 0x07; // bits 0-2: index type
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -222,11 +218,11 @@ public final class TableUtils {
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);
     private static final int MIN_SYMBOL_CAPACITY = 2;
-    private static final int PARQUET_CONFIG_COMPRESSION_MASK = 0xFF;
-    private static final int PARQUET_CONFIG_COMPRESSION_SHIFT = 8;
     // Bit layout for the packed per-column parquet encoding config (32-bit integer).
     // Must stay in sync with the Rust constants in parquet_write/schema.rs.
     private static final int PARQUET_CONFIG_BLOOM_FILTER_FLAG = 1 << 25;
+    private static final int PARQUET_CONFIG_COMPRESSION_MASK = 0xFF;
+    private static final int PARQUET_CONFIG_COMPRESSION_SHIFT = 8;
     private static final int PARQUET_CONFIG_ENCODING_MASK = 0xFF;
     private static final int PARQUET_CONFIG_EXPLICIT_FLAG = 1 << 24;
     private static final int PARQUET_CONFIG_LEVEL_MASK = 0xFF;
@@ -2621,22 +2617,26 @@ public final class TableUtils {
 
     /**
      * Decodes the index type from the column flags long.
-     * Index type occupies bits 0-1 (values 0-3).
+     * Index type occupies bits 0-2 (values 0-7).
      */
     static byte decodeIndexTypeFlags(long flags) {
-        return (byte) (flags & META_FLAG_INDEX_TYPE_MASK_LO);
+        return (byte) (flags & META_FLAG_INDEX_TYPE_MASK);
     }
 
     /**
      * Encodes the index type into flag bits for storage.
-     * Index type occupies bits 0-1 (values 0-3).
+     * Index type occupies bits 0-2 (values 0-7).
      */
     static long encodeIndexTypeFlags(byte indexType) {
-        return indexType & META_FLAG_INDEX_TYPE_MASK_LO;
+        return indexType & META_FLAG_INDEX_TYPE_MASK;
     }
 
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4);
+    }
+
+    static byte getColumnIndexType(MemoryR metaMem, int columnIndex) {
+        return decodeIndexTypeFlags(getColumnFlags(metaMem, columnIndex));
     }
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
@@ -2653,10 +2653,6 @@ public final class TableUtils {
 
     static boolean isColumnDedupKey(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
-    }
-
-    static byte getColumnIndexType(MemoryR metaMem, int columnIndex) {
-        return decodeIndexTypeFlags(getColumnFlags(metaMem, columnIndex));
     }
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
