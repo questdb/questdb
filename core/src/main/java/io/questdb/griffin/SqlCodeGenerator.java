@@ -7348,7 +7348,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         boolean entity;
         // the model is considered entity when it doesn't add any value to its nested model
-        if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
+        boolean hasRename = false;
+        for (int i = 0; i < selectColumnCount; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.getAlias() != null && !Chars.equals(qc.getAlias(), qc.getAst().token)) {
+                // user projection renames a column (e.g. `timestamp AS ts`); the wrapper
+                // carries real semantics and must not be elided.
+                hasRename = true;
+                break;
+            }
+        }
+        if (hasRename) {
+            entity = false;
+        } else if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
             entity = true;
             for (int i = 0; i < selectColumnCount; i++) {
                 QueryColumn qc = columns.getQuick(i);

@@ -4662,6 +4662,32 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCteWithDoubleParensAndTimestampClauseSampleBy() throws SqlException {
+        assertQuery(
+                "select-group-by ts, sum(amount) sum from " +
+                        "(select-choose [ts, amount] ts, amount from " +
+                        "(select-choose [timestamp ts, amount] timestamp ts, amount from " +
+                        "(select-choose [timestamp, amount] timestamp, amount from " +
+                        "(select [timestamp, amount] from trades timestamp (timestamp) " +
+                        "where timestamp in '2024-03-08' or timestamp between ('2024-03-10T08:00:00Z', '2024-03-12'))" +
+                        ") timestamp (timestamp))) Test " +
+                        "sample by 1d align to calendar time zone 'America/New_York' with offset '00:00'",
+                "WITH Test AS ((" +
+                        " SELECT timestamp AS ts, amount" +
+                        " FROM (" +
+                        "  SELECT timestamp, amount FROM trades" +
+                        "  WHERE timestamp IN '2024-03-08'" +
+                        "  OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')" +
+                        " ) timestamp(timestamp))" +
+                        ") SELECT ts, sum(amount) FROM Test " +
+                        "SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                modelOf("trades")
+                        .timestamp("timestamp")
+                        .col("amount", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testCursorFromFuncAliasConfusing() throws SqlException {
         assertQuery(
                 "select-choose x1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
@@ -13538,11 +13564,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testUnnestEmptyExpression() throws Exception {
+    public void testUnnestColumnAliasMalformedSeparator() throws Exception {
         assertSyntaxError(
-                "SELECT val FROM t, UNNEST()",
-                26,
-                "expression expected",
+                "SELECT u.val FROM t, UNNEST(t.arr) u(val JUNK)",
+                41,
+                "',' or ')' expected",
                 modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
         );
     }
@@ -13553,16 +13579,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "SELECT u.val FROM t, UNNEST(t.arr) u(val, extra1, extra2)",
                 42,
                 "too many column aliases for UNNEST",
-                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
-        );
-    }
-
-    @Test
-    public void testUnnestColumnAliasMalformedSeparator() throws Exception {
-        assertSyntaxError(
-                "SELECT u.val FROM t, UNNEST(t.arr) u(val JUNK)",
-                41,
-                "',' or ')' expected",
                 modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
         );
     }
@@ -13594,6 +13610,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 50,
                 "unsupported type for JSON UNNEST",
                 modelOf("t").col("payload", ColumnType.VARCHAR)
+        );
+    }
+
+    @Test
+    public void testUnnestEmptyExpression() throws Exception {
+        assertSyntaxError(
+                "SELECT val FROM t, UNNEST()",
+                26,
+                "expression expected",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
         );
     }
 
