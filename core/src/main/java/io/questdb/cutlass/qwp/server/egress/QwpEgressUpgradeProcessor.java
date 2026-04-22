@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.server.egress;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.PageFrame;
@@ -55,6 +56,7 @@ import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
@@ -70,6 +72,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zstd;
@@ -115,7 +118,7 @@ import io.questdb.std.str.Utf8Sequence;
  * encoding discriminator; ordered columns compress via delta-of-delta, jumpy
  * ones fall back to raw).
  */
-public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
+public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietCloseable {
 
     private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
     private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
@@ -169,7 +172,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
     public static byte mapErrorStatus(Throwable e) {
         // SqlException covers both syntax errors and semantic errors (e.g., table not found).
         // Its getMessage() already embeds the "[position] text" form.
-        if (e instanceof io.questdb.griffin.SqlException) {
+        if (e instanceof SqlException) {
             return QwpConstants.STATUS_PARSE_ERROR;
         }
         // QwpParseException signals a client-side protocol error (truncated frame,
@@ -179,7 +182,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
         if (e instanceof QwpParseException) {
             return QwpConstants.STATUS_PARSE_ERROR;
         }
-        if (e instanceof io.questdb.cairo.CairoException ce) {
+        if (e instanceof CairoException ce) {
             if (ce.isAuthorizationError()) {
                 return QwpConstants.STATUS_SECURITY_ERROR;
             }
@@ -196,6 +199,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor {
             return QwpConstants.STATUS_INTERNAL_ERROR;
         }
         return QwpConstants.STATUS_INTERNAL_ERROR;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(selectCache);
     }
 
     @Override

@@ -29,6 +29,8 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 
 /**
  * HTTP request handler for QWP egress (query results) WebSocket connections at /read/v1.
@@ -37,7 +39,7 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
  * server-to-client direction. The handshake validation and 101 response writing
  * are reused via static helpers; only the post-upgrade behavior differs.
  */
-public class QwpEgressHttpProcessor implements HttpRequestHandler {
+public class QwpEgressHttpProcessor implements HttpRequestHandler, QuietCloseable {
 
     private final QwpEgressUpgradeProcessor processor;
 
@@ -47,6 +49,11 @@ public class QwpEgressHttpProcessor implements HttpRequestHandler {
             int sharedWorkerCount
     ) {
         this.processor = new QwpEgressUpgradeProcessor(engine, httpConfiguration, sharedWorkerCount);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(processor);
     }
 
     @Override
