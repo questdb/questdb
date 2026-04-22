@@ -7391,7 +7391,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (parquetMetaReader.getAddr() != 0 && parquetMetaReader.resolveFooter(parquetFileSize)) {
                     return;
                 }
-            } catch (CairoException ignored) {
+            } catch (Exception ignored) {
                 // ignore corrupt _pm file, we'll regenerate it
             }
 
