@@ -19,7 +19,7 @@ use std::io::{Read, Seek};
 /// Extract the questdb-specific metadata from the parquet file metadata.
 /// Error if the JSON is not valid or the version is not supported.
 /// Returns `None` if the metadata is not present.
-fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMeta>> {
+pub(crate) fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMeta>> {
     let Some(key_value_meta) = file_metadata.key_value_metadata.as_ref() else {
         return Ok(None);
     };

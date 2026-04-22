@@ -215,6 +215,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         }
 
         Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
     }
