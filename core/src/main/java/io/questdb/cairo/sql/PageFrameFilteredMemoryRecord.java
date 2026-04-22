@@ -433,12 +433,18 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
         return TableUtils.NULL_LEN;
     }
 
+    /**
+     * Binds this record to a new page frame. Both the absolute and compacted indices are reset
+     * to -1: callers MUST invoke {@link #setFilteredRowIndex(long, long)} before any column
+     * read. Reading a column before the first positioning call produces a negative page offset
+     * and crashes loudly rather than silently returning data from a stale row.
+     */
     public PageFrameFilteredMemoryRecord of(PageFrameMemory memory, PageFrameMemoryRecord other, IntHashSet filterIndexes) {
         super.init(memory);
         this.symbolTableSource = other.symbolTableSource;
-        this.rowIndex = other.rowIndex;
         this.letter = other.letter;
         this.stableStrings = other.stableStrings;
+        this.rowIndex = -1;
         this.compactedRowIndex = -1;
         filteredColumns.clear();
         for (int i = 0, n = memory.getColumnCount(); i < n; i++) {
@@ -454,15 +460,13 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     }
 
     /**
-     * @throws UnsupportedOperationException always. A filtered record cannot be positioned by
-     *     the absolute index alone because non-filter columns address rows by the compacted
-     *     index. Use {@link #setFilteredRowIndex(long, long)} instead.
+     * @throws UnsupportedOperationException always. A filtered record cannot be positioned by the absolute index
+     *                                       alone because non-filter columns address rows by the compacted index.
+     *                                       Use {@link #setFilteredRowIndex(long, long)} instead.
      */
     @Override
     public void setRowIndex(long rowIndex) {
-        throw new UnsupportedOperationException(
-                "PageFrameFilteredMemoryRecord requires setFilteredRowIndex(rowIndex, compactedRowIndex)"
-        );
+        throw new UnsupportedOperationException("PageFrameFilteredMemoryRecord requires setFilteredRowIndex(rowIndex, compactedRowIndex)");
     }
 
     private long getRowIndex(int columnIndex) {
