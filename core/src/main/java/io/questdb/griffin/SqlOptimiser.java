@@ -11197,6 +11197,10 @@ public class SqlOptimiser implements Mutable {
         return Long.MAX_VALUE;
     }
 
+    // SUBSAMPLE is intentionally NOT transferred here. Broad transfer would
+    // hoist branch-local SUBSAMPLE from parenthesized subqueries to the outer
+    // query. SUBSAMPLE propagation is handled by subsampleSource tracking in
+    // rewriteSelectClause0() and skipNoneTypeModels() preservation.
     static IQueryModel replaceAndTransferDependents(IQueryModel oldModel, IQueryModel newModel) {
         if (newModel != oldModel && oldModel != null && oldModel.hasSharedRefs()) {
             newModel.copySharedRefs(oldModel);
