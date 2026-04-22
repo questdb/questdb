@@ -68,9 +68,7 @@ impl<'a> ParquetMetaReader<'a> {
     ///
     /// The resulting reader is bound to the first `file_size` bytes of `data`.
     /// Any trailing bytes (e.g. from an in-progress append that hasn't been
-    /// published yet) are ignored. As a sanity check, the method also
-    /// validates that the header's `parquet_meta_file_size` agrees with the passed-in
-    /// value — a mismatch is treated as corruption.
+    /// published yet) are ignored.
     #[must_use = "returns the reader"]
     pub fn from_file_size(data: &'a [u8], file_size: u64) -> ParquetResult<Self> {
         let file_size_usize = usize::try_from(file_size).map_err(|_| {
@@ -118,20 +116,7 @@ impl<'a> ParquetMetaReader<'a> {
                     file_size
                 )
             })?;
-        let reader = Self::new(file_data, footer_offset)?;
-        // Defense in depth: the header's parquet_meta_file_size must match the value
-        // we were handed. If they disagree, the file is corrupt or the
-        // caller passed a stale size — either way, refuse to proceed.
-        let header_size = reader.header.parquet_meta_file_size();
-        if header_size != file_size {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "header parquet_meta_file_size {} does not match caller-provided file size {}",
-                header_size,
-                file_size
-            ));
-        }
-        Ok(reader)
+        Self::new(file_data, footer_offset)
     }
 
     /// Creates a reader over the given byte slice.
@@ -651,10 +636,11 @@ impl<'a> ParquetMetaReader<'a> {
                 (max_stat_sz as usize).min(8)
             };
 
-            // Decode an OOL stat reference: `(offset << 32) | length`.
+            // Decode an OOL stat reference: `(offset << 16) | length`
+            // (offset = high 48 bits, length = low 16 bits).
             let decode_ool = |encoded: u64| -> Option<&[u8]> {
-                let ool_off = (encoded >> 32) as usize;
-                let ool_len = (encoded & 0xFFFF_FFFF) as usize;
+                let ool_off = (encoded >> 16) as usize;
+                let ool_len = (encoded & 0xFFFF) as usize;
                 if ool_len == 0 {
                     return None;
                 }

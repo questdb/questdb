@@ -2974,11 +2974,11 @@ mod tests {
         );
         assert!(!ool.is_empty(), "OOL region should contain stat data");
 
-        // Read OOL stat bytes. Encoding: (offset << 32) | length.
-        let min_off = (chunk.min_stat >> 32) as usize;
-        let min_len = (chunk.min_stat & 0xFFFF_FFFF) as usize;
-        let max_off = (chunk.max_stat >> 32) as usize;
-        let max_len = (chunk.max_stat & 0xFFFF_FFFF) as usize;
+        // Read OOL stat bytes. Encoding: (offset << 16) | length.
+        let min_off = (chunk.min_stat >> 16) as usize;
+        let min_len = (chunk.min_stat & 0xFFFF) as usize;
+        let max_off = (chunk.max_stat >> 16) as usize;
+        let max_len = (chunk.max_stat & 0xFFFF) as usize;
         assert_eq!(min_len, 16, "UUID OOL min stat should be 16 bytes");
         assert_eq!(max_len, 16, "UUID OOL max stat should be 16 bytes");
         let min_bytes = &ool[min_off..min_off + min_len];

@@ -46,7 +46,7 @@ use std::slice;
 ///
 /// SAFETY: callers MUST destroy this struct before munmapping the
 /// underlying `_pm` file. The reference pattern is
-/// `ShowPartitionsRecordCursorFactory.closeParquetMeta()` in the Java tree:
+/// `ParquetMetaFileReader.unmapAndClear()` in the Java tree:
 /// `clear()` first, then `munmap`.
 pub struct JniParquetMetaReader {
     inner: ParquetMetaReader<'static>,

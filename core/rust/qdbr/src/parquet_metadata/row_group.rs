@@ -172,8 +172,10 @@ impl RowGroupBlockBuilder {
     /// `is_min`: if true, patches `min_stat`; otherwise patches `max_stat`.
     /// Appends an out-of-line stat value and records its location in the
     /// column chunk. The `min_stat` / `max_stat` field is encoded as
-    /// `(offset << 32) | length` so the reader can recover both the
-    /// position and size of the OOL data, even for variable-length types.
+    /// `(offset << 16) | length`: offset occupies the high 48 bits (byte
+    /// offset within this row group block's out-of-line region) and length
+    /// occupies the low 16 bits. Parquet truncates stats well below 64KB;
+    /// oversized values are rejected.
     pub fn add_out_of_line_stat(
         &mut self,
         col_index: usize,
@@ -189,10 +191,23 @@ impl RowGroupBlockBuilder {
                 len
             )
         })?;
+        if data.len() > u16::MAX as usize {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "out-of-line stat length {} exceeds u16 max {}",
+                data.len(),
+                u16::MAX
+            ));
+        }
         let offset = self.out_of_line.len() as u64;
+        debug_assert!(
+            offset < (1u64 << 48),
+            "out-of-line stat offset {} exceeds u48 max",
+            offset
+        );
         let data_len = data.len() as u64;
         self.out_of_line.extend_from_slice(data);
-        let encoded = (offset << 32) | (data_len & 0xFFFF_FFFF);
+        let encoded = (offset << 16) | (data_len & 0xFFFF);
         if is_min {
             chunk.min_stat = encoded;
         } else {
@@ -364,13 +379,13 @@ mod tests {
         let c = reader.column_chunk(0).unwrap();
 
         let ool = reader.out_of_line_region();
-        // OOL stats encode (offset << 32) | length.
-        let min_off = (c.min_stat >> 32) as usize;
-        let min_len = (c.min_stat & 0xFFFF_FFFF) as usize;
+        // OOL stats encode (offset << 16) | length.
+        let min_off = (c.min_stat >> 16) as usize;
+        let min_len = (c.min_stat & 0xFFFF) as usize;
         assert_eq!(min_len, 16);
         assert_eq!(&ool[min_off..min_off + min_len], &min_data);
-        let max_off = (c.max_stat >> 32) as usize;
-        let max_len = (c.max_stat & 0xFFFF_FFFF) as usize;
+        let max_off = (c.max_stat >> 16) as usize;
+        let max_len = (c.max_stat & 0xFFFF) as usize;
         assert_eq!(max_len, 16);
         assert_eq!(&ool[max_off..max_off + max_len], &max_data);
     }
@@ -408,6 +423,13 @@ mod tests {
     fn add_out_of_line_stat_out_of_range() {
         let mut builder = RowGroupBlockBuilder::new(1);
         assert!(builder.add_out_of_line_stat(1, true, &[0u8; 8]).is_err());
+    }
+
+    #[test]
+    fn add_out_of_line_stat_length_overflows_u16() {
+        let mut builder = RowGroupBlockBuilder::new(1);
+        let oversized = vec![0u8; (u16::MAX as usize) + 1];
+        assert!(builder.add_out_of_line_stat(0, true, &oversized).is_err());
     }
 
     #[test]
@@ -479,10 +501,10 @@ mod tests {
         let reader = RowGroupBlockReader::new(&buf[block_start..], 1).unwrap();
         let c = reader.column_chunk(0).unwrap();
 
-        // OOL stat still readable. Encoding: (offset << 32) | length.
+        // OOL stat still readable. Encoding: (offset << 16) | length.
         let ool = reader.out_of_line_region();
-        let min_off = (c.min_stat >> 32) as usize;
-        let min_len = (c.min_stat & 0xFFFF_FFFF) as usize;
+        let min_off = (c.min_stat >> 16) as usize;
+        let min_len = (c.min_stat & 0xFFFF) as usize;
         assert_eq!(min_len, 13);
         assert_eq!(&ool[min_off..min_off + min_len], &stat_data);
 
