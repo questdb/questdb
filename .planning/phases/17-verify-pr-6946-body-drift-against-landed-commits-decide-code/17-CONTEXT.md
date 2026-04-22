@@ -155,6 +155,24 @@ Phase 17 applies a narrow principle to PR body edits (D-01 below): a body row is
 
 - **D-28** - After D-26/D-27 land, move `.planning/todos/pending/2026-04-22-reject-cross-column-fill-prev-timestamp-unit-mismatch.md` to `.planning/todos/completed/` with a `completed_at:` field and a back-reference to the Phase 17 plan ID that shipped the fix.
 
+### Test-hygiene addendum (Plan 17-05, surfaced during Phase 17 execution)
+
+Two pending todos auto-created on 2026-04-22T17:10:07 during Plan 03 execution surfaced three lax-assertion findings in the same theme as D-23 (m8c). All three land in a Plan 17-05 addendum rather than Phase 18; phase is still `executing` per STATE.md until `/review-pr 6946` re-run confirms SC#8.
+
+- **D-29** - Finding 4.6: `SampleByFillTest#testFillKeyedRespectsCircuitBreaker` at `:350` assigns `circuitBreakerConfiguration` to the `protected static` field on `AbstractCairoTest` and never restores it. `staticOverrides.reset()` only fires in `@AfterClass`; `@Before setUp()` does not touch this field. No current bleed (no other test in the class reads it), but latent foot-gun for any future test in the same class constructing `NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, ...)`. Caveat: 4 other test classes (`ParallelFilterTest:828`, `OrderByTimeoutTest`, `CheckpointTest`, `ParallelGroupByFuzzTest`) have the identical pattern; fixing this one test diverges from project-wide precedent.
+  
+  Fix: wrap the body in `try { ... } finally { circuitBreakerConfiguration = null; }`. Land the divergence; the SampleByFillTest class is the one with the highest future-test growth potential (Phase 15 + Phase 17 already added CB tests here). Project precedent is a weak argument when a test class is actively accreting related tests.
+
+- **D-30** - Finding 4.7: `SampleByFillTest#testSortedRecordCursorFactoryConstructorThrow` at `:3248` (shifted from :3122 after Plan 03 insertions) catches `Throwable` and accepts one of 6 substrings (`"max pages" || "maxPages" || "Maximum number of pages" || "limit" || "overflow" || "breached"`). The broad matcher accepts any exception that mentions a limit; a single canonical substring suffices because all `LimitOverflowException` sites for `sqlSortKeyMaxPages = -1` produce stable text.
+  
+  Fix: narrow the catch to `CairoException` (the `LimitOverflowException` superclass) and use a single canonical substring via `TestUtils.assertContains(ex.getFlyweightMessage(), "Maximum number of pages")`. JVM-level `Error`s propagate instead of being swallowed; re-wrapping to `SqlException` on the construct path fails loud instead of hiding.
+
+- **D-31** - Finding 4.1 (sibling todo): `SqlOptimiserTest#testSampleByFromToKeyedQuery` at `:4256` is the ONLY `printSql(...)`-only test in that file (vs 167 `assertPlan` + 75 `assertSql` + 12 `assertModel` siblings). PR #6946 renamed it from master's `testSampleByFromToDisallowedQueryWithKey` (which used `assertException`) and replaced the body with a bare `printSql` inside `assertMemoryLeak`. Passes under silent regressions: cursor-path fallback, `LIMIT 6` drop, cartesian collapse, lost `Async Group By` parallelism. A positive-case regression test already exists at `SampleByTest:7015` (`testSampleByFromToIsAllowedForKeyedQueries` with `count(*) rows, count_distinct(x) keys` wrapper asserting 9 buckets x 479 keys = 4311 rows).
+  
+  Fix: convert to `assertPlanNoLeakCheck` pinning the fast-path plan. Probe-and-freeze per Phase 15 D-02 — run once with a temporary `printSql` call to capture the exact plan string, then replace with the plan assertion. Alternative: delete the method (SampleByTest already covers correctness). Choose conversion over deletion because the test name signals coverage of the optimizer rewrite specifically, and keeping it in SqlOptimiserTest is consistent with siblings.
+
+- **D-32** - Plan 17-05 ships all three findings in a single test-only plan. One commit suggested (three edits, same file + one other file) OR two commits (4.6 / 4.7 bundle in `SampleByFillTest.java`; 4.1 as separate commit in `SqlOptimiserTest.java`). Planner's judgment; bisectability favors two. Under D-01, none warrant PR body rows — all three are regression-recovery / test-quality improvements with no user-visible surface change. After the plan lands, move `2026-04-22-tighten-samplebyfilltest-cb-field-reset-and-constructor-thro.md` and `2026-04-22-upgrade-sqloptimisertest-testsamplebyfromtokeyedquery-from-p.md` to `.planning/todos/completed/` with `completed_at` + `completed_in: 17-05-PLAN.md`.
+
 ### Plan / commit structure
 
 - **D-25** - Planner decides plan partitioning and commit boundaries. Suggested (non-binding) clustering:
