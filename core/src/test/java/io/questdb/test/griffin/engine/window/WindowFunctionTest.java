@@ -12988,6 +12988,29 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionAsArgumentToAggregateWithBaseColumnAndGroupBy() throws Exception {
+        // Base column mixed with window function inside aggregate argument with GROUP BY.
+        // max(x - avg(x) OVER (...)) computes max deviation from the moving average per category.
+        assertQuery(
+                """
+                        category\tmax_dev
+                        A\t0.5
+                        B\t0.5
+                        """,
+                "SELECT category, max(x - avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS max_dev " +
+                        "FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testWindowFunctionAsArgumentToAggregateWithBaseColumnImplicitGroupBy() throws Exception {
         // Base column mixed with window function inside aggregate, no GROUP BY clause.
         // sum triggers implicit grouping; x needs pass-through in the inner window model.
@@ -13029,16 +13052,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionAsArgumentToAggregateWithBaseColumnAndGroupBy() throws Exception {
-        // Base column mixed with window function inside aggregate argument with GROUP BY.
-        // max(x - avg(x) OVER (...)) computes max deviation from the moving average per category.
+    public void testWindowFunctionAsArgumentToAggregateWithGroupBy() throws Exception {
+        // Window function inside aggregate argument with explicit GROUP BY.
+        // max(avg(x) OVER (PARTITION BY cat ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW))
+        // computes a 3-row moving average per category, then picks the peak per category.
         assertQuery(
                 """
-                        category\tmax_dev
-                        A\t0.5
-                        B\t0.5
+                        category\tpeak_ma
+                        A\t1.5
+                        B\t3.5
                         """,
-                "SELECT category, max(x - avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS max_dev " +
+                "SELECT category, max(avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS peak_ma " +
                         "FROM tab GROUP BY category ORDER BY category",
                 "CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
@@ -13077,20 +13101,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionAsArgumentToAggregateWithGroupBy() throws Exception {
-        // Window function inside aggregate argument with explicit GROUP BY.
-        // max(avg(x) OVER (PARTITION BY cat ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW))
-        // computes a 3-row moving average per category, then picks the peak per category.
+    public void testWindowFunctionAsArgumentToAggregateWithGroupByExpression() throws Exception {
+        // GROUP BY on a non-aggregate expression (upper(cat)) combined with a nested
+        // window inside an aggregate. The inner window model must expose the underlying
+        // literal (cat), not the GROUP BY alias (upper_cat).
         assertQuery(
                 """
-                        category\tpeak_ma
-                        A\t1.5
-                        B\t3.5
+                        upper_cat\tresult
+                        A\t5.0
+                        B\t5.0
                         """,
-                "SELECT category, max(avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS peak_ma " +
-                        "FROM tab GROUP BY category ORDER BY category",
+                "SELECT upper(cat) AS upper_cat, sum(avg(x) OVER ()) AS result " +
+                        "FROM tab GROUP BY upper(cat) ORDER BY upper_cat",
                 "CREATE TABLE tab AS (" +
-                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'a' ELSE 'b' END AS cat, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY",
@@ -13196,30 +13220,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "SELECT x::DOUBLE AS x, " +
                         "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
                         "CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END AS cat2, " +
-                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
-                        "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testWindowFunctionAsArgumentToAggregateWithGroupByExpression() throws Exception {
-        // GROUP BY on a non-aggregate expression (upper(cat)) combined with a nested
-        // window inside an aggregate. The inner window model must expose the underlying
-        // literal (cat), not the GROUP BY alias (upper_cat).
-        assertQuery(
-                """
-                        upper_cat\tresult
-                        A\t5.0
-                        B\t5.0
-                        """,
-                "SELECT upper(cat) AS upper_cat, sum(avg(x) OVER ()) AS result " +
-                        "FROM tab GROUP BY upper(cat) ORDER BY upper_cat",
-                "CREATE TABLE tab AS (" +
-                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'a' ELSE 'b' END AS cat, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY",
