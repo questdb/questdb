@@ -42,7 +42,8 @@ import io.questdb.std.histogram.org.HdrHistogram.PackedDoubleHistogram;
 public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function exprFunc;
     private final int funcPosition;
-    private final ObjList<PackedDoubleHistogram> histograms = new ObjList<>();
+    private ObjList<PackedDoubleHistogram> histograms = new ObjList<>();
+    private boolean isShared;
     private final Function percentileFunc;
     private final int precision;
     private int histogramIndex;
@@ -58,6 +59,7 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
 
     @Override
     public void clear() {
+        if (isShared) return;
         histograms.clear();
         histogramIndex = 0;
     }
@@ -132,6 +134,13 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
         if (Numbers.isNull(percentile) || percentile < 0 || percentile > 1) {
             throw SqlException.$(funcPosition, "percentile must be between 0.0 and 1.0");
         }
+    }
+
+    @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        this.valueIndex = primary.getValueIndex();
+        this.histograms = ((ApproxPercentileDoublePackedGroupByFunction) primary).histograms;
+        this.isShared = true;
     }
 
     @Override

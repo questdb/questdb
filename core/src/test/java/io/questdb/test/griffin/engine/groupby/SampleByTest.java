@@ -132,6 +132,37 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBadTimezoneSubDayWithFrom() throws Exception {
+        // Sub-day stride + timezone + FROM: the optimiser wraps FROM with
+        // to_utc(FROM, tz), which validates the timezone BEFORE the code
+        // generator's catch(NumericException) block at SqlCodeGenerator:6813.
+        //
+        // The catch(NumericException) in SqlCodeGenerator.generateSampleBy()
+        // is dead code because timestampDriver.getTimezoneRules() wraps
+        // NumericException in CairoException. If it were the only validation,
+        // this test would get CairoException (position=0) instead of
+        // SqlException (position=85 pointing at the timezone token).
+        assertException(
+                "SELECT count(), ts FROM x SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'",
+                "CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                85,
+                "invalid timezone: Invalid/TZ"
+        );
+    }
+
+    @Test
+    public void testBadTimezoneSubDayNoFrom() throws Exception {
+        // Sub-day stride + timezone without FROM: the timezone is passed to
+        // timestamp_floor_utc which validates it in AbstractTimestampFloorFromOffsetFunctionFactory.
+        assertException(
+                "SELECT count(), ts FROM x SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'",
+                "CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                67,
+                "invalid timezone: Invalid/TZ"
+        );
+    }
+
+    @Test
     public void testBadInterval() throws Exception {
         assertException(
                 "select b, sum(a), k from x sample by 1hour",
@@ -321,6 +352,61 @@ public class SampleByTest extends AbstractCairoTest {
                 10,
                 "support for LINEAR fill is not yet implemented"
         );
+    }
+
+    @Test
+    public void testFillValueCachedPlanReturnsCorrectResults() throws Exception {
+        // Reproducer for https://github.com/questdb/questdb/issues/6902
+        // fill() returns correct results on first execution but nulls on second
+        // execution when using a cached plan.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (" +
+                    "  symbol SYMBOL," +
+                    "  side SYMBOL," +
+                    "  price DOUBLE," +
+                    "  amount DOUBLE," +
+                    "  timestamp TIMESTAMP" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
+
+            execute("INSERT INTO trades VALUES" +
+                    "('BTC', 'buy',  100.0, 10.0, '2026-03-31T02:00:00.000000Z')," +
+                    "('BTC', 'buy',  101.0, 20.0, '2026-03-31T02:30:00.000000Z')," +
+                    "('BTC', 'sell', 102.0, 15.0, '2026-03-31T03:15:00.000000Z')," +
+                    "('BTC', 'buy',  103.0, 25.0, '2026-03-31T05:45:00.000000Z')");
+
+            String query = "SELECT timestamp," +
+                    "  sum(price * amount) / sum(amount) AS value," +
+                    "  sum(amount) AS count," +
+                    "  first(price)," +
+                    "  first(amount)" +
+                    " FROM trades" +
+                    " WHERE timestamp >= '2026-03-30T02:44:07.792000+01:00'" +
+                    "   AND timestamp <= '2026-03-31T09:27:07.030999+01:00'" +
+                    " SAMPLE BY 1h" +
+                    " FROM '2026-03-31T00:00:00+01:00' TO '2026-03-31T23:59:59+01:00'" +
+                    " FILL(0, 0, 0, 0)";
+
+            // getCursor() called multiple times on the same factory must
+            // return consistent results (tests cached plan reuse).
+            RecordCursorFactory factory = select(query);
+            try {
+                String firstResult = null;
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        StringSink s = new StringSink();
+                        CursorPrinter.println(factory.getMetadata(), s);
+                        CursorPrinter.println(cursor, factory.getMetadata(), s);
+                        if (firstResult == null) {
+                            firstResult = s.toString();
+                        } else {
+                            TestUtils.assertEquals("execution #" + (i + 1) + " differs from #1", firstResult, s.toString());
+                        }
+                    }
+                }
+            } finally {
+                Misc.free(factory);
+            }
+        });
     }
 
     @Test
@@ -2033,7 +2119,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "   rnd_double(1)*180 lat," +
                             "   rnd_double(1)*180 lon," +
                             "   rnd_symbol('a') s," +
-                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY",
@@ -2126,7 +2212,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "   rnd_double(1)*180 lat," +
                             "   rnd_double(1)*180 lon," +
                             "   rnd_symbol('a') s," +
-                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY"
@@ -2185,7 +2271,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -2216,7 +2302,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T01:00:00.00000Z', 60*1000000L) k" +
+                        "   timestamp_sequence('2021-03-28T01:00:00.00000Z', 60_000_000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -2248,7 +2334,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T01:59:00.00000Z', 60*1000000L) k" +
+                        "   timestamp_sequence('2021-03-28T01:59:00.00000Z', 60_000_000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -2279,7 +2365,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-27T23:01:00.00000Z', 60*1000000L) k" +
+                        "   timestamp_sequence('2021-03-27T23:01:00.00000Z', 60_000_000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -2464,6 +2550,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondon365DaysWithOffset() throws Exception {
+        // See `testIndexSampleByAlignToCalendarWithTimezoneLondon365DaysWithOffsetData` for why the bucketing is the way it is.
         assertSampleByIndexQuery(
                 """
                         to_timezone\tk\ts\tlat\tlon
@@ -2502,6 +2589,80 @@ public class SampleByTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondon365DaysWithOffsetData() throws Exception {
+        // Note that once we convert the bucket to local time all buckets end up as `00:51`.
+        // This means that the timezone+offset calculation was done correctly.
+        assertMemoryLeak(() -> {
+            execute("create table x as " +
+                    "(" +
+                    "select" +
+                    "   rnd_double(1)*180 lat," +
+                    "   rnd_double(1)*180 lon," +
+                    "   rnd_symbol('b',null,'a') s," +
+                    "   timestamp_sequence('2020-01-01 00:30:00', 35 * 6 * 59 * 1000000L) k" +
+                    "   from" +
+                    "   long_sequence(365 * 7)" +
+                    "),index(s) timestamp(k)");
+            assertSql(
+                    """
+                            k\tbucket_no_offset\tbucket\tbucket_local\tlat\tlon
+                            2020-01-01T00:30:00.000000Z\t2020-01-01T00:00:00.000000Z\t2019-12-31T00:51:00.000000Z\t2019-12-31T00:51:00.000000Z\t144.77803379943109\t15.276535618609202
+                            2020-01-01T03:56:30.000000Z\t2020-01-01T00:00:00.000000Z\t2020-01-01T00:51:00.000000Z\t2020-01-01T00:51:00.000000Z\tnull\t168.2028874330922
+                            2020-01-01T14:16:00.000000Z\t2020-01-01T00:00:00.000000Z\t2020-01-01T00:51:00.000000Z\t2020-01-01T00:51:00.000000Z\t145.3027002009222\t43.02952219523745
+                            2020-01-02T04:02:00.000000Z\t2020-01-02T00:00:00.000000Z\t2020-01-02T00:51:00.000000Z\t2020-01-02T00:51:00.000000Z\t34.40222311631727\t104.2823938835198
+                            2020-01-02T17:48:00.000000Z\t2020-01-02T00:00:00.000000Z\t2020-01-02T00:51:00.000000Z\t2020-01-02T00:51:00.000000Z\t44.26821499690838\t9.086742036097899
+                            2020-01-02T21:14:30.000000Z\t2020-01-02T00:00:00.000000Z\t2020-01-02T00:51:00.000000Z\t2020-01-02T00:51:00.000000Z\t0.19935649945118428\t137.58557660357081
+                            2020-02-15T01:11:00.000000Z\t2020-02-15T00:00:00.000000Z\t2020-02-15T00:51:00.000000Z\t2020-02-15T00:51:00.000000Z\tnull\t177.6379890120678
+                            2020-02-15T04:37:30.000000Z\t2020-02-15T00:00:00.000000Z\t2020-02-15T00:51:00.000000Z\t2020-02-15T00:51:00.000000Z\t108.7405202094973\t162.3504525172299
+                            2020-02-15T11:30:30.000000Z\t2020-02-15T00:00:00.000000Z\t2020-02-15T00:51:00.000000Z\t2020-02-15T00:51:00.000000Z\t141.00630662059504\tnull
+                            2020-02-16T01:16:30.000000Z\t2020-02-16T00:00:00.000000Z\t2020-02-16T00:51:00.000000Z\t2020-02-16T00:51:00.000000Z\tnull\t61.03007145022136
+                            2020-02-16T11:36:00.000000Z\t2020-02-16T00:00:00.000000Z\t2020-02-16T00:51:00.000000Z\t2020-02-16T00:51:00.000000Z\tnull\t107.33886589290839
+                            2020-02-16T18:29:00.000000Z\t2020-02-16T00:00:00.000000Z\t2020-02-16T00:51:00.000000Z\t2020-02-16T00:51:00.000000Z\tnull\tnull
+                            2020-03-31T05:18:30.000000Z\t2020-03-30T23:00:00.000000Z\t2020-03-30T23:51:00.000000Z\t2020-03-31T00:51:00.000000Z\t148.68936993059629\tnull
+                            2020-03-31T15:38:00.000000Z\t2020-03-30T23:00:00.000000Z\t2020-03-30T23:51:00.000000Z\t2020-03-31T00:51:00.000000Z\t97.1216180375373\t72.42862906714282
+                            2020-03-31T19:04:30.000000Z\t2020-03-30T23:00:00.000000Z\t2020-03-30T23:51:00.000000Z\t2020-03-31T00:51:00.000000Z\t163.85600778404967\t97.42974170245763
+                            2020-03-31T22:31:00.000000Z\t2020-03-30T23:00:00.000000Z\t2020-03-30T23:51:00.000000Z\t2020-03-31T00:51:00.000000Z\t14.62408950019094\t25.998091674739154
+                            2020-04-01T15:43:30.000000Z\t2020-03-31T23:00:00.000000Z\t2020-03-31T23:51:00.000000Z\t2020-04-01T00:51:00.000000Z\t110.66084459718437\t39.06206834198538
+                            2020-04-01T22:36:30.000000Z\t2020-03-31T23:00:00.000000Z\t2020-03-31T23:51:00.000000Z\t2020-04-01T00:51:00.000000Z\tnull\tnull
+                            2020-05-15T05:59:30.000000Z\t2020-05-14T23:00:00.000000Z\t2020-05-14T23:51:00.000000Z\t2020-05-15T00:51:00.000000Z\t110.71207362929246\t122.50414657476328
+                            2020-05-15T12:52:30.000000Z\t2020-05-14T23:00:00.000000Z\t2020-05-14T23:51:00.000000Z\t2020-05-15T00:51:00.000000Z\tnull\t157.42744407921296
+                            2020-05-16T06:05:00.000000Z\t2020-05-15T23:00:00.000000Z\t2020-05-15T23:51:00.000000Z\t2020-05-16T00:51:00.000000Z\t150.66983388553348\t46.34809211523114
+                            2020-05-16T23:17:30.000000Z\t2020-05-16T23:00:00.000000Z\t2020-05-15T23:51:00.000000Z\t2020-05-16T00:51:00.000000Z\t34.633477019382326\t177.59501806418467
+                            2020-08-13T07:21:30.000000Z\t2020-08-12T23:00:00.000000Z\t2020-08-12T23:51:00.000000Z\t2020-08-13T00:51:00.000000Z\t72.23382159093259\t130.1869619141275
+                            2020-08-13T17:41:00.000000Z\t2020-08-12T23:00:00.000000Z\t2020-08-12T23:51:00.000000Z\t2020-08-13T00:51:00.000000Z\t125.95611140314108\t26.984817742420177
+                            2020-08-13T21:07:30.000000Z\t2020-08-12T23:00:00.000000Z\t2020-08-12T23:51:00.000000Z\t2020-08-13T00:51:00.000000Z\t31.702592206104786\t74.07753667847037
+                            2020-08-14T00:34:00.000000Z\t2020-08-13T23:00:00.000000Z\t2020-08-13T23:51:00.000000Z\t2020-08-14T00:51:00.000000Z\t114.9852700958533\t6.089498865753429
+                            2020-08-14T10:53:30.000000Z\t2020-08-13T23:00:00.000000Z\t2020-08-13T23:51:00.000000Z\t2020-08-14T00:51:00.000000Z\t102.99625402608036\t99.72182055735921
+                            2020-08-14T14:20:00.000000Z\t2020-08-13T23:00:00.000000Z\t2020-08-13T23:51:00.000000Z\t2020-08-14T00:51:00.000000Z\tnull\tnull
+                            2020-08-14T21:13:00.000000Z\t2020-08-13T23:00:00.000000Z\t2020-08-13T23:51:00.000000Z\t2020-08-14T00:51:00.000000Z\t52.249166457268934\t75.48631761790335
+                            2020-09-27T11:29:00.000000Z\t2020-09-26T23:00:00.000000Z\t2020-09-26T23:51:00.000000Z\t2020-09-27T00:51:00.000000Z\t123.4298798999458\t97.78803569813952
+                            2020-09-27T14:55:30.000000Z\t2020-09-26T23:00:00.000000Z\t2020-09-26T23:51:00.000000Z\t2020-09-27T00:51:00.000000Z\tnull\t67.93411440029499
+                            2020-09-28T08:08:00.000000Z\t2020-09-27T23:00:00.000000Z\t2020-09-27T23:51:00.000000Z\t2020-09-28T00:51:00.000000Z\t126.88311324136724\tnull
+                            2020-09-28T15:01:00.000000Z\t2020-09-27T23:00:00.000000Z\t2020-09-27T23:51:00.000000Z\t2020-09-28T00:51:00.000000Z\t2.1077228537622417\t102.29658984903561
+                            2020-11-11T01:50:30.000000Z\t2020-11-11T00:00:00.000000Z\t2020-11-11T00:51:00.000000Z\t2020-11-11T00:51:00.000000Z\tnull\t164.47031511213487
+                            2020-11-11T05:17:00.000000Z\t2020-11-11T00:00:00.000000Z\t2020-11-11T00:51:00.000000Z\t2020-11-11T00:51:00.000000Z\t98.53975966687808\t164.52145000510058
+                            2020-11-11T12:10:00.000000Z\t2020-11-11T00:00:00.000000Z\t2020-11-11T00:51:00.000000Z\t2020-11-11T00:51:00.000000Z\t86.29063891307695\tnull
+                            2020-11-11T22:29:30.000000Z\t2020-11-11T00:00:00.000000Z\t2020-11-11T00:51:00.000000Z\t2020-11-11T00:51:00.000000Z\t51.18874172128277\t11.893003096711803
+                            2020-11-12T08:49:00.000000Z\t2020-11-12T00:00:00.000000Z\t2020-11-12T00:51:00.000000Z\t2020-11-12T00:51:00.000000Z\t18.45077620247658\t163.21615867630382
+                            2020-11-12T12:15:30.000000Z\t2020-11-12T00:00:00.000000Z\t2020-11-12T00:51:00.000000Z\t2020-11-12T00:51:00.000000Z\t42.408261620520236\t119.83524510533938
+                            2020-11-12T19:08:30.000000Z\t2020-11-12T00:00:00.000000Z\t2020-11-12T00:51:00.000000Z\t2020-11-12T00:51:00.000000Z\t95.35323203650431\t118.92607839057486
+                            2020-11-12T22:35:00.000000Z\t2020-11-12T00:00:00.000000Z\t2020-11-12T00:51:00.000000Z\t2020-11-12T00:51:00.000000Z\t42.73330159184082\t56.77237424870539
+                            2020-12-26T23:10:30.000000Z\t2020-12-26T00:00:00.000000Z\t2020-12-26T00:51:00.000000Z\t2020-12-26T00:51:00.000000Z\t126.10430361638399\t34.5011512577364
+                            2020-12-27T06:03:30.000000Z\t2020-12-27T00:00:00.000000Z\t2020-12-27T00:51:00.000000Z\t2020-12-27T00:51:00.000000Z\t83.69163578696043\t139.29959251618345
+                            2020-12-27T12:56:30.000000Z\t2020-12-27T00:00:00.000000Z\t2020-12-27T00:51:00.000000Z\t2020-12-27T00:51:00.000000Z\tnull\t122.01576687768001
+                            """,
+                    "SELECT k, " +
+                            "timestamp_floor_utc('1d', k, null, '00:00', 'Europe/London') bucket_no_offset, " +
+                            "timestamp_floor_utc('1d', k, null, '00:51', 'Europe/London') bucket, " +
+                            "to_timezone(timestamp_floor_utc('1d', k, null, '00:51', 'Europe/London'), 'Europe/London') bucket_local, " +
+                            "lat, lon " +
+                            "FROM x " +
+                            "WHERE s IN ('a') AND k IN '2020-01-01T00:00:00.000000Z;2d;45d;48'"
+            );
+        });
     }
 
     @Test
@@ -2606,7 +2767,8 @@ public class SampleByTest extends AbstractCairoTest {
                         2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z
                         2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z
                         2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-24T23:41:42.000000Z
-                        2020-10-25T01:00:00.000000Z\t2020-10-25T00:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T01:51:12.000000Z
+                        2020-10-25T01:00:00.000000Z\t2020-10-25T00:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T00:55:05.000000Z
+                        2020-10-25T01:00:00.000000Z\t2020-10-25T01:00:00.000000Z\ta\t27.635284834188102\t2020-10-25T01:51:12.000000Z
                         2020-10-25T02:00:00.000000Z\t2020-10-25T02:00:00.000000Z\ta\t95.73868763606973\t2020-10-25T02:47:19.000000Z
                         2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tnull\t2020-10-25T03:43:26.000000Z
                         2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z
@@ -4042,6 +4204,115 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleBy17mSubDayBucketsAcrossTimezones() throws Exception {
+        // Standard-local anchoring: sub-day strides anchor to standard local time,
+        // so different timezones produce different bucket boundaries. Verify that
+        // each timezone produces a valid result and total row count is preserved.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (" +
+                    "SELECT" +
+                    "   x::INT i," +
+                    "   timestamp_sequence('2021-03-28T00:00:00.000000Z', 60 * 1_000_000L) ts" +
+                    " FROM long_sequence(200)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+
+            for (String tzClause : new String[]{"", "TIME ZONE 'UTC'", "TIME ZONE 'America/New_York'", "TIME ZONE 'Asia/Bangkok'"}) {
+                assertSql(
+                        "total\n200\n",
+                        "SELECT sum(c)::LONG total FROM (" +
+                                "SELECT ts, count() c FROM x SAMPLE BY 17m ALIGN TO CALENDAR " + tzClause + ")"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSampleBy27mFromWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence('2021-03-01T00:00:00.000000Z', 600_000_000) " +
+                            "FROM long_sequence(48);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tcount\tts
+                            1\t5\t5\t2021-03-01T00:15:00.000000Z
+                            6\t7\t2\t2021-03-01T00:42:00.000000Z
+                            8\t10\t3\t2021-03-01T01:09:00.000000Z
+                            11\t13\t3\t2021-03-01T01:36:00.000000Z
+                            14\t15\t2\t2021-03-01T02:03:00.000000Z
+                            16\t18\t3\t2021-03-01T02:30:00.000000Z
+                            19\t21\t3\t2021-03-01T02:57:00.000000Z
+                            22\t24\t3\t2021-03-01T03:24:00.000000Z
+                            25\t26\t2\t2021-03-01T03:51:00.000000Z
+                            27\t29\t3\t2021-03-01T04:18:00.000000Z
+                            30\t32\t3\t2021-03-01T04:45:00.000000Z
+                            33\t34\t2\t2021-03-01T05:12:00.000000Z
+                            35\t37\t3\t2021-03-01T05:39:00.000000Z
+                            38\t40\t3\t2021-03-01T06:06:00.000000Z
+                            41\t42\t2\t2021-03-01T06:33:00.000000Z
+                            43\t45\t3\t2021-03-01T07:00:00.000000Z
+                            46\t48\t3\t2021-03-01T07:27:00.000000Z
+                            """,
+                    "SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBy27mFromWithOffsetTimezoneDst() throws Exception {
+        // America/Anchorage: AKST (UTC-9) -> AKDT (UTC-8)
+        // Spring forward: March 14, 2021 at 2:00 AM AKST = 11:00 UTC
+        // Clocks jump from 2:00 AM to 3:00 AM local.
+        //
+        // With OFFSET '-00:20', bucket boundaries shift by -20 minutes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence('2021-03-14T09:00:00.000000Z', 600_000_000) " +
+                            "FROM long_sequence(48);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tcount\tts
+                            1\t3\t3\t2021-03-14T08:58:00.000000Z
+                            4\t6\t3\t2021-03-14T09:25:00.000000Z
+                            7\t8\t2\t2021-03-14T09:52:00.000000Z
+                            9\t11\t3\t2021-03-14T10:19:00.000000Z
+                            12\t14\t3\t2021-03-14T10:46:00.000000Z
+                            15\t16\t2\t2021-03-14T11:13:00.000000Z
+                            17\t19\t3\t2021-03-14T11:40:00.000000Z
+                            20\t22\t3\t2021-03-14T12:07:00.000000Z
+                            23\t25\t3\t2021-03-14T12:34:00.000000Z
+                            26\t27\t2\t2021-03-14T13:01:00.000000Z
+                            28\t30\t3\t2021-03-14T13:28:00.000000Z
+                            31\t33\t3\t2021-03-14T13:55:00.000000Z
+                            34\t35\t2\t2021-03-14T14:22:00.000000Z
+                            36\t38\t3\t2021-03-14T14:49:00.000000Z
+                            39\t41\t3\t2021-03-14T15:16:00.000000Z
+                            42\t43\t2\t2021-03-14T15:43:00.000000Z
+                            44\t46\t3\t2021-03-14T16:10:00.000000Z
+                            47\t48\t2\t2021-03-14T16:37:00.000000Z
+                            """,
+                    "SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSampleByAlignToCalendarDSTGapNoBackwardJumps() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -4052,6 +4323,27 @@ public class SampleByTest extends AbstractCairoTest {
                     "insert into x " +
                             "select x, timestamp_sequence('2021-03-26', 60 * 1000000) " +
                             "from long_sequence(4 * 24 * 60);"
+            );
+
+            final String query = "select min(i), max(i), ts from x " +
+                    "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
+                    "sample by 17m align to calendar time zone 'Europe/Berlin';";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('17m',ts,null,'00:00','Europe/Berlin')]
+                                  values: [min(i),max(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: x
+                                          intervals: [("2021-03-27T23:00:00.000000Z","2021-03-28T01:42:59.999999Z")]
+                            """
             );
 
             // 17m
@@ -4065,13 +4357,12 @@ public class SampleByTest extends AbstractCairoTest {
                             2874\t2890\t2021-03-27T23:53:00.000000Z
                             2891\t2907\t2021-03-28T00:10:00.000000Z
                             2908\t2924\t2021-03-28T00:27:00.000000Z
-                            2925\t2949\t2021-03-28T00:44:00.000000Z
-                            2950\t2966\t2021-03-28T01:09:00.000000Z
-                            2967\t2983\t2021-03-28T01:26:00.000000Z
+                            2925\t2941\t2021-03-28T00:44:00.000000Z
+                            2942\t2958\t2021-03-28T01:01:00.000000Z
+                            2959\t2975\t2021-03-28T01:18:00.000000Z
+                            2976\t2983\t2021-03-28T01:35:00.000000Z
                             """,
-                    "select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
-                            "sample by 17m align to calendar time zone 'Europe/Berlin';",
+                    query,
                     "ts",
                     true,
                     true
@@ -4082,43 +4373,43 @@ public class SampleByTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             min\tmax\tts
-                            2984\t3000\t2021-03-28T01:43:00.000000Z
-                            3001\t3017\t2021-03-28T02:00:00.000000Z
-                            3018\t3034\t2021-03-28T02:17:00.000000Z
-                            3035\t3051\t2021-03-28T02:34:00.000000Z
-                            3052\t3068\t2021-03-28T02:51:00.000000Z
-                            3069\t3085\t2021-03-28T03:08:00.000000Z
-                            3086\t3102\t2021-03-28T03:25:00.000000Z
-                            3103\t3119\t2021-03-28T03:42:00.000000Z
-                            3120\t3136\t2021-03-28T03:59:00.000000Z
-                            3137\t3153\t2021-03-28T04:16:00.000000Z
-                            3154\t3170\t2021-03-28T04:33:00.000000Z
-                            3171\t3187\t2021-03-28T04:50:00.000000Z
-                            3188\t3204\t2021-03-28T05:07:00.000000Z
-                            3205\t3221\t2021-03-28T05:24:00.000000Z
-                            3222\t3238\t2021-03-28T05:41:00.000000Z
-                            3239\t3255\t2021-03-28T05:58:00.000000Z
-                            3256\t3272\t2021-03-28T06:15:00.000000Z
-                            3273\t3289\t2021-03-28T06:32:00.000000Z
-                            3290\t3306\t2021-03-28T06:49:00.000000Z
-                            3307\t3323\t2021-03-28T07:06:00.000000Z
-                            3324\t3340\t2021-03-28T07:23:00.000000Z
-                            3341\t3357\t2021-03-28T07:40:00.000000Z
-                            3358\t3374\t2021-03-28T07:57:00.000000Z
-                            3375\t3391\t2021-03-28T08:14:00.000000Z
-                            3392\t3408\t2021-03-28T08:31:00.000000Z
-                            3409\t3425\t2021-03-28T08:48:00.000000Z
-                            3426\t3442\t2021-03-28T09:05:00.000000Z
-                            3443\t3459\t2021-03-28T09:22:00.000000Z
-                            3460\t3476\t2021-03-28T09:39:00.000000Z
-                            3477\t3493\t2021-03-28T09:56:00.000000Z
-                            3494\t3510\t2021-03-28T10:13:00.000000Z
-                            3511\t3527\t2021-03-28T10:30:00.000000Z
-                            3528\t3544\t2021-03-28T10:47:00.000000Z
-                            3545\t3561\t2021-03-28T11:04:00.000000Z
-                            3562\t3578\t2021-03-28T11:21:00.000000Z
-                            3579\t3595\t2021-03-28T11:38:00.000000Z
-                            3596\t3596\t2021-03-28T11:55:00.000000Z
+                            2984\t2992\t2021-03-28T01:35:00.000000Z
+                            2993\t3009\t2021-03-28T01:52:00.000000Z
+                            3010\t3026\t2021-03-28T02:09:00.000000Z
+                            3027\t3043\t2021-03-28T02:26:00.000000Z
+                            3044\t3060\t2021-03-28T02:43:00.000000Z
+                            3061\t3077\t2021-03-28T03:00:00.000000Z
+                            3078\t3094\t2021-03-28T03:17:00.000000Z
+                            3095\t3111\t2021-03-28T03:34:00.000000Z
+                            3112\t3128\t2021-03-28T03:51:00.000000Z
+                            3129\t3145\t2021-03-28T04:08:00.000000Z
+                            3146\t3162\t2021-03-28T04:25:00.000000Z
+                            3163\t3179\t2021-03-28T04:42:00.000000Z
+                            3180\t3196\t2021-03-28T04:59:00.000000Z
+                            3197\t3213\t2021-03-28T05:16:00.000000Z
+                            3214\t3230\t2021-03-28T05:33:00.000000Z
+                            3231\t3247\t2021-03-28T05:50:00.000000Z
+                            3248\t3264\t2021-03-28T06:07:00.000000Z
+                            3265\t3281\t2021-03-28T06:24:00.000000Z
+                            3282\t3298\t2021-03-28T06:41:00.000000Z
+                            3299\t3315\t2021-03-28T06:58:00.000000Z
+                            3316\t3332\t2021-03-28T07:15:00.000000Z
+                            3333\t3349\t2021-03-28T07:32:00.000000Z
+                            3350\t3366\t2021-03-28T07:49:00.000000Z
+                            3367\t3383\t2021-03-28T08:06:00.000000Z
+                            3384\t3400\t2021-03-28T08:23:00.000000Z
+                            3401\t3417\t2021-03-28T08:40:00.000000Z
+                            3418\t3434\t2021-03-28T08:57:00.000000Z
+                            3435\t3451\t2021-03-28T09:14:00.000000Z
+                            3452\t3468\t2021-03-28T09:31:00.000000Z
+                            3469\t3485\t2021-03-28T09:48:00.000000Z
+                            3486\t3502\t2021-03-28T10:05:00.000000Z
+                            3503\t3519\t2021-03-28T10:22:00.000000Z
+                            3520\t3536\t2021-03-28T10:39:00.000000Z
+                            3537\t3553\t2021-03-28T10:56:00.000000Z
+                            3554\t3570\t2021-03-28T11:13:00.000000Z
+                            3571\t3587\t2021-03-28T11:30:00.000000Z
+                            3588\t3596\t2021-03-28T11:47:00.000000Z
                             """,
                     "select min(i), max(i), ts from x " +
                             "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
@@ -4458,19 +4749,19 @@ public class SampleByTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             min\tmax\tcount\tts
-                            2926\t2952\t27\t2021-03-28T00:45:00.000000Z
-                            2953\t2981\t29\t2021-03-28T01:12:00.000000Z
-                            2982\t3010\t29\t2021-03-28T01:41:00.000000Z
-                            3011\t3039\t29\t2021-03-28T02:10:00.000000Z
-                            3040\t3068\t29\t2021-03-28T02:39:00.000000Z
-                            3069\t3097\t29\t2021-03-28T03:08:00.000000Z
-                            3098\t3126\t29\t2021-03-28T03:37:00.000000Z
-                            3127\t3155\t29\t2021-03-28T04:06:00.000000Z
-                            3156\t3184\t29\t2021-03-28T04:35:00.000000Z
-                            3185\t3213\t29\t2021-03-28T05:04:00.000000Z
-                            3214\t3242\t29\t2021-03-28T05:33:00.000000Z
-                            3243\t3271\t29\t2021-03-28T06:02:00.000000Z
-                            3272\t3300\t29\t2021-03-28T06:31:00.000000Z
+                            2926\t2954\t29\t2021-03-28T00:45:00.000000Z
+                            2955\t2983\t29\t2021-03-28T01:14:00.000000Z
+                            2984\t3012\t29\t2021-03-28T01:43:00.000000Z
+                            3013\t3041\t29\t2021-03-28T02:12:00.000000Z
+                            3042\t3070\t29\t2021-03-28T02:41:00.000000Z
+                            3071\t3099\t29\t2021-03-28T03:10:00.000000Z
+                            3100\t3128\t29\t2021-03-28T03:39:00.000000Z
+                            3129\t3157\t29\t2021-03-28T04:08:00.000000Z
+                            3158\t3186\t29\t2021-03-28T04:37:00.000000Z
+                            3187\t3215\t29\t2021-03-28T05:06:00.000000Z
+                            3216\t3244\t29\t2021-03-28T05:35:00.000000Z
+                            3245\t3273\t29\t2021-03-28T06:04:00.000000Z
+                            3274\t3300\t27\t2021-03-28T06:33:00.000000Z
                             """,
                     "select min(i), max(i), count(), ts from  x " +
                             "where ts between '2021-03-28T00:45:00.000000Z' and '2021-03-28T06:59:59.999999Z' " +
@@ -4484,7 +4775,8 @@ public class SampleByTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             min\tmax\tcount\tts
-                            2718\t3163\t446\t2021-03-27T21:17:00.000000Z
+                            2718\t2970\t253\t2021-03-27T21:17:00.000000Z
+                            2971\t3163\t193\t2021-03-28T01:30:00.000000Z
                             """,
                     "select min(i), max(i), count(), ts from  x " +
                             "where ts between '2021-03-27T21:17:00' and '2021-03-28T04:42:59.999999' " +
@@ -4520,9 +4812,10 @@ public class SampleByTest extends AbstractCairoTest {
                             2877\t2893\t2021-03-27T23:56:00.000000Z
                             2894\t2910\t2021-03-28T00:13:00.000000Z
                             2911\t2927\t2021-03-28T00:30:00.000000Z
-                            2928\t2952\t2021-03-28T00:47:00.000000Z
-                            2953\t2969\t2021-03-28T01:12:00.000000Z
-                            2970\t2983\t2021-03-28T01:29:00.000000Z
+                            2928\t2944\t2021-03-28T00:47:00.000000Z
+                            2945\t2961\t2021-03-28T01:04:00.000000Z
+                            2962\t2978\t2021-03-28T01:21:00.000000Z
+                            2979\t2983\t2021-03-28T01:38:00.000000Z
                             """,
                     "select min(i), max(i), ts from x " +
                             "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
@@ -4532,48 +4825,48 @@ public class SampleByTest extends AbstractCairoTest {
                     true
             );
 
-            // The timestamps in the second query must not be before the ones from the first query.
-            // If we wouldn't be doing DST gap hour check when flooring the timestamps, that would not hold.
+            // Verify no backward timestamp jumps within each query.
+            // With sub-day strides, to_utc converts FROM to UTC and bucketing is pure UTC.
             assertQueryNoLeakCheck(
                     """
                             min\tmax\tts
-                            2984\t2998\t2021-03-28T01:41:00.000000Z
-                            2999\t3015\t2021-03-28T01:58:00.000000Z
-                            3016\t3032\t2021-03-28T02:15:00.000000Z
-                            3033\t3049\t2021-03-28T02:32:00.000000Z
-                            3050\t3066\t2021-03-28T02:49:00.000000Z
-                            3067\t3083\t2021-03-28T03:06:00.000000Z
-                            3084\t3100\t2021-03-28T03:23:00.000000Z
-                            3101\t3117\t2021-03-28T03:40:00.000000Z
-                            3118\t3134\t2021-03-28T03:57:00.000000Z
-                            3135\t3151\t2021-03-28T04:14:00.000000Z
-                            3152\t3168\t2021-03-28T04:31:00.000000Z
-                            3169\t3185\t2021-03-28T04:48:00.000000Z
-                            3186\t3202\t2021-03-28T05:05:00.000000Z
-                            3203\t3219\t2021-03-28T05:22:00.000000Z
-                            3220\t3236\t2021-03-28T05:39:00.000000Z
-                            3237\t3253\t2021-03-28T05:56:00.000000Z
-                            3254\t3270\t2021-03-28T06:13:00.000000Z
-                            3271\t3287\t2021-03-28T06:30:00.000000Z
-                            3288\t3304\t2021-03-28T06:47:00.000000Z
-                            3305\t3321\t2021-03-28T07:04:00.000000Z
-                            3322\t3338\t2021-03-28T07:21:00.000000Z
-                            3339\t3355\t2021-03-28T07:38:00.000000Z
-                            3356\t3372\t2021-03-28T07:55:00.000000Z
-                            3373\t3389\t2021-03-28T08:12:00.000000Z
-                            3390\t3406\t2021-03-28T08:29:00.000000Z
-                            3407\t3423\t2021-03-28T08:46:00.000000Z
-                            3424\t3440\t2021-03-28T09:03:00.000000Z
-                            3441\t3457\t2021-03-28T09:20:00.000000Z
-                            3458\t3474\t2021-03-28T09:37:00.000000Z
-                            3475\t3491\t2021-03-28T09:54:00.000000Z
-                            3492\t3508\t2021-03-28T10:11:00.000000Z
-                            3509\t3525\t2021-03-28T10:28:00.000000Z
-                            3526\t3542\t2021-03-28T10:45:00.000000Z
-                            3543\t3559\t2021-03-28T11:02:00.000000Z
-                            3560\t3576\t2021-03-28T11:19:00.000000Z
-                            3577\t3593\t2021-03-28T11:36:00.000000Z
-                            3594\t3596\t2021-03-28T11:53:00.000000Z
+                            2984\t2990\t2021-03-28T01:33:00.000000Z
+                            2991\t3007\t2021-03-28T01:50:00.000000Z
+                            3008\t3024\t2021-03-28T02:07:00.000000Z
+                            3025\t3041\t2021-03-28T02:24:00.000000Z
+                            3042\t3058\t2021-03-28T02:41:00.000000Z
+                            3059\t3075\t2021-03-28T02:58:00.000000Z
+                            3076\t3092\t2021-03-28T03:15:00.000000Z
+                            3093\t3109\t2021-03-28T03:32:00.000000Z
+                            3110\t3126\t2021-03-28T03:49:00.000000Z
+                            3127\t3143\t2021-03-28T04:06:00.000000Z
+                            3144\t3160\t2021-03-28T04:23:00.000000Z
+                            3161\t3177\t2021-03-28T04:40:00.000000Z
+                            3178\t3194\t2021-03-28T04:57:00.000000Z
+                            3195\t3211\t2021-03-28T05:14:00.000000Z
+                            3212\t3228\t2021-03-28T05:31:00.000000Z
+                            3229\t3245\t2021-03-28T05:48:00.000000Z
+                            3246\t3262\t2021-03-28T06:05:00.000000Z
+                            3263\t3279\t2021-03-28T06:22:00.000000Z
+                            3280\t3296\t2021-03-28T06:39:00.000000Z
+                            3297\t3313\t2021-03-28T06:56:00.000000Z
+                            3314\t3330\t2021-03-28T07:13:00.000000Z
+                            3331\t3347\t2021-03-28T07:30:00.000000Z
+                            3348\t3364\t2021-03-28T07:47:00.000000Z
+                            3365\t3381\t2021-03-28T08:04:00.000000Z
+                            3382\t3398\t2021-03-28T08:21:00.000000Z
+                            3399\t3415\t2021-03-28T08:38:00.000000Z
+                            3416\t3432\t2021-03-28T08:55:00.000000Z
+                            3433\t3449\t2021-03-28T09:12:00.000000Z
+                            3450\t3466\t2021-03-28T09:29:00.000000Z
+                            3467\t3483\t2021-03-28T09:46:00.000000Z
+                            3484\t3500\t2021-03-28T10:03:00.000000Z
+                            3501\t3517\t2021-03-28T10:20:00.000000Z
+                            3518\t3534\t2021-03-28T10:37:00.000000Z
+                            3535\t3551\t2021-03-28T10:54:00.000000Z
+                            3552\t3568\t2021-03-28T11:11:00.000000Z
+                            3569\t3585\t2021-03-28T11:28:00.000000Z
+                            3586\t3596\t2021-03-28T11:45:00.000000Z
                             """,
                     "select min(i), max(i), ts from x " +
                             "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
@@ -4930,6 +5223,7 @@ public class SampleByTest extends AbstractCairoTest {
                     Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)
                         Async JIT Group By workers: 1
                           keys: [tstmp,sym]
+                          keyFunctions: [timestamp_floor_utc('1m',ts)]
                           values: [first(val),avg(val),last(val),max(val)]
                           filter: sym='B'
                             PageFrame
@@ -4960,6 +5254,7 @@ public class SampleByTest extends AbstractCairoTest {
                                   keys: [ts1]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym,ts1]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                       values: [first(val),avg(val),last(val),max(val)]
                                       filter: (ts2>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*ts2::long)
                                         PageFrame
@@ -5025,6 +5320,270 @@ public class SampleByTest extends AbstractCairoTest {
                 null,
                 false
         );
+    }
+
+    @Test
+    public void testSampleByDayFromAlignToCalendarDSTBerlinFallBack() throws Exception {
+        // Europe/Berlin: UTC+2 (CEST) -> UTC+1 (CET)
+        // Fall back: Oct 31, 2021 at 3:00 CEST -> 2:00 CET (= Oct 31 01:00 UTC)
+        //
+        // Day boundaries (midnight local -> UTC):
+        //   Oct 30 00:00 CEST = Oct 29 22:00 UTC
+        //   Oct 31 00:00 CEST = Oct 30 22:00 UTC  (fall-back day, 25h long)
+        //   Nov  1 00:00 CET  = Oct 31 23:00 UTC  (back to standard time)
+        //   Nov  2 00:00 CET  = Nov  1 23:00 UTC
+        //
+        // The WHERE filter must use to_utc to include data from Oct 29 22:00 UTC.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence('2021-10-29T22:00:00.000000Z', 3_600_000_000L) " +
+                            "FROM long_sequence(100);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tts
+                            1\t24\t2021-10-29T22:00:00.000000Z
+                            25\t49\t2021-10-30T22:00:00.000000Z
+                            50\t73\t2021-10-31T23:00:00.000000Z
+                            74\t97\t2021-11-01T23:00:00.000000Z
+                            98\t100\t2021-11-02T23:00:00.000000Z
+                            """,
+                    "SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDayFromAlignToCalendarDSTBerlinSpringForward() throws Exception {
+        // Europe/Berlin: UTC+1 (CET) -> UTC+2 (CEST)
+        // Spring forward: Mar 28, 2021 at 2:00 CET -> 3:00 CEST (= Mar 28 01:00 UTC)
+        //
+        // Day boundaries (midnight local -> UTC):
+        //   Mar 27 00:00 CET  = Mar 26 23:00 UTC
+        //   Mar 28 00:00 CET  = Mar 27 23:00 UTC  (spring-forward day, 23h long)
+        //   Mar 29 00:00 CEST = Mar 28 22:00 UTC  (now in daylight time)
+        //   Mar 30 00:00 CEST = Mar 29 22:00 UTC
+        //
+        // The WHERE filter must use to_utc to include data from Mar 26 23:00 UTC.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence('2021-03-26T23:00:00.000000Z', 3_600_000_000L) " +
+                            "FROM long_sequence(100);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tts
+                            1\t24\t2021-03-26T23:00:00.000000Z
+                            25\t47\t2021-03-27T23:00:00.000000Z
+                            48\t71\t2021-03-28T22:00:00.000000Z
+                            72\t95\t2021-03-29T22:00:00.000000Z
+                            96\t100\t2021-03-30T22:00:00.000000Z
+                            """,
+                    "SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDayNoFromAlignToCalendarDSTNYSpringForwardGap() throws Exception {
+        // Regression for https://github.com/questdb/questdb/issues/4678
+        //
+        // America/New_York: UTC-5 (EST) -> UTC-4 (EDT)
+        // Spring forward: Mar 10, 2024 at 2:00 EST -> 3:00 EDT (= Mar 10 07:00 UTC)
+        //
+        // Day boundaries (midnight local -> UTC):
+        //   Mar  7 00:00 EST = Mar  7 05:00 UTC
+        //   Mar  8 00:00 EST = Mar  8 05:00 UTC
+        //   Mar 10 00:00 EST = Mar 10 05:00 UTC  (spring-forward day, 23h long)
+        //   Mar 11 00:00 EDT = Mar 11 04:00 UTC  (now in daylight time)
+        //
+        // The filter skips Mar 9 entirely and resumes after DST on Mar 10. Before the fix, the
+        // Mar 10 bucket was emitted as Mar 10 00:00 UTC because the cursor back-converted the
+        // bucket's local boundary with the current (post-DST, EDT) offset instead of the offset
+        // valid at the bucket start (EST, pre-DST).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (timestamp TIMESTAMP, amount DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-03-08T00:00:00.000000Z', 1.0),
+                        ('2024-03-08T12:00:00.000000Z', 2.0),
+                        ('2024-03-10T08:00:00.000000Z', 8.0),
+                        ('2024-03-10T09:00:00.000000Z', 8.0),
+                        ('2024-03-10T10:00:00.000000Z', 8.0),
+                        ('2024-03-11T10:00:00.000000Z', 16.0)""");
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\tsum
+                            2024-03-07T05:00:00.000000Z\t1.0
+                            2024-03-08T05:00:00.000000Z\t2.0
+                            2024-03-10T05:00:00.000000Z\t24.0
+                            2024-03-11T04:00:00.000000Z\t16.0
+                            """,
+                    "SELECT timestamp, sum(amount) FROM (" +
+                            " SELECT timestamp, amount FROM trades" +
+                            " WHERE timestamp IN '2024-03-08'" +
+                            " OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')" +
+                            ") SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "timestamp",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDayFromAlignToCalendarDSTChathamFallBack() throws Exception {
+        // Pacific/Chatham: UTC+12:45 (CHAST) / UTC+13:45 (CHADT)
+        // Fall back: Apr 4, 2021 at 3:45am CHADT -> 2:45am CHAST (= Apr 3 14:00 UTC)
+        //
+        // Day boundaries (midnight local -> UTC):
+        //   Apr 3 00:00 CHADT = Apr 2 10:15 UTC
+        //   Apr 4 00:00 CHADT = Apr 3 10:15 UTC
+        //   Apr 5 00:00 CHAST = Apr 4 11:15 UTC  (back to standard time, 25h day)
+        //   Apr 6 00:00 CHAST = Apr 5 11:15 UTC
+        //
+        // The fall-back day (Apr 4) is 25 hours long.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence('2021-04-02T10:15:00.000000Z', 3_600_000_000L) " +
+                            "FROM long_sequence(120);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tts
+                            1\t24\t2021-04-02T10:15:00.000000Z
+                            25\t49\t2021-04-03T10:15:00.000000Z
+                            50\t73\t2021-04-04T11:15:00.000000Z
+                            74\t97\t2021-04-05T11:15:00.000000Z
+                            98\t120\t2021-04-06T11:15:00.000000Z
+                            """,
+                    "SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-04-03' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDayFromAlignToCalendarDSTChathamSpringForward() throws Exception {
+        // Pacific/Chatham: UTC+12:45 (CHAST) / UTC+13:45 (CHADT)
+        // Spring forward: Sep 26, 2021 at 2:45am CHAST -> 3:45am CHADT (= Sep 25 14:00 UTC)
+        // 45-minute offset + DST makes this a demanding timezone test.
+        //
+        // Day boundaries (midnight local -> UTC):
+        //   Sep 24 00:00 CHAST = Sep 23 11:15 UTC
+        //   Sep 25 00:00 CHAST = Sep 24 11:15 UTC
+        //   Sep 26 00:00 CHAST = Sep 25 11:15 UTC  (spring forward at 2:45am during this day)
+        //   Sep 27 00:00 CHADT = Sep 26 10:15 UTC  (now in daylight time)
+        //   Sep 28 00:00 CHADT = Sep 27 10:15 UTC
+        //
+        // The spring-forward day (Sep 26) is only 23 hours long.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence('2021-09-23T11:15:00.000000Z', 3_600_000_000L) " +
+                            "FROM long_sequence(120);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tts
+                            1\t24\t2021-09-23T11:15:00.000000Z
+                            25\t48\t2021-09-24T11:15:00.000000Z
+                            49\t71\t2021-09-25T11:15:00.000000Z
+                            72\t95\t2021-09-26T10:15:00.000000Z
+                            96\t119\t2021-09-27T10:15:00.000000Z
+                            120\t120\t2021-09-28T10:15:00.000000Z
+                            """,
+                    "SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-09-24' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDayFromWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence('2021-03-01T00:00:00.000000Z', 3_600_000_000) " +
+                            "FROM long_sequence(120);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tcount\tts
+                            1\t25\t25\t2021-03-01T00:15:00.000000Z
+                            26\t49\t24\t2021-03-02T00:15:00.000000Z
+                            50\t73\t24\t2021-03-03T00:15:00.000000Z
+                            74\t97\t24\t2021-03-04T00:15:00.000000Z
+                            98\t120\t23\t2021-03-05T00:15:00.000000Z
+                            """,
+                    "SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDayFromWithOffsetTimezoneDst() throws Exception {
+        // America/Anchorage: AKST (UTC-9) -> AKDT (UTC-8)
+        // Spring forward: March 14, 2021 at 2:00 AM AKST = 11:00 UTC
+        // Clocks jump from 2:00 AM to 3:00 AM local.
+        //
+        // 1d stride with OFFSET '-00:20' shifts day boundaries by -20 minutes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence('2021-03-12T09:00:00.000000Z', 3_600_000_000) " +
+                            "FROM long_sequence(120);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tcount\tts
+                            1\t24\t24\t2021-03-12T08:40:00.000000Z
+                            25\t48\t24\t2021-03-13T08:40:00.000000Z
+                            49\t71\t23\t2021-03-14T08:40:00.000000Z
+                            72\t95\t24\t2021-03-15T07:40:00.000000Z
+                            96\t119\t24\t2021-03-16T07:40:00.000000Z
+                            120\t120\t1\t2021-03-17T07:40:00.000000Z
+                            """,
+                    "SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
@@ -5306,6 +5865,8 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByDstForwardShift() throws Exception {
+        // N.B.: See `testSampleByDstForwardShiftData` for raw data before grouping.
+
         // Although '00:15' offset here pushes certain bucket timestamps to the gap hour
         // in 'Europe/Prague' time zone (2021-03-28T02:00 - 2021-03-28T03:00), timestamp_floor()
         // function used in sample by rewrite should assign them to the previous bucket, so
@@ -5327,7 +5888,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -5335,6 +5896,130 @@ public class SampleByTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testSampleByDstForwardShiftData() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as " +
+                    "(" +
+                    "select" +
+                    "   rnd_double(1)*180 lat," +
+                    "   rnd_double(1)*180 lon," +
+                    "   rnd_symbol('a') s," +
+                    "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
+                    "   from" +
+                    "   long_sequence(100)" +
+                    "), index(s) timestamp(k) partition by DAY");
+            // dump raw data with bucket assignments around the DST transition
+            assertSql(
+                    """
+                            k\tbucket_no_shift\tbucket\tlat\tlon
+                            2021-03-28T00:59:00.000000Z\t2021-03-28T00:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t144.77803379943109\t15.276535618609202
+                            2021-03-28T01:00:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\tnull\t168.2028874330922
+                            2021-03-28T01:01:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t142.30215575416736\t40.414213540958805
+                            2021-03-28T01:02:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t112.57238776341633\t83.19303772430138
+                            2021-03-28T01:03:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t145.3027002009222\t43.02952219523745
+                            2021-03-28T01:04:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t122.01416205910576\t157.62189134019474
+                            2021-03-28T01:05:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t0.6477060987779493\t59.18718433823108
+                            2021-03-28T01:06:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t175.87985662892166\t44.65586227798377
+                            2021-03-28T01:07:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t34.40222311631727\t104.2823938835198
+                            2021-03-28T01:08:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t21.647020343099634\t120.60857505241894
+                            2021-03-28T01:09:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t175.59474373022343\tnull
+                            2021-03-28T01:10:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t137.95662156473048\t67.7250307709708
+                            2021-03-28T01:11:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t44.26821499690838\t9.086742036097899
+                            2021-03-28T01:12:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t0.19935649945118428\t137.58557660357081
+                            2021-03-28T01:13:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t7.457062446418488\t165.69007104574442
+                            2021-03-28T01:14:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T00:15:00.000000Z\t82.14202252963403\tnull
+                            2021-03-28T01:15:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t31.267026583720984\t101.86972451750233
+                            2021-03-28T01:16:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t122.78989549802291\t82.18781133883164
+                            2021-03-28T01:17:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t136.58715726218773\tnull
+                            2021-03-28T01:18:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t146.9552866644149\tnull
+                            2021-03-28T01:19:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t58.572579602775775\tnull
+                            2021-03-28T01:20:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t173.52520275329545\t128.41038488800518
+                            2021-03-28T01:21:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t106.0418967098362\tnull
+                            2021-03-28T01:22:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t87.4056293245272\t162.85756350529851
+                            2021-03-28T01:23:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t62.905085994847255\t35.5524666881491
+                            2021-03-28T01:24:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t122.52371642327552\t112.67388825438995
+                            2021-03-28T01:25:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t111.47255286881438\t32.1007009450794
+                            2021-03-28T01:26:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\t4.830635342466265
+                            2021-03-28T01:27:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t127.01855628427093\tnull
+                            2021-03-28T01:28:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t13.043110719486775\t88.06938180680983
+                            2021-03-28T01:29:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\t120.563447321161
+                            2021-03-28T01:30:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\tnull
+                            2021-03-28T01:31:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\t102.59000448441937
+                            2021-03-28T01:32:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\t96.42619011348802
+                            2021-03-28T01:33:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\tnull
+                            2021-03-28T01:34:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t134.2470564736426\tnull
+                            2021-03-28T01:35:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t154.6763666530383\t60.744736178951065
+                            2021-03-28T01:36:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t149.24148064836075\tnull
+                            2021-03-28T01:37:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t50.86048882999828\t48.80759054731445
+                            2021-03-28T01:38:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t111.64999420177696\t5.234553030354528
+                            2021-03-28T01:39:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t93.34137458461633\t37.0531242707858
+                            2021-03-28T01:40:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t177.91219970797408\t170.22982764440493
+                            2021-03-28T01:41:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t90.46603685432262\t161.14518209041026
+                            2021-03-28T01:42:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t5.260985449690796\t30.924525529543136
+                            2021-03-28T01:43:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t37.18481554515998\tnull
+                            2021-03-28T01:44:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t12.323936799689037\t7.849153619342828
+                            2021-03-28T01:45:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\t130.68842590937518
+                            2021-03-28T01:46:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\t121.1293006339255
+                            2021-03-28T01:47:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\tnull
+                            2021-03-28T01:48:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t9.169528660800593\t55.461396710929755
+                            2021-03-28T01:49:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\t102.43895461299094
+                            2021-03-28T01:50:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t138.5054036777327\t156.9779142890346
+                            2021-03-28T01:51:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t129.65706026905153\t127.16519440043825
+                            2021-03-28T01:52:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\tnull
+                            2021-03-28T01:53:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t146.59572903448154\t25.67037835549214
+                            2021-03-28T01:54:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t79.9245166429184\t122.59533609916959
+                            2021-03-28T01:55:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t87.0346116366492\t156.38194995022837
+                            2021-03-28T01:56:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t109.94209864193589\t167.4566019970139
+                            2021-03-28T01:57:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t70.94471490426929\tnull
+                            2021-03-28T01:58:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t133.2884210111175\tnull
+                            2021-03-28T01:59:00.000000Z\t2021-03-28T01:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t98.27279585461298\t127.43011035722469
+                            2021-03-28T02:00:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t60.30746433578906\tnull
+                            2021-03-28T02:01:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t33.45558404694713\tnull
+                            2021-03-28T02:02:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t112.06802636277182\t78.23044463274223
+                            2021-03-28T02:03:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t103.3232623679761\t108.02205611324497
+                            2021-03-28T02:04:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t32.68614114799026\t147.5379854251518
+                            2021-03-28T02:05:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\t52.136679020472876
+                            2021-03-28T02:06:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t85.12240243272826\t137.97053845878514
+                            2021-03-28T02:07:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t91.63508257936049\tnull
+                            2021-03-28T02:08:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t43.10264957660258\t163.2226270502841
+                            2021-03-28T02:09:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t52.50323863126844\tnull
+                            2021-03-28T02:10:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\t54.08774139396344
+                            2021-03-28T02:11:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t137.75860769388385\t160.77258636441167
+                            2021-03-28T02:12:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\tnull\t52.47176414761151
+                            2021-03-28T02:13:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t102.45762796933906\t134.40624602634193
+                            2021-03-28T02:14:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T01:15:00.000000Z\t3.2663559791466135\tnull
+                            2021-03-28T02:15:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t103.7167928478985\t177.99360315668173
+                            2021-03-28T02:16:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\tnull\t176.36300596092585
+                            2021-03-28T02:17:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t61.59269476285845\t54.73849323820834
+                            2021-03-28T02:18:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\tnull\tnull
+                            2021-03-28T02:19:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\tnull\t87.01562900327298
+                            2021-03-28T02:20:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t84.57566653281754\t160.40908135832316
+                            2021-03-28T02:21:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t19.885167386628652\tnull
+                            2021-03-28T02:22:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\tnull\t147.91774569478085
+                            2021-03-28T02:23:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t143.724925526371\t2.5129431827711946
+                            2021-03-28T02:24:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\tnull\t154.33582745049358
+                            2021-03-28T02:25:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t67.11578621833591\tnull
+                            2021-03-28T02:26:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\tnull\tnull
+                            2021-03-28T02:27:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t70.00560222114518\t168.04971262491318
+                            2021-03-28T02:28:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t30.964474165320063\t130.55764888223015
+                            2021-03-28T02:29:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t102.12077740801237\t87.80775554962625
+                            2021-03-28T02:30:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t23.961985914157495\t169.83248577552817
+                            2021-03-28T02:31:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t30.769845049323713\t12.00604188891963
+                            2021-03-28T02:32:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t6.612327943200507\t151.3046788842135
+                            2021-03-28T02:33:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t80.34952723327316\t6.2374224757121866
+                            2021-03-28T02:34:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t106.21505523014889\t21.991863940498963
+                            2021-03-28T02:35:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t164.10317223639072\t146.23752320945698
+                            2021-03-28T02:36:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t83.30193189717542\t72.5092508805134
+                            2021-03-28T02:37:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t117.11888283070247\tnull
+                            2021-03-28T02:38:00.000000Z\t2021-03-28T02:00:00.000000Z\t2021-03-28T02:15:00.000000Z\t99.02039650915859\t128.42101395467057
+                            """,
+                    "SELECT k, timestamp_floor_utc('1h', k, null, '00:00', 'Europe/Prague') bucket_no_shift, timestamp_floor_utc('1h', k, null, '00:15', 'Europe/Prague') bucket, lat, lon " +
+                            "FROM x WHERE s IN ('a')"
+            );
+        });
     }
 
     @Test
@@ -5588,7 +6273,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_symbol('a','b','c') s1," +
                         "   rnd_symbol('foo','bar') s2," +
                         "   rnd_double(1) d1," +
-                        "   timestamp_sequence('2023-05-16T00:00:00.00000Z', 60*1000000L) ts" +
+                        "   timestamp_sequence('2023-05-16T00:00:00.00000Z', 60_000_000L) ts" +
                         "   from long_sequence(100)" +
                         "), index(s1), index(s2) timestamp(ts) partition by DAY",
                 null,
@@ -6192,8 +6877,8 @@ public class SampleByTest extends AbstractCairoTest {
             drainWalQueue();
 
             // TIME ZONE + FROM-TO + FILL(LINEAR)
-            // For sub-minute intervals, timezone should not change bucket boundaries
-            // (timezone offsets are whole minutes); FROM should anchor the buckets
+            // FROM/TO are interpreted as Berlin local time (UTC+1 in January).
+            // Data is at 00:00:00Z–00:00:30Z = 01:00:00–01:00:30 Berlin.
             assertSql(
                     """
                             ts\tsum
@@ -6205,13 +6890,15 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             SELECT ts, sum(val) FROM gaps
                             SAMPLE BY 10s
-                            FROM '2026-01-01T00:00:00' TO '2026-01-01T00:00:40'
+                            FROM '2026-01-01T01:00:00' TO '2026-01-01T01:00:40'
                             FILL(LINEAR)
                             ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
                             """
             );
 
-            // Non-aligned FROM with timezone — FROM should still control alignment
+            // Non-aligned FROM with timezone — FROM should still control alignment.
+            // FROM/TO are Berlin local time (UTC+1 in January).
+            // '00:59:55' Berlin = '23:59:55Z', '01:00:35' Berlin = '00:00:35Z'.
             assertSql(
                     """
                             ts\tsum
@@ -6223,7 +6910,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             SELECT ts, sum(val) FROM gaps
                             SAMPLE BY 10s
-                            FROM '2025-12-31T23:59:55' TO '2026-01-01T00:00:35'
+                            FROM '2026-01-01T00:59:55' TO '2026-01-01T01:00:35'
                             FILL(LINEAR)
                             ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
                             """
@@ -6268,7 +6955,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             SELECT ts, sum(val) FROM dst_data
                             SAMPLE BY 1h
-                            FROM '2026-03-28T22:00:00' TO '2026-03-29T04:00:00'
+                            FROM '2026-03-28T23:00:00' TO '2026-03-29T06:00:00'
                             FILL(LINEAR)
                             ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
                             """
@@ -6447,6 +7134,7 @@ public class SampleByTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -6463,6 +7151,7 @@ public class SampleByTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -6479,6 +7168,7 @@ public class SampleByTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -6495,6 +7185,7 @@ public class SampleByTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -6554,6 +7245,90 @@ public class SampleByTest extends AbstractCairoTest {
                             """,
                     "select ts, avg(x) from fromto\n" +
                             "sample by 4y from '2000-01-01' to '2050-01-01' fill(null)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByHourFromAlignToCalendarDSTBerlinFallBack() throws Exception {
+        // Europe/Berlin: UTC+2 (CEST) -> UTC+1 (CET)
+        // Fall back: Oct 31, 2021 at 3:00 CEST -> 2:00 CET (= Oct 31 01:00 UTC)
+        // The local hour 02:00-03:00 occurs twice.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence('2021-10-30T21:00:00.000000Z', 600_000_000L) " +
+                            "FROM long_sequence(96);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tts
+                            1\t6\t2021-10-30T21:00:00.000000Z
+                            7\t12\t2021-10-30T22:00:00.000000Z
+                            13\t18\t2021-10-30T23:00:00.000000Z
+                            19\t24\t2021-10-31T00:00:00.000000Z
+                            25\t30\t2021-10-31T01:00:00.000000Z
+                            31\t36\t2021-10-31T02:00:00.000000Z
+                            37\t42\t2021-10-31T03:00:00.000000Z
+                            43\t48\t2021-10-31T04:00:00.000000Z
+                            49\t54\t2021-10-31T05:00:00.000000Z
+                            55\t60\t2021-10-31T06:00:00.000000Z
+                            61\t66\t2021-10-31T07:00:00.000000Z
+                            67\t72\t2021-10-31T08:00:00.000000Z
+                            73\t78\t2021-10-31T09:00:00.000000Z
+                            79\t84\t2021-10-31T10:00:00.000000Z
+                            85\t90\t2021-10-31T11:00:00.000000Z
+                            91\t96\t2021-10-31T12:00:00.000000Z
+                            """,
+                    "SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1h FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByHourFromAlignToCalendarDSTBerlinSpringForward() throws Exception {
+        // Europe/Berlin: UTC+1 (CET) -> UTC+2 (CEST)
+        // Spring forward: Mar 28, 2021 at 2:00 CET -> 3:00 CEST (= Mar 28 01:00 UTC)
+        // The local hour 02:00-03:00 doesn't exist.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence('2021-03-27T21:00:00.000000Z', 600_000_000L) " +
+                            "FROM long_sequence(96);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tts
+                            1\t6\t2021-03-27T21:00:00.000000Z
+                            7\t12\t2021-03-27T22:00:00.000000Z
+                            13\t18\t2021-03-27T23:00:00.000000Z
+                            19\t24\t2021-03-28T00:00:00.000000Z
+                            25\t30\t2021-03-28T01:00:00.000000Z
+                            31\t36\t2021-03-28T02:00:00.000000Z
+                            37\t42\t2021-03-28T03:00:00.000000Z
+                            43\t48\t2021-03-28T04:00:00.000000Z
+                            49\t54\t2021-03-28T05:00:00.000000Z
+                            55\t60\t2021-03-28T06:00:00.000000Z
+                            61\t66\t2021-03-28T07:00:00.000000Z
+                            67\t72\t2021-03-28T08:00:00.000000Z
+                            73\t78\t2021-03-28T09:00:00.000000Z
+                            79\t84\t2021-03-28T10:00:00.000000Z
+                            85\t90\t2021-03-28T11:00:00.000000Z
+                            91\t96\t2021-03-28T12:00:00.000000Z
+                            """,
+                    "SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -6984,7 +7759,8 @@ public class SampleByTest extends AbstractCairoTest {
         assertQuery(
                 """
                         k\tc
-                        2021-10-31T02:00:00.000000Z\t18
+                        2021-10-31T02:00:00.000000Z\t8
+                        2021-10-31T02:00:00.000000Z\t10
                         2021-10-31T03:00:00.000000Z\t10
                         2021-10-31T04:00:00.000000Z\t10
                         2021-10-31T05:00:00.000000Z\t10
@@ -7019,8 +7795,10 @@ public class SampleByTest extends AbstractCairoTest {
         assertQuery(
                 """
                         k\tc
-                        2021-10-31T02:00:00.000000Z\t8
-                        2021-10-31T02:30:00.000000Z\t10
+                        2021-10-31T02:00:00.000000Z\t3
+                        2021-10-31T02:30:00.000000Z\t5
+                        2021-10-31T02:00:00.000000Z\t5
+                        2021-10-31T02:30:00.000000Z\t5
                         2021-10-31T03:00:00.000000Z\t5
                         2021-10-31T03:30:00.000000Z\t5
                         2021-10-31T04:00:00.000000Z\t5
@@ -7329,11 +8107,13 @@ public class SampleByTest extends AbstractCairoTest {
                             SelectedRecord
                                 Hash Left Outer Join Light
                                   condition: b.sym=a.sym
+                                  symbolKeyJoin: true
                                     SelectedRecord
                                         Encode sort light
                                           keys: [ts1]
                                             Async Group By workers: 1
                                               keys: [sym,ts1]
+                                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                               values: [first(val),avg(val),last(val),max(val)]
                                               filter: null
                                                 PageFrame
@@ -7345,6 +8125,7 @@ public class SampleByTest extends AbstractCairoTest {
                                               keys: [ts1]
                                                 Async Group By workers: 1
                                                   keys: [sym,ts1]
+                                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                                   values: [first(val),avg(val),last(val),max(val)]
                                                   filter: null
                                                     PageFrame
@@ -7378,6 +8159,7 @@ public class SampleByTest extends AbstractCairoTest {
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [ts1,sym]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                           values: [first(val),avg(val),last(val),max(val)]
                                           filter: null
                                             PageFrame
@@ -7387,6 +8169,7 @@ public class SampleByTest extends AbstractCairoTest {
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [ts1,sym]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                           values: [first(val),avg(val),last(val),max(val)]
                                           filter: null
                                             PageFrame
@@ -7457,6 +8240,7 @@ public class SampleByTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Async Group By workers: 1
                                       keys: [b,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                       values: [first(val),avg(val),last(val),max(val)]
                                       filter: null
                                         PageFrame
@@ -7484,6 +8268,7 @@ public class SampleByTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Async Group By workers: 1
                                       keys: [b]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                       values: [first(val),avg(val),last(val),max(val)]
                                       filter: null
                                         PageFrame
@@ -7511,6 +8296,7 @@ public class SampleByTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Async Group By workers: 1
                                       keys: [d,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                       values: [first(val),avg(val),last(val),max(val)]
                                       filter: null
                                         PageFrame
@@ -7559,6 +8345,7 @@ public class SampleByTest extends AbstractCairoTest {
                                   functions: [ts1,ts2,ts1-ts2,count]
                                     Async Group By workers: 1
                                       keys: [ts1,ts2]
+                                      keyFunctions: [timestamp_floor_utc('2m',ts1)]
                                       values: [count(*)]
                                       filter: null
                                         PageFrame
@@ -7591,6 +8378,7 @@ public class SampleByTest extends AbstractCairoTest {
                                   functions: [ts1,ts1-ts2,count]
                                     Async Group By workers: 1
                                       keys: [ts1,ts2]
+                                      keyFunctions: [timestamp_floor_utc('2m',ts1)]
                                       values: [count(*)]
                                       filter: null
                                         PageFrame
@@ -7634,19 +8422,18 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            VirtualRecord
-                              functions: [ts,count::double/datediff('h',ts,dateadd('d',1,ts,'Europe/Copenhagen'))]
-                                Encode sort light
-                                  keys: [ts]
-                                    VirtualRecord
-                                      functions: [to_utc(ts),count]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          values: [count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                            Encode sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,count::double/datediff('h',ts,dateadd('d',1,ts,'Europe/Copenhagen'))]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1d',ts,null,'00:00','Europe/Copenhagen')]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """
             );
 
@@ -7676,6 +8463,7 @@ public class SampleByTest extends AbstractCairoTest {
                                   functions: [ts,count,max::long/count]
                                     Async Group By workers: 1
                                       keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1d',ts)]
                                       values: [count(*),max(ts)]
                                       filter: null
                                         PageFrame
@@ -7710,6 +8498,7 @@ public class SampleByTest extends AbstractCairoTest {
                                   functions: [ts,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
                                     Async Group By workers: 1
                                       keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
                                       values: [max(i)]
                                       filter: null
                                         PageFrame
@@ -7744,6 +8533,7 @@ public class SampleByTest extends AbstractCairoTest {
                                   functions: [ts,max+datediff('m',ts,1262304000000000),max+datediff('m',ts,1262304000000000)]
                                     Async Group By workers: 1
                                       keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
                                       values: [max(i)]
                                       filter: null
                                         PageFrame
@@ -7778,6 +8568,7 @@ public class SampleByTest extends AbstractCairoTest {
                                   functions: [ts,max,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
                                     Async Group By workers: 1
                                       keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
                                       values: [max(i)]
                                       filter: null
                                         PageFrame
@@ -7812,6 +8603,7 @@ public class SampleByTest extends AbstractCairoTest {
                                   functions: [ts,datediff('h',ts2,ts)/count]
                                     Async Group By workers: 1
                                       keys: [ts,ts2]
+                                      keyFunctions: [timestamp_floor_utc('12h',ts)]
                                       values: [count(*)]
                                       filter: null
                                         PageFrame
@@ -7848,6 +8640,7 @@ public class SampleByTest extends AbstractCairoTest {
                                       functions: [ts,count,ts2,datediff('M',ts2,1262307600000000)/count]
                                         Async Group By workers: 1
                                           keys: [ts,ts2]
+                                          keyFunctions: [timestamp_floor_utc('12h',ts)]
                                           values: [count(*)]
                                           filter: null
                                             PageFrame
@@ -7874,6 +8667,7 @@ public class SampleByTest extends AbstractCairoTest {
                               keys: [ts1]
                                 Async Group By workers: 1
                                   keys: [ts1,sym]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                   values: [min(val),avg(val),max(val)]
                                   filter: null
                                     PageFrame
@@ -7906,6 +8700,7 @@ public class SampleByTest extends AbstractCairoTest {
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [sym,ts1]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                           values: [first(val),avg(val),last(val),max(val)]
                                           filter: null
                                             PageFrame
@@ -7916,6 +8711,7 @@ public class SampleByTest extends AbstractCairoTest {
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [sym,ts1]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                           values: [first(val),avg(val),last(val),max(val)]
                                           filter: null
                                             PageFrame
@@ -7947,6 +8743,7 @@ public class SampleByTest extends AbstractCairoTest {
                                   keys: [tstmp]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                       values: [first(val),avg(val),last(val),max(val)]
                                       filter: null
                                         PageFrame
@@ -7956,6 +8753,7 @@ public class SampleByTest extends AbstractCairoTest {
                                   keys: [tstmp]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                       values: [first(val),avg(val),last(val),max(val)]
                                       filter: null
                                         PageFrame
@@ -7983,6 +8781,7 @@ public class SampleByTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Async Group By workers: 1
                                       keys: [d,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                       values: [first(val),avg(val),last(val),max(val)]
                                       filter: null
                                         PageFrame
@@ -10549,7 +11348,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -10629,7 +11428,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -10711,13 +11510,13 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:20:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-03-28T00:20:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 null,
-                false,
-                false
+                true,
+                true
         );
     }
 
@@ -10807,6 +11606,51 @@ public class SampleByTest extends AbstractCairoTest {
                         67.52509547112409\t1970-01-04T09:00:00.000000Z
                         """,
                 false
+        );
+    }
+
+    @Test
+    public void testSampleFillNoneNotKeyedAlignToCalendarOffset() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
+        assertQuery(
+                """
+                        b\ts\tk
+                        \t11.427984775756228\t2021-03-28T00:20:00.000000Z
+                        VTJW\t42.17768841969397\t2021-03-28T00:50:00.000000Z
+                        RXGZ\t23.90529010846525\t2021-03-28T01:50:00.000000Z
+                        PEHN\t70.94360487171201\t2021-03-28T02:50:00.000000Z
+                        \t87.99634725391621\t2021-03-28T03:20:00.000000Z
+                        \t32.881769076795045\t2021-03-28T04:20:00.000000Z
+                        HYRX\t97.71103146051203\t2021-03-28T05:20:00.000000Z
+                        PEHN\t81.46807944500559\t2021-03-28T06:20:00.000000Z
+                        \t57.93466326862211\t2021-03-28T06:50:00.000000Z
+                        HYRX\t12.026122412833129\t2021-03-28T07:50:00.000000Z
+                        VTJW\t48.820511018586934\t2021-03-28T08:50:00.000000Z
+                        \t26.922103479744898\t2021-03-28T09:20:00.000000Z
+                        \t52.98405941762054\t2021-03-28T10:20:00.000000Z
+                        PEHN\t84.45258177211063\t2021-03-28T11:20:00.000000Z
+                        \t97.5019885372507\t2021-03-28T12:20:00.000000Z
+                        PEHN\t49.00510449885239\t2021-03-28T12:50:00.000000Z
+                        \t80.01121139739173\t2021-03-28T13:50:00.000000Z
+                        \t92.050039469858\t2021-03-28T14:50:00.000000Z
+                        \t45.6344569609078\t2021-03-28T15:50:00.000000Z
+                        \t40.455469747939254\t2021-03-28T16:20:00.000000Z
+                        """,
+                "select b, sum(a) s, k from x sample by 30m fill(none) align to calendar with offset '00:20'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:20:00.000000Z' as timestamp), 3_100_000_000L) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true,
+                true
         );
     }
 
@@ -11094,7 +11938,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11214,7 +12058,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_byte() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11334,7 +12178,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_float() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11454,7 +12298,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11574,7 +12418,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_short() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11777,7 +12621,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE",
@@ -11825,7 +12669,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE",
@@ -11843,7 +12687,10 @@ public class SampleByTest extends AbstractCairoTest {
                 """
                         s\tk
                         0.15786635599554755\t2021-10-31T02:00:00.000000Z
-                        0.7166790794135658\t2021-10-31T02:30:00.000000Z
+                        0.04142812470232493\t2021-10-31T02:30:00.000000Z
+                        null\t2021-10-31T02:00:00.000000Z
+                        0.6752509547112409\t2021-10-31T02:30:00.000000Z
+                        null\t2021-10-31T03:00:00.000000Z
                         null\t2021-10-31T03:30:00.000000Z
                         null\t2021-10-31T04:00:00.000000Z
                         0.22631523434159562\t2021-10-31T04:30:00.000000Z
@@ -11918,7 +12765,192 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(30)" +
                         ") timestamp(k) partition by NONE",
                 null,
-                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedAlignToCalendarOffset() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
+        assertQuery(
+                """
+                        s\tk
+                        0.15786635599554755\t2021-10-30T23:50:00.000000Z
+                        null\t2021-10-31T00:20:00.000000Z
+                        0.04142812470232493\t2021-10-31T00:50:00.000000Z
+                        null\t2021-10-31T01:20:00.000000Z
+                        0.6752509547112409\t2021-10-31T01:50:00.000000Z
+                        null\t2021-10-31T02:20:00.000000Z
+                        null\t2021-10-31T02:50:00.000000Z
+                        0.22631523434159562\t2021-10-31T03:20:00.000000Z
+                        null\t2021-10-31T03:50:00.000000Z
+                        0.6940904779678791\t2021-10-31T04:20:00.000000Z
+                        null\t2021-10-31T04:50:00.000000Z
+                        0.5913874468544745\t2021-10-31T05:20:00.000000Z
+                        null\t2021-10-31T05:50:00.000000Z
+                        0.04001697462715281\t2021-10-31T06:20:00.000000Z
+                        null\t2021-10-31T06:50:00.000000Z
+                        0.07828020681514525\t2021-10-31T07:20:00.000000Z
+                        null\t2021-10-31T07:50:00.000000Z
+                        null\t2021-10-31T08:20:00.000000Z
+                        null\t2021-10-31T08:50:00.000000Z
+                        0.7431472218131966\t2021-10-31T09:20:00.000000Z
+                        null\t2021-10-31T09:50:00.000000Z
+                        0.13312214396754163\t2021-10-31T10:20:00.000000Z
+                        null\t2021-10-31T10:50:00.000000Z
+                        null\t2021-10-31T11:20:00.000000Z
+                        0.2325041018786207\t2021-10-31T11:50:00.000000Z
+                        null\t2021-10-31T12:20:00.000000Z
+                        0.8853675629694284\t2021-10-31T12:50:00.000000Z
+                        null\t2021-10-31T13:20:00.000000Z
+                        0.6940917925148332\t2021-10-31T13:50:00.000000Z
+                        null\t2021-10-31T14:20:00.000000Z
+                        0.4031733414086601\t2021-10-31T14:50:00.000000Z
+                        null\t2021-10-31T15:20:00.000000Z
+                        0.27755720049807464\t2021-10-31T15:50:00.000000Z
+                        null\t2021-10-31T16:20:00.000000Z
+                        0.6361737673041902\t2021-10-31T16:50:00.000000Z
+                        null\t2021-10-31T17:20:00.000000Z
+                        0.5965069739835686\t2021-10-31T17:50:00.000000Z
+                        null\t2021-10-31T18:20:00.000000Z
+                        null\t2021-10-31T18:50:00.000000Z
+                        null\t2021-10-31T19:20:00.000000Z
+                        null\t2021-10-31T19:50:00.000000Z
+                        0.5785645380474713\t2021-10-31T20:20:00.000000Z
+                        null\t2021-10-31T20:50:00.000000Z
+                        0.7291265477629812\t2021-10-31T21:20:00.000000Z
+                        null\t2021-10-31T21:50:00.000000Z
+                        0.8642800031609658\t2021-10-31T22:20:00.000000Z
+                        null\t2021-10-31T22:50:00.000000Z
+                        null\t2021-10-31T23:20:00.000000Z
+                        null\t2021-10-31T23:50:00.000000Z
+                        0.8925004728084927\t2021-11-01T00:20:00.000000Z
+                        null\t2021-11-01T00:50:00.000000Z
+                        0.5522442336842381\t2021-11-01T01:20:00.000000Z
+                        null\t2021-11-01T01:50:00.000000Z
+                        null\t2021-11-01T02:20:00.000000Z
+                        null\t2021-11-01T02:50:00.000000Z
+                        0.7504512900310369\t2021-11-01T03:20:00.000000Z
+                        """,
+                "select sum(o) s, k from x sample by 30m fill(null) align to calendar with offset '00:20'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_double(2) o," +
+                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(30)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedCharColumn() throws Exception {
+        // The old SAMPLE BY code path rejected CHAR columns with fill(null).
+        // The GROUP BY rewrite handles them correctly.
+        assertQuery(
+                """
+                        s\tk
+                        B\t2021-10-31T00:00:00.000000Z
+                        T\t2021-10-31T00:30:00.000000Z
+                        \t2021-10-31T01:00:00.000000Z
+                        U\t2021-10-31T01:30:00.000000Z
+                        \t2021-10-31T02:00:00.000000Z
+                        O\t2021-10-31T02:30:00.000000Z
+                        \t2021-10-31T03:00:00.000000Z
+                        G\t2021-10-31T03:30:00.000000Z
+                        \t2021-10-31T04:00:00.000000Z
+                        I\t2021-10-31T04:30:00.000000Z
+                        \t2021-10-31T05:00:00.000000Z
+                        U\t2021-10-31T05:30:00.000000Z
+                        \t2021-10-31T06:00:00.000000Z
+                        E\t2021-10-31T06:30:00.000000Z
+                        \t2021-10-31T07:00:00.000000Z
+                        X\t2021-10-31T07:30:00.000000Z
+                        \t2021-10-31T08:00:00.000000Z
+                        E\t2021-10-31T08:30:00.000000Z
+                        I\t2021-10-31T09:00:00.000000Z
+                        \t2021-10-31T09:30:00.000000Z
+                        W\t2021-10-31T10:00:00.000000Z
+                        \t2021-10-31T10:30:00.000000Z
+                        N\t2021-10-31T11:00:00.000000Z
+                        \t2021-10-31T11:30:00.000000Z
+                        Q\t2021-10-31T12:00:00.000000Z
+                        \t2021-10-31T12:30:00.000000Z
+                        B\t2021-10-31T13:00:00.000000Z
+                        \t2021-10-31T13:30:00.000000Z
+                        Z\t2021-10-31T14:00:00.000000Z
+                        \t2021-10-31T14:30:00.000000Z
+                        T\t2021-10-31T15:00:00.000000Z
+                        \t2021-10-31T15:30:00.000000Z
+                        H\t2021-10-31T16:00:00.000000Z
+                        \t2021-10-31T16:30:00.000000Z
+                        L\t2021-10-31T17:00:00.000000Z
+                        I\t2021-10-31T17:30:00.000000Z
+                        \t2021-10-31T18:00:00.000000Z
+                        W\t2021-10-31T18:30:00.000000Z
+                        \t2021-10-31T19:00:00.000000Z
+                        X\t2021-10-31T19:30:00.000000Z
+                        \t2021-10-31T20:00:00.000000Z
+                        K\t2021-10-31T20:30:00.000000Z
+                        \t2021-10-31T21:00:00.000000Z
+                        J\t2021-10-31T21:30:00.000000Z
+                        \t2021-10-31T22:00:00.000000Z
+                        B\t2021-10-31T22:30:00.000000Z
+                        \t2021-10-31T23:00:00.000000Z
+                        I\t2021-10-31T23:30:00.000000Z
+                        \t2021-11-01T00:00:00.000000Z
+                        Y\t2021-11-01T00:30:00.000000Z
+                        \t2021-11-01T01:00:00.000000Z
+                        I\t2021-11-01T01:30:00.000000Z
+                        P\t2021-11-01T02:00:00.000000Z
+                        \t2021-11-01T02:30:00.000000Z
+                        V\t2021-11-01T03:00:00.000000Z
+                        """,
+                "select last(z) s, k from x sample by 30m fill(null) align to calendar with offset '10:00'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_double(2) o," +
+                        " rnd_char() z," +
+                        " rnd_varchar(5, 16, 2) vch," +
+                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
+                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(30)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true,
                 false
         );
     }
@@ -11955,38 +12987,6 @@ public class SampleByTest extends AbstractCairoTest {
                         121.75073858040724\t1970-01-04T08:00:00.000000Z
                         """,
                 false
-        );
-    }
-
-    @Test
-    public void testSampleFillNullNotKeyedInvalidSequential() throws Exception {
-        assertException(
-                "select last(z) s from x sample by 30m fill(null) align to calendar with offset '10:00'",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_boolean() b," +
-                        " rnd_str(1,1,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) i," +
-                        " rnd_long() j," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_double(2) o," +
-                        " rnd_char() z," +
-                        " rnd_varchar(5, 16, 2) vch," +
-                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
-                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
-                        " from" +
-                        " long_sequence(30)" +
-                        ") timestamp(k) partition by NONE",
-                7,
-                "Unsupported type: CHAR"
         );
     }
 
@@ -12031,6 +13031,7 @@ public class SampleByTest extends AbstractCairoTest {
                                       values: [null]
                                         Async Group By workers: 1
                                           keys: [k]
+                                          keyFunctions: [timestamp_floor_utc('30m',k)]
                                           values: [last(z)]
                                           filter: null
                                             PageFrame
@@ -12390,7 +13391,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3100000000) k" +
+                        " timestamp_sequence(172800000000, 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -12582,7 +13583,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -14528,7 +15529,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -15616,7 +16617,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false,
+                true,
                 false
         );
     }
@@ -15715,7 +16716,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false,
+                true,
                 false
         );
     }
@@ -15723,13 +16724,26 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleFillValueNotKeyedAlignToCalendarTimeZone2() throws Exception {
         // this test verifies transition from Summer to Winter time and
-        // clock going backwards. An hour of time should drop out of the result set
-        // without the logic trying to backfill things
+        // clock going backwards. The repeated hour produces distinct UTC buckets.
+        final String ddl = "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                " from" +
+                " long_sequence(40)" +
+                ") timestamp(k) partition by NONE";
+        final String query = "select sum(a), k from x sample by 30m fill(20.56) align to calendar time zone 'Europe/Berlin'";
+
         assertQuery(
                 """
                         sum\tk
                         11.427984775756228\t2021-10-31T00:00:00.000000Z
-                        66.08297852815922\t2021-10-31T00:30:00.000000Z
+                        42.17768841969397\t2021-10-31T00:30:00.000000Z
+                        20.56\t2021-10-31T01:00:00.000000Z
+                        23.90529010846525\t2021-10-31T01:30:00.000000Z
+                        20.56\t2021-10-31T02:00:00.000000Z
                         70.94360487171201\t2021-10-31T02:30:00.000000Z
                         20.56\t2021-10-31T03:00:00.000000Z
                         87.99634725391621\t2021-10-31T03:30:00.000000Z
@@ -15800,116 +16814,277 @@ public class SampleByTest extends AbstractCairoTest {
                         20.56\t2021-11-01T12:00:00.000000Z
                         58.93398488053903\t2021-11-01T12:30:00.000000Z
                         """,
-                "select sum(a), k from x sample by 30m fill(20.56) align to calendar time zone 'Europe/Berlin'",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
-                        " from" +
-                        " long_sequence(40)" +
-                        ") timestamp(k) partition by NONE",
+                query,
+                ddl,
                 "k",
-                false,
+                true,
                 false
         );
+
+        assertMemoryLeak(() -> {
+            execute("DROP TABLE x");
+            execute(ddl);
+            assertPlanNoLeakCheck(query,
+                    """
+                            Encode sort
+                              keys: [k]
+                                Fill Range
+                                  stride: '30m'
+                                  values: [20.56]
+                                    Async Group By workers: 1
+                                      keys: [k]
+                                      keyFunctions: [timestamp_floor_utc('30m',k,null,'00:00','Europe/Berlin')]
+                                      values: [sum(a)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """);
+        });
     }
 
     @Test
     public void testSampleFillValueNotKeyedAlignToCalendarTimeZoneOffset() throws Exception {
         // this test verifies transition from Summer to Winter time and
-        // clock going backwards. An hour of time should drop out of the result set
-        // without the logic trying to backfill things
+        // clock going backwards. The repeated hour produces distinct UTC buckets.
+        final String ddl = "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(cast('2021-10-31T00:22:00.000000Z' as timestamp), 3400000000) k" +
+                " from" +
+                " long_sequence(40)" +
+                ") timestamp(k) partition by NONE";
+        final String query = "select s, k, to_timezone(k, 'Europe/Riga') kz from (select count() s, k from x sample by 30m fill(9999) align to calendar time zone 'Europe/Riga' with offset '00:40')";
+
         assertQuery(
                 """
-                        s\tkz
-                        2\t2021-10-31T03:10:00.000000Z
-                        1\t2021-10-31T04:10:00.000000Z
-                        9999\t2021-10-31T04:40:00.000000Z
-                        1\t2021-10-31T05:10:00.000000Z
-                        1\t2021-10-31T05:40:00.000000Z
-                        9999\t2021-10-31T06:10:00.000000Z
-                        1\t2021-10-31T06:40:00.000000Z
-                        9999\t2021-10-31T07:10:00.000000Z
-                        1\t2021-10-31T07:40:00.000000Z
-                        9999\t2021-10-31T08:10:00.000000Z
-                        1\t2021-10-31T08:40:00.000000Z
-                        9999\t2021-10-31T09:10:00.000000Z
-                        1\t2021-10-31T09:40:00.000000Z
-                        9999\t2021-10-31T10:10:00.000000Z
-                        1\t2021-10-31T10:40:00.000000Z
-                        9999\t2021-10-31T11:10:00.000000Z
-                        1\t2021-10-31T11:40:00.000000Z
-                        9999\t2021-10-31T12:10:00.000000Z
-                        1\t2021-10-31T12:40:00.000000Z
-                        9999\t2021-10-31T13:10:00.000000Z
-                        1\t2021-10-31T13:40:00.000000Z
-                        1\t2021-10-31T14:10:00.000000Z
-                        9999\t2021-10-31T14:40:00.000000Z
-                        1\t2021-10-31T15:10:00.000000Z
-                        9999\t2021-10-31T15:40:00.000000Z
-                        1\t2021-10-31T16:10:00.000000Z
-                        9999\t2021-10-31T16:40:00.000000Z
-                        1\t2021-10-31T17:10:00.000000Z
-                        9999\t2021-10-31T17:40:00.000000Z
-                        1\t2021-10-31T18:10:00.000000Z
-                        9999\t2021-10-31T18:40:00.000000Z
-                        1\t2021-10-31T19:10:00.000000Z
-                        9999\t2021-10-31T19:40:00.000000Z
-                        1\t2021-10-31T20:10:00.000000Z
-                        9999\t2021-10-31T20:40:00.000000Z
-                        1\t2021-10-31T21:10:00.000000Z
-                        9999\t2021-10-31T21:40:00.000000Z
-                        1\t2021-10-31T22:10:00.000000Z
-                        1\t2021-10-31T22:40:00.000000Z
-                        9999\t2021-10-31T23:10:00.000000Z
-                        1\t2021-10-31T23:40:00.000000Z
-                        9999\t2021-11-01T00:10:00.000000Z
-                        1\t2021-11-01T00:40:00.000000Z
-                        9999\t2021-11-01T01:10:00.000000Z
-                        1\t2021-11-01T01:40:00.000000Z
-                        9999\t2021-11-01T02:10:00.000000Z
-                        1\t2021-11-01T02:40:00.000000Z
-                        9999\t2021-11-01T03:10:00.000000Z
-                        1\t2021-11-01T03:40:00.000000Z
-                        9999\t2021-11-01T04:10:00.000000Z
-                        1\t2021-11-01T04:40:00.000000Z
-                        9999\t2021-11-01T05:10:00.000000Z
-                        1\t2021-11-01T05:40:00.000000Z
-                        9999\t2021-11-01T06:10:00.000000Z
-                        1\t2021-11-01T06:40:00.000000Z
-                        1\t2021-11-01T07:10:00.000000Z
-                        9999\t2021-11-01T07:40:00.000000Z
-                        1\t2021-11-01T08:10:00.000000Z
-                        9999\t2021-11-01T08:40:00.000000Z
-                        1\t2021-11-01T09:10:00.000000Z
-                        9999\t2021-11-01T09:40:00.000000Z
-                        1\t2021-11-01T10:10:00.000000Z
-                        9999\t2021-11-01T10:40:00.000000Z
-                        1\t2021-11-01T11:10:00.000000Z
-                        9999\t2021-11-01T11:40:00.000000Z
-                        1\t2021-11-01T12:10:00.000000Z
-                        9999\t2021-11-01T12:40:00.000000Z
-                        1\t2021-11-01T13:10:00.000000Z
-                        9999\t2021-11-01T13:40:00.000000Z
-                        1\t2021-11-01T14:10:00.000000Z
-                        9999\t2021-11-01T14:40:00.000000Z
-                        1\t2021-11-01T15:10:00.000000Z
+                        s\tk\tkz
+                        1\t2021-10-31T00:10:00.000000Z\t2021-10-31T03:10:00.000000Z
+                        9999\t2021-10-31T00:40:00.000000Z\t2021-10-31T03:40:00.000000Z
+                        1\t2021-10-31T01:10:00.000000Z\t2021-10-31T03:10:00.000000Z
+                        9999\t2021-10-31T01:40:00.000000Z\t2021-10-31T03:40:00.000000Z
+                        1\t2021-10-31T02:10:00.000000Z\t2021-10-31T04:10:00.000000Z
+                        9999\t2021-10-31T02:40:00.000000Z\t2021-10-31T04:40:00.000000Z
+                        1\t2021-10-31T03:10:00.000000Z\t2021-10-31T05:10:00.000000Z
+                        1\t2021-10-31T03:40:00.000000Z\t2021-10-31T05:40:00.000000Z
+                        9999\t2021-10-31T04:10:00.000000Z\t2021-10-31T06:10:00.000000Z
+                        1\t2021-10-31T04:40:00.000000Z\t2021-10-31T06:40:00.000000Z
+                        9999\t2021-10-31T05:10:00.000000Z\t2021-10-31T07:10:00.000000Z
+                        1\t2021-10-31T05:40:00.000000Z\t2021-10-31T07:40:00.000000Z
+                        9999\t2021-10-31T06:10:00.000000Z\t2021-10-31T08:10:00.000000Z
+                        1\t2021-10-31T06:40:00.000000Z\t2021-10-31T08:40:00.000000Z
+                        9999\t2021-10-31T07:10:00.000000Z\t2021-10-31T09:10:00.000000Z
+                        1\t2021-10-31T07:40:00.000000Z\t2021-10-31T09:40:00.000000Z
+                        9999\t2021-10-31T08:10:00.000000Z\t2021-10-31T10:10:00.000000Z
+                        1\t2021-10-31T08:40:00.000000Z\t2021-10-31T10:40:00.000000Z
+                        9999\t2021-10-31T09:10:00.000000Z\t2021-10-31T11:10:00.000000Z
+                        1\t2021-10-31T09:40:00.000000Z\t2021-10-31T11:40:00.000000Z
+                        9999\t2021-10-31T10:10:00.000000Z\t2021-10-31T12:10:00.000000Z
+                        1\t2021-10-31T10:40:00.000000Z\t2021-10-31T12:40:00.000000Z
+                        9999\t2021-10-31T11:10:00.000000Z\t2021-10-31T13:10:00.000000Z
+                        1\t2021-10-31T11:40:00.000000Z\t2021-10-31T13:40:00.000000Z
+                        1\t2021-10-31T12:10:00.000000Z\t2021-10-31T14:10:00.000000Z
+                        9999\t2021-10-31T12:40:00.000000Z\t2021-10-31T14:40:00.000000Z
+                        1\t2021-10-31T13:10:00.000000Z\t2021-10-31T15:10:00.000000Z
+                        9999\t2021-10-31T13:40:00.000000Z\t2021-10-31T15:40:00.000000Z
+                        1\t2021-10-31T14:10:00.000000Z\t2021-10-31T16:10:00.000000Z
+                        9999\t2021-10-31T14:40:00.000000Z\t2021-10-31T16:40:00.000000Z
+                        1\t2021-10-31T15:10:00.000000Z\t2021-10-31T17:10:00.000000Z
+                        9999\t2021-10-31T15:40:00.000000Z\t2021-10-31T17:40:00.000000Z
+                        1\t2021-10-31T16:10:00.000000Z\t2021-10-31T18:10:00.000000Z
+                        9999\t2021-10-31T16:40:00.000000Z\t2021-10-31T18:40:00.000000Z
+                        1\t2021-10-31T17:10:00.000000Z\t2021-10-31T19:10:00.000000Z
+                        9999\t2021-10-31T17:40:00.000000Z\t2021-10-31T19:40:00.000000Z
+                        1\t2021-10-31T18:10:00.000000Z\t2021-10-31T20:10:00.000000Z
+                        9999\t2021-10-31T18:40:00.000000Z\t2021-10-31T20:40:00.000000Z
+                        1\t2021-10-31T19:10:00.000000Z\t2021-10-31T21:10:00.000000Z
+                        9999\t2021-10-31T19:40:00.000000Z\t2021-10-31T21:40:00.000000Z
+                        1\t2021-10-31T20:10:00.000000Z\t2021-10-31T22:10:00.000000Z
+                        1\t2021-10-31T20:40:00.000000Z\t2021-10-31T22:40:00.000000Z
+                        9999\t2021-10-31T21:10:00.000000Z\t2021-10-31T23:10:00.000000Z
+                        1\t2021-10-31T21:40:00.000000Z\t2021-10-31T23:40:00.000000Z
+                        9999\t2021-10-31T22:10:00.000000Z\t2021-11-01T00:10:00.000000Z
+                        1\t2021-10-31T22:40:00.000000Z\t2021-11-01T00:40:00.000000Z
+                        9999\t2021-10-31T23:10:00.000000Z\t2021-11-01T01:10:00.000000Z
+                        1\t2021-10-31T23:40:00.000000Z\t2021-11-01T01:40:00.000000Z
+                        9999\t2021-11-01T00:10:00.000000Z\t2021-11-01T02:10:00.000000Z
+                        1\t2021-11-01T00:40:00.000000Z\t2021-11-01T02:40:00.000000Z
+                        9999\t2021-11-01T01:10:00.000000Z\t2021-11-01T03:10:00.000000Z
+                        1\t2021-11-01T01:40:00.000000Z\t2021-11-01T03:40:00.000000Z
+                        9999\t2021-11-01T02:10:00.000000Z\t2021-11-01T04:10:00.000000Z
+                        1\t2021-11-01T02:40:00.000000Z\t2021-11-01T04:40:00.000000Z
+                        9999\t2021-11-01T03:10:00.000000Z\t2021-11-01T05:10:00.000000Z
+                        1\t2021-11-01T03:40:00.000000Z\t2021-11-01T05:40:00.000000Z
+                        9999\t2021-11-01T04:10:00.000000Z\t2021-11-01T06:10:00.000000Z
+                        1\t2021-11-01T04:40:00.000000Z\t2021-11-01T06:40:00.000000Z
+                        1\t2021-11-01T05:10:00.000000Z\t2021-11-01T07:10:00.000000Z
+                        9999\t2021-11-01T05:40:00.000000Z\t2021-11-01T07:40:00.000000Z
+                        1\t2021-11-01T06:10:00.000000Z\t2021-11-01T08:10:00.000000Z
+                        9999\t2021-11-01T06:40:00.000000Z\t2021-11-01T08:40:00.000000Z
+                        1\t2021-11-01T07:10:00.000000Z\t2021-11-01T09:10:00.000000Z
+                        9999\t2021-11-01T07:40:00.000000Z\t2021-11-01T09:40:00.000000Z
+                        1\t2021-11-01T08:10:00.000000Z\t2021-11-01T10:10:00.000000Z
+                        9999\t2021-11-01T08:40:00.000000Z\t2021-11-01T10:40:00.000000Z
+                        1\t2021-11-01T09:10:00.000000Z\t2021-11-01T11:10:00.000000Z
+                        9999\t2021-11-01T09:40:00.000000Z\t2021-11-01T11:40:00.000000Z
+                        1\t2021-11-01T10:10:00.000000Z\t2021-11-01T12:10:00.000000Z
+                        9999\t2021-11-01T10:40:00.000000Z\t2021-11-01T12:40:00.000000Z
+                        1\t2021-11-01T11:10:00.000000Z\t2021-11-01T13:10:00.000000Z
+                        9999\t2021-11-01T11:40:00.000000Z\t2021-11-01T13:40:00.000000Z
+                        1\t2021-11-01T12:10:00.000000Z\t2021-11-01T14:10:00.000000Z
+                        9999\t2021-11-01T12:40:00.000000Z\t2021-11-01T14:40:00.000000Z
+                        1\t2021-11-01T13:10:00.000000Z\t2021-11-01T15:10:00.000000Z
                         """,
-                "select s, to_timezone(k, 'Europe/Riga') kz from (select count() s, k from x sample by 30m fill(9999) align to calendar time zone 'Europe/Riga' with offset '00:40')",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-31T00:22:00.000000Z' as timestamp), 3400000000) k" +
-                        " from" +
-                        " long_sequence(40)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                false
+                query,
+                ddl,
+                "k",
+                true
         );
+
+        assertMemoryLeak(() -> {
+            execute("DROP TABLE IF EXISTS x");
+            execute(ddl);
+            assertPlanNoLeakCheck(query,
+                    """
+                            VirtualRecord
+                              functions: [s,k,to_timezone(k)]
+                                Encode sort
+                                  keys: [k]
+                                    Fill Range
+                                      stride: '30m'
+                                      values: [9999]
+                                        Async Group By workers: 1
+                                          keys: [k]
+                                          keyFunctions: [timestamp_floor_utc('30m',k,null,'00:40','Europe/Riga')]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedAlignToCalendarTimeZoneOffsetNepal() throws Exception {
+        // Nepal is UTC+5:45 — the 45-minute offset creates interesting bucket alignment with 30m sampling
+        final String ddl = "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(cast('2021-10-31T00:22:00.000000Z' as timestamp), 3400000000) k" +
+                " from" +
+                " long_sequence(40)" +
+                ") timestamp(k) partition by NONE";
+        final String query = "select s, k, to_timezone(k, 'Asia/Kathmandu') kz from (select count() s, k from x sample by 30m fill(9999) align to calendar time zone 'Asia/Kathmandu' with offset '00:40')";
+
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            assertPlanNoLeakCheck(query,
+                    """
+                            VirtualRecord
+                              functions: [s,k,to_timezone(k)]
+                                Encode sort
+                                  keys: [k]
+                                    Fill Range
+                                      stride: '30m'
+                                      values: [9999]
+                                        Async Group By workers: 1
+                                          keys: [k]
+                                          keyFunctions: [timestamp_floor_utc('30m',k,null,'00:40','Asia/Kathmandu')]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """);
+            assertQueryNoLeakCheck(
+                    """
+                            s\tk\tkz
+                            1\t2021-10-30T23:55:00.000000Z\t2021-10-31T05:40:00.000000Z
+                            9999\t2021-10-31T00:25:00.000000Z\t2021-10-31T06:10:00.000000Z
+                            1\t2021-10-31T00:55:00.000000Z\t2021-10-31T06:40:00.000000Z
+                            9999\t2021-10-31T01:25:00.000000Z\t2021-10-31T07:10:00.000000Z
+                            1\t2021-10-31T01:55:00.000000Z\t2021-10-31T07:40:00.000000Z
+                            9999\t2021-10-31T02:25:00.000000Z\t2021-10-31T08:10:00.000000Z
+                            1\t2021-10-31T02:55:00.000000Z\t2021-10-31T08:40:00.000000Z
+                            9999\t2021-10-31T03:25:00.000000Z\t2021-10-31T09:10:00.000000Z
+                            1\t2021-10-31T03:55:00.000000Z\t2021-10-31T09:40:00.000000Z
+                            9999\t2021-10-31T04:25:00.000000Z\t2021-10-31T10:10:00.000000Z
+                            1\t2021-10-31T04:55:00.000000Z\t2021-10-31T10:40:00.000000Z
+                            9999\t2021-10-31T05:25:00.000000Z\t2021-10-31T11:10:00.000000Z
+                            1\t2021-10-31T05:55:00.000000Z\t2021-10-31T11:40:00.000000Z
+                            9999\t2021-10-31T06:25:00.000000Z\t2021-10-31T12:10:00.000000Z
+                            1\t2021-10-31T06:55:00.000000Z\t2021-10-31T12:40:00.000000Z
+                            9999\t2021-10-31T07:25:00.000000Z\t2021-10-31T13:10:00.000000Z
+                            1\t2021-10-31T07:55:00.000000Z\t2021-10-31T13:40:00.000000Z
+                            1\t2021-10-31T08:25:00.000000Z\t2021-10-31T14:10:00.000000Z
+                            9999\t2021-10-31T08:55:00.000000Z\t2021-10-31T14:40:00.000000Z
+                            1\t2021-10-31T09:25:00.000000Z\t2021-10-31T15:10:00.000000Z
+                            9999\t2021-10-31T09:55:00.000000Z\t2021-10-31T15:40:00.000000Z
+                            1\t2021-10-31T10:25:00.000000Z\t2021-10-31T16:10:00.000000Z
+                            9999\t2021-10-31T10:55:00.000000Z\t2021-10-31T16:40:00.000000Z
+                            1\t2021-10-31T11:25:00.000000Z\t2021-10-31T17:10:00.000000Z
+                            9999\t2021-10-31T11:55:00.000000Z\t2021-10-31T17:40:00.000000Z
+                            1\t2021-10-31T12:25:00.000000Z\t2021-10-31T18:10:00.000000Z
+                            9999\t2021-10-31T12:55:00.000000Z\t2021-10-31T18:40:00.000000Z
+                            1\t2021-10-31T13:25:00.000000Z\t2021-10-31T19:10:00.000000Z
+                            9999\t2021-10-31T13:55:00.000000Z\t2021-10-31T19:40:00.000000Z
+                            1\t2021-10-31T14:25:00.000000Z\t2021-10-31T20:10:00.000000Z
+                            9999\t2021-10-31T14:55:00.000000Z\t2021-10-31T20:40:00.000000Z
+                            1\t2021-10-31T15:25:00.000000Z\t2021-10-31T21:10:00.000000Z
+                            9999\t2021-10-31T15:55:00.000000Z\t2021-10-31T21:40:00.000000Z
+                            1\t2021-10-31T16:25:00.000000Z\t2021-10-31T22:10:00.000000Z
+                            1\t2021-10-31T16:55:00.000000Z\t2021-10-31T22:40:00.000000Z
+                            9999\t2021-10-31T17:25:00.000000Z\t2021-10-31T23:10:00.000000Z
+                            1\t2021-10-31T17:55:00.000000Z\t2021-10-31T23:40:00.000000Z
+                            9999\t2021-10-31T18:25:00.000000Z\t2021-11-01T00:10:00.000000Z
+                            1\t2021-10-31T18:55:00.000000Z\t2021-11-01T00:40:00.000000Z
+                            9999\t2021-10-31T19:25:00.000000Z\t2021-11-01T01:10:00.000000Z
+                            1\t2021-10-31T19:55:00.000000Z\t2021-11-01T01:40:00.000000Z
+                            9999\t2021-10-31T20:25:00.000000Z\t2021-11-01T02:10:00.000000Z
+                            1\t2021-10-31T20:55:00.000000Z\t2021-11-01T02:40:00.000000Z
+                            9999\t2021-10-31T21:25:00.000000Z\t2021-11-01T03:10:00.000000Z
+                            1\t2021-10-31T21:55:00.000000Z\t2021-11-01T03:40:00.000000Z
+                            9999\t2021-10-31T22:25:00.000000Z\t2021-11-01T04:10:00.000000Z
+                            1\t2021-10-31T22:55:00.000000Z\t2021-11-01T04:40:00.000000Z
+                            9999\t2021-10-31T23:25:00.000000Z\t2021-11-01T05:10:00.000000Z
+                            1\t2021-10-31T23:55:00.000000Z\t2021-11-01T05:40:00.000000Z
+                            9999\t2021-11-01T00:25:00.000000Z\t2021-11-01T06:10:00.000000Z
+                            1\t2021-11-01T00:55:00.000000Z\t2021-11-01T06:40:00.000000Z
+                            1\t2021-11-01T01:25:00.000000Z\t2021-11-01T07:10:00.000000Z
+                            9999\t2021-11-01T01:55:00.000000Z\t2021-11-01T07:40:00.000000Z
+                            1\t2021-11-01T02:25:00.000000Z\t2021-11-01T08:10:00.000000Z
+                            9999\t2021-11-01T02:55:00.000000Z\t2021-11-01T08:40:00.000000Z
+                            1\t2021-11-01T03:25:00.000000Z\t2021-11-01T09:10:00.000000Z
+                            9999\t2021-11-01T03:55:00.000000Z\t2021-11-01T09:40:00.000000Z
+                            1\t2021-11-01T04:25:00.000000Z\t2021-11-01T10:10:00.000000Z
+                            9999\t2021-11-01T04:55:00.000000Z\t2021-11-01T10:40:00.000000Z
+                            1\t2021-11-01T05:25:00.000000Z\t2021-11-01T11:10:00.000000Z
+                            9999\t2021-11-01T05:55:00.000000Z\t2021-11-01T11:40:00.000000Z
+                            1\t2021-11-01T06:25:00.000000Z\t2021-11-01T12:10:00.000000Z
+                            9999\t2021-11-01T06:55:00.000000Z\t2021-11-01T12:40:00.000000Z
+                            1\t2021-11-01T07:25:00.000000Z\t2021-11-01T13:10:00.000000Z
+                            9999\t2021-11-01T07:55:00.000000Z\t2021-11-01T13:40:00.000000Z
+                            1\t2021-11-01T08:25:00.000000Z\t2021-11-01T14:10:00.000000Z
+                            9999\t2021-11-01T08:55:00.000000Z\t2021-11-01T14:40:00.000000Z
+                            1\t2021-11-01T09:25:00.000000Z\t2021-11-01T15:10:00.000000Z
+                            1\t2021-11-01T09:55:00.000000Z\t2021-11-01T15:40:00.000000Z
+                            9999\t2021-11-01T10:25:00.000000Z\t2021-11-01T16:10:00.000000Z
+                            1\t2021-11-01T10:55:00.000000Z\t2021-11-01T16:40:00.000000Z
+                            9999\t2021-11-01T11:25:00.000000Z\t2021-11-01T17:10:00.000000Z
+                            1\t2021-11-01T11:55:00.000000Z\t2021-11-01T17:40:00.000000Z
+                            9999\t2021-11-01T12:25:00.000000Z\t2021-11-01T18:10:00.000000Z
+                            1\t2021-11-01T12:55:00.000000Z\t2021-11-01T18:40:00.000000Z
+                            """,
+                    query,
+                    "k",
+                    true
+            );
+        });
     }
 
     @Test
@@ -15996,7 +17171,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 43,
-                "invalid fill value: zz"
+                "Invalid column: zz"
         );
     }
 
@@ -16986,7 +18161,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "   rnd_double(1)*180 lat," +
                             "   rnd_double(1)*180 lon," +
                             "   rnd_symbol('a') s," +
-                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY"

@@ -114,7 +114,12 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             putAt0(index, key, value);
             size++;
             if (--free == 0) {
-                rehash(capacity() << 1);
+                try {
+                    rehash(capacity() << 1);
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -129,13 +134,15 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     public void restoreInitialCapacity() {
         if (ptr == 0 || capacity != initialCapacity) {
             final long oldCapacity = capacity;
+            long newPtr;
+            if (ptr == 0) {
+                newPtr = Unsafe.malloc(8L * initialCapacity, memoryTag);
+            } else {
+                newPtr = Unsafe.realloc(ptr, 8L * oldCapacity, 8L * initialCapacity, memoryTag);
+            }
+            ptr = newPtr;
             capacity = initialCapacity;
             mask = capacity - 1;
-            if (ptr == 0) {
-                ptr = Unsafe.malloc(8L * capacity, memoryTag);
-            } else {
-                ptr = Unsafe.realloc(ptr, 8L * oldCapacity, 8L * capacity, memoryTag);
-            }
         }
 
         clear();
@@ -177,12 +184,13 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         }
 
         final int oldCapacity = capacity;
+        long newPtr = Unsafe.malloc(8L * newCapacity, memoryTag);
 
+        long oldPtr = ptr;
+        ptr = newPtr;
         capacity = newCapacity;
         mask = newCapacity - 1;
         free += (int) ((newCapacity - oldCapacity) * loadFactor);
-        long oldPtr = ptr;
-        ptr = Unsafe.malloc(8L * newCapacity, memoryTag);
         zero();
 
         for (long p = oldPtr, lim = oldPtr + 8L * oldCapacity; p < lim; p += 8L) {

@@ -780,7 +780,7 @@ mod tests {
             columns: vec![col3],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition1, false).unwrap();
+        let (schema, additional_meta) = to_parquet_schema(&partition1, false, -1).unwrap();
         let encodings = to_encodings(&partition1);
 
         let mut chunked = ParquetWriter::new(&mut buf)
@@ -1475,12 +1475,20 @@ mod tests {
         // Verify metadata has bloom filter offset
         let meta =
             parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
-        let bf_offset = meta.row_groups[0].columns()[0]
-            .metadata()
-            .bloom_filter_offset;
+        let col_meta = meta.row_groups[0].columns()[0].metadata();
+        let bf_offset = col_meta.bloom_filter_offset;
         assert!(
             bf_offset.is_some(),
             "bloom filter offset should be present in metadata"
+        );
+        let bf_length = col_meta.bloom_filter_length;
+        assert!(
+            bf_length.is_some(),
+            "bloom filter length should be present in metadata"
+        );
+        assert!(
+            bf_length.unwrap() > 0,
+            "bloom filter length should be positive"
         );
 
         // Values not in the data
@@ -2526,7 +2534,7 @@ mod tests {
             columns: vec![col2],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition1, false).unwrap();
+        let (schema, additional_meta) = to_parquet_schema(&partition1, false, -1).unwrap();
         let encodings = to_encodings(&partition1);
         // Encoding should be RleDictionary since we requested it
         assert_eq!(encodings[0], parquet2::encoding::Encoding::RleDictionary);
@@ -2680,7 +2688,7 @@ mod tests {
             columns: vec![col1_b, col2_b],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition_a, false).unwrap();
+        let (schema, additional_meta) = to_parquet_schema(&partition_a, false, -1).unwrap();
         let encodings = to_encodings(&partition_a);
         let compressions = to_compressions(&partition_a);
 

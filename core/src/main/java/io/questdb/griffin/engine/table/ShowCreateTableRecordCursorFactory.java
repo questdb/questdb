@@ -205,10 +205,6 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             hasRun = false;
         }
 
-        private void putTtl() {
-            ttlToSink(table.getTtlHoursOrMonths(), sink);
-        }
-
         private void showCreateTable(CairoConfiguration config) {
             // CREATE TABLE table_name
             putCreateTable();
@@ -220,7 +216,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 // PARTITION BY unit
                 putPartitionBy();
                 // TTL n unit
-                putTtl();
+                ttlToSink(sink);
                 // (BYPASS) WAL
                 putWal();
             }
@@ -260,17 +256,27 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 int encoding = TableUtils.getParquetConfigEncoding(parquetConfig);
                 int compression = TableUtils.getParquetConfigCompression(parquetConfig);
                 int level = TableUtils.getParquetConfigCompressionLevel(parquetConfig);
+                boolean hasBloomFilter = TableUtils.isParquetConfigBloomFilter(parquetConfig);
                 sink.putAscii(" PARQUET(");
-                if (encoding > 0) {
-                    sink.put(ParquetEncoding.getEncodingName(encoding));
+                if (encoding > 0 || compression > 0) {
+                    if (encoding > 0) {
+                        sink.put(ParquetEncoding.getEncodingName(encoding));
+                    } else {
+                        sink.putAscii("default");
+                    }
+                    if (compression > 0) {
+                        sink.putAscii(", ").put(ParquetCompression.getCompressionName(compression - 1));
+                        if (level > 0) {
+                            sink.putAscii('(').put(level - 1).putAscii(')');
+                        }
+                    }
+                    if (hasBloomFilter) {
+                        sink.putAscii(", bloom_filter");
+                    }
+                } else if (hasBloomFilter) {
+                    sink.putAscii("bloom_filter");
                 } else {
                     sink.putAscii("default");
-                }
-                if (compression > 0) {
-                    sink.putAscii(", ").put(ParquetCompression.getCompressionName(compression - 1));
-                    if (level > 0) {
-                        sink.putAscii('(').put(level - 1).putAscii(')');
-                    }
                 }
                 sink.putAscii(')');
             }
@@ -333,6 +339,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 sink.putAscii(" BYPASS");
                 sink.putAscii(" WAL");
             }
+        }
+
+        // overridden in ent, do not remove!
+        protected void ttlToSink(CharSink<?> sink) {
+            ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
         }
 
         public class ShowCreateTableRecord implements Record {

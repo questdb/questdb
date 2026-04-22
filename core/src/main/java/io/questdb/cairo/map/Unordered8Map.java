@@ -216,6 +216,25 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     @Override
+    public MapRecordCursor newCursor() {
+        Unordered8MapCursor c = new Unordered8MapCursor(record.clone(), this);
+        if (hasZero) {
+            return c.init(memStart, memLimit, zeroMemStart, size + 1);
+        }
+        return c.init(memStart, memLimit, 0, size);
+    }
+
+    @Override
+    public void initCursor(MapRecordCursor cursor) {
+        Unordered8MapCursor c = (Unordered8MapCursor) cursor;
+        if (hasZero) {
+            c.init(memStart, memLimit, zeroMemStart, size + 1);
+        } else {
+            c.init(memStart, memLimit, 0, size);
+        }
+    }
+
+    @Override
     public int getKeyCapacity() {
         return keyCapacity;
     }
@@ -283,7 +302,12 @@ public class Unordered8Map implements Map, Reopenable {
             Vect.memcpy(destAddr, srcAddr, entrySize);
             size++;
             if (--free == 0) {
-                rehash();
+                try {
+                    rehash();
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -306,15 +330,17 @@ public class Unordered8Map implements Map, Reopenable {
     @Override
     public void restoreInitialCapacity() {
         if (memStart == 0 || keyCapacity != initialKeyCapacity) {
+            final long sizeBytes = entrySize * initialKeyCapacity;
+            long newMemStart;
+            if (memStart == 0) {
+                newMemStart = Unsafe.malloc(sizeBytes, memoryTag);
+            } else {
+                newMemStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
+            }
+            memStart = newMemStart;
+            memLimit = memStart + sizeBytes;
             keyCapacity = initialKeyCapacity;
             mask = keyCapacity - 1;
-            final long sizeBytes = entrySize * keyCapacity;
-            if (memStart == 0) {
-                memStart = Unsafe.malloc(sizeBytes, memoryTag);
-            } else {
-                memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
-            }
-            memLimit = memStart + sizeBytes;
         }
 
         if (zeroMemStart == 0) {
@@ -351,7 +377,12 @@ public class Unordered8Map implements Map, Reopenable {
     private Unordered8MapValue asNew(long startAddress, long key, long hashCode, Unordered8MapValue value) {
         Unsafe.getUnsafe().putLong(startAddress, key);
         if (--free == 0) {
-            rehash();
+            try {
+                rehash();
+            } catch (CairoException e) {
+                free = 1;
+                throw e;
+            }
             // Index may have changed after rehash, so we need to find the key.
             startAddress = getStartAddress(hashCode & mask);
             for (; ; ) {

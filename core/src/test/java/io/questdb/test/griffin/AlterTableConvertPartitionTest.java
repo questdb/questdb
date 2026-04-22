@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
@@ -265,6 +266,481 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     95,
                     "',' or ')' expected"
             );
+        });
+    }
+
+    // ============================================================
+    // Metadata-driven bloom filter conversion tests (A1-A4, B1, C1-C2, D1-D2, H1)
+    // ============================================================
+
+    @Test
+    public void testMetadataBloomFilterBasic() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Convert WITHOUT explicit bloom_filter_columns — should use metadata
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Verify bloom filter is active by querying for a non-existent value
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            Assert.assertTrue("metadata bloom filter should enable row group skipping",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // Verify existing value is still found
+            assertQueryNoLeakCheck("val\n50000\n", "SELECT val FROM x WHERE val = 50_000", null, true, false);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterSelectiveColumns() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        a INT PARQUET(BLOOM_FILTER),
+                        b INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, 50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, 100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, 100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Column 'a' has bloom filter — row groups should be skipped
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("a\n", "SELECT a FROM x WHERE a = 25_000", null, true, false);
+            long skippedWithBloom = ParquetRowGroupFilter.getRowGroupsSkipped();
+            Assert.assertTrue("column with BLOOM_FILTER should skip row groups", skippedWithBloom > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterNoColumns() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // No bloom filter columns — should convert without error
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck("""
+                    val
+                    1
+                    """, "SELECT val FROM x WHERE val = 1", null, true, false);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterWithEncodingAndCompression() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            Assert.assertTrue("bloom filter with custom encoding should still skip row groups",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterExplicitOverride() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            // Column 'a' has bloom filter in metadata, column 'b' does not
+            execute("""
+                    CREATE TABLE x (
+                        a INT PARQUET(BLOOM_FILTER),
+                        b INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, 50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, 100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, 100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Explicit override: bloom filter on 'b' only, ignoring metadata on 'a'
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'b')");
+
+            // Column 'b' should have bloom filter (from explicit override)
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("b\n", "SELECT b FROM x WHERE b = 25_000", null, true, false);
+            Assert.assertTrue("explicit bloom_filter_columns should override metadata",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterSetViaDdlThenConvert() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Add bloom filter via ALTER TABLE, then convert
+            execute("ALTER TABLE x ALTER COLUMN val SET PARQUET(BLOOM_FILTER)");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            Assert.assertTrue("bloom filter set via ALTER TABLE should be used during conversion",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterClearViaDdlThenConvert() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Clear bloom filter, then convert
+            execute("ALTER TABLE x ALTER COLUMN val SET PARQUET(default)");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // With bloom filter cleared, row group skipping should not happen via bloom filter
+            // (min/max statistics may still skip some groups, so we just verify no error)
+            assertQueryNoLeakCheck("val\n50000\n", "SELECT val FROM x WHERE val = 50_000", null, true, false);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterWithDeletedColumn() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        a INT PARQUET(BLOOM_FILTER),
+                        b INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, 50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, 100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, 100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Drop column 'a', then convert — bloom filter on 'b' should still work
+            execute("ALTER TABLE x DROP COLUMN a");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("b\n", "SELECT b FROM x WHERE b = 25_000", null, true, false);
+            Assert.assertTrue("bloom filter on remaining column should work after sibling column dropped",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterWithColumnTop() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        a INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // Add column with bloom filter after initial data — creates a column top
+            execute("ALTER TABLE x ADD COLUMN b INT");
+            execute("ALTER TABLE x ALTER COLUMN b SET PARQUET(BLOOM_FILTER)");
+            execute("""
+                    INSERT INTO x VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 50_000),
+                    (4, '2024-01-02T01:00:00.000000Z', 100_000)
+                    """);
+
+            // Convert — column 'b' has a column top in the first partition
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Verify data is correct (nulls for column top rows)
+            assertSql("""
+                    a\tts\tb
+                    1\t2024-01-01T00:00:00.000000Z\tnull
+                    2\t2024-01-01T01:00:00.000000Z\tnull
+                    3\t2024-01-01T02:00:00.000000Z\t50000
+                    """, "SELECT * FROM x WHERE ts < '2024-01-02'");
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterSymbolColumn() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        s SYMBOL PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('aaa', '2024-01-01T00:00:00.000000Z'),
+                    ('bbb', '2024-01-01T01:00:00.000000Z'),
+                    ('ccc', '2024-01-01T02:00:00.000000Z'),
+                    ('ddd', '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("s\n", "SELECT s FROM x WHERE s = 'zzz'", null, true, false);
+            Assert.assertTrue("bloom filter on SYMBOL column should enable row group skipping",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            assertQueryNoLeakCheck("s\naaa\n", "SELECT s FROM x WHERE s = 'aaa'", null, true, false);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterSurvivesNativeRoundTrip() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Convert to parquet, back to native, then re-convert
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE WHERE ts >= 0");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Bloom filter metadata should still be active after round-trip
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            Assert.assertTrue("bloom filter should survive parquet→native→parquet cycle",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterWithNulls() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (NULL, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (NULL, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Bloom filter should still skip row groups for absent values
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            Assert.assertTrue("bloom filter should handle NULL values and still skip row groups",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // Present value should still be found
+            assertQueryNoLeakCheck("val\n50000\n", "SELECT val FROM x WHERE val = 50_000", null, true, false);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterWithEmptyStrings() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val VARCHAR PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('', '2024-01-01T00:00:00.000000Z'),
+                    ('hello', '2024-01-01T01:00:00.000000Z'),
+                    ('world', '2024-01-01T02:00:00.000000Z'),
+                    ('test', '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Bloom filter should skip row groups for absent values
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 'nonexistent'", null, true, false);
+            Assert.assertTrue("bloom filter should handle empty strings and skip row groups for absent values",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // Empty string should still be found
+            assertQueryNoLeakCheck("val\n\n", "SELECT val FROM x WHERE val = ''", null, true, false);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterMultiplePartitions() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-02T00:00:00.000000Z'),
+                    (200_000, '2024-01-02T01:00:00.000000Z'),
+                    (300_000, '2024-01-03T00:00:00.000000Z'),
+                    (400_000, '2024-01-03T01:00:00.000000Z'),
+                    (999_999, '2024-01-04T00:00:00.000000Z')
+                    """);
+
+            // Convert all sealed partitions at once
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Bloom filter should work across multiple parquet partitions
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            Assert.assertTrue("bloom filter should work across multiple converted partitions",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // Verify a value in a later partition is found
+            assertQueryNoLeakCheck("val\n300000\n", "SELECT val FROM x WHERE val = 300_000", null, true, false);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterLong() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val LONG PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (10_000_000_000, '2024-01-01T01:00:00.000000Z'),
+                    (20_000_000_000, '2024-01-01T02:00:00.000000Z'),
+                    (30_000_000_000, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 5_000_000_000", null, true, false);
+            Assert.assertTrue("bloom filter on LONG column should skip row groups",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            assertQueryNoLeakCheck("val\n10000000000\n",
+                    "SELECT val FROM x WHERE val = 10_000_000_000", null, true, false);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterVarchar() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val VARCHAR PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('alpha', '2024-01-01T00:00:00.000000Z'),
+                    ('bravo', '2024-01-01T01:00:00.000000Z'),
+                    ('charlie', '2024-01-01T02:00:00.000000Z'),
+                    ('delta', '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 'zulu'", null, true, false);
+            Assert.assertTrue("bloom filter on VARCHAR column should skip row groups",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            assertQueryNoLeakCheck("val\nalpha\n",
+                    "SELECT val FROM x WHERE val = 'alpha'", null, true, false);
         });
     }
 

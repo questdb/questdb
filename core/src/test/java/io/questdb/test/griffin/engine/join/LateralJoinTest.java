@@ -421,6 +421,57 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLateralWithUnionAllBuckets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z'),
+                    (4, '2024-01-01T03:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 1, 25.0, '2024-01-01T00:20:00.000000Z'),
+                    (3, 1, 40.0, '2024-01-01T00:30:00.000000Z'),
+                    (4, 2, 15.0, '2024-01-01T01:10:00.000000Z'),
+                    (5, 2, 50.0, '2024-01-01T01:20:00.000000Z'),
+                    (6, 3, 29.0, '2024-01-01T02:10:00.000000Z'),
+                    (7, 3, 30.0, '2024-01-01T02:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tbucket
+                            1\t10.0\tsmall
+                            1\t25.0\tsmall
+                            1\t40.0\tlarge
+                            2\t15.0\tsmall
+                            2\t50.0\tlarge
+                            3\t29.0\tsmall
+                            3\t30.0\tlarge
+                            """,
+                    """
+                            SELECT o.id, t.qty, t.bucket
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty, 'small' AS bucket FROM trades
+                                    WHERE order_id = o.id AND qty < 30
+                                UNION ALL
+                                SELECT qty, 'large' AS bucket FROM trades
+                                    WHERE order_id = o.id AND qty >= 30
+                            ) t
+                            ORDER BY o.id, t.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testLateralWithUnionAndLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -603,6 +654,73 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ORDER BY o.id, sub.val
                             """,
                     null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountMixedPrefixColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fx_trades (timestamp TIMESTAMP, symbol SYMBOL, price DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fx_trades VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'EUR/USD', 1.10),
+                    ('2024-01-01T01:00:00.000000Z', 'EUR/USD', 1.20),
+                    ('2024-01-01T02:00:00.000000Z', 'GBP/USD', 1.30)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\tsymbol\tprice\tc
+                            2024-01-01T00:00:00.000000Z\tEUR/USD\t1.1\t1
+                            2024-01-01T01:00:00.000000Z\tEUR/USD\t1.2\t0
+                            2024-01-01T02:00:00.000000Z\tGBP/USD\t1.3\t0
+                            """,
+                    """
+                            SELECT timestamp, t.symbol, price, c FROM fx_trades t
+                            LEFT JOIN LATERAL (
+                                SELECT count() c FROM fx_trades
+                                WHERE symbol = t.symbol AND price > (t.price * 1.01)
+                            ) u
+                            ORDER BY timestamp
+                            """,
+                    "timestamp", false, false
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\tsymbol\tprice\tc
+                            2024-01-01T00:00:00.000000Z\tEUR/USD\t1.1\t1
+                            2024-01-01T01:00:00.000000Z\tEUR/USD\t1.2\t0
+                            2024-01-01T02:00:00.000000Z\tGBP/USD\t1.3\t0
+                            """,
+                    """
+                            SELECT timestamp, t.symbol, price, c FROM fx_trades t
+                            LEFT JOIN LATERAL (
+                                SELECT count() c FROM fx_trades
+                                WHERE symbol = t.symbol AND price > (t.price * 1.01)
+                            )
+                            ORDER BY timestamp
+                            """,
+                    "timestamp", false, false
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp	symbol	price	symbol1	c
+                            2024-01-01T00:00:00.000000Z	EUR/USD	1.1	EUR/USD	1
+                            2024-01-01T01:00:00.000000Z	EUR/USD	1.2		0
+                            2024-01-01T02:00:00.000000Z	GBP/USD	1.3		0
+                            """,
+                    """
+                            SELECT timestamp, t.symbol, price, u.symbol, c FROM fx_trades t
+                            LEFT JOIN LATERAL (
+                                SELECT symbol, count() c FROM fx_trades
+                                WHERE symbol = t.symbol AND price > (t.price * 1.01)
+                            ) u
+                            ORDER BY timestamp
+                            """,
+                    "timestamp", false, false
             );
         });
     }
@@ -2696,7 +2814,6 @@ public class LateralJoinTest extends AbstractCairoTest {
             );
         });
     }
-
 
     // T11: Inner JOIN inside LATERAL, INNER, equality correlation — inner JOIN ON rewrite
     @Test
@@ -8332,6 +8449,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Hash Join Light
                                       condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
+                                      symbolKeyJoin: true
                                         Hash Join Light
                                           condition: t2.t1_id=t1.id
                                             Async JIT Filter workers: 1
@@ -8350,6 +8468,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                 Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                     Hash Join Light
                                                       condition: __qdb_outer_ref__0_category=t3.b
+                                                      symbolKeyJoin: true
                                                         PageFrame
                                                             Row forward scan
                                                             Frame forward scan on: t3

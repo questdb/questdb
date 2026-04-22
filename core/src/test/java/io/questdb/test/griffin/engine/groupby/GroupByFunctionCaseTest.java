@@ -213,6 +213,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                                   functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]
                                     Async Group By workers: 1
                                       keys: [candle_st,venue]
+                                      keyFunctions: [timestamp_floor_utc('1h',trade_timestamp)]
                                       values: [count(*),sum(qty*price),sum(qty)]
                                       filter: (instrument_key ~ ETH.USD.S..*? [state-shared] and venue in [CBS,FUS,LMX,BTS])
                                         PageFrame

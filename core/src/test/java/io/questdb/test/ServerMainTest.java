@@ -739,6 +739,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.writer.data.index.value.append.page.size\tQDB_CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.fo_opts\tQDB_CAIRO_WRITER_FO_OPTS\to_none\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.tick.rows.count\tQDB_CAIRO_WRITER_TICK_ROWS_COUNT\t1024\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.mid.partition.max.splits\tQDB_CAIRO_O3_MID_PARTITION_MAX_SPLITS\t1\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.buffer.size\tQDB_CIRCUIT_BREAKER_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.throttle\tQDB_CIRCUIT_BREAKER_THROTTLE\t2000000\tdefault\tfalse\tfalse\n" +
                                     "config.reload.enabled\tQDB_CONFIG_RELOAD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
@@ -895,6 +896,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.udp.timestamp\tQDB_LINE_UDP_TIMESTAMP\tn\tdefault\tfalse\tfalse\n" +
                                     "line.udp.unicast\tQDB_LINE_UDP_UNICAST\tfalse\tdefault\tfalse\tfalse\n" +
                                     "metrics.enabled\tQDB_METRICS_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
+                                    "cairo.metadata.cache.snapshot.ordered\tQDB_CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.enabled\tQDB_CAIRO_MAT_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.max.refresh.retries\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES\t10\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.refresh.oom.retry.timeout\tQDB_CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT\t200\tdefault\tfalse\tfalse\n" +
@@ -969,6 +971,20 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "posthog.enabled\tQDB_POSTHOG_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "posthog.api.key\tQDB_POSTHOG_API_KEY\t\tdefault\tfalse\tfalse\n" +
                                     "query.timeout.sec\tQDB_QUERY_TIMEOUT_SEC\t60\tdefault\tfalse\tfalse\n" +
+                                    "qwp.max.rows.per.table\tQDB_QWP_MAX_ROWS_PER_TABLE\t1000000\tdefault\tfalse\tfalse\n" +
+                                    "qwp.max.schemas.per.connection\tQDB_QWP_MAX_SCHEMAS_PER_CONNECTION\t65535\tdefault\tfalse\tfalse\n" +
+                                    "qwp.max.tables.per.connection\tQDB_QWP_MAX_TABLES_PER_CONNECTION\t10000\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.bind.to\tQDB_QWP_UDP_BIND_TO\t0.0.0.0:9007\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.commit.interval\tQDB_QWP_UDP_COMMIT_INTERVAL\t2000\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.enabled\tQDB_QWP_UDP_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.join\tQDB_QWP_UDP_JOIN\t224.1.1.1\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.max.uncommitted.datagrams\tQDB_QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.msg.buffer.size\tQDB_QWP_UDP_MSG_BUFFER_SIZE\t65536\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.msg.count\tQDB_QWP_UDP_MSG_COUNT\t10000\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.own.thread\tQDB_QWP_UDP_OWN_THREAD\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.own.thread.affinity\tQDB_QWP_UDP_OWN_THREAD_AFFINITY\t-1\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.receive.buffer.size\tQDB_QWP_UDP_RECEIVE_BUFFER_SIZE\t-1\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.unicast\tQDB_QWP_UDP_UNICAST\ttrue\tdefault\tfalse\tfalse\n" +
                                     "ram.usage.limit.bytes\tQDB_RAM_USAGE_LIMIT_BYTES\t0\tdefault\tfalse\tfalse\n" +
                                     "ram.usage.limit.percent\tQDB_RAM_USAGE_LIMIT_PERCENT\t90\tdefault\tfalse\tfalse\n" +
                                     "readonly\tQDB_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
@@ -1206,7 +1222,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     private static @NotNull WalWriter commitRow(TestServerMain serverMain, TableToken tableToken, int in) {
         WalWriter ww = serverMain.getEngine().getWalWriter(tableToken);
         try {
-            var row = ww.newRow(1234567890L);
+            var row = ww.newRow(1_234_567_890L);
             row.putInt(1, in + 1);
             row.append();
             ww.commit();

@@ -1785,6 +1785,63 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinTwoSymbolKeysCrossColumnIndices() throws Exception {
+        assertMemoryLeak(() -> {
+            // Master: sym1 at col 0, sym2 at col 1
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym2 SYMBOL,
+                                sym1 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-02T10:00:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-03T10:00:00.000000Z'),
+                        ('B', 'Y', 4.0, '2024-01-04T10:00:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('Y', 'B', 40.0, '2024-01-01T09:00:00.000000Z'),
+                        ('X', 'B', 30.0, '2024-01-02T09:00:00.000000Z'),
+                        ('Y', 'A', 20.0, '2024-01-02T09:30:00.000000Z'),
+                        ('X', 'A', 10.0, '2024-01-03T09:00:00.000000Z')
+                    """);
+
+            String expected = """
+                    sym1	sym2	val	sym21	sym11
+                    A	X	1.0	\t	
+                    A	Y	2.0	Y	A
+                    B	X	3.0	X	B
+                    B	Y	4.0	Y	B
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.sym2, s.sym1 FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
     public void testAsOfJoinTwoSymbolKeysEmptyMaster() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -2714,6 +2771,128 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """, leftSuffix, rightSuffix);
 
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWithTopDownFilteredDateaddTimestampProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE fx_trades (
+                                timestamp #TIMESTAMP,
+                                trade_id INT,
+                                symbol SYMBOL
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO fx_trades VALUES
+                        ('2026-04-14T00:00:10.000000Z', 1, 'EURUSD'),
+                        ('2026-04-14T00:01:10.000000Z', 2, 'EURUSD')
+                    """);
+
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE market_data (
+                                timestamp #TIMESTAMP,
+                                symbol SYMBOL,
+                                best_bid DOUBLE,
+                                best_ask DOUBLE
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO market_data VALUES
+                        ('2026-04-14T00:00:30.000000Z', 'EURUSD', 1.09, 1.11),
+                        ('2026-04-14T00:01:30.000000Z', 'EURUSD', 1.19, 1.21)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                                    trade_id\ttimestamp\tbest_bid\tbest_ask
+                                    1\t2026-04-14T00:00:10.000000Z\t1.09\t1.11
+                                    2\t2026-04-14T00:01:10.000000Z\t1.19\t1.21
+                                    """,
+                            leftTableTimestampType.getTypeName()),
+                    """
+                            WITH trades_yday AS (
+                                SELECT timestamp, trade_id, symbol
+                                FROM fx_trades
+                                WHERE symbol = 'EURUSD'
+                                    AND timestamp >= '2026-04-14T00:00:00Z'
+                                    AND timestamp < '2026-04-15T00:00:00Z'
+                                LIMIT 2
+                            ),
+                            market_data_p30 AS (
+                                SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
+                                FROM market_data
+                                WHERE symbol = 'EURUSD'
+                            )
+                            SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
+                            FROM trades_yday t
+                            ASOF JOIN market_data_p30 md ON (symbol)
+                            """,
+                    "timestamp",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWithTopDownFilteredDateaddTimestampProjectionOnMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE fx_trades (
+                                timestamp #TIMESTAMP,
+                                trade_id INT,
+                                symbol SYMBOL
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO fx_trades VALUES
+                        ('2026-04-14T00:00:40.000000Z', 1, 'EURUSD'),
+                        ('2026-04-14T00:01:40.000000Z', 2, 'EURUSD')
+                    """);
+
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE market_data (
+                                timestamp #TIMESTAMP,
+                                symbol SYMBOL,
+                                best_bid DOUBLE
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO market_data VALUES
+                        ('2026-04-14T00:00:20.000000Z', 'EURUSD', 1.09),
+                        ('2026-04-14T00:01:20.000000Z', 'EURUSD', 1.19)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            trade_id\tbest_bid
+                            1\tnull
+                            2\t1.09
+                            """,
+                    """
+                                    WITH trades_p30 AS (
+                                        SELECT dateadd('s', -30, timestamp) AS timestamp, trade_id, symbol
+                                        FROM fx_trades
+                                        WHERE symbol = 'EURUSD'
+                                    )
+                                    SELECT t.trade_id, md.best_bid
+                                    FROM trades_p30 t
+                                    ASOF JOIN market_data md ON (symbol)
+                            """,
+                    null,
+                    false,
+                    false
+            );
         });
     }
 
@@ -4387,6 +4566,64 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // Execute and verify results
             printSql(query);
             Assert.assertFalse(sink.isEmpty());
+        });
+    }
+
+    @Test
+    public void testLtJoinWithTopDownFilteredDateaddTimestampProjectionOnSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE fx_trades (
+                                timestamp #TIMESTAMP,
+                                trade_id INT,
+                                symbol SYMBOL
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO fx_trades VALUES
+                        ('2026-04-14T00:00:10.000000Z', 1, 'EURUSD'),
+                        ('2026-04-14T00:01:10.000000Z', 2, 'EURUSD')
+                    """);
+
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE market_data (
+                                timestamp #TIMESTAMP,
+                                symbol SYMBOL,
+                                best_bid DOUBLE,
+                                best_ask DOUBLE
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO market_data VALUES
+                        ('2026-04-14T00:00:30.000000Z', 'EURUSD', 1.09, 1.11),
+                        ('2026-04-14T00:01:30.000000Z', 'EURUSD', 1.19, 1.21)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                                    trade_id\ttimestamp\tbest_bid\tbest_ask
+                                    1\t2026-04-14T00:00:10.000000Z\t1.09\t1.11
+                                    2\t2026-04-14T00:01:10.000000Z\t1.19\t1.21
+                                    """,
+                            leftTableTimestampType.getTypeName()),
+                    """
+                                    WITH market_data_p30 AS (
+                                        SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
+                                        FROM market_data
+                                        WHERE symbol = 'EURUSD'
+                                    )
+                                    SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
+                                    FROM fx_trades t
+                                    LT JOIN market_data_p30 md ON (symbol)
+                            """,
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 

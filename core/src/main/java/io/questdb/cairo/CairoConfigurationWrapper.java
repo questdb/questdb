@@ -632,6 +632,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3MidPartitionMaxSplits() {
+        return getDelegate().getO3MidPartitionMaxSplits();
+    }
+
+    @Override
     public long getO3MinLag() {
         return getDelegate().getO3MinLag();
     }
@@ -737,13 +742,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public double getPartitionEncoderParquetMinCompressionRatio() {
-        return getDelegate().getPartitionEncoderParquetMinCompressionRatio();
+    public int getPartitionEncoderParquetDataPageSize() {
+        return getDelegate().getPartitionEncoderParquetDataPageSize();
     }
 
     @Override
-    public int getPartitionEncoderParquetDataPageSize() {
-        return getDelegate().getPartitionEncoderParquetDataPageSize();
+    public double getPartitionEncoderParquetMinCompressionRatio() {
+        return getDelegate().getPartitionEncoderParquetMinCompressionRatio();
     }
 
     @Override
@@ -1459,6 +1464,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return getDelegate().getWriterTickRowsCountMod();
+    }
+
+    @Override
+    public boolean isCairoMetadataCacheSnapshotOrdered() {
+        return getDelegate().isCairoMetadataCacheSnapshotOrdered();
     }
 
     @Override
