@@ -776,6 +776,7 @@ public class QueryModel implements IQueryModel {
         return groupBy;
     }
 
+    @Override
     public ObjList<IntList> getGroupingSets() {
         return groupingSets;
     }
@@ -1092,6 +1093,7 @@ public class QueryModel implements IQueryModel {
         return timestamp;
     }
 
+    @Override
     public boolean hasGroupingSets() {
         return groupingSets != null && groupingSets.size() > 0;
     }

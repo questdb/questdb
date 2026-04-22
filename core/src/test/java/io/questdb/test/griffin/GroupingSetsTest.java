@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -1432,15 +1431,17 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCube15ColumnsAccepted() throws Exception {
-        // CUBE(15 columns) = 2^15 = 32768 sets. Within the hard parser cap of 15.
-        // Use 12 columns (2^12 = 4096) to stay at default config limit.
+    public void testCube12ColumnsAtDefaultLimit() throws Exception {
+        // CUBE(12 columns) = 2^12 = 4096 sets, exactly at the default config
+        // limit. Tests the boundary where the set count cap is not exceeded.
+        // Note: CUBE(15) = 32768 would exceed the default 4096 limit but is
+        // within the hard parser cap of 15 columns. CUBE(16+) is rejected by
+        // the parser regardless of the set count limit.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE cube12 (" +
                     "c1 INT, c2 INT, c3 INT, c4 INT, c5 INT, " +
                     "c6 INT, c7 INT, c8 INT, c9 INT, c10 INT, " +
                     "c11 INT, c12 INT, v INT)");
-            // 12 columns = 4096 sets, exactly at default limit; must not error
             assertSql(
                     "c1\tSUM\n",
                     "SELECT c1, SUM(v) FROM cube12" +
@@ -1561,6 +1562,85 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     "SELECT * FROM t GROUP BY CUBE(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13)",
                     25,
                     "CUBE produces too many grouping sets"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRollupFillLinearNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE trades (symbol SYMBOL, quantity DOUBLE, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY"
+            );
+
+            assertException(
+                    "SELECT ts, symbol, SUM(quantity) " +
+                            "FROM trades " +
+                            "SAMPLE BY 1h ROLLUP(symbol) FILL(LINEAR)",
+                    78,
+                    "FILL(PREV) and FILL(LINEAR) are not supported with ROLLUP, CUBE, or GROUPING SETS"
+            );
+        });
+    }
+
+    @Test
+    public void testGroupingIdWithCube() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE trades (symbol SYMBOL, side SYMBOL, quantity DOUBLE, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            execute(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC', 'buy', 10, '2024-01-01T00:00:00.000000Z')," +
+                            "('ETH', 'sell', 20, '2024-01-01T00:01:00.000000Z')"
+            );
+
+            // CUBE(symbol, side) produces sets: (symbol,side), (symbol), (side), ()
+            // GROUPING_ID bitmasks: 0, 1, 2, 3
+            assertSql(
+                    "symbol\tside\tSUM\tgrp\n" +
+                            "BTC\tbuy\t10.0\t0\n" +
+                            "ETH\tsell\t20.0\t0\n" +
+                            "BTC\t\t10.0\t1\n" +
+                            "ETH\t\t20.0\t1\n" +
+                            "\tbuy\t10.0\t2\n" +
+                            "\tsell\t20.0\t2\n" +
+                            "\t\t30.0\t3\n",
+                    "SELECT symbol, side, SUM(quantity), GROUPING_ID(symbol, side) AS grp " +
+                            "FROM trades " +
+                            "GROUP BY CUBE(symbol, side) " +
+                            "ORDER BY grp, symbol, side"
+            );
+        });
+    }
+
+    @Test
+    public void testRollupWithNullAggregateInputs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE trades (symbol SYMBOL, quantity DOUBLE, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            execute(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC', 10, '2024-01-01T00:00:00.000000Z')," +
+                            "('BTC', NaN, '2024-01-01T00:01:00.000000Z')," +
+                            "('ETH', 30, '2024-01-01T00:02:00.000000Z')," +
+                            "('ETH', NaN, '2024-01-01T00:03:00.000000Z')"
+            );
+
+            // SUM should skip NaN values; count should count non-NaN only
+            assertSql(
+                    "symbol\tSUM\tcount\n" +
+                            "BTC\t10.0\t1\n" +
+                            "ETH\t30.0\t1\n" +
+                            "\t40.0\t2\n",
+                    "SELECT symbol, SUM(quantity), COUNT(quantity) AS count " +
+                            "FROM trades " +
+                            "GROUP BY ROLLUP(symbol) " +
+                            "ORDER BY GROUPING(symbol), symbol"
             );
         });
     }

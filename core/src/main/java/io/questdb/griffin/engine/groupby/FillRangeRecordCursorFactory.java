@@ -234,7 +234,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.free(fromFunc);
         Misc.free(toFunc);
         Misc.freeObjList(fillValues);
-        Misc.free(cursor);
     }
 
     private static class FillRangeRecordCursor implements NoRandomAccessRecordCursor {
@@ -276,7 +275,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private long presentTimestampsSize;
 
         private final int columnCount;
-        private boolean isValueFuncsInitialized;
 
         private FillRangeRecordCursor(
                 TimestampSampler timestampSampler,
@@ -302,7 +300,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
             if (hasKeyColumns) {
                 this.outputColToKeyMapCol = new int[metadata.getColumnCount()];
-                java.util.Arrays.fill(outputColToKeyMapCol, -1);
+                for (int j = 0, m = outputColToKeyMapCol.length; j < m; j++) {
+                    outputColToKeyMapCol[j] = -1;
+                }
                 this.keyMapColTypes = new int[keyColumnPositions.size()];
                 ArrayColumnTypes keyMapTypes = new ArrayColumnTypes();
                 for (int i = 0, n = keyColumnPositions.size(); i < n; i++) {
@@ -327,9 +327,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         public void close() {
             baseCursor = Misc.free(baseCursor);
             presentTimestamps = Misc.free(presentTimestamps);
-            if (keyMap != null) {
-                keyMap.close();
-            }
+            keyMap = Misc.free(keyMap);
         }
 
         @Override
@@ -506,10 +504,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 presentTimestamps = new DirectLongList(capacity, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
             }
-            if (!isValueFuncsInitialized) {
-                initValueFuncs(fillValues);
-                isValueFuncsInitialized = true;
-            }
+            initValueFuncs(fillValues);
             assert fillValues.size() <= columnCount : "fillValues.size()=" + fillValues.size() + " exceeds columnCount=" + columnCount;
             if (hasKeyColumns) {
                 keyMap.reopen();
@@ -545,49 +540,22 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 int mapCol = outputColToKeyMapCol[i];
                 if (mapCol >= 0) {
                     switch (ColumnType.tagOf(keyMapColTypes[mapCol])) {
-                        case ColumnType.BOOLEAN:
-                            key.putBool(baseRecord.getBool(i));
-                            break;
-                        case ColumnType.BYTE:
-                            key.putByte(baseRecord.getByte(i));
-                            break;
-                        case ColumnType.CHAR:
-                            key.putChar(baseRecord.getChar(i));
-                            break;
-                        case ColumnType.DATE:
-                            key.putDate(baseRecord.getDate(i));
-                            break;
-                        case ColumnType.DOUBLE:
-                            key.putDouble(baseRecord.getDouble(i));
-                            break;
-                        case ColumnType.FLOAT:
-                            key.putFloat(baseRecord.getFloat(i));
-                            break;
-                        case ColumnType.INT:
-                            key.putInt(baseRecord.getInt(i));
-                            break;
-                        case ColumnType.IPv4:
-                            key.putIPv4(baseRecord.getIPv4(i));
-                            break;
-                        case ColumnType.LONG:
-                            key.putLong(baseRecord.getLong(i));
-                            break;
-                        case ColumnType.SHORT:
-                            key.putShort(baseRecord.getShort(i));
-                            break;
-                        case ColumnType.STRING:
-                            key.putStr(baseRecord.getStrA(i));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            key.putTimestamp(baseRecord.getTimestamp(i));
-                            break;
-                        case ColumnType.VARCHAR:
-                            key.putVarchar(baseRecord.getVarcharA(i));
-                            break;
-                        default:
-                            throw CairoException.nonCritical()
-                                    .put("unsupported key column type for FILL: ")
-                                    .put(ColumnType.nameOf(keyMapColTypes[mapCol]));
+                        case ColumnType.BOOLEAN -> key.putBool(baseRecord.getBool(i));
+                        case ColumnType.BYTE -> key.putByte(baseRecord.getByte(i));
+                        case ColumnType.CHAR -> key.putChar(baseRecord.getChar(i));
+                        case ColumnType.DATE -> key.putDate(baseRecord.getDate(i));
+                        case ColumnType.DOUBLE -> key.putDouble(baseRecord.getDouble(i));
+                        case ColumnType.FLOAT -> key.putFloat(baseRecord.getFloat(i));
+                        case ColumnType.INT -> key.putInt(baseRecord.getInt(i));
+                        case ColumnType.IPv4 -> key.putIPv4(baseRecord.getIPv4(i));
+                        case ColumnType.LONG -> key.putLong(baseRecord.getLong(i));
+                        case ColumnType.SHORT -> key.putShort(baseRecord.getShort(i));
+                        case ColumnType.STRING -> key.putStr(baseRecord.getStrA(i));
+                        case ColumnType.TIMESTAMP -> key.putTimestamp(baseRecord.getTimestamp(i));
+                        case ColumnType.VARCHAR -> key.putVarchar(baseRecord.getVarcharA(i));
+                        default -> throw CairoException.nonCritical()
+                                .put("unsupported key column type for FILL: ")
+                                .put(ColumnType.nameOf(keyMapColTypes[mapCol]));
                     }
                 }
             }
@@ -596,23 +564,14 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         private static void validateKeyColumnType(int mapType, int position) throws SqlException {
             switch (ColumnType.tagOf(mapType)) {
-                case ColumnType.BOOLEAN:
-                case ColumnType.BYTE:
-                case ColumnType.CHAR:
-                case ColumnType.DATE:
-                case ColumnType.DOUBLE:
-                case ColumnType.FLOAT:
-                case ColumnType.INT:
-                case ColumnType.IPv4:
-                case ColumnType.LONG:
-                case ColumnType.SHORT:
-                case ColumnType.STRING:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.VARCHAR:
-                    break;
-                default:
-                    throw SqlException.$(position, "unsupported key column type for FILL: ")
-                            .put(ColumnType.nameOf(mapType));
+                case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR,
+                     ColumnType.DATE, ColumnType.DOUBLE, ColumnType.FLOAT,
+                     ColumnType.INT, ColumnType.IPv4, ColumnType.LONG,
+                     ColumnType.SHORT, ColumnType.STRING, ColumnType.TIMESTAMP,
+                     ColumnType.VARCHAR -> {
+                }
+                default -> throw SqlException.$(position, "unsupported key column type for FILL: ")
+                        .put(ColumnType.nameOf(mapType));
             }
         }
 

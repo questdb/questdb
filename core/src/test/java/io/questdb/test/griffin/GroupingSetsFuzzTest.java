@@ -335,11 +335,22 @@ public class GroupingSetsFuzzTest extends AbstractCairoTest {
             if (r > 0) {
                 sb.append(',');
             }
-            sb.append("('");
-            sb.append(SYMBOLS[rnd.nextInt(SYMBOLS.length)]);
-            sb.append("', '");
-            sb.append(SIDES[rnd.nextInt(SIDES.length)]);
-            sb.append("', ");
+            // ~10% chance of NULL symbol or side to test data NULLs vs rollup NULLs
+            boolean nullSymbol = rnd.nextInt(10) == 0;
+            boolean nullSide = rnd.nextInt(10) == 0;
+            sb.append('(');
+            if (nullSymbol) {
+                sb.append("NULL");
+            } else {
+                sb.append('\'').append(SYMBOLS[rnd.nextInt(SYMBOLS.length)]).append('\'');
+            }
+            sb.append(", ");
+            if (nullSide) {
+                sb.append("NULL");
+            } else {
+                sb.append('\'').append(SIDES[rnd.nextInt(SIDES.length)]).append('\'');
+            }
+            sb.append(", ");
             sb.append(1 + rnd.nextInt(1000));
             sb.append(')');
         }

@@ -70,12 +70,12 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
         // so no update is needed after the first row.
     }
 
-    public int getPosition() {
-        return position;
-    }
-
     public IntList getArgColumnIndices() {
         return argColumnIndices;
+    }
+
+    public int getPosition() {
+        return position;
     }
 
     @Override

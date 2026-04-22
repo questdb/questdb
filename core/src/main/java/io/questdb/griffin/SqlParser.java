@@ -3008,10 +3008,11 @@ public class SqlParser {
 
             // support SAMPLE BY 1h ROLLUP(symbol, side)
             if (tok != null && (isRollupKeyword(tok) || isCubeKeyword(tok))) {
+                QueryModel qm = (QueryModel) model;
                 int kwPos = lexer.lastTokenPosition();
-                guardAgainstLatestOnWithGroupingSets(model, kwPos);
+                guardAgainstLatestOnWithGroupingSets(qm, kwPos);
                 boolean isRollup = isRollupKeyword(tok);
-                ObjList<ExpressionNode> columnList = parseParenthesizedColumnList(lexer, model, sqlParserCallback);
+                ObjList<ExpressionNode> columnList = parseParenthesizedColumnList(lexer, qm, sqlParserCallback);
                 if (columnList.size() == 0) {
                     throw SqlException.$(kwPos, (isRollup ? "ROLLUP" : "CUBE") + " requires at least one column");
                 }
@@ -3026,18 +3027,18 @@ public class SqlParser {
                 }
                 int maxSets = configuration.getSqlMaxGroupingSets();
                 if (isRollup) {
-                    expandRollup(model, startIdx, columnList.size(), kwPos, maxSets);
+                    expandRollup(qm, startIdx, columnList.size(), kwPos, maxSets);
                 } else {
-                    expandCube(model, startIdx, columnList.size(), kwPos, maxSets);
+                    expandCube(qm, startIdx, columnList.size(), kwPos, maxSets);
                 }
                 tok = optTok(lexer);
             } else if (tok != null && isGroupingKeyword(tok)) {
-                guardAgainstLatestOnWithGroupingSets(model, lexer.lastTokenPosition());
+                guardAgainstLatestOnWithGroupingSets((QueryModel) model, lexer.lastTokenPosition());
                 CharSequence next = tok(lexer, "'SETS'");
                 if (!isSetsKeyword(next)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "expected SETS after GROUPING");
                 }
-                parseExplicitGroupingSets(lexer, model, sqlParserCallback);
+                parseExplicitGroupingSets(lexer, (QueryModel) model, sqlParserCallback);
                 tok = optTok(lexer);
             }
 
@@ -3136,7 +3137,7 @@ public class SqlParser {
                 model = parentModel;
             }
             expectBy(lexer);
-            tok = parseGroupByColumns(lexer, model, sqlParserCallback);
+            tok = parseGroupByColumns(lexer, (QueryModel) model, sqlParserCallback);
         }
 
         // expect [window]
@@ -4123,37 +4124,6 @@ public class SqlParser {
      * significantly impact performance. This aligns with mainstream databases which also
      * do not support ELSE in PIVOT. For such requirements, user can use subqueries instead.
      */
-    /**
-     * Parses a parenthesized comma-separated list of column expressions: (a, b, c).
-     * Used by ROLLUP and CUBE parsing.
-     */
-    private ObjList<ExpressionNode> parseParenthesizedColumnList(
-            GenericLexer lexer,
-            QueryModel model,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
-        expectTok(lexer, '(');
-        ObjList<ExpressionNode> columns = new ObjList<>();
-        CharSequence tok = tok(lexer, "column or ')'");
-        if (Chars.equals(tok, ')')) {
-            return columns;
-        }
-        lexer.unparseLast();
-        do {
-            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
-            if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
-                throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
-            }
-            columns.add(n);
-            tok = tok(lexer, "',' or ')'");
-            if (Chars.equals(tok, ')')) {
-                break;
-            }
-            expectTok(tok, lexer.lastTokenPosition(), ',');
-        } while (true);
-        return columns;
-    }
-
     private CharSequence parsePivot(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         expectTok(lexer, '(');
