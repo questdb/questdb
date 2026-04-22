@@ -4127,12 +4127,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (volumeAlias != null) {
                     if (Chars.equals(volumeAlias, ":memory:")) {
                         // Memory table: use normal creation path (no symlink).
-                        // RoutingFilesFacade will direct I/O to MemFdFilesFacade.
+                        // RoutingFilesFacade will direct I/O (including WAL
+                        // segment and sequencer directories) to
+                        // MemFdFilesFacade via the registered prefix match,
+                        // so WAL-backed memory tables work transparently.
                         isMemoryTable = true;
-                        if (createTableOp.isWalEnabled()) {
-                            throw SqlException.position(createTableOp.getVolumePosition())
-                                    .put("WAL is not supported for memory tables");
-                        }
                         volumeAlias = null;
                     } else {
                         CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);

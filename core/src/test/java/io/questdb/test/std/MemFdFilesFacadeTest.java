@@ -228,21 +228,41 @@ public class MemFdFilesFacadeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMemoryTableRejectsWal() throws Exception {
+    public void testMemoryTableWithWal() throws Exception {
+        // WAL segments and the sequencer live under the table directory, so
+        // the memory-table prefix registered with RoutingFilesFacade catches
+        // them and every WAL write/apply/purge is served by memfd pages.
         assertMemoryLeak(() -> {
-            try {
-                execute(
-                        "CREATE MEMORY TABLE wal_test (" +
-                        "    ts TIMESTAMP," +
-                        "    val LONG" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY WAL"
-                );
-                org.junit.Assert.fail("Expected SqlException for WAL on memory table");
-            } catch (io.questdb.griffin.SqlException e) {
-                org.junit.Assert.assertTrue(
-                        e.getMessage().contains("WAL is not supported for memory tables")
-                );
-            }
+            execute(
+                    "CREATE MEMORY TABLE wal_mem (" +
+                    "    ts TIMESTAMP," +
+                    "    val LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+
+            execute(
+                    "INSERT INTO wal_mem VALUES" +
+                    "    ('2024-06-01T10:00:00.000000Z', 1)," +
+                    "    ('2024-06-01T10:01:00.000000Z', 2)," +
+                    "    ('2024-06-01T10:02:00.000000Z', 3)"
+            );
+
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\n" +
+                    "2024-06-01T10:00:00.000000Z\t1\n" +
+                    "2024-06-01T10:01:00.000000Z\t2\n" +
+                    "2024-06-01T10:02:00.000000Z\t3\n",
+                    "SELECT * FROM wal_mem ORDER BY ts",
+                    "ts",
+                    true,
+                    true
+            );
+
+            execute("DROP TABLE wal_mem");
+            drainWalQueue();
+            drainPurgeJob();
         });
     }
 }
