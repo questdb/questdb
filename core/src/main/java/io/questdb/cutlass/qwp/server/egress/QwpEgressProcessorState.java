@@ -488,10 +488,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         pageFrameMemoryRecord = Misc.free(pageFrameMemoryRecord);
         pageFrameMemoryPool = Misc.free(pageFrameMemoryPool);
         pageFrameAddressCache = Misc.free(pageFrameAddressCache);
-        if (zstdCCtx != 0) {
-            Zstd.freeCCtx(zstdCCtx);
-            zstdCCtx = 0;
-        }
         if (zstdCompressScratchAddr != 0) {
             Unsafe.free(zstdCompressScratchAddr, zstdCompressScratchCapacity, MemoryTag.NATIVE_DEFAULT);
             zstdCompressScratchAddr = 0;

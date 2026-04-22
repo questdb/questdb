@@ -24,11 +24,13 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
@@ -478,12 +480,97 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     /**
-     * // testSymbolBindHandlingIsDocumented deleted: it asserted literally `true` while the
-     * // client bind encoder was not yet shipping, but QwpEgressRequestDecoderTest pins
-     * // the server-side SYMBOL=STRING lenient-routing contract directly against the
-     * // decoder. Re-add an end-to-end version when the client bind encoder ships.
+     * Regression: {@code streamResults} used to send {@code RESULT_END} to the
+     * kernel BEFORE calling {@code state.endStreaming()} to release the cursor
+     * (and therefore the {@code TableReader}). On a fast loopback the client
+     * could parse {@code RESULT_END}, fire {@code onEnd}, and race back into a
+     * follow-up {@code DROP TABLE} on the same connection before the server
+     * thread reached {@code endStreaming}, surfacing as "could not lock '...'
+     * [reason='busyReader']" on the DROP. Fixed by releasing the cursor first
+     * (see commit "Release egress cursor before sending RESULT_END").
      * <p>
-     * /**
+     * Runs under forced send/recv fragmentation so the final send parks and
+     * resumes through the dispatcher, widening the window between {@code
+     * rawSocket.send} and the trailing {@code endStreaming} under the buggy
+     * ordering. Without the fix the DROP fails with "busyReader" on at least
+     * one iteration; with the fix the reader is back in the pool before any
+     * RESULT_END bytes leave the kernel.
+     */
+    @Test
+    public void testDropAfterSelectReleasesReaderInTime() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "23",
+                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "23"
+            )) {
+                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                    client.connect();
+                    final int iterations = 20;
+                    for (int i = 0; i < iterations; i++) {
+                        final int iter = i;
+                        final String table = "drop_race_" + iter;
+                        serverMain.execute("CREATE TABLE " + table + "(x LONG, ts TIMESTAMP) "
+                                + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        serverMain.execute("INSERT INTO " + table
+                                + " VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
+                        serverMain.awaitTable(table);
+
+                        final long[] sum = {0};
+                        client.execute("SELECT x FROM " + table, new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                for (int r = 0; r < batch.getRowCount(); r++) {
+                                    sum[0] += batch.getLongValue(0, r);
+                                }
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                            }
+
+                            @Override
+                            public void onError(byte status, String message) {
+                                Assert.fail("SELECT failed at iteration " + iter + ": " + message);
+                            }
+                        });
+                        Assert.assertEquals("iteration " + iter, 6L, sum[0]);
+
+                        // By the time execute() returned the server had already shipped
+                        // RESULT_END. With the fix in place the TableReader was released
+                        // BEFORE that send, so this DROP is free to take the exclusive
+                        // lock. Without the fix it races into "busyReader".
+                        final short[] dropOp = {-1};
+                        client.execute("DROP TABLE " + table, new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                Assert.fail("unexpected batch for DROP at iteration " + iter);
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                                Assert.fail("unexpected end for DROP at iteration " + iter);
+                            }
+
+                            @Override
+                            public void onError(byte status, String message) {
+                                Assert.fail("DROP TABLE " + table + " failed (iteration " + iter
+                                        + ", status=" + status + "): " + message);
+                            }
+
+                            @Override
+                            public void onExecDone(short opType, long rowsAffected) {
+                                dropOp[0] = opType;
+                            }
+                        });
+                        Assert.assertEquals("DROP should succeed at iteration " + iter,
+                                CompiledQuery.DROP, dropOp[0]);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
      * C5: empty result set must still produce one RESULT_BATCH (with 0 rows + the schema)
      * followed by RESULT_END. Otherwise the client never sees the schema and onEnd would
      * never fire. Verifies the empty-cursor branch in {@code streamResults}.
