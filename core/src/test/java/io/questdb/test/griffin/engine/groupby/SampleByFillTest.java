@@ -361,76 +361,84 @@ public class SampleByFillTest extends AbstractCairoTest {
         // emission loop.
         final long tripWhenTicks = 100;
         assertMemoryLeak(() -> {
-            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                private final AtomicLong ticks = new AtomicLong();
+            try {
+                circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    private final AtomicLong ticks = new AtomicLong();
 
-                @Override
-                @NotNull
-                public MillisecondClock getClock() {
-                    return () -> {
-                        if (ticks.incrementAndGet() < tripWhenTicks) {
-                            return 0;
-                        }
-                        return Long.MAX_VALUE;
-                    };
-                }
+                    @Override
+                    @NotNull
+                    public MillisecondClock getClock() {
+                        return () -> {
+                            if (ticks.incrementAndGet() < tripWhenTicks) {
+                                return 0;
+                            }
+                            return Long.MAX_VALUE;
+                        };
+                    }
 
-                @Override
-                public long getQueryTimeout() {
-                    return 1;
-                }
-            };
+                    @Override
+                    public long getQueryTimeout() {
+                        return 1;
+                    }
+                };
 
-            final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
-                    pool,
-                    (engine, compiler, sqlExecutionContext) -> {
-                        final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-                        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
-                                engine,
-                                circuitBreakerConfiguration,
-                                MemoryTag.NATIVE_DEFAULT
-                        );
-                        try {
-                            engine.execute(
-                                    "CREATE TABLE t (" +
-                                            "  ts TIMESTAMP," +
-                                            "  k SYMBOL," +
-                                            "  x DOUBLE" +
-                                            ") TIMESTAMP(ts) PARTITION BY DAY",
-                                    sqlExecutionContext
+                final WorkerPool pool = new WorkerPool(() -> 4);
+                TestUtils.execute(
+                        pool,
+                        (engine, compiler, sqlExecutionContext) -> {
+                            final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+                            final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                                    engine,
+                                    circuitBreakerConfiguration,
+                                    MemoryTag.NATIVE_DEFAULT
                             );
-                            engine.execute(
-                                    "INSERT INTO t VALUES" +
-                                            " ('2024-01-01T00:00:00.000000Z', 'a', 1.0)," +
-                                            " ('2024-01-01T00:00:00.000000Z', 'b', 2.0)",
-                                    sqlExecutionContext
-                            );
-                            context.with(
-                                    context.getSecurityContext(),
-                                    context.getBindVariableService(),
-                                    context.getRandom(),
-                                    context.getRequestFd(),
-                                    circuitBreaker
-                            );
-                            TestUtils.assertSql(
-                                    compiler,
-                                    context,
-                                    "SELECT ts, k, first(x) FROM t " +
-                                            "SAMPLE BY 1s FROM '1970-01-01' TO '2100-01-01' FILL(NULL)",
-                                    sink,
-                                    ""
-                            );
-                            Assert.fail("expected CB-tripped exception");
-                        } catch (CairoException ex) {
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
-                        } finally {
-                            Misc.free(circuitBreaker);
-                        }
-                    },
-                    configuration,
-                    LOG
-            );
+                            try {
+                                engine.execute(
+                                        "CREATE TABLE t (" +
+                                                "  ts TIMESTAMP," +
+                                                "  k SYMBOL," +
+                                                "  x DOUBLE" +
+                                                ") TIMESTAMP(ts) PARTITION BY DAY",
+                                        sqlExecutionContext
+                                );
+                                engine.execute(
+                                        "INSERT INTO t VALUES" +
+                                                " ('2024-01-01T00:00:00.000000Z', 'a', 1.0)," +
+                                                " ('2024-01-01T00:00:00.000000Z', 'b', 2.0)",
+                                        sqlExecutionContext
+                                );
+                                context.with(
+                                        context.getSecurityContext(),
+                                        context.getBindVariableService(),
+                                        context.getRandom(),
+                                        context.getRequestFd(),
+                                        circuitBreaker
+                                );
+                                TestUtils.assertSql(
+                                        compiler,
+                                        context,
+                                        "SELECT ts, k, first(x) FROM t " +
+                                                "SAMPLE BY 1s FROM '1970-01-01' TO '2100-01-01' FILL(NULL)",
+                                        sink,
+                                        ""
+                                );
+                                Assert.fail("expected CB-tripped exception");
+                            } catch (CairoException ex) {
+                                TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+                            } finally {
+                                Misc.free(circuitBreaker);
+                            }
+                        },
+                        configuration,
+                        LOG
+                );
+            } finally {
+                // D-29 finding 4.6: null the inherited AbstractCairoTest static
+                // field so the tick-counting mock clock does not bleed into any
+                // future test in this class that constructs a
+                // NetworkSqlExecutionCircuitBreaker against circuitBreakerConfiguration.
+                circuitBreakerConfiguration = null;
+            }
         });
     }
 
@@ -3282,18 +3290,18 @@ public class SampleByFillTest extends AbstractCairoTest {
                 // sqlSortKeyMaxPages = -1 override causes RecordTreeChain to
                 // throw during SortedRecordCursorFactory construction.
                 assertSql("", "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
-                fail("expected exception from pathological sqlSortKeyMaxPages");
-            } catch (Throwable th) {
-                // Assert on message content rather than exact class: the
-                // LimitOverflowException may wrap inside a CairoException or
-                // SqlException depending on the surface that catches it.
-                String msg = th.getMessage();
-                Assert.assertTrue(
-                        "exception did not surface the pages limit error: msg=" + msg,
-                        msg != null && (msg.contains("max pages") || msg.contains("maxPages")
-                                || msg.contains("Maximum number of pages") || msg.contains("limit")
-                                || msg.contains("overflow") || msg.contains("breached"))
-                );
+                fail("expected LimitOverflowException from pathological sqlSortKeyMaxPages");
+            } catch (CairoException ex) {
+                // D-30 finding 4.7: catch the LimitOverflowException superclass
+                // (CairoException) directly so JVM-level Error subclasses
+                // propagate instead of being swallowed, and assert a single
+                // canonical substring. Both MemoryPARWImpl.java:1266 and
+                // MemoryCARWImpl.java:193 produce the same stable page-limit
+                // text for sqlSortKeyMaxPages=-1. If the exception is ever
+                // re-wrapped to SqlException on the construct path, the typed
+                // catch fails loudly instead of hiding the signal under a
+                // 6-way substring disjunction.
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Maximum number of pages");
             }
         });
     }
