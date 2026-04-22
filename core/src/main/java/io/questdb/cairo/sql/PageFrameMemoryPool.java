@@ -448,7 +448,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetColumns.add(decodeType);
                     // Negative value signals var→fixed direction.
                     // -1 remains the "no conversion" sentinel.
-                    sourceColumnTypes.setQuick(i, -ColumnType.tagOf(sourceType));
+                    // For decimal targets, encode precision/scale in the upper bits:
+                    //   bits 0-7:  source tag (STRING or VARCHAR)
+                    //   bits 8-15: target decimal precision
+                    //   bits 16-23: target decimal scale
+                    int encoded = ColumnType.tagOf(sourceType);
+                    if (ColumnType.isDecimal(targetType)) {
+                        encoded |= (ColumnType.getDecimalPrecision(targetType) << 8)
+                                | (ColumnType.getDecimalScale(targetType) << 16);
+                    }
+                    sourceColumnTypes.setQuick(i, -encoded);
                     hasTypeCasts = true;
                     return;
                 }

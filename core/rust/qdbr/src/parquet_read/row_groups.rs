@@ -104,10 +104,12 @@ fn decompress_varchar_slice_data<'a>(
 /// Apply post-decode conversions that cannot be handled by the per-page decode dispatch,
 /// typically because the source and target share the same physical representation.
 fn post_convert(
-    src_tag: ColumnTypeTag,
-    dst_tag: ColumnTypeTag,
+    from_type: ColumnType,
+    to_type: ColumnType,
     bufs: &mut ColumnChunkBuffers,
 ) -> ParquetResult<()> {
+    let src_tag = from_type.tag();
+    let dst_tag = to_type.tag();
     match (src_tag, dst_tag) {
         (ColumnTypeTag::Boolean, ColumnTypeTag::Byte) => {
             // Same physical size (1 byte), no expansion needed.
@@ -141,6 +143,19 @@ fn post_convert(
         (src, ColumnTypeTag::String) if is_fixed_to_var_source(src) => {}
         // Var → fixed: Java handles batch conversion after decode.
         (ColumnTypeTag::Varchar | ColumnTypeTag::String, dst) if is_var_to_fixed_target(dst) => {}
+        // Decimal → Decimal: rescale if source and target have different scales.
+        (src, dst) if is_decimal_tag(src) && is_decimal_tag(dst) => {
+            let src_scale = from_type.decimal_scale();
+            let dst_scale = to_type.decimal_scale();
+            if src_scale != dst_scale {
+                rescale_decimal_in_place(&mut bufs.data_vec, dst, src_scale, dst_scale)?;
+            }
+        }
+        // Fixed integer → Decimal: widen to target size and scale by 10^(target_scale).
+        (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long,
+         dst) if is_decimal_tag(dst) => {
+            convert_fixed_to_decimal(&mut bufs.data_vec, src_tag, dst, to_type.decimal_scale())?;
+        }
         _ => return Ok(()),
     }
     bufs.data_ptr = bufs.data_vec.as_mut_ptr();
@@ -180,6 +195,362 @@ fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool) {
             val * factor
         };
         unsafe { ptr.add(i).write_unaligned(converted) };
+    }
+}
+
+/// Returns true for decimal type tags.
+fn is_decimal_tag(tag: ColumnTypeTag) -> bool {
+    matches!(
+        tag,
+        ColumnTypeTag::Decimal8
+            | ColumnTypeTag::Decimal16
+            | ColumnTypeTag::Decimal32
+            | ColumnTypeTag::Decimal64
+            | ColumnTypeTag::Decimal128
+            | ColumnTypeTag::Decimal256
+    )
+}
+
+/// Rescale decoded decimal values in place by multiplying or dividing by 10^|scale_diff|.
+/// Called when a Decimal column's scale changed after the parquet partition was written.
+fn rescale_decimal_in_place(
+    data: &mut AcVec<u8>,
+    target_tag: ColumnTypeTag,
+    src_scale: u8,
+    dst_scale: u8,
+) -> ParquetResult<()> {
+    let abs_diff = (dst_scale as i32 - src_scale as i32).unsigned_abs();
+    let divide = dst_scale < src_scale;
+    match target_tag {
+        ColumnTypeTag::Decimal8 => rescale_fixed::<1>(data, abs_diff, divide),
+        ColumnTypeTag::Decimal16 => rescale_fixed::<2>(data, abs_diff, divide),
+        ColumnTypeTag::Decimal32 => rescale_fixed::<4>(data, abs_diff, divide),
+        ColumnTypeTag::Decimal64 => rescale_fixed::<8>(data, abs_diff, divide),
+        ColumnTypeTag::Decimal128 => rescale_i128(data, abs_diff, divide),
+        ColumnTypeTag::Decimal256 => rescale_i256(data, abs_diff, divide),
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Rescale Decimal8/16/32/64 values (N = 1, 2, 4, or 8 bytes) in place.
+fn rescale_fixed<const N: usize>(data: &mut AcVec<u8>, scale_diff: u32, divide: bool) {
+    debug_assert!(N == 1 || N == 2 || N == 4 || N == 8);
+    let count = data.len() / N;
+    let ptr = data.as_mut_ptr();
+    // For N <= 8, 10^max_scale fits in the native integer (max scales: 2, 4, 9, 18).
+    // Use i64 arithmetic for all sizes to keep things simple.
+    let factor = 10i64.wrapping_pow(scale_diff);
+    for i in 0..count {
+        let offset = i * N;
+        unsafe {
+            let val = read_le_i64::<N>(ptr.add(offset));
+            // Null sentinel is MIN for each width.
+            let null = match N {
+                1 => i8::MIN as i64,
+                2 => i16::MIN as i64,
+                4 => i32::MIN as i64,
+                _ => i64::MIN,
+            };
+            if val == null {
+                continue;
+            }
+            let scaled = if divide { val / factor } else { val.wrapping_mul(factor) };
+            write_le_i64::<N>(ptr.add(offset), scaled);
+        }
+    }
+}
+
+#[inline]
+unsafe fn read_le_i64<const N: usize>(ptr: *const u8) -> i64 {
+    match N {
+        1 => *(ptr as *const i8) as i64,
+        2 => (ptr as *const i16).read_unaligned() as i64,
+        4 => (ptr as *const i32).read_unaligned() as i64,
+        _ => (ptr as *const i64).read_unaligned(),
+    }
+}
+
+#[inline]
+unsafe fn write_le_i64<const N: usize>(ptr: *mut u8, val: i64) {
+    match N {
+        1 => *(ptr as *mut i8) = val as i8,
+        2 => (ptr as *mut i16).write_unaligned(val as i16),
+        4 => (ptr as *mut i32).write_unaligned(val as i32),
+        _ => (ptr as *mut i64).write_unaligned(val),
+    }
+}
+
+/// Rescale Decimal128 values in place. Layout: [hi: i64 LE, lo: u64 LE].
+fn rescale_i128(data: &mut AcVec<u8>, scale_diff: u32, divide: bool) {
+    let factor = 10i128.wrapping_pow(scale_diff);
+    let count = data.len() / 16;
+    let ptr = data.as_mut_ptr();
+    for i in 0..count {
+        let offset = i * 16;
+        let hi = unsafe { (ptr.add(offset) as *const i64).read_unaligned() };
+        let lo = unsafe { (ptr.add(offset + 8) as *const u64).read_unaligned() };
+        if hi == i64::MIN && lo == 0 {
+            continue;
+        }
+        let val = ((hi as i128) << 64) | (lo as i128);
+        let scaled = if divide { val / factor } else { val.wrapping_mul(factor) };
+        unsafe {
+            (ptr.add(offset) as *mut i64).write_unaligned((scaled >> 64) as i64);
+            (ptr.add(offset + 8) as *mut u64).write_unaligned(scaled as u64);
+        }
+    }
+}
+
+/// Rescale Decimal256 values in place. Layout: [w0(hi): i64 LE, w1: u64 LE, w2: u64 LE, w3(lo): u64 LE].
+/// Value = w0 * 2^192 + w1 * 2^128 + w2 * 2^64 + w3.
+fn rescale_i256(data: &mut AcVec<u8>, scale_diff: u32, divide: bool) {
+    let count = data.len() / 32;
+    let ptr = data.as_mut_ptr();
+    for i in 0..count {
+        let offset = i * 32;
+        let w0 = unsafe { (ptr.add(offset) as *const i64).read_unaligned() };
+        let w1 = unsafe { (ptr.add(offset + 8) as *const u64).read_unaligned() };
+        let w2 = unsafe { (ptr.add(offset + 16) as *const u64).read_unaligned() };
+        let w3 = unsafe { (ptr.add(offset + 24) as *const u64).read_unaligned() };
+        if w0 == i64::MIN && w1 == 0 && w2 == 0 && w3 == 0 {
+            continue;
+        }
+        let (nw0, nw1, nw2, nw3) = if divide {
+            div_i256_pow10(w0, w1, w2, w3, scale_diff)
+        } else {
+            mul_i256_pow10(w0, w1, w2, w3, scale_diff)
+        };
+        unsafe {
+            (ptr.add(offset) as *mut i64).write_unaligned(nw0);
+            (ptr.add(offset + 8) as *mut u64).write_unaligned(nw1);
+            (ptr.add(offset + 16) as *mut u64).write_unaligned(nw2);
+            (ptr.add(offset + 24) as *mut u64).write_unaligned(nw3);
+        }
+    }
+}
+
+fn mul_i256_pow10(w0: i64, w1: u64, w2: u64, w3: u64, scale_diff: u32) -> (i64, u64, u64, u64) {
+    let mut r = (w0, w1, w2, w3);
+    let mut remaining = scale_diff;
+    while remaining > 0 {
+        let step = remaining.min(18); // 10^18 fits in u64
+        r = mul_i256_u64(r.0, r.1, r.2, r.3, 10u64.pow(step));
+        remaining -= step;
+    }
+    r
+}
+
+/// Multiply a 256-bit two's complement integer by a u64 factor.
+fn mul_i256_u64(w0: i64, w1: u64, w2: u64, w3: u64, factor: u64) -> (i64, u64, u64, u64) {
+    let f = factor as u128;
+    let p3 = w3 as u128 * f;
+    let p2 = w2 as u128 * f + (p3 >> 64);
+    let p1 = w1 as u128 * f + (p2 >> 64);
+    let p0 = w0 as i128 * f as i128 + (p1 >> 64) as i128;
+    (p0 as i64, p1 as u64, p2 as u64, p3 as u64)
+}
+
+fn div_i256_pow10(w0: i64, w1: u64, w2: u64, w3: u64, scale_diff: u32) -> (i64, u64, u64, u64) {
+    let mut r = (w0, w1, w2, w3);
+    let mut remaining = scale_diff;
+    while remaining > 0 {
+        let step = remaining.min(18);
+        r = div_i256_u64(r.0, r.1, r.2, r.3, 10u64.pow(step));
+        remaining -= step;
+    }
+    r
+}
+
+/// Divide a 256-bit two's complement integer by a u64 divisor (truncation toward zero).
+fn div_i256_u64(w0: i64, w1: u64, w2: u64, w3: u64, divisor: u64) -> (i64, u64, u64, u64) {
+    let neg = w0 < 0;
+    let (aw0, aw1, aw2, aw3) = if neg { negate_i256(w0, w1, w2, w3) } else { (w0, w1, w2, w3) };
+    let d = divisor as u128;
+    let p0 = aw0 as u64 as u128;
+    let q0 = (p0 / d) as u64;
+    let p1 = ((p0 % d) << 64) | aw1 as u128;
+    let q1 = (p1 / d) as u64;
+    let p2 = ((p1 % d) << 64) | aw2 as u128;
+    let q2 = (p2 / d) as u64;
+    let p3 = ((p2 % d) << 64) | aw3 as u128;
+    let q3 = (p3 / d) as u64;
+    if neg { negate_i256(q0 as i64, q1, q2, q3) } else { (q0 as i64, q1, q2, q3) }
+}
+
+fn negate_i256(w0: i64, w1: u64, w2: u64, w3: u64) -> (i64, u64, u64, u64) {
+    let (n3, c3) = (!w3).overflowing_add(1);
+    let (n2, c2) = (!w2).overflowing_add(c3 as u64);
+    let (n1, c1) = (!w1).overflowing_add(c2 as u64);
+    let n0 = (!(w0 as u64)).wrapping_add(c1 as u64) as i64;
+    (n0, n1, n2, n3)
+}
+
+/// Convert decoded fixed integer values (BYTE/SHORT/INT/LONG) to a target decimal type.
+/// Widens each value from the source size to the target decimal size, then multiplies
+/// by 10^scale. Iterates backwards when the target is wider to avoid overwriting unread data.
+fn convert_fixed_to_decimal(
+    data: &mut AcVec<u8>,
+    src_tag: ColumnTypeTag,
+    dst_tag: ColumnTypeTag,
+    dst_scale: u8,
+) -> ParquetResult<()> {
+    let src_size = fixed_tag_size(src_tag);
+    let dst_size = decimal_tag_size(dst_tag);
+    let count = data.len() / src_size;
+    if count == 0 {
+        return Ok(());
+    }
+
+    // Grow the buffer if target is wider.
+    let needed = count * dst_size;
+    if needed > data.len() {
+        data.reserve(needed - data.len())?;
+    }
+    unsafe { data.set_len(needed) };
+    let ptr = data.as_mut_ptr();
+
+    match dst_tag {
+        // Target Decimal8..Decimal64: use i64 arithmetic.
+        tag if decimal_tag_size(tag) <= 8 => {
+            let factor = 10i64.wrapping_pow(dst_scale as u32);
+            if dst_size >= src_size {
+                for i in (0..count).rev() {
+                    let val = unsafe { read_le_i64_at(ptr, i, src_size) };
+                    let scaled = if is_int_null(val, src_tag) {
+                        null_i64_for_decimal(dst_tag)
+                    } else {
+                        val.wrapping_mul(factor)
+                    };
+                    unsafe { write_le_i64_at(ptr, i, dst_size, scaled) };
+                }
+            } else {
+                for i in 0..count {
+                    let val = unsafe { read_le_i64_at(ptr, i, src_size) };
+                    let scaled = if is_int_null(val, src_tag) {
+                        null_i64_for_decimal(dst_tag)
+                    } else {
+                        val.wrapping_mul(factor)
+                    };
+                    unsafe { write_le_i64_at(ptr, i, dst_size, scaled) };
+                }
+            }
+        }
+        // Target Decimal128: widen to i128, scale, write as (hi, lo).
+        ColumnTypeTag::Decimal128 => {
+            let factor = 10i128.wrapping_pow(dst_scale as u32);
+            for i in (0..count).rev() {
+                let val = unsafe { read_le_i64_at(ptr, i, src_size) };
+                let offset = i * 16;
+                if is_int_null(val, src_tag) {
+                    unsafe {
+                        (ptr.add(offset) as *mut i64).write_unaligned(i64::MIN);
+                        (ptr.add(offset + 8) as *mut u64).write_unaligned(0);
+                    }
+                } else {
+                    let scaled = (val as i128).wrapping_mul(factor);
+                    unsafe {
+                        (ptr.add(offset) as *mut i64).write_unaligned((scaled >> 64) as i64);
+                        (ptr.add(offset + 8) as *mut u64).write_unaligned(scaled as u64);
+                    }
+                }
+            }
+        }
+        // Target Decimal256: widen to 256-bit, scale, write as (w0, w1, w2, w3).
+        ColumnTypeTag::Decimal256 => {
+            for i in (0..count).rev() {
+                let val = unsafe { read_le_i64_at(ptr, i, src_size) };
+                let offset = i * 32;
+                if is_int_null(val, src_tag) {
+                    unsafe {
+                        (ptr.add(offset) as *mut i64).write_unaligned(i64::MIN);
+                        (ptr.add(offset + 8) as *mut u64).write_unaligned(0);
+                        (ptr.add(offset + 16) as *mut u64).write_unaligned(0);
+                        (ptr.add(offset + 24) as *mut u64).write_unaligned(0);
+                    }
+                } else {
+                    // Sign-extend to 256-bit: (sign, sign, sign, val)
+                    let sign = if val < 0 { u64::MAX } else { 0 };
+                    let (w0, w1, w2, w3) = mul_i256_pow10(
+                        sign as i64, sign, sign, val as u64, dst_scale as u32,
+                    );
+                    unsafe {
+                        (ptr.add(offset) as *mut i64).write_unaligned(w0);
+                        (ptr.add(offset + 8) as *mut u64).write_unaligned(w1);
+                        (ptr.add(offset + 16) as *mut u64).write_unaligned(w2);
+                        (ptr.add(offset + 24) as *mut u64).write_unaligned(w3);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+#[inline]
+unsafe fn read_le_i64_at(ptr: *const u8, idx: usize, elem_size: usize) -> i64 {
+    let p = ptr.add(idx * elem_size);
+    match elem_size {
+        1 => *(p as *const i8) as i64,
+        2 => (p as *const i16).read_unaligned() as i64,
+        4 => (p as *const i32).read_unaligned() as i64,
+        _ => (p as *const i64).read_unaligned(),
+    }
+}
+
+#[inline]
+unsafe fn write_le_i64_at(ptr: *mut u8, idx: usize, elem_size: usize, val: i64) {
+    let p = ptr.add(idx * elem_size);
+    match elem_size {
+        1 => *(p as *mut i8) = val as i8,
+        2 => (p as *mut i16).write_unaligned(val as i16),
+        4 => (p as *mut i32).write_unaligned(val as i32),
+        _ => (p as *mut i64).write_unaligned(val),
+    }
+}
+
+/// Returns true if the value is a null sentinel for the given integer source type.
+#[inline]
+fn is_int_null(val: i64, src_tag: ColumnTypeTag) -> bool {
+    match src_tag {
+        // BYTE and SHORT have no null sentinel in QuestDB.
+        ColumnTypeTag::Byte | ColumnTypeTag::Short => false,
+        ColumnTypeTag::Int => val == i32::MIN as i64,
+        _ => val == i64::MIN,
+    }
+}
+
+/// Returns the null sentinel as i64 for a small decimal target (size <= 8).
+#[inline]
+fn null_i64_for_decimal(tag: ColumnTypeTag) -> i64 {
+    match tag {
+        ColumnTypeTag::Decimal8 => i8::MIN as i64,
+        ColumnTypeTag::Decimal16 => i16::MIN as i64,
+        ColumnTypeTag::Decimal32 => i32::MIN as i64,
+        _ => i64::MIN,
+    }
+}
+
+fn fixed_tag_size(tag: ColumnTypeTag) -> usize {
+    match tag {
+        ColumnTypeTag::Byte | ColumnTypeTag::Boolean => 1,
+        ColumnTypeTag::Short | ColumnTypeTag::Char => 2,
+        ColumnTypeTag::Int | ColumnTypeTag::IPv4 | ColumnTypeTag::Float => 4,
+        ColumnTypeTag::Long | ColumnTypeTag::Double | ColumnTypeTag::Date | ColumnTypeTag::Timestamp => 8,
+        _ => 8,
+    }
+}
+
+fn decimal_tag_size(tag: ColumnTypeTag) -> usize {
+    match tag {
+        ColumnTypeTag::Decimal8 => 1,
+        ColumnTypeTag::Decimal16 => 2,
+        ColumnTypeTag::Decimal32 => 4,
+        ColumnTypeTag::Decimal64 => 8,
+        ColumnTypeTag::Decimal128 => 16,
+        ColumnTypeTag::Decimal256 => 32,
+        _ => 8,
     }
 }
 
@@ -395,6 +766,23 @@ impl ParquetDecoder {
                         && src_t == ColumnTypeTag::Array => {
                         column_type = to_column_type;
                     }
+                    // Decimal → Decimal: different precision/scale.
+                    // The decoder sign-extends or truncates to the target size.
+                    (ColumnTypeTag::Decimal8 | ColumnTypeTag::Decimal16 |
+                     ColumnTypeTag::Decimal32 | ColumnTypeTag::Decimal64 |
+                     ColumnTypeTag::Decimal128 | ColumnTypeTag::Decimal256,
+                     ColumnTypeTag::Decimal8 | ColumnTypeTag::Decimal16 |
+                     ColumnTypeTag::Decimal32 | ColumnTypeTag::Decimal64 |
+                     ColumnTypeTag::Decimal128 | ColumnTypeTag::Decimal256) => {
+                        column_type = to_column_type;
+                    }
+                    // Fixed integer → Decimal: keep source type for decode,
+                    // post_convert widens and scales by 10^(target_scale).
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short |
+                     ColumnTypeTag::Int | ColumnTypeTag::Long,
+                     dst) if is_decimal_tag(dst) => {
+                        // Keep column_type as source fixed type.
+                    }
                     _ => {
                         return Err(fmt_err!(
                             InvalidType,
@@ -447,7 +835,7 @@ impl ParquetDecoder {
             }
 
             // Post-decode conversions that cannot be handled by the decode dispatch.
-            post_convert(src_tag, to_column_type.tag(), column_chunk_bufs)?;
+            post_convert(original_column_type, to_column_type, column_chunk_bufs)?;
 
             // Timestamp nano additional scaling after post_convert.
             // post_convert handles μs↔ms (×/÷1000) for Timestamp↔Date.
@@ -623,6 +1011,23 @@ impl ParquetDecoder {
                         && src_t == ColumnTypeTag::Array => {
                         column_type = to_column_type;
                     }
+                    // Decimal → Decimal: different precision/scale.
+                    // The decoder sign-extends or truncates to the target size.
+                    (ColumnTypeTag::Decimal8 | ColumnTypeTag::Decimal16 |
+                     ColumnTypeTag::Decimal32 | ColumnTypeTag::Decimal64 |
+                     ColumnTypeTag::Decimal128 | ColumnTypeTag::Decimal256,
+                     ColumnTypeTag::Decimal8 | ColumnTypeTag::Decimal16 |
+                     ColumnTypeTag::Decimal32 | ColumnTypeTag::Decimal64 |
+                     ColumnTypeTag::Decimal128 | ColumnTypeTag::Decimal256) => {
+                        column_type = to_column_type;
+                    }
+                    // Fixed integer → Decimal: keep source type for decode,
+                    // post_convert widens and scales by 10^(target_scale).
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short |
+                     ColumnTypeTag::Int | ColumnTypeTag::Long,
+                     dst) if is_decimal_tag(dst) => {
+                        // Keep column_type as source fixed type.
+                    }
                     _ => {
                         return Err(fmt_err!(
                             InvalidType,
@@ -678,7 +1083,7 @@ impl ParquetDecoder {
             }
 
             // Post-decode conversions that cannot be handled by the decode dispatch.
-            post_convert(src_tag, to_column_type.tag(), column_chunk_bufs)?;
+            post_convert(original_column_type, to_column_type, column_chunk_bufs)?;
 
             // Timestamp nano additional scaling after post_convert.
             // post_convert handles μs↔ms (×/÷1000) for Timestamp↔Date.

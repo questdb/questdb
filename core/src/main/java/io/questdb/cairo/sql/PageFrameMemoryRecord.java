@@ -37,6 +37,8 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -100,6 +102,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     // Set from PageFrameMemoryPool during init(); null when hasTypeCasts is false.
     protected IntList sourceColumnTypes;
     protected boolean stableStrings;
+    // Reusable decimal instances for lazy var→decimal conversion.
+    private final Decimal128 decimal128Buf = new Decimal128();
+    private final Decimal256 decimal256Buf = new Decimal256();
+    private final Decimal64 decimal64Buf = new Decimal64();
     // Reusable sinks for lazy fixed→varchar conversion.
     private final StringSink stringSinkA = new StringSink();
     private final StringSink stringSinkB = new StringSink();
@@ -276,6 +282,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public void getDecimal128(int columnIndex, Decimal128 sink) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                convertVarToDecimal128(-srcTag, columnIndex, sink);
+                return;
+            }
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             address += (rowIndex << 4);
@@ -290,6 +303,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public short getDecimal16(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                return convertVarToDecimal16(-srcTag, columnIndex);
+            }
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
@@ -299,6 +318,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public void getDecimal256(int columnIndex, Decimal256 sink) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                convertVarToDecimal256(-srcTag, columnIndex, sink);
+                return;
+            }
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             sink.ofRawAddress(address + (rowIndex << 5));
@@ -309,6 +335,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public int getDecimal32(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                return convertVarToDecimal32(-srcTag, columnIndex);
+            }
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
@@ -318,6 +350,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public long getDecimal64(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                return convertVarToDecimal64(-srcTag, columnIndex);
+            }
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
@@ -327,6 +365,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public byte getDecimal8(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                return convertVarToDecimal8(-srcTag, columnIndex);
+            }
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex);
@@ -828,6 +872,98 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return cs != null && cs.length() > 0 ? cs.charAt(0) : (char) 0;
     }
 
+    private void convertVarToDecimal128(int encoded, int columnIndex, Decimal128 sink) {
+        int srcTag = encoded & 0xFF;
+        int precision = (encoded >> 8) & 0xFF;
+        int scale = (encoded >> 16) & 0xFF;
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                decimal128Buf.ofString(cs, precision, scale);
+                sink.ofRaw(decimal128Buf.getHigh(), decimal128Buf.getLow());
+                return;
+            } catch (NumericException ignore) {
+            }
+        }
+        sink.ofRawNull();
+    }
+
+    private short convertVarToDecimal16(int encoded, int columnIndex) {
+        int srcTag = encoded & 0xFF;
+        int precision = (encoded >> 8) & 0xFF;
+        int scale = (encoded >> 16) & 0xFF;
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                decimal64Buf.ofString(cs, precision, scale);
+                return (short) decimal64Buf.getValue();
+            } catch (NumericException ignore) {
+            }
+        }
+        return Decimals.DECIMAL16_NULL;
+    }
+
+    private void convertVarToDecimal256(int encoded, int columnIndex, Decimal256 sink) {
+        int srcTag = encoded & 0xFF;
+        int precision = (encoded >> 8) & 0xFF;
+        int scale = (encoded >> 16) & 0xFF;
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                decimal256Buf.ofString(cs, precision, scale);
+                sink.ofRaw(decimal256Buf.getHh(), decimal256Buf.getHl(), decimal256Buf.getLh(), decimal256Buf.getLl());
+                return;
+            } catch (NumericException ignore) {
+            }
+        }
+        sink.ofRawNull();
+    }
+
+    private int convertVarToDecimal32(int encoded, int columnIndex) {
+        int srcTag = encoded & 0xFF;
+        int precision = (encoded >> 8) & 0xFF;
+        int scale = (encoded >> 16) & 0xFF;
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                decimal64Buf.ofString(cs, precision, scale);
+                return (int) decimal64Buf.getValue();
+            } catch (NumericException ignore) {
+            }
+        }
+        return Decimals.DECIMAL32_NULL;
+    }
+
+    private long convertVarToDecimal64(int encoded, int columnIndex) {
+        int srcTag = encoded & 0xFF;
+        int precision = (encoded >> 8) & 0xFF;
+        int scale = (encoded >> 16) & 0xFF;
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                decimal64Buf.ofString(cs, precision, scale);
+                return decimal64Buf.getValue();
+            } catch (NumericException ignore) {
+            }
+        }
+        return Decimals.DECIMAL64_NULL;
+    }
+
+    private byte convertVarToDecimal8(int encoded, int columnIndex) {
+        int srcTag = encoded & 0xFF;
+        int precision = (encoded >> 8) & 0xFF;
+        int scale = (encoded >> 16) & 0xFF;
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                decimal64Buf.ofString(cs, precision, scale);
+                return (byte) decimal64Buf.getValue();
+            } catch (NumericException ignore) {
+            }
+        }
+        return Decimals.DECIMAL8_NULL;
+    }
+
     private double convertVarToDouble(int srcTag, int columnIndex) {
         CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
         return Numbers.parseDoubleQuiet(cs);
@@ -931,6 +1067,65 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
     }
 
+    private boolean appendDecimalToSink(int srcType, long address, CharSink<?> sink) {
+        final int tag = ColumnType.tagOf(srcType);
+        final int precision = ColumnType.getDecimalPrecision(srcType);
+        final int scale = ColumnType.getDecimalScale(srcType);
+        switch (tag) {
+            case ColumnType.DECIMAL8 -> {
+                byte val = Unsafe.getUnsafe().getByte(address + rowIndex);
+                if (val == Decimals.DECIMAL8_NULL) {
+                    return false;
+                }
+                Decimals.appendNonNull(val, precision, scale, sink);
+            }
+            case ColumnType.DECIMAL16 -> {
+                short val = Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
+                if (val == Decimals.DECIMAL16_NULL) {
+                    return false;
+                }
+                Decimals.appendNonNull(val, precision, scale, sink);
+            }
+            case ColumnType.DECIMAL32 -> {
+                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+                if (val == Decimals.DECIMAL32_NULL) {
+                    return false;
+                }
+                Decimals.appendNonNull(val, precision, scale, sink);
+            }
+            case ColumnType.DECIMAL64 -> {
+                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                if (val == Decimals.DECIMAL64_NULL) {
+                    return false;
+                }
+                Decimals.appendNonNull(val, precision, scale, sink);
+            }
+            case ColumnType.DECIMAL128 -> {
+                long hi = Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
+                long lo = Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
+                if (Decimal128.isNull(hi, lo)) {
+                    return false;
+                }
+                Decimals.appendNonNull(hi, lo, precision, scale, sink);
+            }
+            case ColumnType.DECIMAL256 -> {
+                long base = address + (rowIndex << 5);
+                long hh = Unsafe.getUnsafe().getLong(base);
+                long hl = Unsafe.getUnsafe().getLong(base + 8L);
+                long lh = Unsafe.getUnsafe().getLong(base + 16L);
+                long ll = Unsafe.getUnsafe().getLong(base + 24L);
+                if (Decimal256.isNull(hh, hl, lh, ll)) {
+                    return false;
+                }
+                Decimals.appendNonNull(hh, hl, lh, ll, precision, scale, sink);
+            }
+            default -> {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * Converts a fixed-type value to a STRING CharSequence.
      * Returns null for null values. Called only when the column needs a type cast.
@@ -1017,6 +1212,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
                 Numbers.appendUuid(lo, hi, sink);
             }
             default -> {
+                if (ColumnType.isDecimal(srcType) && appendDecimalToSink(srcType, address, sink)) {
+                    return sink;
+                }
                 return null;
             }
         }
@@ -1109,6 +1307,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
                 Numbers.appendUuid(lo, hi, sink);
             }
             default -> {
+                if (ColumnType.isDecimal(srcType) && appendDecimalToSink(srcType, address, sink)) {
+                    return sink;
+                }
                 return null;
             }
         }
