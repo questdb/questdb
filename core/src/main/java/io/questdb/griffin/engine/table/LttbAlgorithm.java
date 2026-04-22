@@ -198,6 +198,14 @@ class LttbAlgorithm implements SubsampleAlgorithm {
     private static void selectOnRange(long buffer, int start, int end, int m,
                                       DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         int n = end - start;
+        if (m < 2 || n < 2) {
+            // Cannot form buckets with fewer than 2 target points or 2 data points.
+            // Emit all rows in the range.
+            for (int j = start; j < end; j++) {
+                selectedIndices.add(j);
+            }
+            return;
+        }
 
         selectedIndices.add(start);
 

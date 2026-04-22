@@ -78,8 +78,8 @@ class MinMaxAlgorithm implements SubsampleAlgorithm {
 
             int minIdx = -1;
             int maxIdx = -1;
-            double minVal = Double.MAX_VALUE;
-            double maxVal = -Double.MAX_VALUE;
+            double minVal = Double.POSITIVE_INFINITY;
+            double maxVal = Double.NEGATIVE_INFINITY;
 
             while (dataIdx < bufferSize) {
                 long ts = Unsafe.getUnsafe().getLong(buffer + (long) dataIdx * ENTRY_SIZE + 8);
@@ -116,6 +116,11 @@ class MinMaxAlgorithm implements SubsampleAlgorithm {
                 selectedIndices.add(maxIdx);
                 selectedIndices.add(minIdx);
             }
+        }
+        // Cap output to targetPoints. With small targets (e.g., 2),
+        // a single bucket can emit more rows than the target.
+        if (selectedIndices.size() > targetPoints) {
+            selectedIndices.setPos(targetPoints);
         }
     }
 }

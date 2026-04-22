@@ -6066,57 +6066,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        // Parse optional gap threshold (3rd argument, LTTB only)
-        long gapThresholdMicros = 0;
-        if (subsample.paramCount >= 3 && method == SubsampleRecordCursorFactory.METHOD_LTTB) {
-            final ExpressionNode gapNode = subsample.args.get(2);
-            final CharSequence gapStr = gapNode.token;
-            // Remove quotes if present (e.g., '1h' -> 1h)
-            CharSequence interval = Chars.isQuoted(gapStr)
-                    ? Chars.toString(gapStr, 1, gapStr.length() - 1) : gapStr;
-            int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, gapNode.position, "gap threshold");
-            long n = TimestampSamplerFactory.parsePositiveInterval(
-                    interval, k, gapNode.position, "gap threshold", Numbers.INT_NULL, '?'
-            );
-            gapThresholdMicros = switch (interval.charAt(k)) {
-                case 's' -> n * Micros.SECOND_MICROS;
-                case 'm' -> n * Micros.MINUTE_MICROS;
-                case 'h' -> n * Micros.HOUR_MICROS;
-                case 'd' -> n * Micros.DAY_MICROS;
-                default ->
-                        throw SqlException.$(gapNode.position + k, "unsupported interval unit: ").put(interval.charAt(k))
-                                .put(". Supported: s, m, h, d");
-            };
-        }
+        // All remaining work must free targetFunc on error since it's not yet
+        // owned by a factory.
+        try {
+            // Parse optional gap threshold (3rd argument, LTTB only)
+            long gapThresholdMicros = 0;
+            if (subsample.paramCount >= 3 && method == SubsampleRecordCursorFactory.METHOD_LTTB) {
+                final ExpressionNode gapNode = subsample.args.get(2);
+                final CharSequence gapStr = gapNode.token;
+                CharSequence interval = Chars.isQuoted(gapStr)
+                        ? Chars.toString(gapStr, 1, gapStr.length() - 1) : gapStr;
+                int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, gapNode.position, "gap threshold");
+                long n = TimestampSamplerFactory.parsePositiveInterval(
+                        interval, k, gapNode.position, "gap threshold", Numbers.INT_NULL, '?'
+                );
+                gapThresholdMicros = switch (interval.charAt(k)) {
+                    case 's' -> n * Micros.SECOND_MICROS;
+                    case 'm' -> n * Micros.MINUTE_MICROS;
+                    case 'h' -> n * Micros.HOUR_MICROS;
+                    case 'd' -> n * Micros.DAY_MICROS;
+                    default ->
+                            throw SqlException.$(gapNode.position + k, "unsupported interval unit: ").put(interval.charAt(k))
+                                    .put(". Supported: s, m, h, d");
+                };
+            }
 
-        // Find timestamp column index. First try the factory's designated timestamp.
-        // If not designated, only fall back to type scan when the caller confirms
-        // the model chain originally had a designated timestamp (SAMPLE BY/GROUP BY
-        // results lose designation). Do not grab arbitrary TIMESTAMP columns from
-        // tables without designated timestamp.
-        int timestampIndex = factory.getMetadata().getTimestampIndex();
-        if (timestampIndex == -1 && allowTypeScanFallback) {
-            for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
-                if (ColumnType.tagOf(factory.getMetadata().getColumnType(i)) == ColumnType.TIMESTAMP) {
-                    timestampIndex = i;
-                    break;
+            int timestampIndex = factory.getMetadata().getTimestampIndex();
+            if (timestampIndex == -1 && allowTypeScanFallback) {
+                for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
+                    if (ColumnType.tagOf(factory.getMetadata().getColumnType(i)) == ColumnType.TIMESTAMP) {
+                        timestampIndex = i;
+                        break;
+                    }
                 }
             }
-        }
-        if (timestampIndex == -1) {
-            throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
-        }
+            if (timestampIndex == -1) {
+                throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+            }
 
-        // Fast path: direct random access with designated timestamp and forward scan.
-        // The factory promises recordAt() returns the same record shape as
-        // sequential iteration, including computed/virtual columns.
-        // Fallback: RecordChain materialization for aggregate cursors or
-        // non-random-access/non-forward scans.
-        final boolean useDirectAccess = factory.recordCursorSupportsRandomAccess()
-                && factory.getMetadata().getTimestampIndex() != -1
-                && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
+            final boolean useDirectAccess = factory.recordCursorSupportsRandomAccess()
+                    && factory.getMetadata().getTimestampIndex() != -1
+                    && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
 
-        try {
             RecordSink recordSink = null;
             if (!useDirectAccess) {
                 entityColumnFilter.of(factory.getMetadata().getColumnCount());
@@ -6135,6 +6126,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     useDirectAccess
             );
         } catch (Throwable e) {
+            Misc.free(targetFunc);
             Misc.free(factory);
             throw e;
         }

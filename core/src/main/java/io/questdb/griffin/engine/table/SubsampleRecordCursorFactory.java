@@ -229,9 +229,9 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             this.valueColumnIndex = valueColumnIndex;
             this.timestampColumnIndex = timestampColumnIndex;
             this.subsamplePosition = subsamplePosition;
-            if (maxRows > Integer.MAX_VALUE) {
+            if (maxRows < 1 || maxRows > Integer.MAX_VALUE) {
                 throw CairoException.nonCritical().position(subsamplePosition)
-                        .put("cairo.sql.subsample.max.rows exceeds maximum of ")
+                        .put("cairo.sql.subsample.max.rows must be between 1 and ")
                         .put(Integer.MAX_VALUE);
             }
             this.maxRows = maxRows;

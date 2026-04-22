@@ -435,27 +435,32 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testM4WithOrderByThirdColumn() throws Exception {
-        // M4 + ORDER BY on third column: row count must not change
+        // M4 + ORDER BY on a non-SUBSAMPLE column
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, quantity INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            StringBuilder sb = new StringBuilder("INSERT INTO t VALUES\n");
-            for (int i = 0; i < 24; i++) {
-                if (i > 0) sb.append(",\n");
-                sb.append("(").append(10.0 + i * 3).append(", ").append((i * 7) % 100)
-                        .append(", '2024-01-01T").append(String.format("%02d", i))
-                        .append(":00:00.000000Z')");
-            }
-            execute(sb.toString());
-
-            sink.clear();
-            printSql("SELECT price, quantity, ts FROM t SUBSAMPLE m4(price, 8)");
-            int rowsWithout = countDataRows(sink.toString());
-            Assert.assertTrue("M4 should reduce 24 rows, got " + rowsWithout, rowsWithout <= 8);
-
-            sink.clear();
-            printSql("SELECT price, quantity, ts FROM t SUBSAMPLE m4(price, 8) ORDER BY quantity");
-            int rowsWith = countDataRows(sink.toString());
-            Assert.assertEquals("ORDER BY must not change row count", rowsWithout, rowsWith);
+            execute("CREATE TABLE t (price DOUBLE, quantity INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, 5, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, 3, '2024-01-01T01:00:00.000000Z'),
+                    (5.0, 8, '2024-01-01T02:00:00.000000Z'),
+                    (30.0, 1, '2024-01-01T03:00:00.000000Z'),
+                    (45.0, 9, '2024-01-01T04:00:00.000000Z'),
+                    (20.0, 2, '2024-01-01T05:00:00.000000Z')
+                    """);
+            // M4 target=8, 2 buckets of 3 rows each:
+            // Bucket 1 (00:00-02:00): first=10, last=5, min=5, max=50 -> rows 0,1,2 (deduped: 3)
+            // Bucket 2 (03:00-05:00): first=30, last=20, min=20, max=45 -> rows 3,4,5 (deduped: 3)
+            // Total: 6 rows. ORDER BY quantity sorts by quantity ascending.
+            assertSql(
+                    "price\tquantity\tts\n" +
+                            "30.0\t1\t2024-01-01T03:00:00.000000Z\n" +
+                            "20.0\t2\t2024-01-01T05:00:00.000000Z\n" +
+                            "50.0\t3\t2024-01-01T01:00:00.000000Z\n" +
+                            "10.0\t5\t2024-01-01T00:00:00.000000Z\n" +
+                            "5.0\t8\t2024-01-01T02:00:00.000000Z\n" +
+                            "45.0\t9\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, quantity, ts FROM t SUBSAMPLE m4(price, 8) ORDER BY quantity"
+            );
         });
     }
 
@@ -1354,6 +1359,28 @@ public class SubsampleTest extends AbstractCairoTest {
                             "20.0\t2024-01-01T02:00:00.000000Z\n",
                     "SELECT price, ts FROM t SUBSAMPLE lttb(price, 3)"
             );
+        });
+    }
+
+    @Test
+    public void testM4SmallTargetCapped() throws Exception {
+        // M4 with target=2 on distinct-value data: one bucket can emit up to
+        // 4 rows (first, last, min, max). The output must be capped at target.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, '2024-01-01T01:00:00.000000Z'),
+                    (5.0, '2024-01-01T02:00:00.000000Z'),
+                    (30.0, '2024-01-01T03:00:00.000000Z')
+                    """);
+            // target=2, numBuckets=1. Bucket has first=10, last=30, min=5, max=50.
+            // Without capping: 4 rows. With capping: 2 rows.
+            sink.clear();
+            printSql("SELECT price, ts FROM t SUBSAMPLE m4(price, 2)");
+            int rows = countDataRows(sink.toString());
+            Assert.assertTrue("M4 target=2 must not exceed 2 rows, got " + rows, rows <= 2);
         });
     }
 

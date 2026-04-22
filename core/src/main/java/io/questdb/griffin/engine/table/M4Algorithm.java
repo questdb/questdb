@@ -78,8 +78,8 @@ class M4Algorithm implements SubsampleAlgorithm {
             int lastIdx = -1;
             int minIdx = -1;
             int maxIdx = -1;
-            double minVal = Double.MAX_VALUE;
-            double maxVal = -Double.MAX_VALUE;
+            double minVal = Double.POSITIVE_INFINITY;
+            double maxVal = Double.NEGATIVE_INFINITY;
 
             while (dataIdx < bufferSize) {
                 long ts = Unsafe.getUnsafe().getLong(buffer + (long) dataIdx * ENTRY_SIZE + 8);
@@ -112,6 +112,11 @@ class M4Algorithm implements SubsampleAlgorithm {
             // Sort 4 indices with a sorting network (5 comparisons, 0 allocations)
             // and deduplicate.
             emitSorted4(selectedIndices, firstIdx, minIdx, maxIdx, lastIdx);
+        }
+        // Cap output to targetPoints. With small targets (e.g., 2 or 3),
+        // a single bucket can emit up to 4 rows, exceeding the target.
+        if (selectedIndices.size() > targetPoints) {
+            selectedIndices.setPos(targetPoints);
         }
     }
 
