@@ -13016,7 +13016,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         A\t5.0
                         B\t5.0
                         """,
-                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category",
+                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category",
                 "CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
@@ -13039,7 +13039,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         B\t0.5
                         """,
                 "SELECT category, max(x - avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS max_dev " +
-                        "FROM tab GROUP BY category",
+                        "FROM tab GROUP BY category ORDER BY category",
                 "CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
@@ -13063,7 +13063,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         A\t5.0
                         B\t7.5
                         """,
-                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category",
+                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category",
                 "CREATE TABLE tab AS (" +
                         "SELECT CASE WHEN x = 5 THEN NULL ELSE x::DOUBLE END AS x, " +
                         "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
@@ -13088,7 +13088,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         B\t3.5
                         """,
                 "SELECT category, max(avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS peak_ma " +
-                        "FROM tab GROUP BY category",
+                        "FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithMultipleAggregatesAndGroupBy() throws Exception {
+        // Multiple aggregates, each wrapping a different nested window function, with GROUP BY.
+        // Extraction creates two inner window models (one per nested window). Pass-through of
+        // one window's alias must only reach outer models that have the owning model in their
+        // nested chain, not the deeper one (which would produce an unresolvable column).
+        assertQuery(
+                """
+                        category\tmax_avg\tmin_sum
+                        A\t1.5\t3.0
+                        B\t3.5\t7.0
+                        """,
+                "SELECT category, " +
+                        "max(avg(x) OVER (PARTITION BY category)) AS max_avg, " +
+                        "min(sum(x) OVER (PARTITION BY category)) AS min_sum " +
+                        "FROM tab GROUP BY category ORDER BY category",
                 "CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
@@ -13112,7 +13139,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         B\tX\t2.5
                         B\tY\t2.5
                         """,
-                "SELECT cat1, cat2, sum(avg(x) OVER ()) AS result FROM tab GROUP BY cat1, cat2",
+                "SELECT cat1, cat2, sum(avg(x) OVER ()) AS result FROM tab GROUP BY cat1, cat2 ORDER BY cat1, cat2",
                 "CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, " +
                         "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
