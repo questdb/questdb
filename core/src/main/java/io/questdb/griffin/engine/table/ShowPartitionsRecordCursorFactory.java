@@ -51,7 +51,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -217,11 +216,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         private void closeParquetMeta() {
-            if (parquetMetaReader != null && parquetMetaReader.isOpen()) {
-                long addr = parquetMetaReader.getAddr();
-                long size = parquetMetaReader.getFileSize();
-                parquetMetaReader.clear();
-                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            if (parquetMetaReader != null) {
+                parquetMetaReader.unmapAndClear(ff);
             }
         }
 
@@ -401,29 +397,18 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             }
             int dirLen = partitionDirPath.size();
             partitionDirPath.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            long addr = 0;
-            long parquetMetaFileSize = 0;
             try {
-                // Size the mapping from the committed PARQUET_META_FILE_SIZE header
-                // field, not ff.length(). A non-positive return means the
-                // file is missing, unreadable, or header-corrupt — skip it.
-                parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, partitionDirPath.$());
-                if (parquetMetaFileSize <= 0) {
-                    return;
-                }
-                addr = TableUtils.mapRO(ff, partitionDirPath.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                 if (parquetMetaReader == null) {
                     parquetMetaReader = new ParquetMetaFileReader();
                 }
-                parquetMetaReader.of(addr, parquetMetaFileSize, parquetFileSize);
+                parquetMetaReader.openAndMapRO(ff, partitionDirPath.$());
+                if (parquetMetaReader.getAddr() == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
+                    throw CairoException.critical(0)
+                            .put("could not resolve expected footer");
+                }
             } catch (Throwable e) {
                 LOG.error().$("could not read parquet metadata [path=").$(partitionDirPath).$(", error=").$(e.getMessage()).I$();
                 closeParquetMeta();
-                // If of() threw before setting addr, the reader is not open.
-                // Munmap the raw address directly to prevent a leak.
-                if (addr != 0 && (parquetMetaReader == null || !parquetMetaReader.isOpen())) {
-                    ff.munmap(addr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                }
             } finally {
                 partitionDirPath.trimTo(dirLen);
             }

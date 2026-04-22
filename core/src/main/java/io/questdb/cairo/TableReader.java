@@ -1370,12 +1370,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         path.trimTo(rootLen);
         pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
 
-        // Read the committed _pm size, map that many bytes, and hand both
-        // the address and size to of(). The size read here is the MVCC
-        // anchor; a concurrent writer that extends _pm later produces
-        // footers for parquet sizes newer than our _txn snapshot, which
-        // the MVCC walk would reject anyway, so we don't need to observe
-        // them.
         final long parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
         if (parquetMetaFileSize <= 0) {
             throw CairoException.critical(0).put("missing or invalid _pm sidecar file [path=").put(path).put(']');
@@ -1389,7 +1383,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             parquetMetadataPartitions.setQuick(partitionIndex, parquetMetaMem);
         }
 
-        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaFileSize, parquetFileSize);
+        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaFileSize);
+        if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
+            throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [path=").put(path).put(']');
+        }
         return parquetMetaReader.getParquetFileSize();
     }
 

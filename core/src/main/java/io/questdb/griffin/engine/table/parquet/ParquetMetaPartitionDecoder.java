@@ -228,9 +228,28 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         this.parquetAddr = parquetAddr;
         this.parquetSize = parquetSize;
         this.allocator = Unsafe.getNativeAllocator(memoryTag);
-        // Long.MAX_VALUE disables MVCC footer matching — use the latest footer
-        // as-is (caller already selected the _pm that matches its snapshot).
-        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
+        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
+        if (!this.parquetMetaReader.resolveFooter(parquetSize)) {
+            throw CairoException.critical(0).put("could not resolve _pm footer");
+        }
+    }
+
+    /**
+     * Initializes the decoder with {@code ParquetMetaFileReader} and parquet file regions.
+     *
+     * @param reader      parquet metadata file reader with the footer already resolved
+     * @param parquetAddr base address of the mmapped parquet file
+     * @param parquetSize size of the mmapped parquet file
+     * @param memoryTag   memory tag for native allocations
+     */
+    public void of(ParquetMetaFileReader reader, long parquetAddr, long parquetSize, int memoryTag) {
+        destroy();
+        this.parquetMetaAddr = reader.getAddr();
+        this.parquetMetaSize = reader.getFileSize();
+        this.parquetAddr = parquetAddr;
+        this.parquetSize = parquetSize;
+        this.allocator = Unsafe.getNativeAllocator(memoryTag);
+        this.parquetMetaReader.of(reader);
     }
 
     /**
@@ -247,7 +266,8 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         this.parquetAddr = other.parquetAddr;
         this.parquetSize = other.parquetSize;
         this.allocator = other.allocator;
-        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
+        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
+        this.parquetMetaReader.resolveFooter(Long.MAX_VALUE);
     }
 
     public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {

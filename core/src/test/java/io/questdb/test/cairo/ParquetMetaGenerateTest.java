@@ -24,13 +24,13 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -96,7 +96,8 @@ public class ParquetMetaGenerateTest extends AbstractCairoTest {
                 long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
+                    reader.of(parquetMetaAddr, parquetMetaFileSize);
+                    Assert.assertTrue(reader.resolveFooter(parquetFileSize));
 
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());

@@ -28,9 +28,17 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Regression test for stale-reader safety during append-only `_pm` updates.
@@ -43,6 +51,224 @@ import org.junit.Test;
  * chain while a fresh reader sees the new footer after the O3 merge commits.
  */
 public class O3ParquetStaleReaderTest extends AbstractCairoTest {
+
+    @Test
+    public void testCanSkipRowGroupSurvivesConcurrentO3Merge() throws Exception {
+        // Pin a reader on a background thread and loop canSkipRowGroup
+        // against its held ParquetMetaFileReader while the main thread
+        // triggers an O3 merge that appends a new _pm footer. The pinned
+        // reader's mmap still points at the pre-merge bytes, so the loop
+        // must keep returning consistent results with no crash.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, ts) VALUES
+                            (1,  '2020-01-01T00:00:00.000Z'),
+                            (2,  '2020-01-01T01:00:00.000Z'),
+                            (3,  '2020-01-01T02:00:00.000Z'),
+                            (4,  '2020-01-01T03:00:00.000Z'),
+                            (5,  '2020-01-01T04:00:00.000Z'),
+                            (6,  '2020-01-01T05:00:00.000Z'),
+                            (7,  '2020-01-01T06:00:00.000Z'),
+                            (8,  '2020-01-01T07:00:00.000Z'),
+                            (9,  '2020-01-01T08:00:00.000Z'),
+                            (10, '2020-01-01T09:00:00.000Z'),
+                            (11, '2020-01-01T10:00:00.000Z'),
+                            (12, '2020-01-01T11:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(a, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicLong iterations = new AtomicLong();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final CountDownLatch started = new CountDownLatch(1);
+
+            Thread bg = new Thread(() -> {
+                try (
+                        TableReader reader = engine.getReader("x");
+                        DirectLongList emptyFilters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    int parquetIdx = findParquetPartitionIndex(reader);
+                    if (parquetIdx < 0) {
+                        throw new IllegalStateException("no parquet partition");
+                    }
+                    reader.openPartition(parquetIdx);
+                    ParquetMetaFileReader meta = reader
+                            .getAndInitParquetMetaPartitionDecoder(parquetIdx)
+                            .metadata();
+                    int rgCount = meta.getRowGroupCount();
+                    if (rgCount < 2) {
+                        throw new IllegalStateException("expected >= 2 row groups, got " + rgCount);
+                    }
+                    started.countDown();
+                    while (!stop.get()) {
+                        for (int i = 0; i < rgCount; i++) {
+                            boolean canSkip = meta.canSkipRowGroup(i, emptyFilters, 0);
+                            if (canSkip) {
+                                throw new IllegalStateException("empty filter list must never skip");
+                            }
+                        }
+                        iterations.incrementAndGet();
+                    }
+                } catch (Throwable e) {
+                    bgError.set(e);
+                } finally {
+                    started.countDown();
+                }
+            }, "pm-canskip-loop");
+            bg.setDaemon(true);
+            bg.start();
+
+            Assert.assertTrue("background thread failed to start", started.await(10, TimeUnit.SECONDS));
+            Assert.assertNull("background thread threw before main work", bgError.get());
+
+            // O3 insert + drain triggers the merge that appends a new _pm
+            // footer on disk. The pinned reader above keeps resolving the
+            // pre-merge snapshot.
+            execute(
+                    """
+                            INSERT INTO x(a, ts) VALUES
+                            (50, '2020-01-01T00:30:00.000Z'),
+                            (51, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Give the loop time to iterate across the merge boundary.
+            long target = iterations.get() + 200;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (iterations.get() < target && bgError.get() == null && System.nanoTime() < deadline) {
+                Thread.sleep(1);
+            }
+
+            stop.set(true);
+            bg.join(30_000);
+            Assert.assertFalse("background thread did not stop", bg.isAlive());
+            Assert.assertNull("background thread threw: " + bgError.get(), bgError.get());
+            Assert.assertTrue("background should have iterated", iterations.get() > 0);
+        });
+    }
+
+    @Test
+    public void testO3MergePreservesAddColumnSchemaInPm() throws Exception {
+        // ADD COLUMN fires AFTER the partition is already parquet. On the
+        // subsequent O3 merge, the target-schema loop in O3PartitionJob
+        // must emit a null column chunk for the added column so the
+        // merged _pm carries the evolved column count.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(a, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // Convert BEFORE adding the column so the parquet file is
+            // written with only (a, ts).
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            assertParquetColumnCount("x", 2);
+
+            execute("ALTER TABLE x ADD COLUMN newcol DOUBLE");
+            drainWalQueue();
+
+            // O3 insert with the new column present triggers a merge that
+            // must emit a null column chunk into the existing row groups.
+            execute(
+                    """
+                            INSERT INTO x(a, newcol, ts) VALUES
+                            (50, 7.5, '2020-01-01T00:30:00.000Z'),
+                            (51, 8.5, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            assertParquetColumnCount("x", 3);
+        });
+    }
+
+    @Test
+    public void testO3MergePreservesDropColumnSchemaInPm() throws Exception {
+        // DROP COLUMN fires AFTER the partition is already parquet. On the
+        // subsequent O3 merge, the target-schema loop in O3PartitionJob
+        // skips the dropped column (colType < 0), so the merged _pm
+        // carries the reduced column count.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, b INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, b, ts) VALUES
+                            (1, 100, '2020-01-01T00:00:00.000Z'),
+                            (2, 101, '2020-01-01T01:00:00.000Z'),
+                            (3, 102, '2020-01-01T02:00:00.000Z'),
+                            (4, 103, '2020-01-01T03:00:00.000Z'),
+                            (5, 104, '2020-01-01T04:00:00.000Z'),
+                            (6, 105, '2020-01-01T05:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(a, b, ts) VALUES (99, 999, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            assertParquetColumnCount("x", 3);
+
+            execute("ALTER TABLE x DROP COLUMN b");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(a, ts) VALUES
+                            (50, '2020-01-01T00:30:00.000Z'),
+                            (51, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            assertParquetColumnCount("x", 2);
+        });
+    }
 
     @Test
     public void testStaleReaderSurvivesO3MergeWithColumnTops() throws Exception {
@@ -169,5 +395,25 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             }
         }
         return -1;
+    }
+
+    private void assertParquetColumnCount(String tableName, int expectedColumnCount) {
+        try (TableReader reader = getReader(tableName)) {
+            int parquetCount = 0;
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+                reader.openPartition(i);
+                ParquetMetaFileReader meta = reader
+                        .getAndInitParquetMetaPartitionDecoder(i)
+                        .metadata();
+                Assert.assertEquals("column count on parquet partition " + i,
+                        expectedColumnCount, meta.getColumnCount());
+                Assert.assertTrue("row group count > 0", meta.getRowGroupCount() > 0);
+                parquetCount++;
+            }
+            Assert.assertTrue("expected at least one parquet partition", parquetCount > 0);
+        }
     }
 }

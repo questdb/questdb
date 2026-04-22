@@ -217,6 +217,10 @@ public class O3ParquetMergeContext implements Closeable {
      */
     public void releaseResources() {
         partitionUpdater.close();
-        parquetMetaReader.clear();
+        // Release the native handle (which borrows from the _pm mmap) so the
+        // caller can munmap safely. Do NOT clear() — that would wipe addr /
+        // fileSize, making the subsequent unmapAndClear(ff) a no-op and
+        // leaking the mapping.
+        parquetMetaReader.close();
     }
 }

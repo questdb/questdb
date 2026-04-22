@@ -113,6 +113,11 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
         let err = fmt_err!(InvalidType, "invalid column name pointer or length");
         return err.into_cairo_exception().throw(&mut env);
     }
+    debug_assert!(
+        (name_len as usize) <= 1 << 16,
+        "implausible column name length: {}",
+        name_len
+    );
     let wrapper = unsafe { &mut *ptr };
     let name_bytes = unsafe { slice::from_raw_parts(name_ptr, name_len as usize) };
     let name = match std::str::from_utf8(name_bytes) {
@@ -156,6 +161,11 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addBloomFilte
         );
         return err.into_cairo_exception().throw(&mut env);
     }
+    debug_assert!(
+        (bitset_len as usize) <= 1 << 30,
+        "implausible bloom filter bitset length: {}",
+        bitset_len
+    );
     let wrapper = unsafe { &mut *ptr };
     let bitset = unsafe { slice::from_raw_parts(bitset_ptr, bitset_len as usize) };
     if let Err(mut err) = wrapper

@@ -212,6 +212,11 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_canSkipRowGro
                 "filters pointer is null with non-zero filter count"
             ));
         }
+        debug_assert!(
+            (filter_count as usize) <= 1 << 24,
+            "implausible filter_count: {}",
+            filter_count
+        );
         let jni_reader = unsafe { &*ptr };
         let filters: &[ColumnFilterPacked] = if filter_count == 0 {
             &[]

@@ -122,47 +122,35 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
         final PartitionDescriptor partitionDescriptor = ctx.getPartitionDescriptor();
         long parquetSize = parquetFileSize;
-        long parquetMetaAddr = 0;
-        long parquetMetaFileSize = 0;
         try {
-            // Derive parquet file size from _pm metadata. The _pm size comes
-            // from the committed PARQUET_META_FILE_SIZE header field, not from
-            // ff.length() — the filesystem size may include bytes from an
-            // unpublished append and is not a valid commit boundary. A
-            // non-positive return means missing / unreadable / header-corrupt,
-            // in which case we regenerate from data.parquet.
             int parquetNameLen = path.size();
             int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
-            boolean isStale = parquetMetaFileSize <= 0;
-            if (!isStale) {
-                parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                try {
-                    parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
-                } catch (CairoException e) {
-                    ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                    parquetMetaAddr = 0;
-                    if (e.getErrno() != CairoException.STALE_PARQUET_METADATA) {
-                        throw e;
-                    }
-                    isStale = true;
+
+            // The _pm file _might_ need to be regenerated, we can check that by resolving the footer, if it exists
+            // for a specific parquet file then we're fine.
+            parquetMetaReader.openAndMapRO(ff, path.$());
+            boolean needsRegenerating = parquetMetaReader.getAddr() == 0;
+            try {
+                if (!needsRegenerating) {
+                    needsRegenerating = !parquetMetaReader.resolveFooter(parquetFileSize);
                 }
+            } catch (CairoException ignored) {
+                needsRegenerating = true;
             }
-            if (isStale) {
+            if (needsRegenerating) {
+                parquetMetaReader.unmapAndClear(ff);
                 LOG.info()
                         .$("regenerating stale _pm [path=").$(path)
                         .$(", parquetFileSize=").$(parquetFileSize)
                         .I$();
                 regenerateParquetMetadata(ff, path, partitionDirLen, parquetFileSize, cairoConfiguration);
                 path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-                parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
-                if (parquetMetaFileSize <= 0) {
+                parquetMetaReader.openAndMapRO(ff, path.$());
+                if (parquetMetaReader.getAddr() == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
                     throw CairoException.critical(0)
                             .put("regenerated _pm is missing or invalid [path=").put(path).put(']');
                 }
-                parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
             }
             parquetSize = parquetMetaReader.getParquetFileSize();
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
@@ -171,8 +159,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             try {
                 parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 partitionDecoder.of(
-                        parquetMetaAddr,
-                        parquetMetaFileSize,
+                        parquetMetaReader,
                         parquetAddr,
                         parquetSize,
                         MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER
@@ -283,7 +270,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetMetaFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
                         parquetMetaFdOs = Files.detach(parquetMetaFd);
                         parquetMetaFd = -1;
-                        updaterParquetMetaFileSize = 0;
                     } else {
                         writerFd = TableUtils.openRW(ff, path.$(), LOG, opts);
                         writerFdOs = Files.detach(writerFd);
@@ -294,7 +280,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetMetaFd = TableUtils.openRW(ff, path.$(), LOG, opts);
                         parquetMetaFdOs = Files.detach(parquetMetaFd);
                         parquetMetaFd = -1;
-                        updaterParquetMetaFileSize = parquetMetaFileSize;
+                        updaterParquetMetaFileSize = parquetMetaReader.getFileSize();
                         // Restore path to parquet file.
                         path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
                     }
@@ -620,11 +606,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 ff.close(fd);
 
-                if (parquetMetaFileSize > 0) {
+                if (parquetMetaReader.getAddr() != 0) {
                     path.of(pathToTable);
                     setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
                     fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-                    if (!ff.truncate(fd, parquetMetaFileSize)) {
+                    if (!ff.truncate(fd, parquetMetaReader.getFileSize())) {
                         LOG.error().$("could not truncate _pm file [path=").$(path).I$();
                     }
                     ff.close(fd);
@@ -636,9 +622,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Release the reader's native handle (which borrows from the mmap) before munmap.
             // See ParquetMetaFileReader lifecycle contract.
             ctx.releaseResources();
-            if (parquetMetaAddr != 0) {
-                ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            }
+            parquetMetaReader.unmapAndClear(ff);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize - duplicateCount);

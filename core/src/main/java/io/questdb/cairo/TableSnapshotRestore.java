@@ -499,6 +499,84 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
+    private void generateMissingParquetMetaFiles(Path tablePath) {
+        int partitionBy = tableMetadata.getPartitionBy();
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return;
+        }
+        int timestampType = tableMetadata.getTimestampType();
+        int plen = tablePath.size();
+        int partitionCount = txWriter.getPartitionCount();
+
+        for (int i = 0; i < partitionCount; i++) {
+            if (!txWriter.isPartitionParquet(i)) {
+                continue;
+            }
+            long partitionTs = txWriter.getPartitionTimestampByIndex(i);
+            long nameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTs);
+
+            TableUtils.setPathForNativePartition(
+                    tablePath.trimTo(plen), timestampType, partitionBy, partitionTs, nameTxn
+            );
+            int partitionDirLen = tablePath.size();
+
+            tablePath.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            if (ff.exists(tablePath.$())) {
+                tablePath.trimTo(plen);
+                continue;
+            }
+
+            // Use the committed parquet file size from _txn, not the on-disk size.
+            // A snapshot may capture data.parquet mid-append; bytes past the committed
+            // size are not part of the MVCC-visible state and must not be published.
+            long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
+
+            // Open data.parquet to generate _pm from it.
+            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            long parquetFd = ff.openRO(tablePath.$());
+            if (parquetFd < 0) {
+                int errno = ff.errno();
+                tablePath.trimTo(plen);
+                throw CairoException.critical(errno).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
+            }
+            long onDiskSize = ff.length(parquetFd);
+            if (onDiskSize < parquetFileSize) {
+                ff.close(parquetFd);
+                tablePath.trimTo(plen);
+                throw CairoException.critical(0)
+                        .put("restored parquet file is shorter than committed size [path=").put(tablePath)
+                        .put(", committed=").put(parquetFileSize)
+                        .put(", onDisk=").put(onDiskSize)
+                        .put(']');
+            }
+
+            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            long parquetMetaFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
+            if (parquetMetaFd < 0) {
+                int errno = ff.errno();
+                ff.close(parquetFd);
+                tablePath.trimTo(plen);
+                throw CairoException.critical(errno).put("cannot create _pm file [path=").put(tablePath).put(']');
+            }
+
+            try {
+                long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT);
+                long parquetMetaFileSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
+                LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", parquetMetaSize=").$(parquetMetaFileSize).I$();
+            } catch (Throwable t) {
+                // Remove partially written _pm file so a retry regenerates it.
+                tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                ff.remove(tablePath.$());
+                throw t;
+            } finally {
+                ff.close(parquetFd);
+                ff.close(parquetMetaFd);
+            }
+            tablePath.trimTo(plen);
+        }
+        tablePath.trimTo(plen);
+    }
+
     private void rebuildBitmapIndexForNativePartition(int pathTableLen, int columnCount, long partitionTimestamp, long partitionRowCount, long partitionNameTxn, String tablePathStr, int partitionBy, int timestampType) {
         for (int colIdx = 0; colIdx < columnCount; colIdx++) {
             // Skip non-indexed columns and non-symbol columns (deleted columns may still have indexed flag set)
@@ -606,7 +684,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             long partitionTimestamp,
             long partitionRowCount,
             long partitionNameTxn,
-            long parquetMetadataFileSize,
+            long parquetFileSize,
             int partitionBy,
             int timestampType
     ) {
@@ -628,19 +706,17 @@ public class TableSnapshotRestore implements QuietCloseable {
             int partitionDirLen = path.size();
 
             // mmap _pm metadata to read parquet file size and provide metadata to the decoder.
-            // Size the mapping from the committed PARQUET_META_FILE_SIZE header field,
-            // not from ff.length() — the filesystem size is not a commit
-            // boundary.
             path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            final long parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
-            if (parquetMetaFileSize <= 0) {
-                throw CairoException.critical(0).put("missing or invalid _pm [path=").put(path).put(']');
-            }
-            long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            long parquetMetaAddr = 0;
+            long parquetMetaFileSize = 0;
             try {
                 final long parquetSize;
                 try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
-                    parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetMetadataFileSize);
+                    parquetMetaAddr = parquetMetaReader.openAndMapRO(ff, path.$());
+                    parquetMetaFileSize = parquetMetaReader.getFileSize();
+                    if (parquetMetaAddr == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
+                        throw CairoException.critical(0).put("missing or invalid _pm [path=").put(path).put(']');
+                    }
                     parquetSize = parquetMetaReader.getParquetFileSize();
                 }
 
@@ -684,87 +760,11 @@ public class TableSnapshotRestore implements QuietCloseable {
                     ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 }
             } finally {
-                ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                if (parquetMetaAddr != 0) {
+                    ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
             }
         }
-    }
-
-    private void generateMissingParquetMetaFiles(Path tablePath) {
-        int partitionBy = tableMetadata.getPartitionBy();
-        if (!PartitionBy.isPartitioned(partitionBy)) {
-            return;
-        }
-        int timestampType = tableMetadata.getTimestampType();
-        int plen = tablePath.size();
-        int partitionCount = txWriter.getPartitionCount();
-
-        for (int i = 0; i < partitionCount; i++) {
-            if (!txWriter.isPartitionParquet(i)) {
-                continue;
-            }
-            long partitionTs = txWriter.getPartitionTimestampByIndex(i);
-            long nameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTs);
-
-            TableUtils.setPathForNativePartition(
-                    tablePath.trimTo(plen), timestampType, partitionBy, partitionTs, nameTxn
-            );
-            int partitionDirLen = tablePath.size();
-
-            tablePath.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            if (ff.exists(tablePath.$())) {
-                tablePath.trimTo(plen);
-                continue;
-            }
-
-            // Use the committed parquet file size from _txn, not the on-disk size.
-            // A snapshot may capture data.parquet mid-append; bytes past the committed
-            // size are not part of the MVCC-visible state and must not be published.
-            long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
-
-            // Open data.parquet to generate _pm from it.
-            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
-            long parquetFd = ff.openRO(tablePath.$());
-            if (parquetFd < 0) {
-                int errno = ff.errno();
-                tablePath.trimTo(plen);
-                throw CairoException.critical(errno).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
-            }
-            long onDiskSize = ff.length(parquetFd);
-            if (onDiskSize < parquetFileSize) {
-                ff.close(parquetFd);
-                tablePath.trimTo(plen);
-                throw CairoException.critical(0)
-                        .put("restored parquet file is shorter than committed size [path=").put(tablePath)
-                        .put(", committed=").put(parquetFileSize)
-                        .put(", onDisk=").put(onDiskSize)
-                        .put(']');
-            }
-
-            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            long parquetMetaFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
-            if (parquetMetaFd < 0) {
-                int errno = ff.errno();
-                ff.close(parquetFd);
-                tablePath.trimTo(plen);
-                throw CairoException.critical(errno).put("cannot create _pm file [path=").put(tablePath).put(']');
-            }
-
-            try {
-                long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT);
-                long parquetMetaFileSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
-                LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", parquetMetaSize=").$(parquetMetaFileSize).I$();
-            } catch (Throwable t) {
-                // Remove partially written _pm file so a retry regenerates it.
-                tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-                ff.remove(tablePath.$());
-                throw t;
-            } finally {
-                ff.close(parquetFd);
-                ff.close(parquetMetaFd);
-            }
-            tablePath.trimTo(plen);
-        }
-        tablePath.trimTo(plen);
     }
 
     private void rebuildBitmapIndexes(Path tablePath, int pathTableLen) {

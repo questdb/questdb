@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.mig;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
@@ -31,6 +32,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mig.Mig940;
 import io.questdb.cairo.mig.MigrationContext;
 import io.questdb.cairo.vm.Vm;
@@ -100,7 +102,8 @@ public class Mig940Test extends AbstractCairoTest {
                 long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
+                    reader.of(parquetMetaAddr, parquetMetaSize);
+                    reader.resolveFooter(Long.MAX_VALUE);
                     Assert.assertEquals(1, reader.getColumnCount());
                     Assert.assertEquals(2, reader.getRowGroupCount());
                     // MIN_PRESENT=bit0, MIN_INLINED=bit1, MAX_PRESENT=bit3, MAX_INLINED=bit4.
@@ -166,13 +169,89 @@ public class Mig940Test extends AbstractCairoTest {
                 long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
+                    reader.of(parquetMetaAddr, parquetMetaSize);
+                    reader.resolveFooter(Long.MAX_VALUE);
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                     Assert.assertTrue(reader.getParquetFileSize() > 0);
                 } finally {
                     ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testMigrateMixedNativeAndParquetPartitions() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            // Three day partitions; WHERE ts > 0 converts every inactive
+            // partition to parquet, leaving the active (last) partition
+            // native. Mig940 must regenerate _pm on the parquet partitions
+            // and leave the native one alone.
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')," +
+                    "(2, '2024-06-11T00:00:00.000000Z')," +
+                    "(3, '2024-06-12T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long[] partitionTimestamps = new long[3];
+            long[] partitionNameTxns = new long[3];
+            boolean[] isParquet = new boolean[3];
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals(3, reader.getPartitionCount());
+                for (int i = 0; i < 3; i++) {
+                    partitionTimestamps[i] = reader.getTxFile().getPartitionTimestampByIndex(i);
+                    partitionNameTxns[i] = reader.getTxFile().getPartitionNameTxn(i);
+                    isParquet[i] = reader.getTxFile().isPartitionParquet(i);
+                }
+            }
+            Assert.assertTrue("first partition should be parquet", isParquet[0]);
+            Assert.assertTrue("second partition should be parquet", isParquet[1]);
+            Assert.assertFalse("third (active) partition must be native", isParquet[2]);
+
+            // Delete _pm from both parquet partitions.
+            for (int i = 0; i < 2; i++) {
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamps[i], partitionNameTxns[i]);
+                    ff.remove(path.$());
+                    Assert.assertFalse("_pm should be deleted", ff.exists(path.$()));
+                }
+            }
+
+            runMig940(token);
+
+            // Both parquet partitions have _pm regenerated and readable.
+            for (int i = 0; i < 2; i++) {
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamps[i], partitionNameTxns[i]);
+                    Assert.assertTrue("_pm should exist after migration (parquet partition " + i + ")", ff.exists(path.$()));
+
+                    long parquetMetaSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                    Assert.assertTrue("_pm should have positive size", parquetMetaSize > 0);
+
+                    long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        ParquetMetaFileReader pmReader = new ParquetMetaFileReader();
+                        pmReader.of(parquetMetaAddr, parquetMetaSize);
+                        pmReader.resolveFooter(Long.MAX_VALUE);
+                        Assert.assertEquals(2, pmReader.getColumnCount());
+                        Assert.assertEquals(1, pmReader.getRowGroupCount());
+                    } finally {
+                        ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                }
+            }
+
+            // Native partition must have no _pm file.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamps[2], partitionNameTxns[2]);
+                Assert.assertFalse("native partition must have no _pm", ff.exists(path.$()));
             }
         });
     }
@@ -366,7 +445,74 @@ public class Mig940Test extends AbstractCairoTest {
                 long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
+                    reader.of(parquetMetaAddr, parquetMetaSize);
+                    reader.resolveFooter(Long.MAX_VALUE);
+                    Assert.assertEquals(2, reader.getColumnCount());
+                    Assert.assertEquals(1, reader.getRowGroupCount());
+                } finally {
+                    ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMigrateRepeatableViaEscapeHatch() throws Exception {
+        // cairo.repeat.migration.from.version forces EngineMigration to
+        // re-invoke Mig940 on an already-upgraded database. The check at
+        // EngineMigration.java:110 resets the recorded migration version
+        // back to the table version so the standard dispatcher runs it
+        // again. This test drives the full dispatcher path (not the direct
+        // Mig940.migrate() call that runMig940() uses) to prove the
+        // documented recovery flow.
+        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, ColumnType.VERSION);
+
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Delete _pm so we can observe the dispatcher actually invoking Mig940.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                ff.remove(path.$());
+                Assert.assertFalse("_pm should be deleted", ff.exists(path.$()));
+            }
+
+            // Release handles so the migration can reopen files.
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            engine.releaseInactive();
+
+            // Drive the dispatcher end-to-end. The escape hatch forces Mig940
+            // to re-run even though the database is already at MIGRATION_VERSION.
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                Assert.assertTrue("_pm should be regenerated by the dispatcher", ff.exists(path.$()));
+
+                long parquetMetaSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                Assert.assertTrue("_pm should have positive size", parquetMetaSize > 0);
+
+                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(parquetMetaAddr, parquetMetaSize);
+                    reader.resolveFooter(Long.MAX_VALUE);
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                 } finally {
