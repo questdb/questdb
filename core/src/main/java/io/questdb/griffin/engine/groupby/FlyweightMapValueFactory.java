@@ -30,12 +30,12 @@ import io.questdb.cairo.ColumnTypes;
 /**
  * Common interface for flyweight map values over off-heap memory.
  */
-public class DirectMapValueFactory {
+public class FlyweightMapValueFactory {
 
-    private DirectMapValueFactory() {
+    private FlyweightMapValueFactory() {
     }
 
-    public static FlyweightMapValue createDirectMapValue(ColumnTypes valueTypes, boolean useCompactDirectMap) {
+    public static FlyweightMapValue createMapValue(ColumnTypes valueTypes, boolean useCompactDirectMap) {
         if (useCompactDirectMap) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 final int size = ColumnType.sizeOf(valueTypes.getColumnType(i));

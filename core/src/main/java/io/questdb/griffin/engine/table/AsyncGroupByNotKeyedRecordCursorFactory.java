@@ -483,6 +483,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         Misc.free(frameSequence);
         Misc.freeObjList(groupByFunctions);
         GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
     }
 }
