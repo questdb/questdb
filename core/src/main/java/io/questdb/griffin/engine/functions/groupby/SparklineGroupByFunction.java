@@ -165,8 +165,8 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
             return;
         }
         long ptr = allocator.malloc(INITIAL_CAPACITY * ENTRY_SIZE);
-        Unsafe.getUnsafe().putLong(ptr, rowId);
-        Unsafe.getUnsafe().putDouble(ptr + 8, value);
+        Unsafe.putLong(ptr, rowId);
+        Unsafe.putDouble(ptr + 8, value);
         mapValue.putLong(valueIndex, ptr);
         mapValue.putLong(valueIndex + 1, 1);
         mapValue.putLong(valueIndex + 2, INITIAL_CAPACITY);
@@ -181,8 +181,8 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         long count = mapValue.getLong(valueIndex + 1);
         if (count <= 0) {
             long ptr = allocator.malloc(INITIAL_CAPACITY * ENTRY_SIZE);
-            Unsafe.getUnsafe().putLong(ptr, rowId);
-            Unsafe.getUnsafe().putDouble(ptr + 8, value);
+            Unsafe.putLong(ptr, rowId);
+            Unsafe.putDouble(ptr + 8, value);
             mapValue.putLong(valueIndex, ptr);
             mapValue.putLong(valueIndex + 1, 1);
             mapValue.putLong(valueIndex + 2, INITIAL_CAPACITY);
@@ -202,8 +202,8 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
             mapValue.putLong(valueIndex + 2, newCapacity);
         }
         long offset = count * ENTRY_SIZE;
-        Unsafe.getUnsafe().putLong(ptr + offset, rowId);
-        Unsafe.getUnsafe().putDouble(ptr + offset + 8, value);
+        Unsafe.putLong(ptr + offset, rowId);
+        Unsafe.putDouble(ptr + offset + 8, value);
         mapValue.putLong(valueIndex + 1, count + 1);
     }
 
@@ -347,18 +347,18 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         while (di < destCount && si < srcCount) {
             long destAddr = destPtr + di * ENTRY_SIZE;
             long srcAddr = srcPtr + si * ENTRY_SIZE;
-            long destRowId = Unsafe.getUnsafe().getLong(destAddr);
-            long srcRowId = Unsafe.getUnsafe().getLong(srcAddr);
+            long destRowId = Unsafe.getLong(destAddr);
+            long srcRowId = Unsafe.getLong(srcAddr);
             long mergedAddr = mergedPtr + mi * ENTRY_SIZE;
             // Inline the 16-byte copy as two longs - a JNI Vect.memcpy
             // call dominates over the payload cost for entries this small.
             if (destRowId <= srcRowId) {
-                Unsafe.getUnsafe().putLong(mergedAddr, destRowId);
-                Unsafe.getUnsafe().putLong(mergedAddr + 8, Unsafe.getUnsafe().getLong(destAddr + 8));
+                Unsafe.putLong(mergedAddr, destRowId);
+                Unsafe.putLong(mergedAddr + 8, Unsafe.getLong(destAddr + 8));
                 di++;
             } else {
-                Unsafe.getUnsafe().putLong(mergedAddr, srcRowId);
-                Unsafe.getUnsafe().putLong(mergedAddr + 8, Unsafe.getUnsafe().getLong(srcAddr + 8));
+                Unsafe.putLong(mergedAddr, srcRowId);
+                Unsafe.putLong(mergedAddr + 8, Unsafe.getLong(srcAddr + 8));
                 si++;
             }
             mi++;
@@ -459,10 +459,10 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         }
         double min, max;
         if (Double.isNaN(userMin) || Double.isNaN(userMax)) {
-            double first = Unsafe.getUnsafe().getDouble(ptr + 8);
+            double first = Unsafe.getDouble(ptr + 8);
             min = max = first;
             for (int i = 1; i < size; i++) {
-                double v = Unsafe.getUnsafe().getDouble(ptr + i * ENTRY_SIZE + 8);
+                double v = Unsafe.getDouble(ptr + i * ENTRY_SIZE + 8);
                 if (v < min) min = v;
                 if (v > max) max = v;
             }
@@ -509,7 +509,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         int packed = (0xE0 | ((c >> 12) & 0x0F))
                 | ((0x80 | ((c >> 6) & 0x3F)) << 8)
                 | ((0x80 | (c & 0x3F)) << 16);
-        Unsafe.getUnsafe().putInt(out + pos * 3L, packed);
+        Unsafe.putInt(out + pos * 3L, packed);
     }
 
     private void renderSubsampled(long out, long ptr, int size, int width, double min, double max) {
@@ -522,7 +522,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
             int to = (int) ((i + 1) * bucketSize);
             double sum = 0;
             for (int j = from; j < to; j++) {
-                sum += Unsafe.getUnsafe().getDouble(ptr + j * ENTRY_SIZE + 8);
+                sum += Unsafe.getDouble(ptr + j * ENTRY_SIZE + 8);
             }
             double avg = sum / (to - from);
             putChar(out, i, charForValue(avg, min, range));
@@ -532,7 +532,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     private void renderValues(long out, long ptr, int size, double min, double max) {
         double range = max - min;
         for (int i = 0; i < size; i++) {
-            double v = Unsafe.getUnsafe().getDouble(ptr + i * ENTRY_SIZE + 8);
+            double v = Unsafe.getDouble(ptr + i * ENTRY_SIZE + 8);
             putChar(out, i, charForValue(v, min, range));
         }
     }

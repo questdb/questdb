@@ -179,7 +179,7 @@ public class GeoHashes {
         }
         long geohash = 0;
         for (long p = lo, limit = p + byteCount; p < limit; p++) {
-            geohash = appendByte(geohash, encodeByte(Unsafe.getUnsafe().getByte(p))); // base32
+            geohash = appendByte(geohash, encodeByte(Unsafe.getByte(p))); // base32
         }
         return widen(geohash, actualBits, bits);
     }

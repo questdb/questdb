@@ -87,7 +87,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
     }
 
     public long keyAtRaw(long index) {
-        return Unsafe.getUnsafe().getLong(ptr + 16 * index);
+        return Unsafe.getLong(ptr + 16 * index);
     }
 
     public long keyIndex(long key) {
@@ -109,7 +109,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
 
     public void putAt(long index, long key, long value) {
         if (index < 0) {
-            Unsafe.getUnsafe().putLong(ptr + 16 * (-index - 1) + 8, value);
+            Unsafe.putLong(ptr + 16 * (-index - 1) + 8, value);
         } else {
             putAt0(index, key, value);
             size++;
@@ -197,22 +197,22 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
     }
 
     public long valueAt(long index) {
-        return index < 0 ? Unsafe.getUnsafe().getLong(ptr + 16 * (-index - 1) + 8) : noEntryValue;
+        return index < 0 ? Unsafe.getLong(ptr + 16 * (-index - 1) + 8) : noEntryValue;
     }
 
     public long valueAtRaw(long index) {
-        return Unsafe.getUnsafe().getLong(ptr + 16 * index + 8);
+        return Unsafe.getLong(ptr + 16 * index + 8);
     }
 
     private void erase(long index) {
-        Unsafe.getUnsafe().putLong(ptr + 16 * index, noEntryKey);
+        Unsafe.putLong(ptr + 16 * index, noEntryKey);
     }
 
     private void move(long from, long to) {
         final long fromPtr = ptr + 16 * from;
         final long toPtr = ptr + 16 * to;
-        Unsafe.getUnsafe().putLong(toPtr, Unsafe.getUnsafe().getLong(fromPtr));
-        Unsafe.getUnsafe().putLong(toPtr + 8, Unsafe.getUnsafe().getLong(fromPtr + 8));
+        Unsafe.putLong(toPtr, Unsafe.getLong(fromPtr));
+        Unsafe.putLong(toPtr + 8, Unsafe.getLong(fromPtr + 8));
         erase(from);
     }
 
@@ -234,8 +234,8 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
 
     private void putAt0(long index, long key, long value) {
         final long p = ptr + 16 * index;
-        Unsafe.getUnsafe().putLong(p, key);
-        Unsafe.getUnsafe().putLong(p + 8, value);
+        Unsafe.putLong(p, key);
+        Unsafe.putLong(p + 8, value);
     }
 
     private void rehash(int newCapacity) {
@@ -254,7 +254,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         zero();
 
         for (long p = oldPtr, lim = oldPtr + 16L * oldCapacity; p < lim; p += 16L) {
-            long key = Unsafe.getUnsafe().getLong(p);
+            long key = Unsafe.getLong(p);
             if (key != noEntryKey) {
                 long hashCode = Hash.fastHashLong64(key);
                 long index = hashCode & mask;
@@ -262,7 +262,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
                     index = (index + 1) & mask;
                 }
 
-                long value = Unsafe.getUnsafe().getLong(p + 8);
+                long value = Unsafe.getLong(p + 8);
                 putAt0(index, key, value);
             }
         }
@@ -277,7 +277,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         } else {
             // Otherwise, clean up only keys.
             for (long p = ptr, lim = ptr + 16L * capacity; p < lim; p += 16L) {
-                Unsafe.getUnsafe().putLong(p, noEntryKey);
+                Unsafe.putLong(p, noEntryKey);
             }
         }
     }

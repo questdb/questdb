@@ -38,7 +38,7 @@ public class DirectIntSlice implements DirectSequence {
     public int get(int index) {
         assert index >= 0;
         assert index < length;
-        return Unsafe.getUnsafe().getInt(ptr + ((long) index << 2));
+        return Unsafe.getInt(ptr + ((long) index << 2));
     }
 
     public int length() {

@@ -43,7 +43,7 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
             final long hi = ptr + count * 8L;
             long offset = 0;
             for (; ptr < hi; ptr += 8L) {
-                long value = Unsafe.getUnsafe().getLong(ptr);
+                long value = Unsafe.getLong(ptr);
                 if (value != Numbers.LONG_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);

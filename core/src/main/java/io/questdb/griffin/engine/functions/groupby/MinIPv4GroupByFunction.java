@@ -51,7 +51,7 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
             final long hi = ptr + count * (long) Integer.BYTES;
             long min = IPv4_NULL_AS_LONG;
             for (; ptr < hi; ptr += Integer.BYTES) {
-                long value = Numbers.ipv4ToLong(Unsafe.getUnsafe().getInt(ptr));
+                long value = Numbers.ipv4ToLong(Unsafe.getInt(ptr));
                 if (value != IPv4_NULL_AS_LONG && (value < min || min == IPv4_NULL_AS_LONG)) {
                     min = value;
                 }

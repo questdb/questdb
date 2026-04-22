@@ -84,7 +84,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                 currentTimestamp = gorillaDecodedValues[currentValueIndex - 2];
             }
         } else {
-            currentTimestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) currentValueIndex * 8);
+            currentTimestamp = Unsafe.getLong(valuesAddress + (long) currentValueIndex * 8);
         }
         currentValueIndex++;
         return false;
@@ -188,7 +188,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
             );
         }
         int nullCount;
-        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+        if (Unsafe.getByte(dataAddress + offset) != 0) {
             offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
@@ -219,7 +219,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                         "timestamp column data truncated: expected encoding flag"
                 );
             }
-            byte encoding = Unsafe.getUnsafe().getByte(dataAddress + offset);
+            byte encoding = Unsafe.getByte(dataAddress + offset);
             offset++;
 
             if (encoding == ENCODING_UNCOMPRESSED) {
@@ -236,7 +236,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                                 "timestamp column data truncated: expected first timestamp"
                         );
                     }
-                    this.firstTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
+                    this.firstTimestamp = Unsafe.getLong(dataAddress + offset);
                     offset += 8;
                 } else if (valueCount >= 2) {
                     // First and second timestamps
@@ -246,9 +246,9 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                                 "timestamp column data truncated: expected first two timestamps"
                         );
                     }
-                    this.firstTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
+                    this.firstTimestamp = Unsafe.getLong(dataAddress + offset);
                     offset += 8;
-                    this.secondTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
+                    this.secondTimestamp = Unsafe.getLong(dataAddress + offset);
                     offset += 8;
 
                     if (valueCount > 2) {

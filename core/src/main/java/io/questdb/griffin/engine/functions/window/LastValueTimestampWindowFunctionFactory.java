@@ -617,7 +617,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         /**
@@ -744,7 +744,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -851,7 +851,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
             long val = value != null ? value.getTimestamp(0) : Numbers.LONG_NULL;
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -1222,7 +1222,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         /**
@@ -1606,7 +1606,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         /**
@@ -1807,7 +1807,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         /**
@@ -1922,7 +1922,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
          */
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         /**
@@ -2033,7 +2033,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         /**
@@ -2179,7 +2179,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         /**
@@ -2279,7 +2279,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             } else {
                 val = value.getTimestamp(0);
             }
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -2501,7 +2501,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         /**
@@ -2709,7 +2709,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         /**
@@ -2975,7 +2975,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         /**
@@ -3160,7 +3160,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         /**
@@ -3297,7 +3297,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
                 value = arg.getTimestamp(record);
                 found = true;
             }
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         /**

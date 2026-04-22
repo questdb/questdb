@@ -50,7 +50,7 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putFloat(valueIndex + 1, Unsafe.getUnsafe().getFloat(ptr));
+                mapValue.putFloat(valueIndex + 1, Unsafe.getFloat(ptr));
             }
         }
     }

@@ -56,7 +56,7 @@ public class GcUtf8String implements DirectUtf8Sequence {
         this.buffer = ByteBuffer.allocateDirect(bytes.length);
         this.buffer.put(bytes);
         this.buffer.rewind();
-        this.ptr = Unsafe.getUnsafe().getLong(this.buffer, BUFFER_ADDRESS_OFFSET);
+        this.ptr = Unsafe.getLong(this.buffer, BUFFER_ADDRESS_OFFSET);
         this.size = bytes.length;
         this.zeroPaddedSixPrefix = Utf8s.zeroPaddedSixPrefix(this);
     }
@@ -120,6 +120,6 @@ public class GcUtf8String implements DirectUtf8Sequence {
         } catch (NoSuchFieldException ex) {
             throw new RuntimeException(ex);
         }
-        BUFFER_ADDRESS_OFFSET = Unsafe.getUnsafe().objectFieldOffset(addressField);
+        BUFFER_ADDRESS_OFFSET = Unsafe.objectFieldOffset(addressField);
     }
 }

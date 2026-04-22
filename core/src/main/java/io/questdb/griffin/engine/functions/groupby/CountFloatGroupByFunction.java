@@ -43,7 +43,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
             long nonNullCount = 0;
             final long hi = ptr + count * (long) Float.BYTES;
             for (; ptr < hi; ptr += Float.BYTES) {
-                final float value = Unsafe.getUnsafe().getFloat(ptr);
+                final float value = Unsafe.getFloat(ptr);
                 if (!Numbers.isNull(value)) {
                     nonNullCount++;
                 }

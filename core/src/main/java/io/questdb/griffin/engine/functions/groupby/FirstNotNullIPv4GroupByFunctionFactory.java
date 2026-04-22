@@ -70,7 +70,7 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
                 final long hi = ptr + count * 4L;
                 long offset = 0;
                 for (; ptr < hi; ptr += 4L) {
-                    int value = Unsafe.getUnsafe().getInt(ptr);
+                    int value = Unsafe.getInt(ptr);
                     if (value != Numbers.IPv4_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);

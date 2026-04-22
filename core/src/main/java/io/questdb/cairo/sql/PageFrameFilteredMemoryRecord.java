@@ -125,7 +125,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
                         .put(']');
             }
             final long dataPageLim = pageSizes.get(columnOffset + columnIndex);
-            final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
+            final long dataOffset = Unsafe.getLong(auxPageAddress + auxOffset);
             return getBin(dataPageAddress, dataOffset, dataPageLim, bsView(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getBin(0);
@@ -150,7 +150,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
                         .put(']');
             }
             final long dataPageLim = pageSizes.get(columnOffset + columnIndex);
-            final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
+            final long dataOffset = Unsafe.getLong(auxPageAddress + auxOffset);
             if (dataPageLim < dataOffset + 8) {
                 throw CairoException.critical(0)
                         .put("binary is outside of file boundary [dataOffset=")
@@ -159,7 +159,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
                         .put(dataPageLim)
                         .put(']');
             }
-            return Unsafe.getUnsafe().getLong(dataPageAddress + dataOffset);
+            return Unsafe.getLong(dataPageAddress + dataOffset);
         }
         return NullMemoryCMR.INSTANCE.getBinLen(0);
     }
@@ -168,7 +168,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public boolean getBool(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getByte(address + rowIndex(columnIndex)) == 1;
+            return Unsafe.getByte(address + rowIndex(columnIndex)) == 1;
         }
         return NullMemoryCMR.INSTANCE.getBool(0);
     }
@@ -177,7 +177,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public byte getByte(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getByte(address + rowIndex(columnIndex));
+            return Unsafe.getByte(address + rowIndex(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getByte(0);
     }
@@ -186,7 +186,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public char getChar(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getChar(address + (rowIndex(columnIndex) << 1));
+            return Unsafe.getChar(address + (rowIndex(columnIndex) << 1));
         }
         return NullMemoryCMR.INSTANCE.getChar(0);
     }
@@ -197,8 +197,8 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
         if (address != 0) {
             address += (rowIndex(columnIndex) << 4);
             sink.ofRaw(
-                    Unsafe.getUnsafe().getLong(address),
-                    Unsafe.getUnsafe().getLong(address + 8L)
+                    Unsafe.getLong(address),
+                    Unsafe.getLong(address + 8L)
             );
         } else {
             sink.ofRawNull();
@@ -209,7 +209,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public short getDecimal16(int columnIndex) {
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getShort(address + (rowIndex(columnIndex) << 1));
+            return Unsafe.getShort(address + (rowIndex(columnIndex) << 1));
         }
         return NullMemoryCMR.INSTANCE.getDecimal16(0);
     }
@@ -228,7 +228,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public int getDecimal32(int columnIndex) {
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getInt(address + (rowIndex(columnIndex) << 2));
+            return Unsafe.getInt(address + (rowIndex(columnIndex) << 2));
         }
         return NullMemoryCMR.INSTANCE.getDecimal32(0);
     }
@@ -237,7 +237,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public long getDecimal64(int columnIndex) {
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex(columnIndex) << 3));
+            return Unsafe.getLong(address + (rowIndex(columnIndex) << 3));
         }
         return NullMemoryCMR.INSTANCE.getDecimal64(0);
     }
@@ -246,7 +246,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public byte getDecimal8(int columnIndex) {
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getByte(address + rowIndex(columnIndex));
+            return Unsafe.getByte(address + rowIndex(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getDecimal8(0);
     }
@@ -255,7 +255,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public double getDouble(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getDouble(address + (rowIndex(columnIndex) << 3));
+            return Unsafe.getDouble(address + (rowIndex(columnIndex) << 3));
         }
         return NullMemoryCMR.INSTANCE.getDouble(0);
     }
@@ -264,7 +264,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public float getFloat(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getFloat(address + (rowIndex(columnIndex) << 2));
+            return Unsafe.getFloat(address + (rowIndex(columnIndex) << 2));
         }
         return NullMemoryCMR.INSTANCE.getFloat(0);
     }
@@ -273,7 +273,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public byte getGeoByte(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getByte(address + rowIndex(columnIndex));
+            return Unsafe.getByte(address + rowIndex(columnIndex));
         }
         return GeoHashes.BYTE_NULL;
     }
@@ -282,7 +282,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public int getGeoInt(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getInt(address + (rowIndex(columnIndex) << 2));
+            return Unsafe.getInt(address + (rowIndex(columnIndex) << 2));
         }
         return GeoHashes.INT_NULL;
     }
@@ -291,7 +291,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public long getGeoLong(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex(columnIndex) << 3));
+            return Unsafe.getLong(address + (rowIndex(columnIndex) << 3));
         }
         return GeoHashes.NULL;
     }
@@ -300,7 +300,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public short getGeoShort(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getShort(address + (rowIndex(columnIndex) << 1));
+            return Unsafe.getShort(address + (rowIndex(columnIndex) << 1));
         }
         return GeoHashes.SHORT_NULL;
     }
@@ -309,7 +309,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public int getIPv4(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getInt(address + (rowIndex(columnIndex) << 2));
+            return Unsafe.getInt(address + (rowIndex(columnIndex) << 2));
         }
         return NullMemoryCMR.INSTANCE.getIPv4(0);
     }
@@ -318,7 +318,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public int getInt(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getInt(address + (rowIndex(columnIndex) << 2));
+            return Unsafe.getInt(address + (rowIndex(columnIndex) << 2));
         }
         return NullMemoryCMR.INSTANCE.getInt(0);
     }
@@ -327,7 +327,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public long getLong(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex(columnIndex) << 3));
+            return Unsafe.getLong(address + (rowIndex(columnIndex) << 3));
         }
         return NullMemoryCMR.INSTANCE.getLong(0);
     }
@@ -336,7 +336,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public long getLong128Hi(int columnIndex) {
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex(columnIndex) << 4) + Long.BYTES);
+            return Unsafe.getLong(address + (rowIndex(columnIndex) << 4) + Long.BYTES);
         }
         return NullMemoryCMR.INSTANCE.getLong128Hi();
     }
@@ -345,7 +345,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public long getLong128Lo(int columnIndex) {
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex(columnIndex) << 4));
+            return Unsafe.getLong(address + (rowIndex(columnIndex) << 4));
         }
         return NullMemoryCMR.INSTANCE.getLong128Lo();
     }
@@ -364,7 +364,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public short getShort(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getShort(address + (rowIndex(columnIndex) << 1));
+            return Unsafe.getShort(address + (rowIndex(columnIndex) << 1));
         }
         return NullMemoryCMR.INSTANCE.getShort(0);
     }
@@ -385,7 +385,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
                         .put(']');
             }
             final long dataPageLim = pageSizes.get(columnOffset + columnIndex);
-            final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
+            final long dataOffset = Unsafe.getLong(auxPageAddress + auxOffset);
             if (dataPageLim < dataOffset + 4) {
                 throw CairoException.critical(0)
                         .put("string is outside of file boundary [dataOffset=")
@@ -394,7 +394,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
                         .put(dataPageLim)
                         .put(']');
             }
-            return Unsafe.getUnsafe().getInt(dataPageAddress + dataOffset);
+            return Unsafe.getInt(dataPageAddress + dataOffset);
         }
         return NullMemoryCMR.INSTANCE.getStrLen(0);
     }
@@ -405,7 +405,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public CharSequence getSymA(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            int key = Unsafe.getUnsafe().getInt(address + (rowIndex(columnIndex) << 2));
+            int key = Unsafe.getInt(address + (rowIndex(columnIndex) << 2));
             return getSymbolTable(columnIndex).valueOf(key);
         }
         return null;
@@ -417,7 +417,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public CharSequence getSymB(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            int key = Unsafe.getUnsafe().getInt(address + (rowIndex(columnIndex) << 2));
+            int key = Unsafe.getInt(address + (rowIndex(columnIndex) << 2));
             return getSymbolTable(columnIndex).valueBOf(key);
         }
         return null;
@@ -484,7 +484,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
                         .put(']');
             }
             final long dataPageLim = pageSizes.get(columnOffset + columnIndex);
-            final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
+            final long dataOffset = Unsafe.getLong(auxPageAddress + auxOffset);
             return getStr(dataPageAddress, dataOffset, dataPageLim, csView);
         }
         return NullMemoryCMR.INSTANCE.getStrB(0);

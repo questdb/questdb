@@ -44,7 +44,7 @@ public class LastCharGroupByFunction extends FirstCharGroupByFunction {
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putChar(valueIndex + 1, Unsafe.getUnsafe().getChar(ptr + ((long) count - 1) * Character.BYTES));
+                mapValue.putChar(valueIndex + 1, Unsafe.getChar(ptr + ((long) count - 1) * Character.BYTES));
             }
         }
     }

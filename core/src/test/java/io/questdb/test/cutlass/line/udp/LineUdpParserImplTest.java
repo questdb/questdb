@@ -927,7 +927,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                     long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
                     try {
                         for (int i = 0; i < len; i++) {
-                            Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+                            Unsafe.putByte(mem + i, bytes[i]);
                         }
                         try (LineUdpLexer lexer = new LineUdpLexer(4096)) {
                             lexer.withParser(parser);

@@ -3724,7 +3724,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         try {
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(buf + i, bytes[i]);
+                Unsafe.putByte(buf + i, bytes[i]);
             }
 
             if (firstBufSize < len) {
@@ -3732,7 +3732,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 textLoader.setState(TextLoader.LOAD_DATA);
 
                 for (int i = firstBufSize; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
+                    Unsafe.putByte(smallBuf, Unsafe.getByte(buf + i));
                     textLoader.parse(smallBuf, smallBuf + 1, AllowAllSecurityContext.INSTANCE);
                 }
             } else {
@@ -4081,11 +4081,11 @@ public class TextLoaderTest extends AbstractCairoTest {
         long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         try {
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(buf + i, json[i]);
+                Unsafe.putByte(buf + i, json[i]);
             }
 
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
+                Unsafe.putByte(smallBuf, Unsafe.getByte(buf + i));
                 textLoader.parse(smallBuf, smallBuf + 1, AllowAllSecurityContext.INSTANCE);
             }
             textLoader.wrapUp();

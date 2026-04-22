@@ -87,7 +87,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     }
 
     public int keyAt(long index) {
-        return Unsafe.getUnsafe().getInt(ptr + (index << 3));
+        return Unsafe.getInt(ptr + (index << 3));
     }
 
     public long keyIndex(int key) {
@@ -109,7 +109,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
 
     public void putAt(long index, int key, int value) {
         if (index < 0) {
-            Unsafe.getUnsafe().putInt(ptr + ((-index - 1) << 3) + 4, value);
+            Unsafe.putInt(ptr + ((-index - 1) << 3) + 4, value);
         } else {
             putAt0(index, key, value);
             size++;
@@ -153,7 +153,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     }
 
     public int valueAt(long index) {
-        return index < 0 ? Unsafe.getUnsafe().getInt(ptr + ((-index - 1) << 3) + 4) : noEntryValue;
+        return index < 0 ? Unsafe.getInt(ptr + ((-index - 1) << 3) + 4) : noEntryValue;
     }
 
     private long probe(int key, long index) {
@@ -174,8 +174,8 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
 
     private void putAt0(long index, int key, int value) {
         final long p = ptr + (index << 3);
-        Unsafe.getUnsafe().putInt(p, key);
-        Unsafe.getUnsafe().putInt(p + 4, value);
+        Unsafe.putInt(p, key);
+        Unsafe.putInt(p + 4, value);
     }
 
     private void rehash(int newCapacity) {
@@ -194,7 +194,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         zero();
 
         for (long p = oldPtr, lim = oldPtr + 8L * oldCapacity; p < lim; p += 8L) {
-            int key = Unsafe.getUnsafe().getInt(p);
+            int key = Unsafe.getInt(p);
             if (key != noEntryKey) {
                 long hashCode = Hash.fastHashInt64(key);
                 long index = hashCode & mask;
@@ -202,7 +202,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
                     index = (index + 1) & mask;
                 }
 
-                int value = Unsafe.getUnsafe().getInt(p + 4);
+                int value = Unsafe.getInt(p + 4);
                 putAt0(index, key, value);
             }
         }
@@ -217,7 +217,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         } else {
             // Otherwise, clean up only keys.
             for (long p = ptr, lim = ptr + 8L * capacity; p < lim; p += 8L) {
-                Unsafe.getUnsafe().putInt(p, noEntryKey);
+                Unsafe.putInt(p, noEntryKey);
             }
         }
     }

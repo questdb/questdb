@@ -1463,7 +1463,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             TableToken tableToken = engine.verifyTableName(src.getName());
             path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).concat(columnFileName).$();
             fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
-            Unsafe.getUnsafe().putLong(writeBuff, value);
+            Unsafe.putLong(writeBuff, value);
             ff.write(fd, writeBuff, Long.BYTES, offset);
         } finally {
             ff.close(fd);

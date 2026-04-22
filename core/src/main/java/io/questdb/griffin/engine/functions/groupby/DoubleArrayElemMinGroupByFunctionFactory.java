@@ -73,15 +73,15 @@ public class DoubleArrayElemMinGroupByFunctionFactory implements FunctionFactory
         @Override
         protected void accumulateOne(long dataPtr, int accFi, double inputVal) {
             long addr = dataPtr + (long) accFi * Double.BYTES;
-            double accVal = Unsafe.getUnsafe().getDouble(addr);
-            Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? Math.min(accVal, inputVal) : inputVal);
+            double accVal = Unsafe.getDouble(addr);
+            Unsafe.putDouble(addr, Numbers.isFinite(accVal) ? Math.min(accVal, inputVal) : inputVal);
         }
 
         @Override
         protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
             long addr = destDataPtr + (long) destFi * Double.BYTES;
-            double destVal = Unsafe.getUnsafe().getDouble(addr);
-            Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(destVal) ? Math.min(destVal, srcVal) : srcVal);
+            double destVal = Unsafe.getDouble(addr);
+            Unsafe.putDouble(addr, Numbers.isFinite(destVal) ? Math.min(destVal, srcVal) : srcVal);
         }
     }
 }

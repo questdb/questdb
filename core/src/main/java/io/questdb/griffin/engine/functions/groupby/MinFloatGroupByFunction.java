@@ -50,7 +50,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
             final long hi = ptr + count * (long) Float.BYTES;
             float min = Float.NaN;
             for (; ptr < hi; ptr += Float.BYTES) {
-                float value = Unsafe.getUnsafe().getFloat(ptr);
+                float value = Unsafe.getFloat(ptr);
                 if (value < min || Numbers.isNull(min)) {
                     min = value;
                 }

@@ -62,7 +62,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(address + index);
+        return Unsafe.getByte(address + index);
     }
 
     @Override
@@ -116,7 +116,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
     public Utf8Sink put(byte b) {
         final long left = lim - _wptr - EOL_LENGTH;
         if (left >= 4) { // 4 is the maximum byte length for a UTF-8 character.
-            Unsafe.getUnsafe().putByte(_wptr++, b);
+            Unsafe.putByte(_wptr++, b);
             return this;
         }
 
@@ -148,7 +148,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         }
 
         if (left >= needed) {
-            Unsafe.getUnsafe().putByte(_wptr++, b);
+            Unsafe.putByte(_wptr++, b);
         } else {
             done = true;
         }
@@ -172,7 +172,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         final long size = hi - lo;
         if (rem >= size) {
             // Common case where the buffer fits the available space.
-            Unsafe.getUnsafe().copyMemory(lo, _wptr, size);
+            Unsafe.copyMemory(lo, _wptr, size);
             _wptr += size;
             return this;
         }
@@ -183,14 +183,14 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         // NOTE: The computed length may be negative.
         long safeLen = rem - 4;
         if (safeLen > 0) {
-            Unsafe.getUnsafe().copyMemory(lo, _wptr, safeLen);
+            Unsafe.copyMemory(lo, _wptr, safeLen);
             _wptr += safeLen;
         }
 
         safeLen = Math.max(0, safeLen);
         for (long i = safeLen; i < rem; i++) {
             // Copying the final few bytes one at a time ensures we don't write any partial codepoints.
-            put(Unsafe.getUnsafe().getByte(lo + i));
+            put(Unsafe.getByte(lo + i));
         }
         return this;
     }
@@ -263,7 +263,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
 
                 lookback:
                 for (; ptr >= boundary; --ptr) {
-                    final byte prev = Unsafe.getUnsafe().getByte(ptr);
+                    final byte prev = Unsafe.getByte(ptr);
                     multibyteLength = utf8ByteClass(prev);
                     switch (multibyteLength) {
                         case UTF8_BYTE_CLASS_BAD:

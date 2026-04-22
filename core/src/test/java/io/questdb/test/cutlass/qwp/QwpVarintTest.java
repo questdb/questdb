@@ -46,7 +46,7 @@ public class QwpVarintTest {
             int len = QwpVarint.encode(buf, 0, 300);
 
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(addr + i, buf[i]);
+                Unsafe.putByte(addr + i, buf[i]);
             }
 
             long decoded = QwpVarint.decode(addr, addr + len);
@@ -171,19 +171,19 @@ public class QwpVarintTest {
             QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
 
             // Value 0
-            Unsafe.getUnsafe().putByte(addr, (byte) 0x00);
+            Unsafe.putByte(addr, (byte) 0x00);
             QwpVarint.decode(addr, addr + 1, result);
             Assert.assertEquals(0, result.value);
             Assert.assertEquals(1, result.bytesRead);
 
             // Value 1
-            Unsafe.getUnsafe().putByte(addr, (byte) 0x01);
+            Unsafe.putByte(addr, (byte) 0x01);
             QwpVarint.decode(addr, addr + 1, result);
             Assert.assertEquals(1, result.value);
             Assert.assertEquals(1, result.bytesRead);
 
             // Value 127 (max single-byte)
-            Unsafe.getUnsafe().putByte(addr, (byte) 0x7F);
+            Unsafe.putByte(addr, (byte) 0x7F);
             QwpVarint.decode(addr, addr + 1, result);
             Assert.assertEquals(127, result.value);
             Assert.assertEquals(1, result.bytesRead);

@@ -218,10 +218,10 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                     Os.pause();
                 } else if (type == TSK_COMPLETE) {
                     LOG.info().$("writer command response received [instance=").$(correlationId).I$();
-                    final int code = Unsafe.getUnsafe().getInt(event.getData());
+                    final int code = Unsafe.getInt(event.getData());
                     switch (code) {
                         case OK:
-                            affectedRowsCount = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
+                            affectedRowsCount = Unsafe.getInt(event.getData() + Integer.BYTES);
                             queryFutureUpdateListener.reportProgress(correlationId, QUERY_COMPLETE);
                             return QUERY_COMPLETE;
                         case READER_OUT_OF_DATE:
@@ -229,7 +229,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                         default:
                             LOG.error().$("error writer command response [instance=").$(correlationId)
                                     .$(", errorCode=").$(code).I$();
-                            final int strLen = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
+                            final int strLen = Unsafe.getInt(event.getData() + Integer.BYTES);
                             final long strLo = event.getData() + 2L * Integer.BYTES;
                             if (strLen == 0) {
                                 throw SqlException.$(tableNamePositionInSql, "statement execution failed");

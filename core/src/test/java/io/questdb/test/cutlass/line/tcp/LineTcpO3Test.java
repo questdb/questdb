@@ -170,7 +170,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             resourceNLines = 0;
             for (int i = 0; i < resourceSize; i++) {
                 byte b = bytes[i];
-                Unsafe.getUnsafe().putByte(resourceAddress + i, b);
+                Unsafe.putByte(resourceAddress + i, b);
                 if (b == '\n') {
                     resourceNLines++;
                 }

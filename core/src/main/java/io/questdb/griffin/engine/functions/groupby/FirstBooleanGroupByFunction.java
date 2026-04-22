@@ -50,7 +50,7 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putBool(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr) != 0);
+                mapValue.putBool(valueIndex + 1, Unsafe.getByte(ptr) != 0);
             }
         }
     }

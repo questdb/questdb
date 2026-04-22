@@ -168,7 +168,7 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length, 1);
@@ -197,7 +197,7 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length);
@@ -218,7 +218,7 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length);
@@ -238,7 +238,7 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length, 1);
@@ -257,7 +257,7 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length);
@@ -279,7 +279,7 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length);

@@ -5494,7 +5494,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
     static void prepareBinPayload(long pointer, int limit) {
         for (int offset = 0; offset < limit; offset++) {
-            Unsafe.getUnsafe().putByte(pointer + offset, (byte) limit);
+            Unsafe.putByte(pointer + offset, (byte) limit);
         }
     }
 

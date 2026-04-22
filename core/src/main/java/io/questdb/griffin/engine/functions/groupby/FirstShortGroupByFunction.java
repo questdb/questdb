@@ -50,7 +50,7 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(ptr));
+                mapValue.putShort(valueIndex + 1, Unsafe.getShort(ptr));
             }
         }
     }

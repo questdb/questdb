@@ -294,8 +294,8 @@ public class WriterPool extends AbstractPool {
                 writer.transferLock(e.lockFd);
                 e.lockFd = -1;
                 e.ownershipReason = OWNERSHIP_REASON_NONE;
-                Unsafe.getUnsafe().storeFence();
-                Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
+                Unsafe.storeFence();
+                Unsafe.putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, tableToken, PoolListener.EV_UNLOCKED);
             LOG.debug().$("unlocked [table=").$(tableToken)
@@ -587,8 +587,8 @@ public class WriterPool extends AbstractPool {
                         .$(", error=").$(th).I$();
             }
 
-            Unsafe.getUnsafe().storeFence();
-            Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
+            Unsafe.storeFence();
+            Unsafe.putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
 
             if (isClosed()) {
                 // when pool is closed it could be busy releasing writer

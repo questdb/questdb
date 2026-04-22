@@ -287,7 +287,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         configuration.getWriterFileOpenOpts()
                 )) {
                     for (long l = SymbolMapWriter.HEADER_SIZE; l < mem.size(); l += 8) {
-                        Unsafe.getUnsafe().putLong(mem.addressOf(l), 0);
+                        Unsafe.putLong(mem.addressOf(l), 0);
                     }
                     mem.jumpTo(mem.size());
                 }
@@ -1188,7 +1188,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
             long address = TableUtils.mapRW(ff, fd, size, MemoryTag.MMAP_DEFAULT);
             for (long i = keyToOffset(cleanCount); i + 4 < size; i += 4) {
-                Unsafe.getUnsafe().putInt(address + i, rnd.nextInt());
+                Unsafe.putInt(address + i, rnd.nextInt());
             }
 
             ff.munmap(address, size, MemoryTag.MMAP_DEFAULT);

@@ -105,7 +105,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
         }
     }
 
@@ -133,7 +133,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
         }
 
         @Override
@@ -173,7 +173,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 }

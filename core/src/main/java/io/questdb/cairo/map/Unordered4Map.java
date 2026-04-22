@@ -277,14 +277,14 @@ public class Unordered4Map implements Map, Reopenable {
         // Then we handle all non-zero keys.
         OUTER:
         for (long srcAddr = src4Map.memStart; srcAddr < src4Map.memLimit; srcAddr += entrySize) {
-            int key = Unsafe.getUnsafe().getInt(srcAddr);
+            int key = Unsafe.getInt(srcAddr);
             if (key == 0) {
                 continue;
             }
 
             long destAddr = getStartAddress(Hash.hashInt64(key) & mask);
             for (; ; ) {
-                int k = Unsafe.getUnsafe().getInt(destAddr);
+                int k = Unsafe.getInt(destAddr);
                 if (k == 0) {
                     break;
                 } else if (k == key) {
@@ -375,7 +375,7 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     private Unordered4MapValue asNew(long startAddress, int key, long hashCode, Unordered4MapValue value) {
-        Unsafe.getUnsafe().putInt(startAddress, key);
+        Unsafe.putInt(startAddress, key);
         if (--free == 0) {
             try {
                 rehash();
@@ -386,7 +386,7 @@ public class Unordered4Map implements Map, Reopenable {
             // Index may have changed after rehash, so we need to find the key.
             startAddress = getStartAddress(hashCode & mask);
             for (; ; ) {
-                int k = Unsafe.getUnsafe().getInt(startAddress);
+                int k = Unsafe.getInt(startAddress);
                 if (k == key) {
                     break;
                 }
@@ -437,13 +437,13 @@ public class Unordered4Map implements Map, Reopenable {
         final int newMask = (int) newKeyCapacity - 1;
 
         for (long addr = memStart; addr < memLimit; addr += entrySize) {
-            int key = Unsafe.getUnsafe().getInt(addr);
+            int key = Unsafe.getInt(addr);
             if (key == 0) {
                 continue;
             }
 
             long newAddr = getStartAddress(newMemStart, Hash.hashInt64(key) & newMask);
-            while (Unsafe.getUnsafe().getInt(newAddr) != 0) {
+            while (Unsafe.getInt(newAddr) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
                     newAddr = newMemStart;
@@ -471,7 +471,7 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     boolean isZeroKey(long startAddress) {
-        return Unsafe.getUnsafe().getInt(startAddress) == 0;
+        return Unsafe.getInt(startAddress) == 0;
     }
 
     class Key implements MapKey {
@@ -653,7 +653,7 @@ public class Unordered4Map implements Map, Reopenable {
             long index = hashCode & mask;
             long startAddress = getStartAddress(index);
             for (; ; ) {
-                int k = Unsafe.getUnsafe().getInt(startAddress);
+                int k = Unsafe.getInt(startAddress);
                 if (k == 0) {
                     return asNew(startAddress, key, hashCode, value);
                 } else if (k == key) {
@@ -680,7 +680,7 @@ public class Unordered4Map implements Map, Reopenable {
             long index = hashCode & mask;
             long startAddress = getStartAddress(index);
             for (; ; ) {
-                int k = Unsafe.getUnsafe().getInt(startAddress);
+                int k = Unsafe.getInt(startAddress);
                 if (k == 0) {
                     return null;
                 } else if (k == key) {

@@ -74,7 +74,7 @@ public class SumShortBenchmark {
         long p = shortAddr;
         for (int i = 0; i < shortCount; i++) {
             short s = rnd.nextShort();
-            Unsafe.getUnsafe().putShort(p, s);
+            Unsafe.putShort(p, s);
             shortArray[i] = s;
             p += Short.BYTES;
         }
@@ -98,7 +98,7 @@ public class SumShortBenchmark {
     public double testJavaNativeSum() {
         double result = 0.0;
         for (int i = 0; i < shortCount; i++) {
-            result += Unsafe.getUnsafe().getShort(shortAddr + i * Short.BYTES);
+            result += Unsafe.getShort(shortAddr + i * Short.BYTES);
         }
         return result;
     }

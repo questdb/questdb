@@ -591,7 +591,7 @@ public class PathTest {
             p0.zeroPad(len);
             Assert.assertEquals(17, p0.capacity());
             for (int i = 0; i < len; i++) {
-                Assert.assertEquals(0, Unsafe.getUnsafe().getByte(p0.hi() + i));
+                Assert.assertEquals(0, Unsafe.getByte(p0.hi() + i));
             }
         }
     }

@@ -60,11 +60,11 @@ public class QwpVarintTruncationTest extends AbstractWebSocketTest {
             int totalSize = HEADER_SIZE + payloadSize;
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
-                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
-                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
-                Unsafe.getUnsafe().putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
-                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
+                Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
+                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
+                Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
+                Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
 
                 long pos = address + HEADER_SIZE;
                 pos = QwpVarint.encode(pos, deltaStartId);
@@ -95,11 +95,11 @@ public class QwpVarintTruncationTest extends AbstractWebSocketTest {
             int totalSize = HEADER_SIZE + payloadSize;
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
-                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
-                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
-                Unsafe.getUnsafe().putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
-                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
+                Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
+                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
+                Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
+                Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
 
                 long pos = address + HEADER_SIZE;
                 pos = QwpVarint.encode(pos, deltaStartId);
@@ -129,7 +129,7 @@ public class QwpVarintTruncationTest extends AbstractWebSocketTest {
             long pos = address;
 
             // no null bitmap
-            Unsafe.getUnsafe().putByte(pos, (byte) 0);
+            Unsafe.putByte(pos, (byte) 0);
             pos++;
 
             // Dictionary: 6 entries ("s0" .. "s5")
@@ -138,7 +138,7 @@ public class QwpVarintTruncationTest extends AbstractWebSocketTest {
                 byte[] sBytes = ("s" + i).getBytes(StandardCharsets.UTF_8);
                 pos = QwpVarint.encode(pos, sBytes.length);
                 for (byte b : sBytes) {
-                    Unsafe.getUnsafe().putByte(pos++, b);
+                    Unsafe.putByte(pos++, b);
                 }
             }
 

@@ -165,7 +165,7 @@ public class QwpCursorBoundsCheckFuzzTest {
 
     private static void copyToNative(byte[] src, long address) {
         for (int i = 0; i < src.length; i++) {
-            Unsafe.getUnsafe().putByte(address + i, src[i]);
+            Unsafe.putByte(address + i, src[i]);
         }
     }
 

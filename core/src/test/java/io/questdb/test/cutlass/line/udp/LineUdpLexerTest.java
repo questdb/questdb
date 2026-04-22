@@ -289,7 +289,7 @@ public class LineUdpLexerTest extends AbstractCairoTest {
         try {
             final int len = bytes.length;
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+                Unsafe.putByte(mem + i, bytes[i]);
             }
             for (int i = 0; i < len; i++) {
                 lineAssemblingParser.clear();
@@ -316,7 +316,7 @@ public class LineUdpLexerTest extends AbstractCairoTest {
         long mem = Unsafe.malloc(line.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, line[i]);
+                Unsafe.putByte(mem + i, line[i]);
             }
 
             if (len < 10) {

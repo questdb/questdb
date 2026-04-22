@@ -50,7 +50,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
             boolean hasValue = false;
             final long hi = ptr + count * (long) Float.BYTES;
             for (; ptr < hi; ptr += Float.BYTES) {
-                final float value = Unsafe.getUnsafe().getFloat(ptr);
+                final float value = Unsafe.getFloat(ptr);
                 if (!Float.isNaN(value)) {
                     acc += value;
                     hasValue = true;

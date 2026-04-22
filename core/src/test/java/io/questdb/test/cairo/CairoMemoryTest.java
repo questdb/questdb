@@ -341,7 +341,7 @@ public class CairoMemoryTest extends AbstractTest {
                     long addr = FF.mmap(mem.getFd(), fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                     try {
                         for (int i = 0; i < count; i++) {
-                            Assert.assertEquals(i, Unsafe.getUnsafe().getLong(addr + i * Long.BYTES));
+                            Assert.assertEquals(i, Unsafe.getLong(addr + i * Long.BYTES));
                         }
                     } finally {
                         FF.munmap(addr, fileSize, MemoryTag.MMAP_DEFAULT);
@@ -354,7 +354,7 @@ public class CairoMemoryTest extends AbstractTest {
                     addr = FF.mmap(mem.getFd(), fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                     try {
                         for (int i = 0; i < fileSize / Long.BYTES; i++) {
-                            Assert.assertEquals(0, Unsafe.getUnsafe().getLong(addr + i * 8L));
+                            Assert.assertEquals(0, Unsafe.getLong(addr + i * 8L));
                         }
                     } finally {
                         FF.munmap(addr, fileSize, MemoryTag.MMAP_DEFAULT);

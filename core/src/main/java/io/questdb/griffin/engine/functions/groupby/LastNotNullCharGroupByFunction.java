@@ -44,7 +44,7 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
             long hi = ptr + (count - 1) * 2L;
             long offset = count - 1;
             for (; hi >= ptr; hi -= 2L) {
-                char value = Unsafe.getUnsafe().getChar(hi);
+                char value = Unsafe.getChar(hi);
                 if (value != CharConstant.ZERO.getChar(null)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);

@@ -739,7 +739,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 long bufaddr = io.questdb.std.Unsafe.malloc(crashPayload.length, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int n = 0; n < crashPayload.length; n++) {
-                        io.questdb.std.Unsafe.getUnsafe().putByte(bufaddr + n, crashPayload[n]);
+                        io.questdb.std.Unsafe.putByte(bufaddr + n, crashPayload[n]);
                     }
                     Net.send(fd, bufaddr, crashPayload.length);
                 } finally {

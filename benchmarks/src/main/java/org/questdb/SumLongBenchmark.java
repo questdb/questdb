@@ -76,7 +76,7 @@ public class SumLongBenchmark {
         long p = longAddr;
         for (int i = 0; i < longCount; i++) {
             long d = rnd.nextLong();
-            Unsafe.getUnsafe().putLong(p, d);
+            Unsafe.putLong(p, d);
             longArray[i] = d;
             p += Long.BYTES;
         }
@@ -101,7 +101,7 @@ public class SumLongBenchmark {
     public long testJavaNativeSum() {
         long result = 0;
         for (int i = 0; i < longCount; i++) {
-            result += Unsafe.getUnsafe().getLong(longAddr + i * 8);
+            result += Unsafe.getLong(longAddr + i * 8);
         }
         return result;
     }

@@ -137,7 +137,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             }
             long pHi = buffer + read;
             for (long p = buffer; p < pHi; p += 4, lo++) {
-                writer.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(p)), lo);
+                writer.add(TableUtils.toIndexKey(Unsafe.getInt(p)), lo);
             }
         }
         writer.setMaxValue(hiRow - 1);

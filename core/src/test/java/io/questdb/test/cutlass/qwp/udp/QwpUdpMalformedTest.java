@@ -739,7 +739,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
         try {
             mem = Unsafe.malloc(data.length, MemoryTag.NATIVE_DEFAULT);
             for (int i = 0; i < data.length; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, data[i]);
+                Unsafe.putByte(mem + i, data[i]);
             }
             sockaddr = Net.sockaddr(LOCALHOST, PORT);
             int sent = Net.sendTo(fd, mem, data.length, sockaddr);

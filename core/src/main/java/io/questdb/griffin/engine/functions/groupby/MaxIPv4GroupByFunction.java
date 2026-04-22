@@ -51,7 +51,7 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
             final long hi = ptr + count * (long) Integer.BYTES;
             long max = Numbers.ipv4ToLong(Numbers.IPv4_NULL);
             for (; ptr < hi; ptr += Integer.BYTES) {
-                long value = Numbers.ipv4ToLong(Unsafe.getUnsafe().getInt(ptr));
+                long value = Numbers.ipv4ToLong(Unsafe.getInt(ptr));
                 if (value > max) {
                     max = value;
                 }

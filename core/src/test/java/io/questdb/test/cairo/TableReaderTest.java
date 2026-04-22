@@ -5041,9 +5041,9 @@ public class TableReaderTest extends AbstractCairoTest {
             BinarySequence sq = r.getBin(index);
             for (int l = 0; l < blobLen; l++) {
                 byte b = sq.byteAt(l);
-                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
+                boolean result = Unsafe.getByte(blob + l) != b;
                 if (result) {
-                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
+                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getByte(blob + l) + ", actual=" + b);
                 }
             }
         } else {

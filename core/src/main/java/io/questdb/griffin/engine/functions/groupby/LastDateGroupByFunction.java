@@ -43,7 +43,7 @@ public class LastDateGroupByFunction extends FirstDateGroupByFunction {
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putDate(valueIndex + 1, Unsafe.getUnsafe().getLong(ptr + ((long) count - 1) * Long.BYTES));
+                mapValue.putDate(valueIndex + 1, Unsafe.getLong(ptr + ((long) count - 1) * Long.BYTES));
             }
         }
     }

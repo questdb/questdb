@@ -140,7 +140,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
             TableWriter.Row row = writer.newRow(ts);
             row.putInt(0, i);
             for (int k = 0; k < 1024; k++) {
-                Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
+                Unsafe.putByte(addr + k, rnd.nextByte());
             }
             row.putBin(1, addr, 1024);
             row.putLong(2, start + n - i);
@@ -172,7 +172,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                             TableWriter.Row row = writer.newRow(ts);
                             row.putInt(0, i);
                             for (int k = 0; k < 128; k++) {
-                                Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
+                                Unsafe.putByte(addr + k, rnd.nextByte());
                             }
                             row.putBin(1, addr, 128);
                             row.putLong(2, rnd.nextLong());

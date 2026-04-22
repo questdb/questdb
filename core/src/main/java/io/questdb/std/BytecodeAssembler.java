@@ -947,7 +947,7 @@ public class BytecodeAssembler {
         public Utf8Appender putNonAscii(long lo, long hi) {
             Bytes.checkedLoHiSize(lo, hi, BytecodeAssembler.this.position());
             for (long p = lo; p < hi; p++) {
-                BytecodeAssembler.this.putByte(Unsafe.getUnsafe().getByte(p));
+                BytecodeAssembler.this.putByte(Unsafe.getByte(p));
             }
             return this;
         }

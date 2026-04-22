@@ -108,8 +108,8 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
     }
 
     @Override

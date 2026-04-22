@@ -44,7 +44,7 @@ public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putBool(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr + ((long) count - 1) * Byte.BYTES) != 0);
+                mapValue.putBool(valueIndex + 1, Unsafe.getByte(ptr + ((long) count - 1) * Byte.BYTES) != 0);
             }
         }
     }

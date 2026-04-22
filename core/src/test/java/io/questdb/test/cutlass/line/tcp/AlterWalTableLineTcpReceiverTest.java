@@ -882,7 +882,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int n = 0; n < lineDataBytes.length; n++) {
-                        Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+                        Unsafe.putByte(bufaddr + n, lineDataBytes[n]);
                     }
                     int sent = 0;
                     Rnd rnd = TestUtils.generateRandom(LOG);
@@ -932,7 +932,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int n = 0; n < lineDataBytes.length; n++) {
-                        Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+                        Unsafe.putByte(bufaddr + n, lineDataBytes[n]);
                     }
                     int rc = Net.send(fd, bufaddr, lineDataBytes.length);
                     Assert.assertEquals(lineDataBytes.length, rc);

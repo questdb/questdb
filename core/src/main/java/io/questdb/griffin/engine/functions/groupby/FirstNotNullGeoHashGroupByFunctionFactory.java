@@ -81,7 +81,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
                 final long hi = ptr + count;
                 long offset = 0;
                 for (; ptr < hi; ptr++) {
-                    byte value = Unsafe.getUnsafe().getByte(ptr);
+                    byte value = Unsafe.getByte(ptr);
                     if (value != GeoHashes.BYTE_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
@@ -135,7 +135,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
                 final long hi = ptr + count * 4L;
                 long offset = 0;
                 for (; ptr < hi; ptr += 4L) {
-                    int value = Unsafe.getUnsafe().getInt(ptr);
+                    int value = Unsafe.getInt(ptr);
                     if (value != GeoHashes.INT_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
@@ -189,7 +189,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
                 final long hi = ptr + count * 8L;
                 long offset = 0;
                 for (; ptr < hi; ptr += 8L) {
-                    long value = Unsafe.getUnsafe().getLong(ptr);
+                    long value = Unsafe.getLong(ptr);
                     if (value != GeoHashes.NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
@@ -243,7 +243,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
                 final long hi = ptr + count * 2L;
                 long offset = 0;
                 for (; ptr < hi; ptr += 2L) {
-                    short value = Unsafe.getUnsafe().getShort(ptr);
+                    short value = Unsafe.getShort(ptr);
                     if (value != GeoHashes.SHORT_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);

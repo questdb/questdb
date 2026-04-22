@@ -110,7 +110,7 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MIN_VALUE);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MIN_VALUE);
     }
 
     @Override

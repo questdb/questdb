@@ -221,7 +221,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             long errorLen = utf8ErrorPos - utf8ErrorTop;
             if (errorLen > 1) {
                 dstPos = utf8ErrorTop - 1;
-                n = Utf8s.utf8DecodeMultiByte(utf8ErrorTop, utf8ErrorPos, Unsafe.getUnsafe().getByte(utf8ErrorTop), sink);
+                n = Utf8s.utf8DecodeMultiByte(utf8ErrorTop, utf8ErrorPos, Unsafe.getByte(utf8ErrorTop), sink);
             }
 
             if (n == -1 && errorLen > 3) {
@@ -230,7 +230,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             }
 
             if (n == -1 && ++lo < hi) {
-                b = Unsafe.getUnsafe().getByte(lo);
+                b = Unsafe.getByte(lo);
             } else {
                 break;
             }
@@ -291,7 +291,7 @@ public class LineUdpLexer implements Mutable, Closeable {
 
         byte lastByte = (byte) 0;
         while (p < hi && !partialComplete()) {
-            final byte b = Unsafe.getUnsafe().getByte(p);
+            final byte b = Unsafe.getByte(p);
             if (skipLine) {
                 doSkipLine(b);
                 p++;
@@ -366,7 +366,7 @@ public class LineUdpLexer implements Mutable, Closeable {
 
         @Override
         public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(lo + index * 2L);
+            return Unsafe.getChar(lo + index * 2L);
         }
 
         @Override
@@ -387,7 +387,7 @@ public class LineUdpLexer implements Mutable, Closeable {
 
         @Override
         public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(dstTop + index * 2L);
+            return Unsafe.getChar(dstTop + index * 2L);
         }
 
         @Override
@@ -408,7 +408,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             if (dstPos == bufferHi) {
                 extend();
             }
-            Unsafe.getUnsafe().putChar(dstPos, c);
+            Unsafe.putChar(dstPos, c);
             return this;
         }
 

@@ -56,7 +56,7 @@ public abstract class AbstractPool implements Closeable {
 
     @Override
     public void close() {
-        if (Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, FALSE, TRUE)) {
+        if (Unsafe.cas(this, CLOSED, FALSE, TRUE)) {
             closePool();
         }
     }
@@ -79,7 +79,7 @@ public abstract class AbstractPool implements Closeable {
 
     @TestOnly
     public boolean reopen() {
-        return Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, TRUE, FALSE);
+        return Unsafe.cas(this, CLOSED, TRUE, FALSE);
     }
 
     public void setPoolListener(PoolListener eventListener) {

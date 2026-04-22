@@ -56,31 +56,31 @@ final class OrderedMapValue implements MapValue {
     @Override
     public void addByte(int index, byte value) {
         final long p = getAddress(index);
-        Unsafe.getUnsafe().putByte(p, (byte) (Unsafe.getUnsafe().getByte(p) + value));
+        Unsafe.putByte(p, (byte) (Unsafe.getByte(p) + value));
     }
 
     @Override
     public void addDouble(int index, double value) {
         final long p = getAddress(index);
-        Unsafe.getUnsafe().putDouble(p, Unsafe.getUnsafe().getDouble(p) + value);
+        Unsafe.putDouble(p, Unsafe.getDouble(p) + value);
     }
 
     @Override
     public void addFloat(int index, float value) {
         final long p = getAddress(index);
-        Unsafe.getUnsafe().putFloat(p, Unsafe.getUnsafe().getFloat(p) + value);
+        Unsafe.putFloat(p, Unsafe.getFloat(p) + value);
     }
 
     @Override
     public void addInt(int index, int value) {
         final long p = getAddress(index);
-        Unsafe.getUnsafe().putInt(p, Unsafe.getUnsafe().getInt(p) + value);
+        Unsafe.putInt(p, Unsafe.getInt(p) + value);
     }
 
     @Override
     public void addLong(int index, long value) {
         final long p = getAddress(index);
-        Unsafe.getUnsafe().putLong(p, Unsafe.getUnsafe().getLong(p) + value);
+        Unsafe.putLong(p, Unsafe.getLong(p) + value);
     }
 
     @Override
@@ -93,7 +93,7 @@ final class OrderedMapValue implements MapValue {
     @Override
     public void addShort(int index, short value) {
         final long p = getAddress(index);
-        Unsafe.getUnsafe().putShort(p, (short) (Unsafe.getUnsafe().getShort(p) + value));
+        Unsafe.putShort(p, (short) (Unsafe.getShort(p) + value));
     }
 
     @Override
@@ -114,12 +114,12 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public byte getByte(int index) {
-        return Unsafe.getUnsafe().getByte(getAddress(index));
+        return Unsafe.getByte(getAddress(index));
     }
 
     @Override
     public char getChar(int index) {
-        return Unsafe.getUnsafe().getChar(getAddress(index));
+        return Unsafe.getChar(getAddress(index));
     }
 
     @Override
@@ -131,14 +131,14 @@ final class OrderedMapValue implements MapValue {
     public void getDecimal128(int index, Decimal128 sink) {
         long address = getAddress(index);
         sink.ofRaw(
-                Unsafe.getUnsafe().getLong(address),
-                Unsafe.getUnsafe().getLong(address + 8L)
+                Unsafe.getLong(address),
+                Unsafe.getLong(address + 8L)
         );
     }
 
     @Override
     public short getDecimal16(int index) {
-        return Unsafe.getUnsafe().getShort(getAddress(index));
+        return Unsafe.getShort(getAddress(index));
     }
 
     @Override
@@ -148,27 +148,27 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public int getDecimal32(int index) {
-        return Unsafe.getUnsafe().getInt(getAddress(index));
+        return Unsafe.getInt(getAddress(index));
     }
 
     @Override
     public long getDecimal64(int index) {
-        return Unsafe.getUnsafe().getLong(getAddress(index));
+        return Unsafe.getLong(getAddress(index));
     }
 
     @Override
     public byte getDecimal8(int index) {
-        return Unsafe.getUnsafe().getByte(getAddress(index));
+        return Unsafe.getByte(getAddress(index));
     }
 
     @Override
     public double getDouble(int index) {
-        return Unsafe.getUnsafe().getDouble(getAddress(index));
+        return Unsafe.getDouble(getAddress(index));
     }
 
     @Override
     public float getFloat(int index) {
-        return Unsafe.getUnsafe().getFloat(getAddress(index));
+        return Unsafe.getFloat(getAddress(index));
     }
 
     @Override
@@ -193,27 +193,27 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public int getIPv4(int index) {
-        return Unsafe.getUnsafe().getInt(getAddress(index));
+        return Unsafe.getInt(getAddress(index));
     }
 
     @Override
     public int getInt(int index) {
-        return Unsafe.getUnsafe().getInt(getAddress(index));
+        return Unsafe.getInt(getAddress(index));
     }
 
     @Override
     public long getLong(int index) {
-        return Unsafe.getUnsafe().getLong(getAddress(index));
+        return Unsafe.getLong(getAddress(index));
     }
 
     @Override
     public long getLong128Hi(int index) {
-        return Unsafe.getUnsafe().getLong(getAddress(index) + 8L);
+        return Unsafe.getLong(getAddress(index) + 8L);
     }
 
     @Override
     public long getLong128Lo(int index) {
-        return Unsafe.getUnsafe().getLong(getAddress(index));
+        return Unsafe.getLong(getAddress(index));
     }
 
     @Override
@@ -225,7 +225,7 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public short getShort(int index) {
-        return Unsafe.getUnsafe().getShort(getAddress(index));
+        return Unsafe.getShort(getAddress(index));
     }
 
     @Override
@@ -246,21 +246,21 @@ final class OrderedMapValue implements MapValue {
     @Override
     public void maxInt(int index, int value) {
         final long p = getAddress(index);
-        Unsafe.getUnsafe().putInt(p, Math.max(value, Unsafe.getUnsafe().getInt(p)));
+        Unsafe.putInt(p, Math.max(value, Unsafe.getInt(p)));
     }
 
     @Override
     public void maxLong(int index, long value) {
         final long p = getAddress(index);
-        Unsafe.getUnsafe().putLong(p, Math.max(value, Unsafe.getUnsafe().getLong(p)));
+        Unsafe.putLong(p, Math.max(value, Unsafe.getLong(p)));
     }
 
     @Override
     public void minInt(int index, int value) {
         if (value != Numbers.INT_NULL) {
             final long p = getAddress(index);
-            final int current = Unsafe.getUnsafe().getInt(p);
-            Unsafe.getUnsafe().putInt(p, current != Numbers.INT_NULL ? Math.min(value, current) : value);
+            final int current = Unsafe.getInt(p);
+            Unsafe.putInt(p, current != Numbers.INT_NULL ? Math.min(value, current) : value);
         }
     }
 
@@ -268,8 +268,8 @@ final class OrderedMapValue implements MapValue {
     public void minLong(int index, long value) {
         if (value != Numbers.LONG_NULL) {
             final long p = getAddress(index);
-            final long current = Unsafe.getUnsafe().getLong(p);
-            Unsafe.getUnsafe().putLong(p, current != Numbers.LONG_NULL ? Math.min(value, current) : value);
+            final long current = Unsafe.getLong(p);
+            Unsafe.putLong(p, current != Numbers.LONG_NULL ? Math.min(value, current) : value);
         }
     }
 
@@ -282,14 +282,14 @@ final class OrderedMapValue implements MapValue {
     public void putByte(int index, byte value) {
         final long p = getAddress(index);
         assert p + 1L <= limit;
-        Unsafe.getUnsafe().putByte(p, value);
+        Unsafe.putByte(p, value);
     }
 
     @Override
     public void putChar(int index, char value) {
         final long p = getAddress(index);
         assert p + 2L <= limit;
-        Unsafe.getUnsafe().putChar(p, value);
+        Unsafe.putChar(p, value);
     }
 
     @Override
@@ -335,35 +335,35 @@ final class OrderedMapValue implements MapValue {
     public void putDouble(int index, double value) {
         final long p = getAddress(index);
         assert p + 8L <= limit;
-        Unsafe.getUnsafe().putDouble(p, value);
+        Unsafe.putDouble(p, value);
     }
 
     @Override
     public void putFloat(int index, float value) {
         final long p = getAddress(index);
         assert p + 4L <= limit;
-        Unsafe.getUnsafe().putFloat(p, value);
+        Unsafe.putFloat(p, value);
     }
 
     @Override
     public void putInt(int index, int value) {
         final long p = getAddress(index);
         assert p + 4L <= limit;
-        Unsafe.getUnsafe().putInt(p, value);
+        Unsafe.putInt(p, value);
     }
 
     @Override
     public void putLong(int index, long value) {
         final long p = getAddress(index);
         assert p + 8L <= limit;
-        Unsafe.getUnsafe().putLong(p, value);
+        Unsafe.putLong(p, value);
     }
 
     @Override
     public void putLong128(int index, long lo, long hi) {
         long address = getAddress(index);
-        Unsafe.getUnsafe().putLong(address, lo);
-        Unsafe.getUnsafe().putLong(address + 8L, hi);
+        Unsafe.putLong(address, lo);
+        Unsafe.putLong(address + 8L, hi);
     }
 
     @Override
@@ -375,7 +375,7 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public void putShort(int index, short value) {
-        Unsafe.getUnsafe().putShort(getAddress(index), value);
+        Unsafe.putShort(getAddress(index), value);
     }
 
     @Override

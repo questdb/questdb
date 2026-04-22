@@ -76,7 +76,7 @@ public class SumDoubleBenchmark {
         long p = doubleAddr;
         for (int i = 0; i < doubleCount; i++) {
             double d = rnd.nextDouble();
-            Unsafe.getUnsafe().putDouble(p, d);
+            Unsafe.putDouble(p, d);
             doubleArray[i] = d;
             p += Double.BYTES;
         }
@@ -101,7 +101,7 @@ public class SumDoubleBenchmark {
     public double testJavaNativeSum() {
         double result = 0.0;
         for (int i = 0; i < doubleCount; i++) {
-            result += Unsafe.getUnsafe().getDouble(doubleAddr + i * 8);
+            result += Unsafe.getDouble(doubleAddr + i * 8);
         }
         return result;
     }

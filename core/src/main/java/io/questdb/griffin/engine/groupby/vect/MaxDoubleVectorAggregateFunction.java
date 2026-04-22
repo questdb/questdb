@@ -110,7 +110,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.NEGATIVE_INFINITY);
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.NEGATIVE_INFINITY);
     }
 
     @Override

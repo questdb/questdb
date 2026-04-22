@@ -50,7 +50,7 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putLong(valueIndex + 1, Unsafe.getUnsafe().getLong(ptr));
+                mapValue.putLong(valueIndex + 1, Unsafe.getLong(ptr));
             }
         }
     }

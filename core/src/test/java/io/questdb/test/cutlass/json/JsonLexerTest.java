@@ -175,7 +175,7 @@ public class JsonLexerTest {
         int len = bytes.length;
         long address = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(address + i, bytes[i]);
+            Unsafe.putByte(address + i, bytes[i]);
         }
         try {
             for (int i = 0; i < len; i++) {
@@ -266,8 +266,8 @@ public class JsonLexerTest {
                     for (int i = 0; i < l; i++) {
                         try {
                             LEXER.clear();
-                            Unsafe.getUnsafe().copyMemory(buf, bufA, i);
-                            Unsafe.getUnsafe().copyMemory(buf + i, bufB, l - i);
+                            Unsafe.copyMemory(buf, bufA, i);
+                            Unsafe.copyMemory(buf + i, bufB, l - i);
                             LEXER.parse(bufA, bufA + i, listener);
                             LEXER.parse(bufB, bufB + l - i, listener);
                             LEXER.parseLast();
@@ -740,7 +740,7 @@ public class JsonLexerTest {
         int len = bytes.length;
         long address = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(address + i, bytes[i]);
+            Unsafe.putByte(address + i, bytes[i]);
         }
         try {
             listener.recordPositions = recordPositions;

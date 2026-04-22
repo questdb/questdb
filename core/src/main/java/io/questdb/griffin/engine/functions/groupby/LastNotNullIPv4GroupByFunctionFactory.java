@@ -63,7 +63,7 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
                 long hi = ptr + (count - 1) * 4L;
                 long offset = count - 1;
                 for (; hi >= ptr; hi -= 4L) {
-                    int value = Unsafe.getUnsafe().getInt(hi);
+                    int value = Unsafe.getInt(hi);
                     if (value != Numbers.IPv4_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);

@@ -34,17 +34,17 @@ public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
 
     @Override
     default byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(ptr() + index);
+        return Unsafe.getByte(ptr() + index);
     }
 
     @Override
     default int intAt(int offset) {
-        return Unsafe.getUnsafe().getInt(ptr() + offset);
+        return Unsafe.getInt(ptr() + offset);
     }
 
     @Override
     default long longAt(int offset) {
-        return Unsafe.getUnsafe().getLong(ptr() + offset);
+        return Unsafe.getLong(ptr() + offset);
     }
 
     @Override
@@ -52,6 +52,6 @@ public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
 
     @Override
     default short shortAt(int offset) {
-        return Unsafe.getUnsafe().getShort(ptr() + offset);
+        return Unsafe.getShort(ptr() + offset);
     }
 }

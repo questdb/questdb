@@ -42,7 +42,7 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
             long hi = ptr + (count - 1) * (long) Long.BYTES;
             long offset = count - 1;
             for (; hi >= ptr; hi -= Long.BYTES) {
-                long value = Unsafe.getUnsafe().getLong(hi);
+                long value = Unsafe.getLong(hi);
                 if (value != Numbers.LONG_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);

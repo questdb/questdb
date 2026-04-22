@@ -44,7 +44,7 @@ public class LastDoubleGroupByFunction extends FirstDoubleGroupByFunction {
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putDouble(valueIndex + 1, Unsafe.getUnsafe().getDouble(ptr + ((long) count - 1) * Double.BYTES));
+                mapValue.putDouble(valueIndex + 1, Unsafe.getDouble(ptr + ((long) count - 1) * Double.BYTES));
             }
         }
     }

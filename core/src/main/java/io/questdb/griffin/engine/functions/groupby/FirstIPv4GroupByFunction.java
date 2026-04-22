@@ -50,7 +50,7 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(ptr));
+                mapValue.putInt(valueIndex + 1, Unsafe.getInt(ptr));
             }
         }
     }

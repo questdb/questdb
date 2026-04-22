@@ -219,7 +219,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             }
             lastRecordOffset = recordOffset;
             count++;
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), rank);
         }
 
         @Override
@@ -302,7 +302,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), RANK_CONST);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), RANK_CONST);
         }
 
         @Override
@@ -471,7 +471,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             mapValue.putLong(0, recordOffset);
             mapValue.putLong(1, rank);
             mapValue.putLong(2, count + 1);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), rank);
         }
 
         @Override

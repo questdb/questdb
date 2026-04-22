@@ -117,7 +117,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Numbers.INT_NULL);
+        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Numbers.INT_NULL);
     }
 
     @Override

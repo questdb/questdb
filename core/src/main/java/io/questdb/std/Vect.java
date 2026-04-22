@@ -182,7 +182,7 @@ public final class Vect {
         // the split length was determined experimentally
         // using 'MemCopyBenchmark' bench
         if (len < 4096) {
-            Unsafe.getUnsafe().copyMemory(src, dst, len);
+            Unsafe.copyMemory(src, dst, len);
         } else {
             memcpy0(src, dst, len);
         }
@@ -480,18 +480,18 @@ public final class Vect {
     private static boolean memeq0(long a, long b, long len) {
         long i = 0;
         for (; i + 7 < len; i += 8) {
-            if (Unsafe.getUnsafe().getLong(a + i) != Unsafe.getUnsafe().getLong(b + i)) {
+            if (Unsafe.getLong(a + i) != Unsafe.getLong(b + i)) {
                 return false;
             }
         }
         if (i + 3 < len) {
-            if (Unsafe.getUnsafe().getInt(a + i) != Unsafe.getUnsafe().getInt(b + i)) {
+            if (Unsafe.getInt(a + i) != Unsafe.getInt(b + i)) {
                 return false;
             }
             i += 4;
         }
         for (; i < len; i++) {
-            if (Unsafe.getUnsafe().getByte(a + i) != Unsafe.getUnsafe().getByte(b + i)) {
+            if (Unsafe.getByte(a + i) != Unsafe.getByte(b + i)) {
                 return false;
             }
         }

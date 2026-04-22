@@ -952,7 +952,7 @@ public class ParquetTest extends AbstractTest {
         long ptr = Unsafe.malloc(arr.length, MemoryTag.NATIVE_DEFAULT);
         try (BorrowedArray borrowedArray = new BorrowedArray()) {
             for (int i = 0; i < arr.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, arr[i]);
+                Unsafe.putByte(ptr + i, arr[i]);
             }
 
             // the shape is padded to 8 bytes, hence Long.BYTES

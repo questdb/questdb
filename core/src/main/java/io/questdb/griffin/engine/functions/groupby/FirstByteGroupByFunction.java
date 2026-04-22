@@ -50,7 +50,7 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putByte(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr));
+                mapValue.putByte(valueIndex + 1, Unsafe.getByte(ptr));
             }
         }
     }

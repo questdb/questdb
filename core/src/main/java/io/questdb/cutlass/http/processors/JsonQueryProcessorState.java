@@ -1017,7 +1017,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         boolean quoted = false;
         boolean escaped = false;
         while (rawLo < rawHi) {
-            byte b = Unsafe.getUnsafe().getByte(rawLo);
+            byte b = Unsafe.getByte(rawLo);
             if (b < 0) {
                 int n = Utf8s.utf8DecodeMultiByte(rawLo, rawHi, b, columnNameSink);
                 if (n == -1) {

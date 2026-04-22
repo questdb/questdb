@@ -435,7 +435,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         @Override
@@ -525,7 +525,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             MapValue value = key.findValue();
 
             final double result = value != null ? value.getDouble(0) : Double.NaN;
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), result);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), result);
         }
 
         @Override
@@ -823,7 +823,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), result);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), result);
         }
 
         @Override
@@ -1053,7 +1053,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), result);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), result);
         }
 
         @Override
@@ -1318,7 +1318,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), result);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), result);
         }
 
         @Override
@@ -1511,7 +1511,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), result);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), result);
         }
 
         @Override
@@ -1687,7 +1687,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), result);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), result);
         }
 
         @Override
@@ -1764,7 +1764,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), result);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), result);
         }
 
         @Override
@@ -1850,7 +1850,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), result);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), result);
         }
 
         @Override

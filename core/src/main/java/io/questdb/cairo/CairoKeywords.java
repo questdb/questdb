@@ -34,15 +34,15 @@ public class CairoKeywords {
         }
 
         long i = lpsz + len - 9;
-        return Unsafe.getUnsafe().getByte(i++) == '.'
-                && Unsafe.getUnsafe().getByte(i++) == 'd'
-                && Unsafe.getUnsafe().getByte(i++) == 'e'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i++) == 'a'
-                && Unsafe.getUnsafe().getByte(i++) == 'c'
-                && Unsafe.getUnsafe().getByte(i++) == 'h'
-                && Unsafe.getUnsafe().getByte(i++) == 'e'
-                && Unsafe.getUnsafe().getByte(i) == 'd';
+        return Unsafe.getByte(i++) == '.'
+                && Unsafe.getByte(i++) == 'd'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == 'a'
+                && Unsafe.getByte(i++) == 'c'
+                && Unsafe.getByte(i++) == 'h'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i) == 'd';
 
     }
 
@@ -54,60 +54,60 @@ public class CairoKeywords {
 
         // .lock
         long i = lpsz + len - 5;
-        return Unsafe.getUnsafe().getByte(i++) == '.'
-                && Unsafe.getUnsafe().getByte(i++) == 'l'
-                && Unsafe.getUnsafe().getByte(i++) == 'o'
-                && Unsafe.getUnsafe().getByte(i++) == 'c'
-                && Unsafe.getUnsafe().getByte(i) == 'k';
+        return Unsafe.getByte(i++) == '.'
+                && Unsafe.getByte(i++) == 'l'
+                && Unsafe.getByte(i++) == 'o'
+                && Unsafe.getByte(i++) == 'c'
+                && Unsafe.getByte(i) == 'k';
 
     }
 
     public static boolean isMeta(long lpsz) {
         long i = lpsz;
-        return Unsafe.getUnsafe().getByte(i++) == '_'
-                && Unsafe.getUnsafe().getByte(i++) == 'm'
-                && Unsafe.getUnsafe().getByte(i++) == 'e'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i) == 'a';
+        return Unsafe.getByte(i++) == '_'
+                && Unsafe.getByte(i++) == 'm'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i) == 'a';
     }
 
     public static boolean isSeq(long lpsz) {
         long i = lpsz;
-        return Unsafe.getUnsafe().getByte(i++) == 's'
-                && Unsafe.getUnsafe().getByte(i++) == 'e'
-                && Unsafe.getUnsafe().getByte(i) == 'q';
+        return Unsafe.getByte(i++) == 's'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i) == 'q';
     }
 
     public static boolean isTxn(long lpsz) {
         long i = lpsz;
-        return Unsafe.getUnsafe().getByte(i++) == '_'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i++) == 'x'
-                && Unsafe.getUnsafe().getByte(i) == 'n';
+        return Unsafe.getByte(i++) == '_'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == 'x'
+                && Unsafe.getByte(i) == 'n';
     }
 
     public static boolean isTxnSeq(long lpsz) {
         long i = lpsz;
-        return Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i++) == 'x'
-                && Unsafe.getUnsafe().getByte(i++) == 'n'
-                && Unsafe.getUnsafe().getByte(i++) == '_'
-                && Unsafe.getUnsafe().getByte(i++) == 's'
-                && Unsafe.getUnsafe().getByte(i++) == 'e'
-                && Unsafe.getUnsafe().getByte(i) == 'q';
+        return Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == 'x'
+                && Unsafe.getByte(i++) == 'n'
+                && Unsafe.getByte(i++) == '_'
+                && Unsafe.getByte(i++) == 's'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i) == 'q';
 
     }
 
     public static boolean isWal(long lpsz) {
         long i = lpsz;
-        return Unsafe.getUnsafe().getByte(i++) == 'w'
-                && Unsafe.getUnsafe().getByte(i++) == 'a'
-                && Unsafe.getUnsafe().getByte(i) == 'l';
+        return Unsafe.getByte(i++) == 'w'
+                && Unsafe.getByte(i++) == 'a'
+                && Unsafe.getByte(i) == 'l';
     }
 
     public static int length(long lpsz) {
         long p = lpsz;
-        while (Unsafe.getUnsafe().getByte(p) != 0) {
+        while (Unsafe.getByte(p) != 0) {
             p++;
         }
         return (int) (p - lpsz);

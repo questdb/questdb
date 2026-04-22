@@ -163,10 +163,10 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                                 long fd = ff.openRO(path.$());
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                        tableId = Unsafe.getUnsafe().getInt(tempMem);
+                                        tableId = Unsafe.getInt(tempMem);
                                         if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
                                             foundMetadataFile = true;
-                                            columnCount = Unsafe.getUnsafe().getInt(tempMem);
+                                            columnCount = Unsafe.getInt(tempMem);
                                         } else {
                                             LOG.error().$("Could not read column count [fd=").$(fd).$(", errno=").$(ff.errno()).I$();
                                         }

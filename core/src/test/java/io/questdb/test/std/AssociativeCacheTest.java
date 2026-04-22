@@ -248,26 +248,26 @@ public class AssociativeCacheTest {
             final FlyweightDirectUtf16Sink dcs = new FlyweightDirectUtf16Sink();
 
             try {
-                Unsafe.getUnsafe().putChar(mem, 'A');
-                Unsafe.getUnsafe().putChar(mem + 2, 'B');
+                Unsafe.putChar(mem, 'A');
+                Unsafe.putChar(mem + 2, 'B');
 
                 dcs.of(mem, mem + 4);
                 dcs.clear(4);
 
                 cache.put(dcs, "hello1");
 
-                Unsafe.getUnsafe().putChar(mem, 'C');
-                Unsafe.getUnsafe().putChar(mem + 2, 'D');
+                Unsafe.putChar(mem, 'C');
+                Unsafe.putChar(mem + 2, 'D');
 
                 cache.put(dcs, "hello2");
 
-                Unsafe.getUnsafe().putChar(mem, 'A');
-                Unsafe.getUnsafe().putChar(mem + 2, 'B');
+                Unsafe.putChar(mem, 'A');
+                Unsafe.putChar(mem + 2, 'B');
 
                 Assert.assertEquals("hello1", cache.poll(dcs));
 
-                Unsafe.getUnsafe().putChar(mem, 'C');
-                Unsafe.getUnsafe().putChar(mem + 2, 'D');
+                Unsafe.putChar(mem, 'C');
+                Unsafe.putChar(mem + 2, 'D');
 
                 Assert.assertEquals("hello2", cache.poll(dcs));
             } finally {

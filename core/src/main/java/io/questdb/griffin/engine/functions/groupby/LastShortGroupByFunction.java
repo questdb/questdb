@@ -44,7 +44,7 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(ptr + ((long) count - 1) * Short.BYTES));
+                mapValue.putShort(valueIndex + 1, Unsafe.getShort(ptr + ((long) count - 1) * Short.BYTES));
             }
         }
     }

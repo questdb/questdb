@@ -50,7 +50,7 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putDate(valueIndex + 1, Unsafe.getUnsafe().getLong(ptr));
+                mapValue.putDate(valueIndex + 1, Unsafe.getLong(ptr));
             }
         }
     }

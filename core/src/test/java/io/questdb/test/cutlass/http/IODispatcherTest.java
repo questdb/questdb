@@ -6031,7 +6031,7 @@ public class IODispatcherTest extends AbstractTest {
                                 assertTrue(n > 0);
 
                                 for (int i = 0; i < n; i++) {
-                                    sink2.put((char) Unsafe.getUnsafe().getByte(buffer + i));
+                                    sink2.put((char) Unsafe.getByte(buffer + i));
                                 }
                                 // copy response bytes to sink
                                 read += n;
@@ -6785,7 +6785,7 @@ public class IODispatcherTest extends AbstractTest {
                         new Thread(() -> {
                             final StringSink sink = new StringSink();
                             final long responseBuf = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
-                            Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
+                            Unsafe.putByte(responseBuf, (byte) 'A');
 
                             final HttpRequestProcessor processor = new HttpRequestProcessor() {
                                 @Override
@@ -6871,7 +6871,7 @@ public class IODispatcherTest extends AbstractTest {
                                             Assert.assertEquals(len, Net.send(fd, buffer, len));
                                             Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
                                             LOG.info().$("i=").$(i).$(", j=").$(k).$();
-                                            Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
+                                            Assert.assertEquals('A', Unsafe.getByte(buffer));
                                         } finally {
                                             Unsafe.free(buffer, len, MemoryTag.NATIVE_DEFAULT);
                                         }
@@ -7170,7 +7170,7 @@ public class IODispatcherTest extends AbstractTest {
             if (n > 0) {
                 if (headerCheckRemaining > 0) {
                     for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
+                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getByte(buffer + i)) {
                             Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
                         }
                         headerCheckRemaining--;
@@ -7184,7 +7184,7 @@ public class IODispatcherTest extends AbstractTest {
                             contentRemaining = 1048576;
                             rnd.reset();
                         }
-                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
+                        Assert.assertEquals(rnd.nextByte(), Unsafe.getByte(buffer + i));
                         contentRemaining--;
                     }
 
@@ -7886,7 +7886,7 @@ public class IODispatcherTest extends AbstractTest {
 
         long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
         for (int i = 0; i < 1048576; i++) {
-            Unsafe.getUnsafe().putByte(buf + i, rnd.nextByte());
+            Unsafe.putByte(buf + i, rnd.nextByte());
         }
 
         for (int i = 0; i < 20; i++) {

@@ -95,7 +95,7 @@ public class ConcurrentParquetExportTest extends AbstractBootstrapTest {
                                             long lo = fragment.lo();
                                             long len = fragment.hi() - lo;
                                             long dest = buf.appendAddressFor(len);
-                                            Unsafe.getUnsafe().copyMemory(lo, dest, len);
+                                            Unsafe.copyMemory(lo, dest, len);
                                         }
                                     }
                                     successCount.incrementAndGet();

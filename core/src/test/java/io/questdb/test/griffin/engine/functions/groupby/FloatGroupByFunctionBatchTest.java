@@ -566,7 +566,7 @@ public class FloatGroupByFunctionBatchTest {
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         long addr = lastAllocated;
         for (float value : values) {
-            Unsafe.getUnsafe().putFloat(addr, value);
+            Unsafe.putFloat(addr, value);
             addr += Float.BYTES;
         }
         return lastAllocated;

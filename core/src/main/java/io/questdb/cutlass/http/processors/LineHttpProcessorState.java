@@ -257,7 +257,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             // NEEDS_REED status means that there is still a buffer space to read to.
             long recvBufPos = recvBuffer.getBufPos();
             assert recvBufPos < recvBuffer.getBufEnd();
-            Unsafe.getUnsafe().putByte(recvBufPos, (byte) '\n');
+            Unsafe.putByte(recvBufPos, (byte) '\n');
             recvBuffer.setBufPos(recvBufPos + 1);
             currentStatus = processLocalBuffer();
             if (currentStatus == Status.NEEDS_READ) {

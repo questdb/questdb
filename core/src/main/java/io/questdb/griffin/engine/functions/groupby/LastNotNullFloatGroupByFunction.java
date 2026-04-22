@@ -43,7 +43,7 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
             long hi = ptr + (count - 1) * 4L;
             long offset = count - 1;
             for (; hi >= ptr; hi -= 4L) {
-                float value = Unsafe.getUnsafe().getFloat(hi);
+                float value = Unsafe.getFloat(hi);
                 if (!Numbers.isNull(value)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);

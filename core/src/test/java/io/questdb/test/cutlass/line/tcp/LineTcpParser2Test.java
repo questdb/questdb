@@ -76,7 +76,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             array.applyShape();
             array.putDouble(0, 1);
             array.putDouble(1, 2);
-            Unsafe.getUnsafe().putByte(mem, LineTcpParser.ENTITY_TYPE_ARRAY);
+            Unsafe.putByte(mem, LineTcpParser.ENTITY_TYPE_ARRAY);
             long array1Addr = mem + 1;
             long array1Size = ArrayTest.arrayViewToBinaryFormat(array, array1Addr);
             long array2Addr = array1Addr + array1Size;
@@ -94,7 +94,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             memA.putDouble(4.1);
             memA.putDouble(5.1);
             memA.putDouble(6.1);
-            Unsafe.getUnsafe().putByte(array2Addr, LineTcpParser.ENTITY_TYPE_ARRAY);
+            Unsafe.putByte(array2Addr, LineTcpParser.ENTITY_TYPE_ARRAY);
             sink.clear();
             long array2Size = ArrayTest.arrayViewToBinaryFormat(array, array2Addr + 1);
 
@@ -651,7 +651,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         long memStart = memFull;
         byte lastByte = 0;
         for (byte b : line) {
-            Unsafe.getUnsafe().putByte(memStart, b);
+            Unsafe.putByte(memStart, b);
             memStart++;
             if (b == '=' && lastByte == '=') {
                 Assert.assertNotNull(binaryValuesSize);
@@ -662,7 +662,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             lastByte = b;
         }
         if (!endWithEOL) {
-            Unsafe.getUnsafe().putByte(memStart, (byte) '\n');
+            Unsafe.putByte(memStart, (byte) '\n');
         }
         len = (int) (len + binaryValueSizes);
 

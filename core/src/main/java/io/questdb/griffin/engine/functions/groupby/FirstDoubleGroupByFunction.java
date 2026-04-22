@@ -50,7 +50,7 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putDouble(valueIndex + 1, Unsafe.getUnsafe().getDouble(ptr));
+                mapValue.putDouble(valueIndex + 1, Unsafe.getDouble(ptr));
             }
         }
     }

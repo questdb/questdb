@@ -315,17 +315,17 @@ public class TableUtilsTest extends AbstractTest {
                     int size = ColumnType.sizeOf(columnType);
                     if (size > 0) {
                         TableUtils.setNull(columnType, mem2, 1);
-                        Unsafe.getUnsafe().putLong(mem1, TableUtils.getNullLong(columnType, 0));
-                        Unsafe.getUnsafe().putLong(mem1 + 8, TableUtils.getNullLong(columnType, 1));
-                        Unsafe.getUnsafe().putLong(mem1 + 16, TableUtils.getNullLong(columnType, 2));
-                        Unsafe.getUnsafe().putLong(mem1 + 24, TableUtils.getNullLong(columnType, 3));
+                        Unsafe.putLong(mem1, TableUtils.getNullLong(columnType, 0));
+                        Unsafe.putLong(mem1 + 8, TableUtils.getNullLong(columnType, 1));
+                        Unsafe.putLong(mem1 + 16, TableUtils.getNullLong(columnType, 2));
+                        Unsafe.putLong(mem1 + 24, TableUtils.getNullLong(columnType, 3));
 
                         String type = ColumnType.nameOf(columnType);
                         for (int b = 0; b < size; b++) {
                             Assert.assertEquals(
                                     type,
-                                    Unsafe.getUnsafe().getByte(mem1 + b),
-                                    Unsafe.getUnsafe().getByte(mem2 + b)
+                                    Unsafe.getByte(mem1 + b),
+                                    Unsafe.getByte(mem2 + b)
                             );
                         }
                     }

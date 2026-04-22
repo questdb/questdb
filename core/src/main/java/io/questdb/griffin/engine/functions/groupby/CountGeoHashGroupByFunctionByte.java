@@ -43,7 +43,7 @@ public class CountGeoHashGroupByFunctionByte extends AbstractCountGroupByFunctio
             long nonNullCount = 0;
             final long hi = ptr + count;
             for (; ptr < hi; ptr++) {
-                if (Unsafe.getUnsafe().getByte(ptr) != GeoHashes.BYTE_NULL) {
+                if (Unsafe.getByte(ptr) != GeoHashes.BYTE_NULL) {
                     nonNullCount++;
                 }
             }

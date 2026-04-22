@@ -62,7 +62,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
 
     public void add(int x) {
         checkCapacity();
-        Unsafe.getUnsafe().putInt(pos, x);
+        Unsafe.putInt(pos, x);
         pos += Integer.BYTES;
     }
 
@@ -103,7 +103,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     }
 
     public int get(long p) {
-        return Unsafe.getUnsafe().getInt(address + (p << 2));
+        return Unsafe.getInt(address + (p << 2));
     }
 
     // base address of native memory
@@ -157,7 +157,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
 
     public void set(long p, int v) {
         assert p > -1 && p < ((pos - address) >>> 2);
-        Unsafe.getUnsafe().putInt(address + (p << 2), v);
+        Unsafe.putInt(address + (p << 2), v);
     }
 
     // Desired capacity in INTs (not count of bytes).

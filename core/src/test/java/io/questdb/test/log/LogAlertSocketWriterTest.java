@@ -379,7 +379,7 @@ public class LogAlertSocketWriterTest {
             final byte[] bytes = fileContent.getBytes(Files.UTF_8);
             long p = buffPtr;
             for (int i = 0, n = bytes.length; i < n; i++) {
-                Unsafe.getUnsafe().putByte(p++, bytes[i]);
+                Unsafe.putByte(p++, bytes[i]);
             }
             try (Path path = new Path()) {
                 path.put(fileName).$();
@@ -391,7 +391,7 @@ public class LogAlertSocketWriterTest {
                 // clear buffer
                 p = buffPtr;
                 for (int i = 0; i < bytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(p++, (byte) 0);
+                    Unsafe.putByte(p++, (byte) 0);
                 }
                 LogAlertSocketWriter.readFile(fileName, buffPtr, buffSize, ff, sink);
                 TestUtils.assertEquals(fileContent, sink);
@@ -435,7 +435,7 @@ public class LogAlertSocketWriterTest {
                 final int len = bytes.length;
                 long p = buffPtr;
                 for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(p++, bytes[i]);
+                    Unsafe.putByte(p++, bytes[i]);
                 }
 
                 path.put(fileName).$();

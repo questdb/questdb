@@ -69,7 +69,7 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
             if (isDesignated) {
-                final long value = Unsafe.getUnsafe().getLong(address + 8L * (frameRowCount - 1));
+                final long value = Unsafe.getLong(address + 8L * (frameRowCount - 1));
                 accumulator.accumulate(value);
             } else {
                 accumulator.accumulate(Vect.maxLong(address, frameRowCount));
@@ -113,7 +113,7 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MIN_VALUE);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MIN_VALUE);
     }
 
     @Override

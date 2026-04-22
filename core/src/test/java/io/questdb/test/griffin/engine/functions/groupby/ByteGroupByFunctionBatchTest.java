@@ -177,7 +177,7 @@ public class ByteGroupByFunctionBatchTest {
         lastSize = values.length;
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putByte(lastAllocated + i, values[i]);
+            Unsafe.putByte(lastAllocated + i, values[i]);
         }
         return lastAllocated;
     }

@@ -132,7 +132,7 @@ public class Utf8sTest {
         final int len = data.length;
         long mem = Unsafe.malloc(data.length, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < data.length; i++) {
-            Unsafe.getUnsafe().putByte(mem + i, data[i]);
+            Unsafe.putByte(mem + i, data[i]);
         }
         try {
             Utf8s.stringFromUtf8Bytes(mem, mem + len);
@@ -382,7 +382,7 @@ public class Utf8sTest {
         byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < bytes.length; i++) {
-            Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+            Unsafe.putByte(ptr + i, bytes[i]);
         }
         try {
             Assert.assertTrue(Utf8s.utf8ToUtf16EscConsecutiveQuotes(ptr, ptr + bytes.length, query));
@@ -591,7 +591,7 @@ public class Utf8sTest {
         long mem = Unsafe.malloc(data.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < data.length; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, data[i]);
+                Unsafe.putByte(mem + i, data[i]);
             }
             Assert.assertTrue(Utf8s.equalsAscii("hello", mem, mem + data.length));
             Assert.assertFalse(Utf8s.equalsAscii("world", mem, mem + data.length));
@@ -610,7 +610,7 @@ public class Utf8sTest {
             long mem = Unsafe.malloc(data.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < data.length; i++) {
-                    Unsafe.getUnsafe().putByte(mem + i, data[i]);
+                    Unsafe.putByte(mem + i, data[i]);
                 }
                 Assert.assertTrue(Utf8s.equals(sink, mem, data.length));
                 Assert.assertFalse(Utf8s.equals(sink, mem, data.length - 1));
@@ -1260,7 +1260,7 @@ public class Utf8sTest {
 
         long buf = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xE4);
+            Unsafe.putByte(buf, (byte) 0xE4);
             sink.clear();
             Utf8s.putSafe(buf, buf + 1, sink);
             Assert.assertEquals("\\xE4", sink.toString());
@@ -1362,7 +1362,7 @@ public class Utf8sTest {
         // Control char via pointer path
         long buf = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(buf, (byte) 0x01);
+            Unsafe.putByte(buf, (byte) 0x01);
             sink.clear();
             Utf8s.putSafe(buf, buf + 1, sink);
             Assert.assertEquals("\\x01", sink.toString());
@@ -1513,8 +1513,8 @@ public class Utf8sTest {
                     }
 
                     long address = utf8Sink.ptr() + rnd.nextInt(utf8Sink.size());
-                    byte b = Unsafe.getUnsafe().getByte(address);
-                    Unsafe.getUnsafe().putByte(address, (byte) (b + 1));
+                    byte b = Unsafe.getByte(address);
+                    Unsafe.putByte(address, (byte) (b + 1));
                     if (Utf8s.equalsUtf16(sink, utf8Sink)) {
                         Assert.fail("iteration " + i + ", expected non-equals: " + sink);
                     }
@@ -2131,7 +2131,7 @@ public class Utf8sTest {
         try {
             byte[] bytes = in.getBytes(Files.UTF_8);
             for (int i = 0, n = bytes.length; i < n; i++) {
-                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+                Unsafe.putByte(p + i, bytes[i]);
             }
             Utf16Sink b = new StringSink();
             Utf8s.utf8ToUtf16(p, p + bytes.length, b);
@@ -2156,9 +2156,9 @@ public class Utf8sTest {
         long mem = Unsafe.malloc(nBytes, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < nBytes - 1; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+                Unsafe.putByte(mem + i, bytes[i]);
             }
-            Unsafe.getUnsafe().putByte(mem + nBytes - 1, (byte) 0);
+            Unsafe.putByte(mem + nBytes - 1, (byte) 0);
 
             StringSink b = new StringSink();
             Utf8s.utf8ToUtf16Z(mem, b);
@@ -2177,9 +2177,9 @@ public class Utf8sTest {
         long mem = Unsafe.malloc(nBytes, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+                Unsafe.putByte(mem + i, bytes[i]);
             }
-            Unsafe.getUnsafe().putByte(mem + bytes.length, (byte) 0);
+            Unsafe.putByte(mem + bytes.length, (byte) 0);
 
             StringSink b = new StringSink();
             Assert.assertTrue(Utf8s.utf8ToUtf16Z(mem, b));
@@ -2199,9 +2199,9 @@ public class Utf8sTest {
         long mem = Unsafe.malloc(nBytes, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+                Unsafe.putByte(mem + i, bytes[i]);
             }
-            Unsafe.getUnsafe().putByte(mem + bytes.length, (byte) 0);
+            Unsafe.putByte(mem + bytes.length, (byte) 0);
 
             StringSink b = new StringSink();
             Assert.assertTrue(Utf8s.utf8ToUtf16Z(mem, b));
@@ -2220,9 +2220,9 @@ public class Utf8sTest {
         long mem = Unsafe.malloc(nBytes, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+                Unsafe.putByte(mem + i, bytes[i]);
             }
-            Unsafe.getUnsafe().putByte(mem + bytes.length, (byte) 0);
+            Unsafe.putByte(mem + bytes.length, (byte) 0);
 
             StringSink b = new StringSink();
             Assert.assertTrue(Utf8s.utf8ToUtf16Z(mem, b));
@@ -2295,19 +2295,19 @@ public class Utf8sTest {
         long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
         try {
             // Truncated 2-byte via pointer
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xC2);
+            Unsafe.putByte(buf, (byte) 0xC2);
             utf16Sink.clear();
             Assert.assertFalse(Utf8s.utf8ToUtf16(buf, buf + 1, utf16Sink));
 
             // Invalid continuation in 2-byte via pointer
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xC2);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x00);
+            Unsafe.putByte(buf, (byte) 0xC2);
+            Unsafe.putByte(buf + 1, (byte) 0x00);
             utf16Sink.clear();
             Assert.assertFalse(Utf8s.utf8ToUtf16(buf, buf + 2, utf16Sink));
 
             // Truncated 3-byte via pointer
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xE4);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0xBD);
+            Unsafe.putByte(buf, (byte) 0xE4);
+            Unsafe.putByte(buf + 1, (byte) 0xBD);
             utf16Sink.clear();
             Assert.assertFalse(Utf8s.utf8ToUtf16(buf, buf + 2, utf16Sink));
         } finally {
@@ -2320,8 +2320,8 @@ public class Utf8sTest {
         // Invalid multi-byte UTF-8 in utf8ToUtf16EscConsecutiveQuotes
         long buf = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xC0); // overlong
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x80);
+            Unsafe.putByte(buf, (byte) 0xC0); // overlong
+            Unsafe.putByte(buf + 1, (byte) 0x80);
             StringSink sink = new StringSink();
             Assert.assertFalse(Utf8s.utf8ToUtf16EscConsecutiveQuotes(buf, buf + 2, sink));
         } finally {
@@ -2364,57 +2364,57 @@ public class Utf8sTest {
             StringSink sink = new StringSink();
 
             // 2-byte lead followed by null terminator
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xC2);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0);
+            Unsafe.putByte(buf, (byte) 0xC2);
+            Unsafe.putByte(buf + 1, (byte) 0);
             Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
 
             // 2-byte lead followed by invalid continuation
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xC2);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x41); // 'A', not continuation
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0);
+            Unsafe.putByte(buf, (byte) 0xC2);
+            Unsafe.putByte(buf + 1, (byte) 0x41); // 'A', not continuation
+            Unsafe.putByte(buf + 2, (byte) 0);
             sink.clear();
             Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
 
             // 3-byte: null after b2
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xE4);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0);
+            Unsafe.putByte(buf, (byte) 0xE4);
+            Unsafe.putByte(buf + 1, (byte) 0);
             sink.clear();
             Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
 
             // 3-byte: null after b3
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xE4);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0xBD);
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0);
+            Unsafe.putByte(buf, (byte) 0xE4);
+            Unsafe.putByte(buf + 1, (byte) 0xBD);
+            Unsafe.putByte(buf + 2, (byte) 0);
             sink.clear();
             Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
 
             // 4-byte: invalid lead (not >> 3 == -2)
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xF8); // 11111000, >> 3 = -1
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x80);
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x80);
-            Unsafe.getUnsafe().putByte(buf + 3, (byte) 0x80);
-            Unsafe.getUnsafe().putByte(buf + 4, (byte) 0);
+            Unsafe.putByte(buf, (byte) 0xF8); // 11111000, >> 3 = -1
+            Unsafe.putByte(buf + 1, (byte) 0x80);
+            Unsafe.putByte(buf + 2, (byte) 0x80);
+            Unsafe.putByte(buf + 3, (byte) 0x80);
+            Unsafe.putByte(buf + 4, (byte) 0);
             sink.clear();
             Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
 
             // 4-byte: null after b2
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xF0);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0);
+            Unsafe.putByte(buf, (byte) 0xF0);
+            Unsafe.putByte(buf + 1, (byte) 0);
             sink.clear();
             Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
 
             // 4-byte: null after b3
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xF0);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x9F);
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0);
+            Unsafe.putByte(buf, (byte) 0xF0);
+            Unsafe.putByte(buf + 1, (byte) 0x9F);
+            Unsafe.putByte(buf + 2, (byte) 0);
             sink.clear();
             Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
 
             // 4-byte: null after b4
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xF0);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x9F);
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x98);
-            Unsafe.getUnsafe().putByte(buf + 3, (byte) 0);
+            Unsafe.putByte(buf, (byte) 0xF0);
+            Unsafe.putByte(buf + 1, (byte) 0x9F);
+            Unsafe.putByte(buf + 2, (byte) 0x98);
+            Unsafe.putByte(buf + 3, (byte) 0);
             sink.clear();
             Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
         } finally {
@@ -2431,9 +2431,9 @@ public class Utf8sTest {
         long mem = Unsafe.malloc(nBytes, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+                Unsafe.putByte(mem + i, bytes[i]);
             }
-            Unsafe.getUnsafe().putByte(mem + bytes.length, (byte) 0);
+            Unsafe.putByte(mem + bytes.length, (byte) 0);
 
             Utf8StringSink sink = new Utf8StringSink();
             Utf8s.utf8ZCopy(mem, sink);
@@ -2446,9 +2446,9 @@ public class Utf8sTest {
             long mem2 = Unsafe.malloc(cyrBytes.length + 1, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < cyrBytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(mem2 + i, cyrBytes[i]);
+                    Unsafe.putByte(mem2 + i, cyrBytes[i]);
                 }
-                Unsafe.getUnsafe().putByte(mem2 + cyrBytes.length, (byte) 0);
+                Unsafe.putByte(mem2 + cyrBytes.length, (byte) 0);
                 Utf8s.utf8ZCopy(mem2, sink);
                 Assert.assertEquals("привет", sink.toString());
             } finally {
@@ -2457,7 +2457,7 @@ public class Utf8sTest {
 
             // Empty string (just null terminator)
             sink.clear();
-            Unsafe.getUnsafe().putByte(mem, (byte) 0);
+            Unsafe.putByte(mem, (byte) 0);
             Utf8s.utf8ZCopy(mem, sink);
             Assert.assertEquals("", sink.toString());
         } finally {
@@ -2572,16 +2572,16 @@ public class Utf8sTest {
         long buf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
         try {
             // Valid 3-byte (CJK 你 = E4 BD A0)
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xE4);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0xBD);
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0xA0);
+            Unsafe.putByte(buf, (byte) 0xE4);
+            Unsafe.putByte(buf + 1, (byte) 0xBD);
+            Unsafe.putByte(buf + 2, (byte) 0xA0);
             Assert.assertEquals(3, Utf8s.validateUtf8MultiByte(buf, buf + 3, (byte) 0xE4));
 
             // Valid 4-byte (emoji U+1F600 = F0 9F 98 80)
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xF0);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x9F);
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x98);
-            Unsafe.getUnsafe().putByte(buf + 3, (byte) 0x80);
+            Unsafe.putByte(buf, (byte) 0xF0);
+            Unsafe.putByte(buf + 1, (byte) 0x9F);
+            Unsafe.putByte(buf + 2, (byte) 0x98);
+            Unsafe.putByte(buf + 3, (byte) 0x80);
             Assert.assertEquals(4, Utf8s.validateUtf8MultiByte(buf, buf + 4, (byte) 0xF0));
 
             // Invalid 3-byte: truncated
@@ -2591,41 +2591,41 @@ public class Utf8sTest {
             Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 3, (byte) 0xF0));
 
             // Invalid 3-byte: surrogate range
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xED);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0xA0);
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x80);
+            Unsafe.putByte(buf, (byte) 0xED);
+            Unsafe.putByte(buf + 1, (byte) 0xA0);
+            Unsafe.putByte(buf + 2, (byte) 0x80);
             Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 3, (byte) 0xED));
 
             // Invalid 4-byte: not supplementary
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xF4);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x90);
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x80);
-            Unsafe.getUnsafe().putByte(buf + 3, (byte) 0x80);
+            Unsafe.putByte(buf, (byte) 0xF4);
+            Unsafe.putByte(buf + 1, (byte) 0x90);
+            Unsafe.putByte(buf + 2, (byte) 0x80);
+            Unsafe.putByte(buf + 3, (byte) 0x80);
             Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 4, (byte) 0xF4));
 
             // Valid 2-byte
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xC2);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0xA9);
+            Unsafe.putByte(buf, (byte) 0xC2);
+            Unsafe.putByte(buf + 1, (byte) 0xA9);
             Assert.assertEquals(2, Utf8s.validateUtf8MultiByte(buf, buf + 2, (byte) 0xC2));
 
             // Truncated 2-byte
             Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 1, (byte) 0xC2));
 
             // Invalid continuation in 2-byte
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x00);
+            Unsafe.putByte(buf + 1, (byte) 0x00);
             Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 2, (byte) 0xC2));
 
             // Malformed 3-byte: overlong (E0 80 80)
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xE0);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x80);
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x80);
+            Unsafe.putByte(buf, (byte) 0xE0);
+            Unsafe.putByte(buf + 1, (byte) 0x80);
+            Unsafe.putByte(buf + 2, (byte) 0x80);
             Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 3, (byte) 0xE0));
 
             // Malformed 4-byte: invalid continuation bytes
-            Unsafe.getUnsafe().putByte(buf, (byte) 0xF0);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x28);
-            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x80);
-            Unsafe.getUnsafe().putByte(buf + 3, (byte) 0x80);
+            Unsafe.putByte(buf, (byte) 0xF0);
+            Unsafe.putByte(buf + 1, (byte) 0x28);
+            Unsafe.putByte(buf + 2, (byte) 0x80);
+            Unsafe.putByte(buf + 3, (byte) 0x80);
             Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 4, (byte) 0xF0));
         } finally {
             Unsafe.free(buf, 16, MemoryTag.NATIVE_DEFAULT);
@@ -2660,7 +2660,7 @@ public class Utf8sTest {
 
     private static long copyBytes(long buf, byte[] bytes) {
         for (int n = bytes.length, i = 0; i < n; i++) {
-            Unsafe.getUnsafe().putByte(buf + i, bytes[i]);
+            Unsafe.putByte(buf + i, bytes[i]);
         }
         return buf + bytes.length;
     }
@@ -2668,7 +2668,7 @@ public class Utf8sTest {
     private static String readUtf8(long addr, int len) {
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
-            bytes[i] = Unsafe.getUnsafe().getByte(addr + i);
+            bytes[i] = Unsafe.getByte(addr + i);
         }
         return new String(bytes, StandardCharsets.UTF_8);
     }
@@ -2693,7 +2693,7 @@ public class Utf8sTest {
         byte[] bytes = text.getBytes(Files.UTF_8);
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < bytes.length; i++) {
-            Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+            Unsafe.putByte(ptr + i, bytes[i]);
         }
 
         boolean res;

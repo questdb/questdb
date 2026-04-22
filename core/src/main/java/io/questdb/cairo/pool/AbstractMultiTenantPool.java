@@ -139,7 +139,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
                 // try to prevent new entries from being created
                 if (e.next == null) {
-                    if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
+                    if (Unsafe.cas(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
                         break;
                     } else if (e.nextStatus == NEXT_ALLOCATED) {
                         // now we must wait until another thread that executes a get() call
@@ -352,7 +352,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             LOG.debug().$("Thread ").$(thread).$(" is moving to entry ").$(e.index + 1).$();
 
             // all allocated, create next entry if possible
-            if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
+            if (Unsafe.cas(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
                 e.next = new Entry<>(e.index + 1, clock.getTicks(), segmentSize);
             } else {

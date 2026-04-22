@@ -312,7 +312,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
             byte[] bytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
             long ptr = io.questdb.std.Unsafe.malloc(bytes.length, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
             for (int i = 0; i < bytes.length; i++) {
-                io.questdb.std.Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                io.questdb.std.Unsafe.putByte(ptr + i, bytes[i]);
             }
             allocatedMemory.add(ptr);
             allocatedMemory.add((long) bytes.length);

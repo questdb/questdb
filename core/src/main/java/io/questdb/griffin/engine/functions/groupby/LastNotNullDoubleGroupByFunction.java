@@ -43,7 +43,7 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
             long hi = ptr + (count - 1) * 8L;
             long offset = count - 1;
             for (; hi >= ptr; hi -= 8L) {
-                double value = Unsafe.getUnsafe().getDouble(hi);
+                double value = Unsafe.getDouble(hi);
                 if (!Numbers.isNull(value)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);

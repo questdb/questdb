@@ -43,7 +43,7 @@ public class LastIPv4GroupByFunction extends FirstIPv4GroupByFunction {
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(ptr + ((long) count - 1) * Integer.BYTES));
+                mapValue.putInt(valueIndex + 1, Unsafe.getInt(ptr + ((long) count - 1) * Integer.BYTES));
             }
         }
     }

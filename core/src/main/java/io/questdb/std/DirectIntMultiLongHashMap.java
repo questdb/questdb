@@ -132,7 +132,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
     }
 
     public int keyAt(long index) {
-        return Unsafe.getUnsafe().getInt(ptr + index * entrySize);
+        return Unsafe.getInt(ptr + index * entrySize);
     }
 
     public long keyIndex(int key) {
@@ -183,7 +183,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         if (index < 0) {
             long entryPtr = ptr + (-index - 1) * entrySize;
             for (int i = 0; i < valueCount; i++) {
-                Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * i, values[i]);
+                Unsafe.putLong(entryPtr + 4 + 8L * i, values[i]);
             }
         } else {
             putAllAt0(index, key, values);
@@ -204,14 +204,14 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
             throw new IllegalArgumentException("valueIndex out of bounds: " + valueIndex);
         }
         if (index < 0) {
-            Unsafe.getUnsafe().putLong(ptr + (-index - 1) * entrySize + 4 + 8L * valueIndex, value);
+            Unsafe.putLong(ptr + (-index - 1) * entrySize + 4 + 8L * valueIndex, value);
         } else {
             long entryPtr = ptr + index * entrySize;
-            Unsafe.getUnsafe().putInt(entryPtr, key);
+            Unsafe.putInt(entryPtr, key);
             for (int i = 0; i < valueCount; i++) {
-                Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * i, 0L);
+                Unsafe.putLong(entryPtr + 4 + 8L * i, 0L);
             }
-            Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * valueIndex, value);
+            Unsafe.putLong(entryPtr + 4 + 8L * valueIndex, value);
             size++;
             if (--free == 0) {
                 try {
@@ -256,7 +256,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         if (valueIndex < 0 || valueIndex >= valueCount) {
             throw new IllegalArgumentException("valueIndex out of bounds: " + valueIndex);
         }
-        return index < 0 ? Unsafe.getUnsafe().getLong(ptr + (-index - 1) * entrySize + 4 + 8L * valueIndex) : noEntryValue;
+        return index < 0 ? Unsafe.getLong(ptr + (-index - 1) * entrySize + 4 + 8L * valueIndex) : noEntryValue;
     }
 
     private long probe(int key, long index) {
@@ -277,9 +277,9 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
 
     private void putAllAt0(long index, int key, long[] values) {
         final long entryPtr = ptr + index * entrySize;
-        Unsafe.getUnsafe().putInt(entryPtr, key);
+        Unsafe.putInt(entryPtr, key);
         for (int i = 0; i < valueCount; i++) {
-            Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * i, values[i]);
+            Unsafe.putLong(entryPtr + 4 + 8L * i, values[i]);
         }
     }
 
@@ -299,7 +299,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         zero();
 
         for (long p = oldPtr, lim = oldPtr + entrySize * oldCapacity; p < lim; p += entrySize) {
-            int key = Unsafe.getUnsafe().getInt(p);
+            int key = Unsafe.getInt(p);
             if (key != noEntryKey) {
                 long hashCode = Hash.fastHashInt64(key);
                 long index = hashCode & mask;
@@ -308,10 +308,10 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
                 }
 
                 long entryPtr = ptr + index * entrySize;
-                Unsafe.getUnsafe().putInt(entryPtr, key);
+                Unsafe.putInt(entryPtr, key);
                 // Copy all values
                 for (long o = 4, oLim = 4 + 8L * valueCount; o < oLim; o += 8) {
-                    Unsafe.getUnsafe().putLong(entryPtr + o, Unsafe.getUnsafe().getLong(p + o));
+                    Unsafe.putLong(entryPtr + o, Unsafe.getLong(p + o));
                 }
             }
         }
@@ -324,7 +324,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
             Vect.memset(ptr, entrySize * capacity, 0);
         } else {
             for (long p = ptr, lim = ptr + entrySize * capacity; p < lim; p += entrySize) {
-                Unsafe.getUnsafe().putInt(p, noEntryKey);
+                Unsafe.putInt(p, noEntryKey);
             }
         }
     }

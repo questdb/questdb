@@ -92,7 +92,7 @@ public class Digest implements Utf8Sink {
     @Override
     public Utf8Sink putNonAscii(long lo, long hi) {
         for (long p = lo; p < hi; p++) {
-            this.digest.update(Unsafe.getUnsafe().getByte(p));
+            this.digest.update(Unsafe.getByte(p));
         }
         return this;
     }

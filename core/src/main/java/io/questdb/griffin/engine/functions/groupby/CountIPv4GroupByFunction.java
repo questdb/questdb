@@ -44,7 +44,7 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
             long nonNullCount = 0;
             final long hi = ptr + count * (long) Integer.BYTES;
             for (; ptr < hi; ptr += Integer.BYTES) {
-                if (Unsafe.getUnsafe().getInt(ptr) != Numbers.IPv4_NULL) {
+                if (Unsafe.getInt(ptr) != Numbers.IPv4_NULL) {
                     nonNullCount++;
                 }
             }

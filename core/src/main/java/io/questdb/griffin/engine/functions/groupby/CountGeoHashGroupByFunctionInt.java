@@ -44,7 +44,7 @@ public class CountGeoHashGroupByFunctionInt extends AbstractCountGroupByFunction
             long nonNullCount = 0;
             final long hi = ptr + count * 4L;
             for (; ptr < hi; ptr += 4L) {
-                if (Unsafe.getUnsafe().getInt(ptr) != GeoHashes.INT_NULL) {
+                if (Unsafe.getInt(ptr) != GeoHashes.INT_NULL) {
                     nonNullCount++;
                 }
             }

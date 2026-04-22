@@ -176,7 +176,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
 
         try {
             if (ff.read(seqMetaFd, longBuffer, Long.BYTES, SEQ_META_OFFSET_STRUCTURE_VERSION) == Long.BYTES) {
-                long structureVersion = Unsafe.getUnsafe().getLong(longBuffer);
+                long structureVersion = Unsafe.getLong(longBuffer);
                 return structureVersion == DROP_TABLE_STRUCTURE_VERSION;
             } else {
                 LOG.error().$("cannot read structure version, assume table is being dropped [path=").$(path).I$();

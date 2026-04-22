@@ -180,7 +180,7 @@ public class BooleanGroupByFunctionBatchTest {
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         long addr = lastAllocated;
         for (boolean value : values) {
-            Unsafe.getUnsafe().putByte(addr, value ? (byte) 1 : 0);
+            Unsafe.putByte(addr, value ? (byte) 1 : 0);
             addr++;
         }
         return lastAllocated;

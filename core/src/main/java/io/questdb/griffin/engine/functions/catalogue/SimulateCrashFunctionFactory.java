@@ -174,7 +174,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            Unsafe.getUnsafe().getLong(0L);
+            Unsafe.getLong(0L);
             return true;
         }
 

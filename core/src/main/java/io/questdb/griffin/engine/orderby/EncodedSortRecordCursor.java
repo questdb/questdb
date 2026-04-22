@@ -124,7 +124,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         }
         if (currentAddr < endAddr) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            long chainOffset = Unsafe.getUnsafe().getLong(currentAddr);
+            long chainOffset = Unsafe.getLong(currentAddr);
             currentAddr += entrySize;
             recordChain.recordAt(recordChain.getRecord(), chainOffset);
             return true;

@@ -76,17 +76,17 @@ public class QwpNullBitmapTest {
 
             // Set bit 0 (LSB)
             QwpNullBitmapTestUtil.setNull(address, 0);
-            byte b = Unsafe.getUnsafe().getByte(address);
+            byte b = Unsafe.getByte(address);
             Assert.assertEquals(0b00000001, b & 0xFF);
 
             // Set bit 7 (MSB of first byte)
             QwpNullBitmapTestUtil.setNull(address, 7);
-            b = Unsafe.getUnsafe().getByte(address);
+            b = Unsafe.getByte(address);
             Assert.assertEquals(0b10000001, b & 0xFF);
 
             // Set bit 3
             QwpNullBitmapTestUtil.setNull(address, 3);
-            b = Unsafe.getUnsafe().getByte(address);
+            b = Unsafe.getByte(address);
             Assert.assertEquals(0b10001001, b & 0xFF);
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
@@ -104,12 +104,12 @@ public class QwpNullBitmapTest {
 
             // Set bit 8 (first bit of second byte)
             QwpNullBitmapTestUtil.setNull(address, 8);
-            Assert.assertEquals(0, Unsafe.getUnsafe().getByte(address) & 0xFF);
-            Assert.assertEquals(0b00000001, Unsafe.getUnsafe().getByte(address + 1) & 0xFF);
+            Assert.assertEquals(0, Unsafe.getByte(address) & 0xFF);
+            Assert.assertEquals(0b00000001, Unsafe.getByte(address + 1) & 0xFF);
 
             // Set bit 15 (last bit of second byte)
             QwpNullBitmapTestUtil.setNull(address, 15);
-            Assert.assertEquals(0b10000001, Unsafe.getUnsafe().getByte(address + 1) & 0xFF);
+            Assert.assertEquals(0b10000001, Unsafe.getByte(address + 1) & 0xFF);
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
@@ -142,7 +142,7 @@ public class QwpNullBitmapTest {
             // Set row 9 (bit 1 of second byte)
             QwpNullBitmapTestUtil.setNull(address, 9);
             Assert.assertTrue(QwpNullBitmap.isNull(address, 9));
-            Assert.assertEquals(0b00000010, Unsafe.getUnsafe().getByte(address + 1) & 0xFF);
+            Assert.assertEquals(0b00000010, Unsafe.getByte(address + 1) & 0xFF);
 
             Assert.assertEquals(1, QwpNullBitmap.countNulls(address, rowCount));
         } finally {

@@ -116,7 +116,7 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.POSITIVE_INFINITY);
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.POSITIVE_INFINITY);
     }
 
     @Override

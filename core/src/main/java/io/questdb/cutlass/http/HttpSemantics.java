@@ -76,7 +76,7 @@ public class HttpSemantics {
      * @return the address of the next character if c is a delimiter.
      */
     public static long swallowNextDelimiter(long lo, long hi) {
-        if (lo < hi && isDelimiter((char) Unsafe.getUnsafe().getByte(lo))) {
+        if (lo < hi && isDelimiter((char) Unsafe.getByte(lo))) {
             return lo + 1;
         }
         return lo;
@@ -90,7 +90,7 @@ public class HttpSemantics {
      * @return the address of the first character that isn't a whitespace.
      */
     public static long swallowOWS(long lo, long hi) {
-        while (lo < hi && (char) Unsafe.getUnsafe().getByte(lo) == ' ') {
+        while (lo < hi && (char) Unsafe.getByte(lo) == ' ') {
             lo++;
         }
         return lo;
@@ -104,7 +104,7 @@ public class HttpSemantics {
      * @return the address of the first character that isn't a token.
      */
     public static long swallowTokens(long lo, long hi) {
-        while (lo < hi && isToken((char) Unsafe.getUnsafe().getByte(lo))) {
+        while (lo < hi && isToken((char) Unsafe.getByte(lo))) {
             lo++;
         }
         return lo;

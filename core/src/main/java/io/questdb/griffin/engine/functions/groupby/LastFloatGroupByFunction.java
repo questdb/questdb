@@ -44,7 +44,7 @@ public class LastFloatGroupByFunction extends FirstFloatGroupByFunction {
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putFloat(valueIndex + 1, Unsafe.getUnsafe().getFloat(ptr + ((long) count - 1) * Float.BYTES));
+                mapValue.putFloat(valueIndex + 1, Unsafe.getFloat(ptr + ((long) count - 1) * Float.BYTES));
             }
         }
     }

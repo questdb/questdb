@@ -75,7 +75,7 @@ public class ChunkedContentParserTest {
                 StringBuilder received = new StringBuilder();
                 long result = parser.handleRecv(ptr, ptr + input.length(), (lo, hi) -> {
                     for (long p = lo; p < hi; p++) {
-                        received.append((char) Unsafe.getUnsafe().getByte(p));
+                        received.append((char) Unsafe.getByte(p));
                     }
                 });
                 Assert.assertEquals(Long.MIN_VALUE, result);
@@ -140,7 +140,7 @@ public class ChunkedContentParserTest {
                 StringBuilder received = new StringBuilder();
                 long result = parser.handleRecv(ptr, ptr + input.length(), (lo, hi) -> {
                     for (long p = lo; p < hi; p++) {
-                        received.append((char) Unsafe.getUnsafe().getByte(p));
+                        received.append((char) Unsafe.getByte(p));
                     }
                 });
                 Assert.assertEquals(Long.MAX_VALUE, result);
@@ -163,7 +163,7 @@ public class ChunkedContentParserTest {
                 StringBuilder received = new StringBuilder();
                 long result = parser.handleRecv(ptr, ptr + input.length(), (lo, hi) -> {
                     for (long p = lo; p < hi; p++) {
-                        received.append((char) Unsafe.getUnsafe().getByte(p));
+                        received.append((char) Unsafe.getByte(p));
                     }
                 });
                 Assert.assertEquals(Long.MAX_VALUE, result);

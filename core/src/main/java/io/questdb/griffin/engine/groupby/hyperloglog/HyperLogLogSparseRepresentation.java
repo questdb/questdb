@@ -101,7 +101,7 @@ public class HyperLogLogSparseRepresentation {
         dst.setAllocator(allocator);
         dst.of(0);
         for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + ((long) capacity() << 2); p < lim; p += 4L) {
-            int entry = Unsafe.getUnsafe().getInt(p);
+            int entry = Unsafe.getInt(p);
             if (entry != NO_ENTRY_VALUE) {
                 int idx = decodeDenseIndex(entry);
                 byte leadingZeros = (byte) decodeNumberOfLeadingZeros(entry);
@@ -120,9 +120,9 @@ public class HyperLogLogSparseRepresentation {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + (INITIAL_CAPACITY << 2));
             zero(this.ptr, INITIAL_CAPACITY);
-            Unsafe.getUnsafe().putInt(this.ptr + CAPACITY_OFFSET, INITIAL_CAPACITY);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (INITIAL_CAPACITY * LOAD_FACTOR));
+            Unsafe.putInt(this.ptr + CAPACITY_OFFSET, INITIAL_CAPACITY);
+            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (INITIAL_CAPACITY * LOAD_FACTOR));
             moduloMask = INITIAL_CAPACITY - 1;
         } else {
             this.ptr = ptr;
@@ -159,14 +159,14 @@ public class HyperLogLogSparseRepresentation {
         setAt(index, entry);
         int size = size();
         int sizeLimit = sizeLimit();
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, ++size);
+        Unsafe.putInt(ptr + SIZE_OFFSET, ++size);
         if (size >= sizeLimit) {
             rehash(capacity() << 1, sizeLimit << 1);
         }
     }
 
     private int capacity() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + CAPACITY_OFFSET) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + CAPACITY_OFFSET) : 0;
     }
 
     private int computeNumberOfLeadingZeros(long hash) {
@@ -187,7 +187,7 @@ public class HyperLogLogSparseRepresentation {
     }
 
     private int entryAt(int index) {
-        return Unsafe.getUnsafe().getInt(ptr + HEADER_SIZE + ((long) index << 2));
+        return Unsafe.getInt(ptr + HEADER_SIZE + ((long) index << 2));
     }
 
     private long linearCounting(int total, int empty) {
@@ -214,19 +214,19 @@ public class HyperLogLogSparseRepresentation {
         }
 
         final int oldCapacity = capacity();
-        final byte type = Unsafe.getUnsafe().getByte(ptr);
+        final byte type = Unsafe.getByte(ptr);
 
         long oldPtr = ptr;
         ptr = allocator.malloc(HEADER_SIZE + ((long) newCapacity << 2));
         zero(ptr, newCapacity);
-        Unsafe.getUnsafe().putByte(ptr, type);
-        Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
+        Unsafe.putByte(ptr, type);
+        Unsafe.putInt(ptr + CAPACITY_OFFSET, newCapacity);
+        Unsafe.putInt(ptr + SIZE_OFFSET, 0);
+        Unsafe.putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
         moduloMask = newCapacity - 1;
 
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + ((long) oldCapacity << 2); p < lim; p += 4L) {
-            int entry = Unsafe.getUnsafe().getInt(p);
+            int entry = Unsafe.getInt(p);
             if (entry != NO_ENTRY_VALUE) {
                 int registerIdx = decodeSparseIndex(entry);
                 add(registerIdx, entry);
@@ -237,11 +237,11 @@ public class HyperLogLogSparseRepresentation {
     }
 
     private void setAt(int index, int entry) {
-        Unsafe.getUnsafe().putInt(ptr + HEADER_SIZE + ((long) index << 2), entry);
+        Unsafe.putInt(ptr + HEADER_SIZE + ((long) index << 2), entry);
     }
 
     private int sizeLimit() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
     }
 
     private boolean tryAddAt(int index, int registerIdx, int entry) {
@@ -267,7 +267,7 @@ public class HyperLogLogSparseRepresentation {
 
     void copyTo(HyperLogLogSparseRepresentation dst) {
         for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + ((long) capacity() << 2); p < lim; p += 4L) {
-            int entry = Unsafe.getUnsafe().getInt(p);
+            int entry = Unsafe.getInt(p);
             if (entry != NO_ENTRY_VALUE) {
                 int registerIdx = decodeSparseIndex(entry);
                 dst.add(registerIdx, entry);
@@ -277,7 +277,7 @@ public class HyperLogLogSparseRepresentation {
 
     void copyTo(HyperLogLogDenseRepresentation dst) {
         for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + ((long) capacity() << 2); p < lim; p += 4L) {
-            int entry = Unsafe.getUnsafe().getInt(p);
+            int entry = Unsafe.getInt(p);
             if (entry != NO_ENTRY_VALUE) {
                 int idx = decodeDenseIndex(entry);
                 byte leadingZeros = (byte) decodeNumberOfLeadingZeros(entry);
@@ -287,6 +287,6 @@ public class HyperLogLogSparseRepresentation {
     }
 
     int size() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + SIZE_OFFSET) : 0;
     }
 }

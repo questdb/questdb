@@ -668,7 +668,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
                         int len = (int) (hi - lo);
                         byte[] buf = new byte[len];
                         for (int i = 0; i < len; i++) {
-                            buf[i] = Unsafe.getUnsafe().getByte(lo + i);
+                            buf[i] = Unsafe.getByte(lo + i);
                         }
                         fos.write(buf);
                     }
