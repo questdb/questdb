@@ -753,10 +753,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      * Unmap the {@code _pm} file (if opened) and clear this instance.
      */
     public void unmapAndClear(FilesFacade ff) {
+        final long addr = this.addr;
+        final long fileSize = this.fileSize;
+        clear();
         if (addr != 0) {
             ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
         }
-        clear();
     }
 
     private static native boolean canSkipRowGroup0(
