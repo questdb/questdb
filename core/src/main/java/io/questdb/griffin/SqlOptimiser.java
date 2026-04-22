@@ -1027,14 +1027,9 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Walks the expression tree and adds pass-through columns to the inner window
-    // models that sit between the referencing site and the origin of each literal.
-    //
-    // For a literal X, the "origin" is the first inner window model (by index) that
-    // owns X, or the translating model below index 0 if no inner window model owns it.
-    // Pass-through is added to all inner window models in (origin, upToExclusive);
-    // lower indices can't resolve X from their nested chain, and the referencing site
-    // itself is expected to already have X available through its own mechanism.
+    // Propagates each literal only through inner window models above its origin:
+    // lower-indexed models can't resolve the literal from their nested chain, and
+    // the referencing site itself already has it.
     private void addLiteralPassThroughToInnerWindowModels(
             ExpressionNode node,
             ObjList<IQueryModel> innerWindowModels,
@@ -4027,9 +4022,6 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
-    // Returns the index of the first inner window model that owns the given token
-    // (i.e., has it in its aliasToColumnMap), or -1 if no inner window model owns it
-    // (token is either a base column or unresolvable).
     private int findInnerWindowModelOwnerIdx(ObjList<IQueryModel> innerWindowModels, CharSequence token) {
         for (int i = 0, n = innerWindowModels.size(); i < n; i++) {
             if (!innerWindowModels.getQuick(i).getAliasToColumnMap().excludes(token)) {
@@ -9757,11 +9749,9 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        // Add pass-through columns to innerWindowModels for columns referenced by
-        // groupByModel. When an aggregate contains a nested window function, the inner
-        // window model sits between groupByModel and translatingModel. Both GROUP BY
-        // keys and base columns used in aggregate arguments need pass-through so the
-        // groupByModel can resolve them through the inner window model chain.
+        // When an aggregate wraps a nested window, the inner window model sits between
+        // groupByModel and translatingModel. Propagate GROUP BY keys and aggregate-arg
+        // literals through the chain so groupByModel can resolve them.
         if (innerWindowModels.size() > 0 && (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
             final int nInner = innerWindowModels.size();
             ObjList<QueryColumn> groupByCols = groupByModel.getBottomUpColumns();
@@ -9769,7 +9759,6 @@ public class SqlOptimiser implements Mutable {
                 QueryColumn col = groupByCols.getQuick(i);
                 ExpressionNode ast = col.getAst();
                 if (ast.type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
-                    // GROUP BY key — add direct pass-through
                     for (int j = 0; j < nInner; j++) {
                         IQueryModel innerWm = innerWindowModels.getQuick(j);
                         if (innerWm.getAliasToColumnMap().excludes(col.getAlias())) {
@@ -9777,26 +9766,20 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
                 } else {
-                    // Aggregate — add pass-through for literal references in its arguments
-                    // (e.g., max(x - avg(x) OVER ()) needs x to pass through)
                     addLiteralPassThroughToInnerWindowModels(ast, innerWindowModels, nInner);
                 }
             }
 
-            // When multiple inner window models exist, an outer model's window expression
-            // may reference a base column that the deeper inner window models don't yet
-            // expose. Propagate literals referenced by each later inner window model's
-            // own window expression through the deeper inner window models so the chain
-            // can resolve them.
+            // A later inner window model's OVER clause may reference literals that
+            // deeper models don't yet expose; forward them through the chain.
             if (nInner > 1) {
                 for (int i = 1; i < nInner; i++) {
                     IQueryModel laterModel = innerWindowModels.getQuick(i);
                     ObjList<QueryColumn> laterCols = laterModel.getBottomUpColumns();
                     for (int k = 0, m = laterCols.size(); k < m; k++) {
                         QueryColumn laterCol = laterCols.getQuick(k);
-                        if (laterCol.isWindowExpression()) {
-                            WindowExpression wc = (WindowExpression) laterCol;
-                            addLiteralPassThroughToInnerWindowModels(laterCol.getAst(), innerWindowModels, i);
+                        if (laterCol instanceof WindowExpression wc) {
+                            addLiteralPassThroughToInnerWindowModels(wc.getAst(), innerWindowModels, i);
                             ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
                             for (int p = 0, pN = partitionBy.size(); p < pN; p++) {
                                 addLiteralPassThroughToInnerWindowModels(partitionBy.getQuick(p), innerWindowModels, i);

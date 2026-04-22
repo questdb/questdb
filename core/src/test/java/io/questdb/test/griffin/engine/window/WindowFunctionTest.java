@@ -13154,6 +13154,58 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionAsArgumentToAggregateWithMultipleGroupByKeysAndThreeInnerWindows() throws Exception {
+        // Three aggregates, each with a distinct nested window, stressing the chain when
+        // nInner > 2: pass-through must reach intermediate models without leaking window
+        // aliases into models that can't resolve them.
+        assertQuery(
+                """
+                        category\tmax_avg\tmin_sum\tavg_cnt
+                        A\t1.5\t3.0\t2.0
+                        B\t3.5\t7.0\t2.0
+                        """,
+                "SELECT category, " +
+                        "max(avg(x) OVER (PARTITION BY category)) AS max_avg, " +
+                        "min(sum(x) OVER (PARTITION BY category)) AS min_sum, " +
+                        "avg(count(x) OVER (PARTITION BY category)) AS avg_cnt " +
+                        "FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithPartitionByNotInGroupBy() throws Exception {
+        // Window PARTITION BY uses a column (cat2) that is NOT a GROUP BY key (cat1).
+        // Inner window model must expose both columns so the chain resolves them.
+        assertQuery(
+                """
+                        cat1\tpeak
+                        A\t3.0
+                        B\t3.0
+                        """,
+                "SELECT cat1, max(avg(x) OVER (PARTITION BY cat2)) AS peak " +
+                        "FROM tab GROUP BY cat1 ORDER BY cat1",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, " +
+                        "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
+                        "CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END AS cat2, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testWindowFunctionAsArgumentToCast() throws Exception {
         // Test window function as direct argument to cast() function
         assertQuery(
