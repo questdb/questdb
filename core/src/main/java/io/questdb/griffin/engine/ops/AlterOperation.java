@@ -77,9 +77,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
-    public final static short DROP_PARQUET_ENCODING = SET_PARQUET_ENCODING + 1; // 27
-    private static final long BIT_DEDUP_KEY = 0x04L;
-    private static final long INDEX_TYPE_MASK = 0x03L;
+    private static final long BIT_DEDUP_KEY = 0x08L;
+    private static final long INDEX_TYPE_MASK = 0x07L;
     private static final Log LOG = LogFactory.getLog(AlterOperation.class);
     private final ObjList<CharSequence> authColumnNames = new ObjList<>();
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
