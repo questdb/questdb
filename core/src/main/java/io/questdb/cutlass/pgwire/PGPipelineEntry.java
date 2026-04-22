@@ -2892,11 +2892,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
+        if (valueSize < dimensions * 2 * Integer.BYTES) {
+            throw kaput().put("malformed array dimension headers [dimensions=").put(dimensions).put(", valueSize=").put(valueSize).put(']');
+        }
+
         PGNonNullBinaryArrayView arrayView = arrayViewPool.next();
         for (int j = 0; j < dimensions; j++) {
-            if (valueSize < 2 * Integer.BYTES) {
-                throw kaput().put("malformed array dimension header [dimensionIndex=").put(j).put(']');
-            }
             int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
             if (dimensionSize < 0) {
                 throw kaput().put("array dimension size cannot be negative [dimensionIndex=").put(j).put(", size=").put(dimensionSize).put(']');
