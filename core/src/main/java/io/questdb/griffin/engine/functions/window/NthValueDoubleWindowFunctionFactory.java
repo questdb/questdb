@@ -318,6 +318,9 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new NthValueOverWholeResultSetFunction(args.get(0), n);
+                } // between unbounded preceding and unbounded following -- whole result set
+                else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    return new NthValueOverWholeResultSetFunction(args.get(0), n);
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new NthValueOverUnboundedRowsFrameFunction(args.get(0), n);
@@ -339,8 +342,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                // between unbounded preceding and [current row | unbounded following]
-                if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
+                // between unbounded preceding and unbounded following -- whole result set
+                if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    return new NthValueOverWholeResultSetFunction(args.get(0), n);
+                } // between unbounded preceding and current row
+                else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new NthValueOverUnboundedRowsFrameFunction(args.get(0), n);
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {

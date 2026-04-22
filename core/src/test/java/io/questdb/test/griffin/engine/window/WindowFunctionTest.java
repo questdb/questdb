@@ -11634,6 +11634,60 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueWholeResultSetRangeUnboundedFollowing() throws Exception {
+        // Regression: RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING with ORDER BY
+        // must return the n-th value for every row. Previously routed to
+        // NthValueOverRangeFrameFunction, which left nthValue = NaN everywhere because
+        // Math.abs(ts - ts') >= Long.MAX_VALUE is never true.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t30.0
+                            1970-01-01T00:00:00.000002Z\t30.0
+                            1970-01-01T00:00:00.000003Z\t30.0
+                            1970-01-01T00:00:00.000004Z\t30.0
+                            1970-01-01T00:00:00.000005Z\t30.0
+                            """),
+                    "select ts, nth_value(val, 3) over (order by ts range between unbounded preceding and unbounded following) nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueWholeResultSetRowsUnboundedFollowing() throws Exception {
+        // Regression: ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING must return
+        // the n-th value for every row. Previously routed to
+        // NthValueOverUnboundedRowsFrameFunction (ZERO_PASS) which emitted NULL for
+        // rows 1..n-1 because the value is not found until row n.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t30.0
+                            1970-01-01T00:00:00.000002Z\t30.0
+                            1970-01-01T00:00:00.000003Z\t30.0
+                            1970-01-01T00:00:00.000004Z\t30.0
+                            1970-01-01T00:00:00.000005Z\t30.0
+                            """),
+                    "select ts, nth_value(val, 3) over (order by ts rows between unbounded preceding and unbounded following) nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNthValueBeyondFrameSize() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
