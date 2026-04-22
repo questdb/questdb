@@ -13445,9 +13445,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNthValueRowsUnboundedToUnbounded() throws Exception {
         // Non-partitioned ROWS frame `unbounded preceding and unbounded following`. Routes
-        // to NthValueOverUnboundedRowsFrameFunction (factory branch at lines 271-273,
-        // shared with the `...and current row` case). nth(2) locks on row 2's value once
-        // count reaches n.
+        // to NthValueOverWholeResultSetFunction (TWO_PASS): pass1 locks on the n-th row's
+        // value, pass2 writes it to every row.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
@@ -13455,7 +13454,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tnv
-                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000001Z\t20.0
                             1970-01-01T00:00:00.000002Z\t20.0
                             1970-01-01T00:00:00.000003Z\t20.0
                             1970-01-01T00:00:00.000004Z\t20.0
@@ -13464,7 +13463,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, nth_value(val, 2) over (" +
                             "order by ts rows between unbounded preceding and unbounded following) nv from tab",
                     "ts",
-                    false,
+                    true,
                     true
             );
         });
