@@ -22,8 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.map;
+package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -33,22 +38,50 @@ import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-final class UnorderedVarcharMapValue implements MapValue {
+/**
+ * A flyweight map value over a densely packed value region, matching the
+ * per-column layout used by {@link Map} implementations.
+ * Column addresses are computed as {@code valueAddress + valueOffsets[index]}.
+ * <p>
+ * Used by {@link Map} implementations that store value columns at a fixed
+ * offset from the entry start, as well as by the batched keyed GROUP BY
+ * dispatch path to keep all value-column accesses monomorphic regardless of
+ * the underlying map type.
+ */
+public class FlyweightPackedMapValue implements FlyweightMapValue {
     private final long[] valueOffsets;
     private final long valueSize;
-    // Flyweights are lazily-initialized to avoid allocations
-    // in case when decimal/long256 are not present in the query.
     private Decimal128 decimal128;
     private Decimal256 decimal256;
-    private long limit;
+    // Start address of the entry this flyweight is positioned at. Only
+    // meaningful when set via the three-argument of(entryAddress, valueAddress,
+    // isNew) form; left stale by the single-argument of(valueAddress) form
+    // used on the batched dispatch path.
+    private long entryAddress;
+    private boolean isNew;
     private Long256Impl long256;
-    private boolean newValue;
-    private UnorderedVarcharMapRecord record; // double-linked
-    private long startAddress; // key-value pair start address
     private long valueAddress;
 
-    public UnorderedVarcharMapValue(long valueSize, long[] valueOffsets) {
+    public FlyweightPackedMapValue(@NotNull ColumnTypes valueTypes) {
+        final int columnCount = valueTypes.getColumnCount();
+        this.valueOffsets = new long[columnCount];
+        long offset = 0;
+        for (int i = 0; i < columnCount; i++) {
+            valueOffsets[i] = offset;
+            final int columnType = valueTypes.getColumnType(i);
+            final int size = ColumnType.sizeOf(columnType);
+            if (size <= 0) {
+                throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+            }
+            offset += size;
+        }
+        this.valueSize = offset;
+    }
+
+    public FlyweightPackedMapValue(long valueSize, long @Nullable [] valueOffsets) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
     }
@@ -87,7 +120,7 @@ final class UnorderedVarcharMapValue implements MapValue {
     public void addLong256(int index, Long256 value) {
         Long256 acc = getLong256A(index);
         Long256Util.add(acc, value);
-        putLong256internal(index, acc);
+        Long256.putLong256(acc, getAddress(index));
     }
 
     @Override
@@ -97,9 +130,13 @@ final class UnorderedVarcharMapValue implements MapValue {
     }
 
     @Override
-    public void copyFrom(MapValue value) {
-        UnorderedVarcharMapValue other = (UnorderedVarcharMapValue) value;
+    public void copyFrom(MapValue srcValue) {
+        final FlyweightPackedMapValue other = (FlyweightPackedMapValue) srcValue;
         Vect.memcpy(valueAddress, other.valueAddress, valueSize);
+    }
+
+    public void copyRawValue(long ptr) {
+        Vect.memcpy(valueAddress, ptr, valueSize);
     }
 
     @Override
@@ -223,14 +260,28 @@ final class UnorderedVarcharMapValue implements MapValue {
         return long256;
     }
 
+    /**
+     * Returns the byte offset of the value column at {@code valueIndex} within
+     * the value region. Used by {@code computeKeyedBatch} overrides to hoist a
+     * compile-time-constant offset out of their hot loop.
+     */
+    public long getOffset(int valueIndex) {
+        return valueOffsets[valueIndex];
+    }
+
     @Override
     public short getShort(int index) {
         return Unsafe.getShort(getAddress(index));
     }
 
     @Override
+    public long getSizeInBytes() {
+        return valueSize;
+    }
+
+    @Override
     public long getStartAddress() {
-        return startAddress;
+        return entryAddress;
     }
 
     @Override
@@ -238,9 +289,13 @@ final class UnorderedVarcharMapValue implements MapValue {
         return getLong(index);
     }
 
+    public long getValueAddress() {
+        return valueAddress;
+    }
+
     @Override
     public boolean isNew() {
-        return newValue;
+        return isNew;
     }
 
     @Override
@@ -266,11 +321,23 @@ final class UnorderedVarcharMapValue implements MapValue {
 
     @Override
     public void minLong(int index, long value) {
-        if (value != Numbers.INT_NULL) {
+        if (value != Numbers.LONG_NULL) {
             final long p = getAddress(index);
             final long current = Unsafe.getLong(p);
-            Unsafe.putLong(p, current != Numbers.INT_NULL ? Math.min(value, current) : value);
+            Unsafe.putLong(p, current != Numbers.LONG_NULL ? Math.min(value, current) : value);
         }
+    }
+
+    @Override
+    public void of(long valueAddress) {
+        this.valueAddress = valueAddress;
+    }
+
+    public FlyweightPackedMapValue of(long entryAddress, long valueAddress, boolean isNew) {
+        this.entryAddress = entryAddress;
+        this.valueAddress = valueAddress;
+        this.isNew = isNew;
+        return this;
     }
 
     @Override
@@ -280,14 +347,12 @@ final class UnorderedVarcharMapValue implements MapValue {
 
     @Override
     public void putByte(int index, byte value) {
-        final long p = getAddress(index);
-        Unsafe.putByte(p, value);
+        Unsafe.putByte(getAddress(index), value);
     }
 
     @Override
     public void putChar(int index, char value) {
-        final long p = getAddress(index);
-        Unsafe.putChar(p, value);
+        Unsafe.putChar(getAddress(index), value);
     }
 
     @Override
@@ -331,26 +396,22 @@ final class UnorderedVarcharMapValue implements MapValue {
 
     @Override
     public void putDouble(int index, double value) {
-        final long p = getAddress(index);
-        Unsafe.putDouble(p, value);
+        Unsafe.putDouble(getAddress(index), value);
     }
 
     @Override
     public void putFloat(int index, float value) {
-        final long p = getAddress(index);
-        Unsafe.putFloat(p, value);
+        Unsafe.putFloat(getAddress(index), value);
     }
 
     @Override
     public void putInt(int index, int value) {
-        final long p = getAddress(index);
-        Unsafe.putInt(p, value);
+        Unsafe.putInt(getAddress(index), value);
     }
 
     @Override
     public void putLong(int index, long value) {
-        final long p = getAddress(index);
-        Unsafe.putLong(p, value);
+        Unsafe.putLong(getAddress(index), value);
     }
 
     @Override
@@ -362,7 +423,7 @@ final class UnorderedVarcharMapValue implements MapValue {
 
     @Override
     public void putLong256(int index, Long256 value) {
-        putLong256internal(index, value);
+        Long256.putLong256(value, getAddress(index));
     }
 
     @Override
@@ -376,8 +437,8 @@ final class UnorderedVarcharMapValue implements MapValue {
     }
 
     @Override
-    public void setMapRecordHere() {
-        record.of(startAddress);
+    public void setNew(boolean isNew) {
+        this.isNew = isNew;
     }
 
     private Decimal128 getDecimal128() {
@@ -399,26 +460,5 @@ final class UnorderedVarcharMapValue implements MapValue {
             long256 = new Long256Impl();
         }
         return long256;
-    }
-
-    private void putLong256internal(int index, Long256 value) {
-        Long256.putLong256(value, getAddress(index));
-    }
-
-    void copyRawValue(long ptr) {
-        Vect.memcpy(valueAddress, ptr, valueSize);
-    }
-
-    void linkRecord(UnorderedVarcharMapRecord record) {
-        this.record = record;
-        record.setLimit(limit);
-    }
-
-    UnorderedVarcharMapValue of(long startAddress, long limit, boolean newValue) {
-        this.startAddress = startAddress;
-        this.valueAddress = startAddress + UnorderedVarcharMap.KEY_SIZE;
-        this.limit = limit;
-        this.newValue = newValue;
-        return this;
     }
 }

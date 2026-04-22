@@ -33,6 +33,7 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -71,14 +72,13 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private final int splitIndex;
     private final DirectUtf8String[] usA;
     private final DirectUtf8String[] usB;
-    private final OrderedMapValue value;
+    private final FlyweightPackedMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
     private long keyAddress;
     private int keySize = -1;
     private int lastKeyIndex = -1;
     private int lastKeyOffset = -1;
-    private long limit;
     private long startAddress; // key-value pair start address
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
@@ -87,14 +87,13 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     OrderedMapVarSizeRecord(
             long valueSize,
             long[] valueOffsets,
-            OrderedMapValue value,
+            FlyweightPackedMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.value = value;
-        this.value.linkRecord(this); // provides feature to position this record at location of map value
         this.splitIndex = valueOffsets != null ? valueOffsets.length : 0;
 
         int nColumns;
@@ -213,7 +212,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.valueOffsets = valueOffsets;
         this.keyTypes = keyTypes;
         this.splitIndex = splitIndex;
-        this.value = new OrderedMapValue(valueSize, valueOffsets);
+        this.value = new FlyweightPackedMapValue(valueSize, valueOffsets);
         this.csA = csA;
         this.csB = csB;
         this.usA = usA;
@@ -335,8 +334,8 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @Override
     public void copyValue(MapValue destValue) {
-        OrderedMapValue destFastValue = (OrderedMapValue) destValue;
-        destFastValue.copyRawValue(valueAddress);
+        FlyweightPackedMapValue destPackedValue = (FlyweightPackedMapValue) destValue;
+        destPackedValue.copyRawValue(valueAddress);
     }
 
     @Override
@@ -530,7 +529,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @Override
     public MapValue getValue() {
-        return value.of(startAddress, valueAddress, limit, false);
+        return value.of(startAddress, valueAddress, false);
     }
 
     @Override
@@ -567,11 +566,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.valueAddress = address + Integer.BYTES + keySize;
         this.lastKeyIndex = -1;
         this.lastKeyOffset = -1;
-    }
-
-    @Override
-    public void setLimit(long limit) {
-        this.limit = limit;
     }
 
     @Override

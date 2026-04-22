@@ -2869,11 +2869,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, PGMessageProcessingException {
+        if (valueSize < 3 * Integer.BYTES) {
+            throw kaput().put("malformed array header [valueSize=").put(valueSize).put(']');
+        }
         int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
-        if (dimensions == 0) {
-            throw kaput().put("array dimensions cannot be zero");
+        if (dimensions <= 0) {
+            throw kaput().put("array dimensions must be positive [dimensions=").put(dimensions).put(']');
         }
         if (dimensions > ColumnType.ARRAY_NDIMS_LIMIT) {
             throw kaput().put("array dimensions cannot be greater than maximum array dimensions [dimensions=").put(dimensions).put(", max=").put(ColumnType.ARRAY_NDIMS_LIMIT).put(']');
@@ -2889,10 +2892,21 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
+        if (valueSize < dimensions * 2 * Integer.BYTES) {
+            throw kaput().put("malformed array dimension headers [dimensions=").put(dimensions).put(", valueSize=").put(valueSize).put(']');
+        }
+
         PGNonNullBinaryArrayView arrayView = arrayViewPool.next();
         for (int j = 0; j < dimensions; j++) {
             int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
-            arrayView.addDimLen(dimensionSize);
+            if (dimensionSize < 0) {
+                throw kaput().put("array dimension size cannot be negative [dimensionIndex=").put(j).put(", size=").put(dimensionSize).put(']');
+            }
+            try {
+                arrayView.addDimLen(dimensionSize);
+            } catch (ArithmeticException e) {
+                throw kaput().put("array size overflow");
+            }
             lo += Integer.BYTES;
             valueSize -= Integer.BYTES;
 
@@ -3072,6 +3086,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void setBindVariableAsVarcharArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, PGMessageProcessingException {
+        if (valueSize < 5 * Integer.BYTES) {
+            throw kaput().put("malformed varchar array header [valueSize=").put(valueSize).put(']');
+        }
         int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
@@ -3095,7 +3112,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         // dimensions == 1
         int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
-        arrayView.addDimLen(dimensionSize);
+        if (dimensionSize < 0) {
+            throw kaput().put("array dimension size cannot be negative [size=").put(dimensionSize).put(']');
+        }
+        try {
+            arrayView.addDimLen(dimensionSize);
+        } catch (ArithmeticException e) {
+            throw kaput().put("array size overflow");
+        }
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
@@ -3559,29 +3583,28 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return msgParseReconcileParameterTypes((short) msgParseParameterTypeOIDs.size(), typeContainer);
     }
 
-    boolean populateBindingServiceForExec(
+    void populateBindingServiceForExec(
             SqlExecutionContext sqlExecutionContext,
             CharacterStore bindVariableCharacterStore,
             @Transient DirectUtf8String directUtf8String,
             @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool
     ) throws PGMessageProcessingException, SqlException {
         if (isError()) {
-            return false;
+            return;
         }
-        return switch (sqlType) {
+        switch (sqlType) {
             // these query types use binding variables at the EXEC time
             case CompiledQuery.EXPLAIN, CompiledQuery.SELECT, CompiledQuery.PSEUDO_SELECT, CompiledQuery.INSERT,
-                 CompiledQuery.INSERT_AS_SELECT, CompiledQuery.UPDATE, CompiledQuery.ALTER -> {
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        bindVariableCharacterStore,
-                        directUtf8String,
-                        binarySequenceParamsPool
-                );
-                yield true;
+                 CompiledQuery.INSERT_AS_SELECT, CompiledQuery.UPDATE, CompiledQuery.ALTER ->
+                    copyParameterValuesToBindVariableService(
+                            sqlExecutionContext,
+                            bindVariableCharacterStore,
+                            directUtf8String,
+                            binarySequenceParamsPool
+                    );
+            default -> {
             }
-            default -> false;
-        };
+        }
     }
 
     boolean populateBindingServiceForSync(SqlExecutionContext sqlExecutionContext,

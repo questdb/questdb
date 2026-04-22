@@ -26,31 +26,37 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
+    protected final int argColumnIndex;
     protected int valueIndex;
 
     public FirstShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.SHORT);
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putShort(valueIndex + 1, Unsafe.getShort(ptr));
+                mapValue.putShort(valueIndex + 1, Unsafe.getShort(dataAddr));
             }
         }
     }
@@ -59,6 +65,50 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
         mapValue.putShort(valueIndex + 1, arg.getShort(record));
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // setEmpty pre-seeds rowId = LONG_NULL, so new entries win the "first" comparison
+        // as long as we keep the explicit LONG_NULL check.
+        final long rowIdOffset = mapValue.getOffset(valueIndex);
+        final long valueColumnOffset = mapValue.getOffset(valueIndex + 1);
+        // Fast path: arg is a direct short column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final long rowId = baseRowId + rowIndex;
+                final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                final long existingRowId = Unsafe.getLong(entryBase + rowIdOffset);
+                if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId) {
+                    Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                    Unsafe.putShort(entryBase + valueColumnOffset, Unsafe.getShort(argAddr + (rowIndex << 1)));
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final long rowId = baseRowId + rowIndex;
+                final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                final long existingRowId = Unsafe.getLong(entryBase + rowIdOffset);
+                if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId) {
+                    record.setRowIndex(rowIndex);
+                    Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                    Unsafe.putShort(entryBase + valueColumnOffset, arg.getShort(record));
+                }
+            }
+        }
     }
 
     @Override

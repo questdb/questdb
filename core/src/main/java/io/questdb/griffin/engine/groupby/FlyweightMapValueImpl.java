@@ -396,11 +396,6 @@ public class FlyweightMapValueImpl implements FlyweightMapValue {
     }
 
     @Override
-    public void setMapRecordHere() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void setNew(boolean isNew) {
         this.isNew = isNew;
     }

@@ -24,9 +24,12 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
@@ -38,13 +41,55 @@ public class LastLongGroupByFunction extends FirstLongGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            long lastRowId = startRowId + count - 1;
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            long lastRowId = startRowId + rowCount - 1;
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putLong(valueIndex + 1, Unsafe.getLong(ptr + ((long) count - 1) * Long.BYTES));
+                mapValue.putLong(valueIndex + 1, Unsafe.getLong(dataAddr + ((long) rowCount - 1) * Long.BYTES));
+            }
+        }
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // setEmpty pre-seeds rowId = LONG_NULL (= Long.MIN_VALUE), so the first real
+        // rowId always exceeds it. No explicit null branch needed.
+        final long rowIdOffset = mapValue.getOffset(valueIndex);
+        final long valueColumnOffset = mapValue.getOffset(valueIndex + 1);
+        // Fast path: arg is a direct long column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final long rowId = baseRowId + rowIndex;
+                final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                if (rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                    Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                    Unsafe.putLong(entryBase + valueColumnOffset, Unsafe.getLong(argAddr + (rowIndex << 3)));
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final long rowId = baseRowId + rowIndex;
+                final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                if (rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                    record.setRowIndex(rowIndex);
+                    Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                    Unsafe.putLong(entryBase + valueColumnOffset, arg.getLong(record));
+                }
             }
         }
     }

@@ -46,12 +46,12 @@ class FirstGeoHashGroupByFunctionLong extends GeoLongFunction implements GroupBy
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putLong(valueIndex + 1, Unsafe.getLong(ptr));
+                mapValue.putLong(valueIndex + 1, Unsafe.getLong(dataAddr));
             }
         }
     }

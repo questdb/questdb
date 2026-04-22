@@ -93,8 +93,10 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     }
 
     void addDimLen(int dimLen) {
+        // compute the new length first; on overflow multiplyExact throws and shape stays consistent
+        int newLen = Math.multiplyExact(flatViewLength, dimLen);
         shape.add(dimLen);
-        flatViewLength *= dimLen;
+        flatViewLength = newLen;
     }
 
     /**
@@ -123,19 +125,18 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
         assert shape.size() > 0;
 
         short componentNativeType;
-        int expectedElementSize;
-        switch (pgOidType) {
-            case PGOids.PG_INT8:
+        int expectedElementSize = switch (pgOidType) {
+            case PGOids.PG_INT8 -> {
                 componentNativeType = ColumnType.LONG;
-                expectedElementSize = Long.BYTES;
-                break;
-            case PGOids.PG_FLOAT8:
+                yield Long.BYTES;
+            }
+            case PGOids.PG_FLOAT8 -> {
                 componentNativeType = ColumnType.DOUBLE;
-                expectedElementSize = Double.BYTES;
-                break;
-            default:
-                throw CairoException.nonCritical().put("unsupported array type, only arrays of int8 and float8 are supported [pgOid=").put(pgOidType).put(']');
-        }
+                yield Double.BYTES;
+            }
+            default ->
+                    throw CairoException.nonCritical().put("unsupported array type, only arrays of int8 and float8 are supported [pgOid=").put(pgOidType).put(']');
+        };
 
         // validate that there are no nulls in the array since we don't support them
         int increment = Integer.BYTES + expectedElementSize;

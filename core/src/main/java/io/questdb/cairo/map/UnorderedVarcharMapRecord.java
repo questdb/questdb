@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Hash;
@@ -54,10 +55,9 @@ final class UnorderedVarcharMapRecord implements MapRecord {
     private final Long256Impl[] keyLong256B;
     private final DirectUtf8String usA;
     private final DirectUtf8String usB;
-    private final UnorderedVarcharMapValue value;
+    private final FlyweightPackedMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
-    private long limit;
     private long startAddress;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
@@ -65,13 +65,12 @@ final class UnorderedVarcharMapRecord implements MapRecord {
     UnorderedVarcharMapRecord(
             long valueSize,
             long[] valueOffsets,
-            UnorderedVarcharMapValue value,
+            FlyweightPackedMapValue value,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.value = value;
-        this.value.linkRecord(this); // provides feature to position this record at location of map value
 
         int nColumns;
         if (valueTypes != null) {
@@ -121,7 +120,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.columnOffsets = columnOffsets;
-        this.value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
+        this.value = new FlyweightPackedMapValue(valueSize, valueOffsets);
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
         this.usA = new DirectUtf8String();
@@ -160,7 +159,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public void copyValue(MapValue destValue) {
-        UnorderedVarcharMapValue destVarcharValue = (UnorderedVarcharMapValue) destValue;
+        FlyweightPackedMapValue destVarcharValue = (FlyweightPackedMapValue) destValue;
         destVarcharValue.copyRawValue(startAddress + UnorderedVarcharMap.KEY_SIZE);
     }
 
@@ -307,7 +306,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public MapValue getValue() {
-        return value.of(startAddress, limit, false);
+        return value.of(startAddress, startAddress + UnorderedVarcharMap.KEY_SIZE, false);
     }
 
     @Override
@@ -344,12 +343,9 @@ final class UnorderedVarcharMapRecord implements MapRecord {
         return 0;
     }
 
+    @Override
     public void of(long address) {
         this.startAddress = address;
-    }
-
-    public void setLimit(long limit) {
-        this.limit = limit;
     }
 
     @Override
