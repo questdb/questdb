@@ -6044,31 +6044,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // Compile target point count as a Function to support bind variables.
-        // The function must evaluate to an integer >= 2.
         final Function targetFunc = functionParser.parseFunction(targetNode, EmptyRecordMetadata.INSTANCE, executionContext);
-        if (!targetFunc.isConstant() && !targetFunc.isRuntimeConstant()) {
-            Misc.free(targetFunc);
-            throw SqlException.$(targetNode.position, "target point count must be a constant or bind variable");
-        }
-        // Validate the function type is integer-compatible
-        final int targetType = ColumnType.tagOf(targetFunc.getType());
-        if (targetType != ColumnType.INT && targetType != ColumnType.LONG
-                && targetType != ColumnType.SHORT && targetType != ColumnType.BYTE) {
-            Misc.free(targetFunc);
-            throw SqlException.$(targetNode.position, "integer expected for target point count");
-        }
-        // Validate at compile time if the value is known
-        if (targetFunc.isConstant()) {
-            int targetPoints = getTargetPoints(targetFunc, targetType, targetNode.position);
-            if (targetPoints < 2) {
-                Misc.free(targetFunc);
-                throw SqlException.$(targetNode.position, "target points must be at least 2");
-            }
-        }
-
-        // All remaining work must free targetFunc on error since it's not yet
+        // All subsequent work must free targetFunc on error since it's not yet
         // owned by a factory.
         try {
+            if (!targetFunc.isConstant() && !targetFunc.isRuntimeConstant()) {
+                throw SqlException.$(targetNode.position, "target point count must be a constant or bind variable");
+            }
+            final int targetType = ColumnType.tagOf(targetFunc.getType());
+            if (targetType != ColumnType.INT && targetType != ColumnType.LONG
+                    && targetType != ColumnType.SHORT && targetType != ColumnType.BYTE) {
+                throw SqlException.$(targetNode.position, "integer expected for target point count");
+            }
+            if (targetFunc.isConstant()) {
+                getTargetPoints(targetFunc, targetType, targetNode.position);
+            }
             // Parse optional gap threshold (3rd argument, LTTB only)
             long gapThresholdMicros = 0;
             if (subsample.paramCount >= 3 && method == SubsampleRecordCursorFactory.METHOD_LTTB) {

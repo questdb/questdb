@@ -447,10 +447,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (45.0, 9, '2024-01-01T04:00:00.000000Z'),
                     (20.0, 2, '2024-01-01T05:00:00.000000Z')
                     """);
-            // M4 target=8, 2 buckets of 3 rows each:
-            // Bucket 1 (00:00-02:00): first=10, last=5, min=5, max=50 -> rows 0,1,2 (deduped: 3)
-            // Bucket 2 (03:00-05:00): first=30, last=20, min=20, max=45 -> rows 3,4,5 (deduped: 3)
-            // Total: 6 rows. ORDER BY quantity sorts by quantity ascending.
+            // M4 target=8: numBuckets = 8/4 = 2 time-based buckets over 5h range.
+            // Bucket 1 (00:00-02:30): first=10, last=5, min=5, max=50 -> indices 0,1,2
+            // Bucket 2 (02:30-05:00): first=30, last=20, min=20, max=45 -> indices 3,4,5
+            // All 6 rows selected (each role is a distinct row). ORDER BY quantity.
             assertSql(
                     "price\tquantity\tts\n" +
                             "30.0\t1\t2024-01-01T03:00:00.000000Z\n" +
@@ -462,11 +462,6 @@ public class SubsampleTest extends AbstractCairoTest {
                     "SELECT price, quantity, ts FROM t SUBSAMPLE m4(price, 8) ORDER BY quantity"
             );
         });
-    }
-
-    private static int countDataRows(String result) {
-        String[] lines = result.split("\n");
-        return lines.length - 1; // subtract header row
     }
 
     @Test
@@ -1065,9 +1060,15 @@ public class SubsampleTest extends AbstractCairoTest {
                     "SELECT a.price, a.ts, b.volume FROM a ASOF JOIN b SUBSAMPLE lttb(price, 2)"
             );
             // Verify the join without SUBSAMPLE gives all 5 rows
-            sink.clear();
-            printSql("SELECT a.price, a.ts, b.volume FROM a ASOF JOIN b");
-            Assert.assertEquals(5, countDataRows(sink.toString()));
+            assertSql(
+                    "price\tts\tvolume\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\t100.0\n" +
+                            "20.0\t2024-01-01T01:00:00.000000Z\t200.0\n" +
+                            "30.0\t2024-01-01T02:00:00.000000Z\t300.0\n" +
+                            "40.0\t2024-01-01T03:00:00.000000Z\t400.0\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\t500.0\n",
+                    "SELECT a.price, a.ts, b.volume FROM a ASOF JOIN b"
+            );
         });
     }
 
@@ -1276,13 +1277,16 @@ public class SubsampleTest extends AbstractCairoTest {
                     "SELECT price, ts FROM t SUBSAMPLE lttb(price, 4, '1h')"
             );
 
-            // Non-gap LTTB with same target: hard maximum of 4
-            sink.clear();
-            printSql("SELECT price, ts FROM t SUBSAMPLE lttb(price, 4)");
-            int nonGapRows = countDataRows(sink.toString());
-            Assert.assertTrue(
-                    "Non-gap LTTB must not exceed target (4), got " + nonGapRows,
-                    nonGapRows <= 4
+            // Non-gap LTTB with same target: hard maximum of 4.
+            // LTTB selects first and last always, plus 2 from middle buckets.
+            // The exact middle selections depend on triangle area calculations.
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "11.0\t2024-01-01T00:30:00.000000Z\n" +
+                            "40.0\t2024-01-01T18:00:00.000000Z\n" +
+                            "51.0\t2024-01-02T00:30:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 4)"
             );
         });
     }
@@ -1309,14 +1313,21 @@ public class SubsampleTest extends AbstractCairoTest {
                     (32.0, '2024-01-01T12:20:00.000000Z'),
                     (33.0, '2024-01-01T12:30:00.000000Z')
                     """);
-            // 3 segments of 4 rows, target 10. Budget sufficient (3*2=6 < 10).
-            // Each segment gets ~3 points, total should be <= 10.
-            sink.clear();
-            printSql("SELECT price, ts FROM t SUBSAMPLE lttb(price, 10, '1h')");
-            int rows = countDataRows(sink.toString());
-            Assert.assertTrue("Gap mode with sufficient budget should stay within target, got " + rows,
-                    rows <= 10);
-            Assert.assertTrue("Gap mode should produce at least 6 rows (2 per segment)", rows >= 6);
+            // 3 segments of 4 rows, target 10. Floor = 3*2 = 6. Budget above floor = 4.
+            // Each segment gets 3 points (first, LTTB-selected middle, last). Total = 9.
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "11.0\t2024-01-01T00:10:00.000000Z\n" +
+                            "13.0\t2024-01-01T00:30:00.000000Z\n" +
+                            "20.0\t2024-01-01T06:00:00.000000Z\n" +
+                            "21.0\t2024-01-01T06:10:00.000000Z\n" +
+                            "23.0\t2024-01-01T06:30:00.000000Z\n" +
+                            "30.0\t2024-01-01T12:00:00.000000Z\n" +
+                            "31.0\t2024-01-01T12:10:00.000000Z\n" +
+                            "33.0\t2024-01-01T12:30:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 10, '1h')"
+            );
         });
     }
 
@@ -1375,12 +1386,71 @@ public class SubsampleTest extends AbstractCairoTest {
                     (5.0, '2024-01-01T02:00:00.000000Z'),
                     (30.0, '2024-01-01T03:00:00.000000Z')
                     """);
-            // target=2, numBuckets=1. Bucket has first=10, last=30, min=5, max=50.
-            // Without capping: 4 rows. With capping: 2 rows.
-            sink.clear();
-            printSql("SELECT price, ts FROM t SUBSAMPLE m4(price, 2)");
-            int rows = countDataRows(sink.toString());
-            Assert.assertTrue("M4 target=2 must not exceed 2 rows, got " + rows, rows <= 2);
+            // target=2, numBuckets=1. Bucket emits first(10), max(50), min(5), last(30)
+            // sorted by index = [0,1,2,3]. Cap at 2 keeps first two: 10.0 and 50.0.
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T01:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testM4WithExtremeValues() throws Exception {
+        // M4/MinMax use Double.POSITIVE_INFINITY/NEGATIVE_INFINITY as initial
+        // min/max sentinels (defensive fix for programmatic buffer construction
+        // with Infinity values). QuestDB stores 'Infinity'::double as NaN, so
+        // the Infinity sentinel edge cannot be tested via SQL. The fix is
+        // accepted as defensive untested code. This test covers extreme finite
+        // values near Double.MAX_VALUE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.7E308, '2024-01-01T00:00:00.000000Z'),
+                    (10.0, '2024-01-01T01:00:00.000000Z'),
+                    (-1.7E308, '2024-01-01T02:00:00.000000Z'),
+                    (20.0, '2024-01-01T03:00:00.000000Z'),
+                    (15.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // 5 rows, target 4, 1 bucket: first=1.7E308(idx0), last=15(idx4),
+            // min=-1.7E308(idx2), max=1.7E308(idx0). Deduped: idx0,2,4 = 3 rows.
+            assertSql(
+                    "price\tts\n" +
+                            "1.7E308\t2024-01-01T00:00:00.000000Z\n" +
+                            "-1.7E308\t2024-01-01T02:00:00.000000Z\n" +
+                            "15.0\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxWithExtremeValues() throws Exception {
+        // See testM4WithExtremeValues for Infinity discussion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.7E308, '2024-01-01T00:00:00.000000Z'),
+                    (10.0, '2024-01-01T01:00:00.000000Z'),
+                    (-1.7E308, '2024-01-01T02:00:00.000000Z'),
+                    (20.0, '2024-01-01T03:00:00.000000Z'),
+                    (15.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // 5 rows, target 4, 2 buckets of 2h each.
+            // Bucket 1 [0h,2h): min=10(1h), max=1.7E308(0h).
+            // Bucket 2 [2h,4h]: min=-1.7E308(2h), max=20(3h).
+            assertSql(
+                    "price\tts\n" +
+                            "1.7E308\t2024-01-01T00:00:00.000000Z\n" +
+                            "10.0\t2024-01-01T01:00:00.000000Z\n" +
+                            "-1.7E308\t2024-01-01T02:00:00.000000Z\n" +
+                            "20.0\t2024-01-01T03:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)"
+            );
         });
     }
 
@@ -1576,15 +1646,16 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2200-01-01T00:00:00.000000Z'),
                     (30.0, '2290-01-01T00:00:00.000000Z')
                     """);
-            // M4 target=4, 1 bucket: first=10, last=30, min=10, max=50
-            // All 4 rows should participate: first(idx0), max(idx1), min(idx0), last(idx3)
-            // Deduplicated: idx0, idx1, idx3 = 3 rows
-            sink.clear();
-            printSql("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)");
-            String result = sink.toString();
-            int rows = countDataRows(result);
-            Assert.assertTrue("M4 final bucket must include last row, got " + rows + ":\n" + result, rows >= 3);
-            Assert.assertTrue("M4 must include the last data point", result.contains("2290"));
+            // M4 target=4, 4 rows: bufferSize(4) <= targetPoints(4), all rows returned.
+            // Last data point (2290) must be included.
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2000-01-01T00:00:00.000000Z\n" +
+                            "50.0\t2100-01-01T00:00:00.000000Z\n" +
+                            "20.0\t2200-01-01T00:00:00.000000Z\n" +
+                            "30.0\t2290-01-01T00:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 4)"
+            );
         });
     }
 
@@ -1600,11 +1671,16 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2200-01-01T00:00:00.000000Z'),
                     (30.0, '2290-01-01T00:00:00.000000Z')
                     """);
-            // MinMax target=4, 2 buckets: each bucket gets min and max
-            sink.clear();
-            printSql("SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)");
-            String result = sink.toString();
-            Assert.assertTrue("MinMax must include the last data point", result.contains("2290"));
+            // MinMax target=4, 2 buckets. Bucket 1: min=10(2000), max=50(2100).
+            // Bucket 2: min=20(2200), max=30(2290). All 4 rows selected.
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2000-01-01T00:00:00.000000Z\n" +
+                            "50.0\t2100-01-01T00:00:00.000000Z\n" +
+                            "20.0\t2200-01-01T00:00:00.000000Z\n" +
+                            "30.0\t2290-01-01T00:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)"
+            );
         });
     }
 

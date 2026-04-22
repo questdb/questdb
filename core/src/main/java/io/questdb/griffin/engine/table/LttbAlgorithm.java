@@ -159,21 +159,18 @@ class LttbAlgorithm implements SubsampleAlgorithm {
                 totalAllocated += segTarget;
             }
 
-            // Trim largest allocations if over budget due to rounding
-            while (totalAllocated > totalPoints) {
-                int maxTarget = 0;
-                int maxIdx = -1;
-                for (int s = 0; s < segCount; s++) {
-                    int t = targets.get(s);
-                    int floor = Math.min(2, (int) segments.get(s * 2 + 1));
-                    if (t > maxTarget && t > floor) {
-                        maxTarget = t;
-                        maxIdx = s;
-                    }
+            // Trim excess due to rounding. O(segments) single pass: reduce
+            // segments from the last one backward, respecting floor.
+            int s = segCount - 1;
+            while (totalAllocated > totalPoints && s >= 0) {
+                int t = targets.get(s);
+                int floor = Math.min(2, (int) segments.get(s * 2 + 1));
+                if (t > floor) {
+                    int trim = Math.min(t - floor, totalAllocated - totalPoints);
+                    targets.set(s, t - trim);
+                    totalAllocated -= trim;
                 }
-                if (maxIdx == -1) break; // can't trim below floor
-                targets.set(maxIdx, maxTarget - 1);
-                totalAllocated--;
+                s--;
             }
         }
 
@@ -198,12 +195,18 @@ class LttbAlgorithm implements SubsampleAlgorithm {
     private static void selectOnRange(long buffer, int start, int end, int m,
                                       DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         int n = end - start;
-        if (m < 2 || n < 2) {
-            // Cannot form buckets with fewer than 2 target points or 2 data points.
-            // Emit all rows in the range.
+        if (n < 2) {
+            // Single data point or empty range - emit what's there
             for (int j = start; j < end; j++) {
                 selectedIndices.add(j);
             }
+            return;
+        }
+        if (m < 2) {
+            // Cannot form LTTB buckets with fewer than 2 target points.
+            // This should not happen in normal flow (targetPoints >= 2 is
+            // validated at compile time), but guard defensively.
+            selectedIndices.add(start);
             return;
         }
 
