@@ -601,6 +601,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 keysMap.clear();
                 int keyIdx = 0;
                 while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     MapKey key = keysMap.withKey();
                     keySink.copy(baseRecord, key);
                     MapValue value = key.createValue();
