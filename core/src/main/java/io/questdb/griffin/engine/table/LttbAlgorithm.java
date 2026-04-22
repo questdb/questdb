@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 /**
@@ -39,6 +41,12 @@ import io.questdb.std.Unsafe;
  * split into contiguous segments where consecutive timestamps are within
  * the threshold, and each segment is downsampled independently.
  * <p>
+ * <b>Gap-preserving mode uses soft target semantics:</b> target_points is a
+ * goal, not a hard maximum. Each segment receives at least
+ * min(2, segmentSize) points to preserve gap structure. When many segments
+ * are detected, the output may exceed target_points. Non-gap LTTB and
+ * M4/MinMax treat target_points as a hard maximum.
+ * <p>
  * Reference: Steinarsson, S. (2013). "Downsampling Time Series for Visual
  * Representation." University of Iceland MSc thesis.
  *
@@ -46,9 +54,24 @@ import io.questdb.std.Unsafe;
  */
 class LttbAlgorithm implements SubsampleAlgorithm {
     private final long gapThresholdMicros;
+    // Reusable native lists for segment bookkeeping. Stored as cursor-lifetime
+    // fields to avoid per-execution allocation. Cleared per execution.
+    private DirectLongList segments;
+    private DirectIntList targets;
 
     LttbAlgorithm(long gapThresholdMicros) {
         this.gapThresholdMicros = gapThresholdMicros;
+    }
+
+    void close() {
+        if (segments != null) {
+            segments.close();
+            segments = null;
+        }
+        if (targets != null) {
+            targets.close();
+            targets = null;
+        }
     }
 
     @Override
@@ -62,8 +85,29 @@ class LttbAlgorithm implements SubsampleAlgorithm {
         }
     }
 
+    /**
+     * Gap-preserving LTTB: split data into contiguous segments, downsample
+     * each independently with proportional point budget.
+     * <p>
+     * Two-pass approach with reusable native bookkeeping:
+     * <ol>
+     *   <li>Pass 1: identify segments (start, size) using gap threshold.</li>
+     *   <li>Compute proportional targets per segment. Each segment gets at
+     *       least min(2, segSize) points. If the total exceeds targetPoints,
+     *       scale down proportional allocations while preserving the floor.
+     *       The total may still exceed targetPoints when the floor alone
+     *       exceeds it (soft target semantics).</li>
+     *   <li>Pass 2: run LTTB on each segment with its budgeted target.</li>
+     * </ol>
+     */
     private void selectGapPreserving(long buffer, int n, int totalPoints,
                                      DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
+        // Pass 1: identify segments
+        if (segments == null) {
+            segments = new DirectLongList(64, MemoryTag.NATIVE_FUNC_RSS);
+        }
+        segments.clear();
+
         int segStart = 0;
         for (int i = 1; i <= n; i++) {
             boolean isGap = false;
@@ -72,26 +116,78 @@ class LttbAlgorithm implements SubsampleAlgorithm {
                 long currTs = Unsafe.getUnsafe().getLong(buffer + (long) i * ENTRY_SIZE + 8);
                 isGap = (currTs - prevTs > gapThresholdMicros);
             }
-
             if (isGap || i == n) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-                int segEnd = i;
-                int segSize = segEnd - segStart;
-
-                int segTarget = Math.max(2, (int) ((long) segSize * totalPoints / n));
-                if (segTarget > segSize) {
-                    segTarget = segSize;
-                }
-
-                if (segSize <= segTarget) {
-                    for (int j = segStart; j < segEnd; j++) {
-                        selectedIndices.add(j);
-                    }
-                } else {
-                    selectOnRange(buffer, segStart, segEnd, segTarget, selectedIndices, circuitBreaker);
-                }
-
+                int segSize = i - segStart;
+                segments.add(segStart);
+                segments.add(segSize);
                 segStart = i;
+            }
+        }
+
+        int segCount = (int) (segments.size() / 2);
+
+        // Compute actual floor: sum(min(2, segSize)) for each segment.
+        // One-row segments only need 1 point, not 2.
+        int floorTotal = 0;
+        for (int s = 0; s < segCount; s++) {
+            int segSize = (int) segments.get(s * 2 + 1);
+            floorTotal += Math.min(2, segSize);
+        }
+
+        if (targets == null) {
+            targets = new DirectIntList(64, MemoryTag.NATIVE_FUNC_RSS);
+        }
+        targets.clear();
+
+        if (floorTotal >= totalPoints) {
+            // Soft target exceeded by floor alone. Give each segment its floor.
+            for (int s = 0; s < segCount; s++) {
+                int segSize = (int) segments.get(s * 2 + 1);
+                targets.add(Math.min(2, segSize));
+            }
+        } else {
+            // Budget available above floor
+            int budgetAboveFloor = totalPoints - floorTotal;
+            int totalAllocated = 0;
+            for (int s = 0; s < segCount; s++) {
+                int segSize = (int) segments.get(s * 2 + 1);
+                int floor = Math.min(2, segSize);
+                int extra = (int) ((long) segSize * budgetAboveFloor / n);
+                int segTarget = Math.min(floor + extra, segSize);
+                targets.add(segTarget);
+                totalAllocated += segTarget;
+            }
+
+            // Trim largest allocations if over budget due to rounding
+            while (totalAllocated > totalPoints) {
+                int maxTarget = 0;
+                int maxIdx = -1;
+                for (int s = 0; s < segCount; s++) {
+                    int t = targets.get(s);
+                    int floor = Math.min(2, (int) segments.get(s * 2 + 1));
+                    if (t > maxTarget && t > floor) {
+                        maxTarget = t;
+                        maxIdx = s;
+                    }
+                }
+                if (maxIdx == -1) break; // can't trim below floor
+                targets.set(maxIdx, maxTarget - 1);
+                totalAllocated--;
+            }
+        }
+
+        // Pass 2: run LTTB per segment with budgeted targets
+        for (int s = 0; s < segCount; s++) {
+            int start = (int) segments.get(s * 2);
+            int size = (int) segments.get(s * 2 + 1);
+            int segTarget = targets.get(s);
+            if (size <= segTarget) {
+                for (int j = start; j < start + size; j++) {
+                    selectedIndices.add(j);
+                }
+            } else {
+                selectOnRange(buffer, start, start + size, segTarget, selectedIndices, circuitBreaker);
             }
         }
     }

@@ -229,6 +229,45 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testErrorNoTimestampColumnAtAll() throws Exception {
+        // Table with no TIMESTAMP column - must fail
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, label SYMBOL)");
+            assertException(
+                    "SELECT price, label FROM t SUBSAMPLE lttb(price, 2)",
+                    27,
+                    "SUBSAMPLE requires a designated timestamp column"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByLosesDesignationButSubsampleStillWorks() throws Exception {
+        // SAMPLE BY results lose designated timestamp (AsyncGroupByRecordCursorFactory
+        // has timestampIndex=-1), but the nested model chain confirms designation.
+        // The type-scan fallback must work for this case.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:30:00.000000Z'),
+                    (30.0, '2024-01-01T01:00:00.000000Z'),
+                    (40.0, '2024-01-01T01:30:00.000000Z'),
+                    (50.0, '2024-01-01T02:00:00.000000Z'),
+                    (60.0, '2024-01-01T02:30:00.000000Z')
+                    """);
+            // SAMPLE BY 1h produces 3 rows, SUBSAMPLE to 2
+            assertSql(
+                    "ts\tavg\n" +
+                            "2024-01-01T00:00:00.000000Z\t15.0\n" +
+                            "2024-01-01T02:00:00.000000Z\t55.0\n",
+                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)"
+            );
+        });
+    }
+
+    @Test
     public void testErrorTargetLessThanTwo() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -265,6 +304,93 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongTargetPointsCast() throws Exception {
+        // LONG constant via cast
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "30.0\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2::LONG)"
+            );
+        });
+    }
+
+    @Test
+    public void testLongTargetPointsDeclare() throws Exception {
+        // LONG bind variable via DECLARE
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "30.0\t2024-01-01T02:00:00.000000Z\n",
+                    "DECLARE @n := 2::LONG SELECT price, ts FROM t SUBSAMPLE lttb(price, @n)"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorLongTargetOverflow() throws Exception {
+        // LONG value exceeding Integer.MAX_VALUE
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 3_000_000_000::LONG)",
+                    59,
+                    "target points exceeds maximum"
+            );
+        });
+    }
+
+    @Test
+    public void testLongBindVariableRuntime() throws Exception {
+        // PG-wire-style LONG bind variable via $1
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            sqlExecutionContext.getBindVariableService().setLong(0, 2L);
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "30.0\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, $1)"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorUnsetBindVariable() throws Exception {
+        // Unset $1 bind variable: type is unknown at compile time, fails type check
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, $1)",
+                    46,
+                    "integer expected for target point count"
+            );
+        });
+    }
+
+    @Test
     public void testSubsampleWithOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -282,6 +408,60 @@ public class SubsampleTest extends AbstractCairoTest {
                     "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2) ORDER BY price DESC"
             );
         });
+    }
+
+    @Test
+    public void testSubsampleWithOrderByThirdColumn() throws Exception {
+        // ORDER BY on a non-SUBSAMPLE column should sort the reduced row set
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, quantity INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, 5, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, 3, '2024-01-01T01:00:00.000000Z'),
+                    (20.0, 8, '2024-01-01T02:00:00.000000Z'),
+                    (30.0, 1, '2024-01-01T03:00:00.000000Z'),
+                    (40.0, 9, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // LTTB target=2 on 5 rows: first and last
+            assertSql(
+                    "price\tquantity\tts\n" +
+                            "10.0\t5\t2024-01-01T00:00:00.000000Z\n" +
+                            "40.0\t9\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, quantity, ts FROM t SUBSAMPLE lttb(price, 2) ORDER BY quantity"
+            );
+        });
+    }
+
+    @Test
+    public void testM4WithOrderByThirdColumn() throws Exception {
+        // M4 + ORDER BY on third column: row count must not change
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, quantity INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            StringBuilder sb = new StringBuilder("INSERT INTO t VALUES\n");
+            for (int i = 0; i < 24; i++) {
+                if (i > 0) sb.append(",\n");
+                sb.append("(").append(10.0 + i * 3).append(", ").append((i * 7) % 100)
+                        .append(", '2024-01-01T").append(String.format("%02d", i))
+                        .append(":00:00.000000Z')");
+            }
+            execute(sb.toString());
+
+            sink.clear();
+            printSql("SELECT price, quantity, ts FROM t SUBSAMPLE m4(price, 8)");
+            int rowsWithout = countDataRows(sink.toString());
+            Assert.assertTrue("M4 should reduce 24 rows, got " + rowsWithout, rowsWithout <= 8);
+
+            sink.clear();
+            printSql("SELECT price, quantity, ts FROM t SUBSAMPLE m4(price, 8) ORDER BY quantity");
+            int rowsWith = countDataRows(sink.toString());
+            Assert.assertEquals("ORDER BY must not change row count", rowsWithout, rowsWith);
+        });
+    }
+
+    private static int countDataRows(String result) {
+        String[] lines = result.split("\n");
+        return lines.length - 1; // subtract header row
     }
 
     @Test
@@ -340,6 +520,7 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T03:00:00.000000Z'),
                     (40.0, '2024-01-01T04:00:00.000000Z')
                     """);
+            // CTE with SUBSAMPLE on the outer query
             assertSql(
                     "price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
@@ -361,6 +542,7 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T03:00:00.000000Z'),
                     (40.0, '2024-01-01T04:00:00.000000Z')
                     """);
+            // Subquery wrapping with SUBSAMPLE on the outer query
             assertSql(
                     "price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
@@ -579,9 +761,48 @@ public class SubsampleTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T01:00:00.000000Z'),
                     (20.0, '2024-01-01T02:00:00.000000Z')
                     """);
+            // SUBSAMPLE inside a parenthesized subquery wrapped in count()
             assertSql(
                     "count\n2\n",
                     "SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))"
+            );
+        });
+    }
+
+    @Test
+    public void testSubsampleViaSubqueryNonDesignatedTimestamp() throws Exception {
+        // Subquery wrapping a table with designated timestamp: SUBSAMPLE must work.
+        // Subquery wrapping a table WITHOUT designated timestamp: must fail.
+        // This is the Bug 6 negative test - if optimizer propagation restores
+        // SUBSAMPLE for subquery wrapping, the non-designated case must not
+        // accidentally grab a TIMESTAMP column by type.
+        assertMemoryLeak(() -> {
+            // Positive: designated timestamp - should work
+            execute("CREATE TABLE t_designated (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t_designated VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "30.0\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM (SELECT * FROM t_designated) SUBSAMPLE lttb(price, 2)"
+            );
+
+            // Negative: no designated timestamp - must fail, not silently succeed
+            execute("CREATE TABLE t_no_designated (price DOUBLE, ts TIMESTAMP)");
+            execute("""
+                    INSERT INTO t_no_designated VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            assertException(
+                    "SELECT price, ts FROM (SELECT * FROM t_no_designated) SUBSAMPLE lttb(price, 2)",
+                    54,
+                    "SUBSAMPLE requires a designated timestamp column"
             );
         });
     }
@@ -808,6 +1029,115 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubsampleNotHoistedFromJoinBranch() throws Exception {
+        // SUBSAMPLE on one join branch must not affect the other branch
+        // or the outer join result. This is a shape/isolation test.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE b (volume DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO a VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                    (100.0, '2024-01-01T00:00:00.000000Z'),
+                    (200.0, '2024-01-01T01:00:00.000000Z'),
+                    (300.0, '2024-01-01T02:00:00.000000Z'),
+                    (400.0, '2024-01-01T03:00:00.000000Z'),
+                    (500.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // SUBSAMPLE is on the outer joined result, not on one branch.
+            // The join produces 5 rows, SUBSAMPLE reduces to 2.
+            assertSql(
+                    "price\tts\tvolume\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\t100.0\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\t500.0\n",
+                    "SELECT a.price, a.ts, b.volume FROM a ASOF JOIN b SUBSAMPLE lttb(price, 2)"
+            );
+            // Verify the join without SUBSAMPLE gives all 5 rows
+            sink.clear();
+            printSql("SELECT a.price, a.ts, b.volume FROM a ASOF JOIN b");
+            Assert.assertEquals(5, countDataRows(sink.toString()));
+        });
+    }
+
+    @Test
+    public void testSubsampleBranchLocalInJoin() throws Exception {
+        // SUBSAMPLE inside a join branch (right side) must apply only to that
+        // branch. The outer join row count follows the left side, not the
+        // subsampled right side. If the optimizer hoists the branch-local
+        // SUBSAMPLE to the outer model, the outer row count would be wrong.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE b (volume DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO a VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                    (100.0, '2024-01-01T00:00:00.000000Z'),
+                    (200.0, '2024-01-01T01:00:00.000000Z'),
+                    (300.0, '2024-01-01T02:00:00.000000Z'),
+                    (400.0, '2024-01-01T03:00:00.000000Z'),
+                    (500.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // Right side subsampled to 2 rows (first=100 at 00:00, last=500 at 04:00).
+            // Left side has 5 rows. ASOF JOIN produces 5 rows driven by left side.
+            // For left rows at 01:00-03:00, the nearest right-side match is 100
+            // (the only right row with ts <= theirs). At 04:00, it matches 500.
+            // If branch SUBSAMPLE were dropped, volumes would be 100,200,300,400,500.
+            assertSql(
+                    "price\tts\tvolume\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\t100.0\n" +
+                            "20.0\t2024-01-01T01:00:00.000000Z\t100.0\n" +
+                            "30.0\t2024-01-01T02:00:00.000000Z\t100.0\n" +
+                            "40.0\t2024-01-01T03:00:00.000000Z\t100.0\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\t500.0\n",
+                    """
+                            SELECT a.price, a.ts, b.volume
+                            FROM a
+                            ASOF JOIN (
+                                SELECT volume, ts FROM b SUBSAMPLE lttb(volume, 2)
+                            ) b
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSubsampleInsideParenthesizedSubqueryNotHoisted() throws Exception {
+        // SUBSAMPLE inside a parenthesized subquery must be applied inside,
+        // not hoisted to the outer aggregation. This is the key isolation test:
+        // the inner subquery reduces 5 rows to 2, then count() returns 2.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, '2024-01-01T01:00:00.000000Z'),
+                    (20.0, '2024-01-01T02:00:00.000000Z'),
+                    (30.0, '2024-01-01T03:00:00.000000Z'),
+                    (40.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // count() wrapping SUBSAMPLE: inner reduces 5 -> 2, outer counts 2
+            assertSql(
+                    "count\n2\n",
+                    "SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))"
+            );
+        });
+    }
+
+    @Test
     public void testLttbThreePoints() throws Exception {
         // Minimum non-trivial LTTB: 1 bucket between first and last
         assertMemoryLeak(() -> {
@@ -897,6 +1227,91 @@ public class SubsampleTest extends AbstractCairoTest {
                             "40.0\t2024-01-01T18:00:00.000000Z\n",
                     "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2, '1h')"
             );
+        });
+    }
+
+    @Test
+    public void testLttbGapModeExceedsTarget() throws Exception {
+        // Gap-preserving mode uses soft target: each segment gets at least
+        // 2 points (first/last). With many small segments and a low target,
+        // the output exceeds targetPoints. Non-gap LTTB is hard-capped.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            // 10 data points with 5 gaps (6h apart, threshold 1h) = 5 segments
+            // of 2 rows each. Each segment gets at least 2 points = 10 minimum.
+            // Target is 4, but 5 segments * 2 = 10 > 4.
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (11.0, '2024-01-01T00:30:00.000000Z'),
+                    (20.0, '2024-01-01T06:00:00.000000Z'),
+                    (21.0, '2024-01-01T06:30:00.000000Z'),
+                    (30.0, '2024-01-01T12:00:00.000000Z'),
+                    (31.0, '2024-01-01T12:30:00.000000Z'),
+                    (40.0, '2024-01-01T18:00:00.000000Z'),
+                    (41.0, '2024-01-01T18:30:00.000000Z'),
+                    (50.0, '2024-01-02T00:00:00.000000Z'),
+                    (51.0, '2024-01-02T00:30:00.000000Z')
+                    """);
+            // Gap mode with target 4: soft target. 5 segments of 2 rows each,
+            // each segment gets first/last = 2 points. Total 10, exceeds target 4.
+            // Assert exact output: each segment's first and last must be present.
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "11.0\t2024-01-01T00:30:00.000000Z\n" +
+                            "20.0\t2024-01-01T06:00:00.000000Z\n" +
+                            "21.0\t2024-01-01T06:30:00.000000Z\n" +
+                            "30.0\t2024-01-01T12:00:00.000000Z\n" +
+                            "31.0\t2024-01-01T12:30:00.000000Z\n" +
+                            "40.0\t2024-01-01T18:00:00.000000Z\n" +
+                            "41.0\t2024-01-01T18:30:00.000000Z\n" +
+                            "50.0\t2024-01-02T00:00:00.000000Z\n" +
+                            "51.0\t2024-01-02T00:30:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 4, '1h')"
+            );
+
+            // Non-gap LTTB with same target: hard maximum of 4
+            sink.clear();
+            printSql("SELECT price, ts FROM t SUBSAMPLE lttb(price, 4)");
+            int nonGapRows = countDataRows(sink.toString());
+            Assert.assertTrue(
+                    "Non-gap LTTB must not exceed target (4), got " + nonGapRows,
+                    nonGapRows <= 4
+            );
+        });
+    }
+
+    @Test
+    public void testLttbGapModeBudgetScaling() throws Exception {
+        // When budget is sufficient, gap mode stays within target.
+        // 3 segments with target 10: each segment gets proportional share,
+        // total should not exceed 10.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (11.0, '2024-01-01T00:10:00.000000Z'),
+                    (12.0, '2024-01-01T00:20:00.000000Z'),
+                    (13.0, '2024-01-01T00:30:00.000000Z'),
+                    (20.0, '2024-01-01T06:00:00.000000Z'),
+                    (21.0, '2024-01-01T06:10:00.000000Z'),
+                    (22.0, '2024-01-01T06:20:00.000000Z'),
+                    (23.0, '2024-01-01T06:30:00.000000Z'),
+                    (30.0, '2024-01-01T12:00:00.000000Z'),
+                    (31.0, '2024-01-01T12:10:00.000000Z'),
+                    (32.0, '2024-01-01T12:20:00.000000Z'),
+                    (33.0, '2024-01-01T12:30:00.000000Z')
+                    """);
+            // 3 segments of 4 rows, target 10. Budget sufficient (3*2=6 < 10).
+            // Each segment gets ~3 points, total should be <= 10.
+            sink.clear();
+            printSql("SELECT price, ts FROM t SUBSAMPLE lttb(price, 10, '1h')");
+            int rows = countDataRows(sink.toString());
+            Assert.assertTrue("Gap mode with sufficient budget should stay within target, got " + rows,
+                    rows <= 10);
+            Assert.assertTrue("Gap mode should produce at least 6 rows (2 per segment)", rows >= 6);
         });
     }
 
@@ -1117,6 +1532,170 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testM4FinalBucketInclusive() throws Exception {
+        // Final bucket must include the last data point. The algorithm no longer
+        // uses maxTs + 1 as the exclusive end (which overflows at Long.MAX_VALUE).
+        // Instead, the final bucket loop skips the break condition entirely,
+        // processing all remaining rows. This SQL test validates the behavior
+        // for wide ranges; the literal Long.MAX_VALUE overflow edge is only
+        // directly testable at algorithm level since QuestDB's max representable
+        // timestamp (CommonUtils.MAX_TIMESTAMP) is less than Long.MAX_VALUE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2000-01-01T00:00:00.000000Z'),
+                    (50.0, '2100-01-01T00:00:00.000000Z'),
+                    (20.0, '2200-01-01T00:00:00.000000Z'),
+                    (30.0, '2290-01-01T00:00:00.000000Z')
+                    """);
+            // M4 target=4, 1 bucket: first=10, last=30, min=10, max=50
+            // All 4 rows should participate: first(idx0), max(idx1), min(idx0), last(idx3)
+            // Deduplicated: idx0, idx1, idx3 = 3 rows
+            sink.clear();
+            printSql("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)");
+            String result = sink.toString();
+            int rows = countDataRows(result);
+            Assert.assertTrue("M4 final bucket must include last row, got " + rows + ":\n" + result, rows >= 3);
+            Assert.assertTrue("M4 must include the last data point", result.contains("2290"));
+        });
+    }
+
+    @Test
+    public void testMinMaxFinalBucketInclusive() throws Exception {
+        // See testM4FinalBucketInclusive for overflow edge discussion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2000-01-01T00:00:00.000000Z'),
+                    (50.0, '2100-01-01T00:00:00.000000Z'),
+                    (20.0, '2200-01-01T00:00:00.000000Z'),
+                    (30.0, '2290-01-01T00:00:00.000000Z')
+                    """);
+            // MinMax target=4, 2 buckets: each bucket gets min and max
+            sink.clear();
+            printSql("SELECT price, ts FROM t SUBSAMPLE minmax(price, 4)");
+            String result = sink.toString();
+            Assert.assertTrue("MinMax must include the last data point", result.contains("2290"));
+        });
+    }
+
+    @Test
+    public void testLttbWithIntColumnDownsampling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10, '2024-01-01T00:00:00.000000Z'),
+                    (50, '2024-01-01T01:00:00.000000Z'),
+                    (20, '2024-01-01T02:00:00.000000Z'),
+                    (30, '2024-01-01T03:00:00.000000Z'),
+                    (40, '2024-01-01T04:00:00.000000Z')
+                    """);
+            assertSql(
+                    "price\tts\n" +
+                            "10\t2024-01-01T00:00:00.000000Z\n" +
+                            "40\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testM4WithLongColumnDownsampling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (100, '2024-01-01T00:00:00.000000Z'),
+                    (500, '2024-01-01T01:00:00.000000Z'),
+                    (200, '2024-01-01T02:00:00.000000Z')
+                    """);
+            assertSql(
+                    "price\tts\n" +
+                            "100\t2024-01-01T00:00:00.000000Z\n" +
+                            "500\t2024-01-01T01:00:00.000000Z\n" +
+                            "200\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 12)"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorExtraArgsM4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 5, '1h')",
+                    47,
+                    "m4() accepts exactly 2 arguments"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorExtraArgsLttb() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 5, '1h', 999)",
+                    55,
+                    "lttb() accepts at most 3 arguments"
+            );
+        });
+    }
+
+    @Test
+    public void testM4AllSameTimestampExceedsTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:00:00.000000Z'),
+                    (30.0, '2024-01-01T00:00:00.000000Z'),
+                    (40.0, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, '2024-01-01T00:00:00.000000Z')
+                    """);
+            // All same timestamp, 5 rows, target 2 - should cap at 2
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "20.0\t2024-01-01T00:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE m4(price, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testExplainPlanSubsampleBeforeOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory fact = compiler.compile(
+                        "EXPLAIN SELECT price, ts FROM t SUBSAMPLE lttb(price, 500) ORDER BY price DESC", sqlExecutionContext
+                ).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = fact.getCursor(sqlExecutionContext)) {
+                        StringBuilder sb = new StringBuilder();
+                        while (cursor.hasNext()) {
+                            sb.append(cursor.getRecord().getStrA(0)).append('\n');
+                        }
+                        String plan = sb.toString();
+                        int subsamplePos = plan.indexOf("Subsample");
+                        int sortPos = plan.indexOf("Sort");
+                        Assert.assertTrue("Plan should contain Subsample: " + plan, subsamplePos >= 0);
+                        if (sortPos >= 0) {
+                            Assert.assertTrue("Subsample should be inside Sort: " + plan,
+                                    subsamplePos > sortPos);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSubsampleWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -1155,6 +1734,375 @@ public class SubsampleTest extends AbstractCairoTest {
                     "SELECT ts, price FROM t SUBSAMPLE ORDER BY ts",
                     40,
                     "'(' expected after subsample method name"
+            );
+        });
+    }
+
+    @Test
+    public void testSubsampleWithOrderByTimestampDesc() throws Exception {
+        // SUBSAMPLE output is always timestamp-ascending. ORDER BY ts DESC
+        // after SUBSAMPLE must reverse the output. If getScanDirection()
+        // incorrectly reported the base direction, the outer ORDER BY could
+        // be skipped.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, '2024-01-01T01:00:00.000000Z'),
+                    (20.0, '2024-01-01T02:00:00.000000Z'),
+                    (30.0, '2024-01-01T03:00:00.000000Z'),
+                    (40.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // SUBSAMPLE selects first (10) and last (40), ORDER BY ts DESC reverses
+            assertSql(
+                    "price\tts\n" +
+                            "40.0\t2024-01-01T04:00:00.000000Z\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2) ORDER BY ts DESC"
+            );
+        });
+    }
+
+    @Test
+    public void testNullIntValueColumn() throws Exception {
+        // INT NULL (Numbers.INT_NULL) rows must be skipped, not treated as
+        // extreme values in the algorithm
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10, '2024-01-01T00:00:00.000000Z'),
+                    (NULL, '2024-01-01T01:00:00.000000Z'),
+                    (20, '2024-01-01T02:00:00.000000Z'),
+                    (NULL, '2024-01-01T03:00:00.000000Z'),
+                    (30, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // 3 non-null rows, target 2: first (10) and last (30)
+            assertSql(
+                    "price\tts\n" +
+                            "10\t2024-01-01T00:00:00.000000Z\n" +
+                            "30\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testNullLongValueColumn() throws Exception {
+        // LONG NULL rows must be skipped
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (100, '2024-01-01T00:00:00.000000Z'),
+                    (NULL, '2024-01-01T01:00:00.000000Z'),
+                    (200, '2024-01-01T02:00:00.000000Z')
+                    """);
+            assertSql(
+                    "price\tts\n" +
+                            "100\t2024-01-01T00:00:00.000000Z\n" +
+                            "200\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testShortColumnZeroIsPreserved() throws Exception {
+        // Zero is a valid value for SHORT columns, not null
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price SHORT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (0, '2024-01-01T00:00:00.000000Z'),
+                    (10, '2024-01-01T01:00:00.000000Z'),
+                    (0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            // All 3 rows have valid values (including zeros), target 2 selects first and last
+            assertSql(
+                    "price\tts\n" +
+                            "0\t2024-01-01T00:00:00.000000Z\n" +
+                            "0\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testByteColumnZeroIsPreserved() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price BYTE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (0, '2024-01-01T00:00:00.000000Z'),
+                    (5, '2024-01-01T01:00:00.000000Z'),
+                    (0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            assertSql(
+                    "price\tts\n" +
+                            "0\t2024-01-01T00:00:00.000000Z\n" +
+                            "0\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)"
+            );
+        });
+    }
+
+    // ---- Fast path vs fallback path tests ----
+
+    @Test
+    public void testFastPathDirectScan() throws Exception {
+        // Direct table scan: uses fast path (rowId, 24 bytes/row, no RecordChain)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, volume INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, 100, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, 500, '2024-01-01T01:00:00.000000Z'),
+                    (20.0, 200, '2024-01-01T02:00:00.000000Z'),
+                    (30.0, 300, '2024-01-01T03:00:00.000000Z'),
+                    (40.0, 400, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // All pass-through columns must be correct via recordAt()
+            assertSql(
+                    "price\tvolume\tts\n" +
+                            "10.0\t100\t2024-01-01T00:00:00.000000Z\n" +
+                            "40.0\t400\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, volume, ts FROM t SUBSAMPLE lttb(price, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testFastPathWithWhere() throws Exception {
+        // WHERE filter + fast path: recordAt() must produce filtered rows
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, 'BTC', '2024-01-01T00:00:00.000000Z'),
+                    (50.0, 'ETH', '2024-01-01T01:00:00.000000Z'),
+                    (20.0, 'BTC', '2024-01-01T02:00:00.000000Z'),
+                    (30.0, 'ETH', '2024-01-01T03:00:00.000000Z'),
+                    (40.0, 'BTC', '2024-01-01T04:00:00.000000Z')
+                    """);
+            // WHERE filters to 3 BTC rows, SUBSAMPLE reduces to 2
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "40.0\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, ts FROM t WHERE symbol = 'BTC' SUBSAMPLE lttb(price, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testFastPathWithLimit() throws Exception {
+        // LIMIT runs after SUBSAMPLE: reduces already-subsampled result
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, '2024-01-01T01:00:00.000000Z'),
+                    (20.0, '2024-01-01T02:00:00.000000Z'),
+                    (30.0, '2024-01-01T03:00:00.000000Z'),
+                    (40.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // SUBSAMPLE to 3, then LIMIT 2 - should get first 2 of 3
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T01:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 3) LIMIT 2"
+            );
+        });
+    }
+
+    @Test
+    public void testFastPathCursorReuseAndToTop() throws Exception {
+        // Verify fast path cursor can be reused via getCursor() and
+        // toTop() resets iteration correctly
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, '2024-01-01T01:00:00.000000Z'),
+                    (20.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory fact = compiler.compile(
+                        "SELECT price, ts FROM t SUBSAMPLE lttb(price, 2)", sqlExecutionContext
+                ).getRecordCursorFactory()) {
+                    // Reuse: multiple getCursor() calls on same factory
+                    for (int run = 0; run < 3; run++) {
+                        try (RecordCursor cursor = fact.getCursor(sqlExecutionContext)) {
+                            TestUtils.assertCursor(
+                                    "price\tts\n" +
+                                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                                            "20.0\t2024-01-01T02:00:00.000000Z\n",
+                                    cursor, fact.getMetadata(), true, sink
+                            );
+                            // toTop: re-iterate same cursor
+                            cursor.toTop();
+                            int count = 0;
+                            while (cursor.hasNext()) count++;
+                            Assert.assertEquals("toTop re-iteration must produce same count", 2, count);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFallbackPathSampleBy() throws Exception {
+        // SAMPLE BY uses fallback path (RecordChain materialization)
+        // because AsyncGroupByRecordCursorFactory has timestampIndex=-1
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:30:00.000000Z'),
+                    (30.0, '2024-01-01T01:00:00.000000Z'),
+                    (40.0, '2024-01-01T01:30:00.000000Z'),
+                    (50.0, '2024-01-01T02:00:00.000000Z'),
+                    (60.0, '2024-01-01T02:30:00.000000Z')
+                    """);
+            // SAMPLE BY produces 3 rows, fallback materializes them, SUBSAMPLE reduces to 2
+            assertSql(
+                    "ts\tavg\n" +
+                            "2024-01-01T00:00:00.000000Z\t15.0\n" +
+                            "2024-01-01T02:00:00.000000Z\t55.0\n",
+                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testFallbackPathCursorReuse() throws Exception {
+        // Verify fallback path cursor can be reused (RecordChain cleared between runs)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:30:00.000000Z'),
+                    (30.0, '2024-01-01T01:00:00.000000Z'),
+                    (40.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory fact = compiler.compile(
+                        "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)", sqlExecutionContext
+                ).getRecordCursorFactory()) {
+                    for (int run = 0; run < 3; run++) {
+                        try (RecordCursor cursor = fact.getCursor(sqlExecutionContext)) {
+                            TestUtils.assertCursor(
+                                    "ts\tavg\n" +
+                                            "2024-01-01T00:00:00.000000Z\t15.0\n" +
+                                            "2024-01-01T01:00:00.000000Z\t35.0\n",
+                                    cursor, fact.getMetadata(), true, sink
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // ---- Sorting tests ----
+
+    @Test
+    public void testFallbackSortDescendingInput() throws Exception {
+        // Deterministic descending input via subquery with ORDER BY ts DESC.
+        // The inner sort produces a SortedRecordCursorFactory (no designated
+        // timestamp, non-forward direction), forcing fallback path. The
+        // fallback's isSorted=false triggers nativeSortBufferByTimestamp()
+        // which must reorder to ascending before the algorithm runs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, '2024-01-01T01:00:00.000000Z'),
+                    (20.0, '2024-01-01T02:00:00.000000Z'),
+                    (30.0, '2024-01-01T03:00:00.000000Z'),
+                    (40.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            // Inner subquery delivers rows in DESC order. Fallback path
+            // buffers them descending (isSorted=false), native sort reorders
+            // to ascending, LTTB selects first (10) and last (40).
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "40.0\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, ts FROM (SELECT price, ts FROM t ORDER BY ts DESC) SUBSAMPLE lttb(price, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testFallbackSortNegativeTimestamp() throws Exception {
+        // SAMPLE BY 1w around 1970-01-01 produces a bucket starting on
+        // Monday 1969-12-29 (pre-epoch, negative timestamp). This exercises
+        // the ts ^ Long.MIN_VALUE signed-to-unsigned mapping in the native
+        // sort. Without it, negative timestamps sort after positive ones.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '1970-01-01T00:00:00.000000Z'),
+                    (20.0, '1970-01-02T00:00:00.000000Z'),
+                    (30.0, '1970-01-08T00:00:00.000000Z'),
+                    (40.0, '1970-01-09T00:00:00.000000Z'),
+                    (50.0, '1970-01-15T00:00:00.000000Z'),
+                    (60.0, '1970-01-16T00:00:00.000000Z')
+                    """);
+            // SAMPLE BY 1w ALIGN TO CALENDAR produces buckets starting at
+            // 1969-12-29 (negative ts), 1970-01-05, 1970-01-12.
+            // Wrap in ORDER BY ts DESC to force deterministic descending input,
+            // ensuring isSorted=false and nativeSortBufferByTimestamp() runs.
+            // The sort must handle the negative first-bucket timestamp correctly
+            // via ts ^ Long.MIN_VALUE signed-to-unsigned mapping.
+            assertSql(
+                    "ts\tavg\n" +
+                            "1969-12-29T00:00:00.000000Z\t15.0\n" +
+                            "1970-01-12T00:00:00.000000Z\t55.0\n",
+                    """
+                            SELECT ts, avg FROM (
+                                SELECT ts, avg(price) avg FROM t
+                                SAMPLE BY 1w ALIGN TO CALENDAR
+                                ORDER BY ts DESC
+                            ) SUBSAMPLE lttb(avg, 2)
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFallbackSortSampleByAlreadySorted() throws Exception {
+        // SAMPLE BY produces time-bucketed rows that are typically monotonic.
+        // The fallback path should detect isSorted=true and skip sorting.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:30:00.000000Z'),
+                    (30.0, '2024-01-01T01:00:00.000000Z'),
+                    (40.0, '2024-01-01T01:30:00.000000Z'),
+                    (50.0, '2024-01-01T02:00:00.000000Z'),
+                    (60.0, '2024-01-01T02:30:00.000000Z')
+                    """);
+            // SAMPLE BY 1h produces 3 monotonic rows, SUBSAMPLE reduces to 2.
+            // isSorted=true, native sort is skipped.
+            assertSql(
+                    "ts\tavg\n" +
+                            "2024-01-01T00:00:00.000000Z\t15.0\n" +
+                            "2024-01-01T02:00:00.000000Z\t55.0\n",
+                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)"
             );
         });
     }

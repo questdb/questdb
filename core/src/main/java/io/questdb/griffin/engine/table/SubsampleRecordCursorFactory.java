@@ -25,12 +25,17 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,19 +44,31 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Wraps a base cursor and emits only the rows selected by a downsampling
- * algorithm (LTTB, M4).
+ * algorithm (LTTB, M4, MinMax).
  * <p>
- * When the base cursor supports random access (direct table scans), uses a
- * single-pass approach: buffers (rowId, timestamp, value) triples, runs the
- * algorithm, then emits selected rows via recordAt(). When random access is
- * not available (SAMPLE BY results), uses a two-pass approach: buffers data,
- * runs the algorithm, then rewinds via toTop() and scans sequentially to emit.
+ * Two execution paths based on the base factory's capabilities:
+ * <ul>
+ *   <li><b>Fast path</b> (useDirectAccess=true): for forward-scan factories that
+ *       support random access and have a designated timestamp. Buffers only
+ *       [rowId(8), timestamp(8), value(8)] = 24 bytes per row. Emits selected
+ *       rows via base.recordAt(). No RecordChain, no heap allocation on the
+ *       hot path.</li>
+ *   <li><b>Fallback path</b> (useDirectAccess=false): for aggregate cursors
+ *       (SAMPLE BY, GROUP BY) that lose timestamp designation or don't support
+ *       stable random access. Materializes full rows into a RecordChain plus
+ *       [chainOffset(8), timestamp(8), value(8)] = 24 bytes per row. Memory
+ *       scales with row width.</li>
+ * </ul>
  * <p>
- * Native buffer layout per entry:
- * [rowId: long (8 bytes)][timestamp: long (8 bytes)][value: double (8 bytes)] = 24 bytes
+ * <b>Important:</b> All algorithms assume the input is ordered by the
+ * designated timestamp in ascending order. The fast path requires
+ * SCAN_DIRECTION_FORWARD. The fallback path sorts by timestamp after
+ * buffering (async cursors may deliver rows out of order).
  */
 public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -61,19 +78,12 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final RecordCursorFactory base;
     private final SubsampleRecordCursor cursor;
+    private final int subsamplePosition;
     private final Function targetFunc;
+    private final int targetType;
 
-    /**
-     * @param base                 the base cursor factory to downsample
-     * @param method               algorithm: {@link #METHOD_LTTB} or {@link #METHOD_M4}
-     * @param targetFunc           function evaluating to the target number of output points
-     * @param valueColumnIndex     index of the numeric column used for visual significance
-     * @param timestampColumnIndex index of the designated timestamp column
-     * @param subsamplePosition    SQL position of the SUBSAMPLE clause for error reporting
-     * @param gapThresholdMicros   gap threshold in microseconds for gap-preserving LTTB (0 = disabled)
-     * @param maxRows              maximum input rows before throwing (from configuration)
-     */
     public SubsampleRecordCursorFactory(
+            @Nullable CairoConfiguration configuration,
             RecordCursorFactory base,
             int method,
             Function targetFunc,
@@ -81,17 +91,23 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             int timestampColumnIndex,
             int subsamplePosition,
             long gapThresholdMicros,
-            long maxRows
+            long maxRows,
+            int valueColumnType,
+            @Nullable RecordSink recordSink,
+            boolean useDirectAccess
     ) {
         super(base.getMetadata());
         this.base = base;
         this.targetFunc = targetFunc;
+        this.targetType = ColumnType.tagOf(targetFunc.getType());
+        this.subsamplePosition = subsamplePosition;
         this.cursor = new SubsampleRecordCursor(
-                method, valueColumnIndex,
+                configuration, method, valueColumnIndex,
                 timestampColumnIndex, subsamplePosition,
-                gapThresholdMicros,
-                base.recordCursorSupportsRandomAccess(),
-                maxRows
+                gapThresholdMicros, maxRows, valueColumnType,
+                useDirectAccess,
+                useDirectAccess ? null : base.getMetadata(),
+                recordSink
         );
     }
 
@@ -102,12 +118,8 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Evaluate target point count (supports bind variables)
         targetFunc.init(null, executionContext);
-        final int targetPoints = targetFunc.getInt(null);
-        if (targetPoints < 2) {
-            throw SqlException.$(cursor.getSubsamplePosition(), "target points must be at least 2");
-        }
+        final int targetPoints = getTargetPoints();
 
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
@@ -121,7 +133,9 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
-        return base.getScanDirection();
+        // SUBSAMPLE output is always timestamp-ascending: fast path requires
+        // forward scan, fallback path sorts the buffer ascending.
+        return SCAN_DIRECTION_FORWARD;
     }
 
     @Override
@@ -144,45 +158,85 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
         cursor.destroy();
     }
 
+    private int getTargetPoints() throws SqlException {
+        long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(subsamplePosition, "target point count must be set");
+            }
+        } else {
+            int intVal = targetFunc.getInt(null);
+            if (intVal == Numbers.INT_NULL) {
+                throw SqlException.$(subsamplePosition, "target point count must be set");
+            }
+            value = intVal;
+        }
+        if (value < 2) {
+            throw SqlException.$(subsamplePosition, "target points must be at least 2");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(subsamplePosition, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return (int) value;
+    }
+
     private static class SubsampleRecordCursor implements RecordCursor {
-        private static final int ENTRY_SIZE = 24; // 8 bytes rowId + 8 bytes timestamp + 8 bytes value
+        private static final int ENTRY_SIZE = 24; // 8 bytes payload + 8 bytes timestamp + 8 bytes value
         private static final int INITIAL_CAPACITY = 1024;
 
         private final SubsampleAlgorithm algorithm;
+        // Fallback path only: materializes full rows
+        private final RecordChain chain;
         private final long maxRows;
         private final int method;
         private final DirectLongList selectedIndices;
         private final int subsamplePosition;
-        private final boolean supportsRandomAccess;
         private final int timestampColumnIndex;
+        private final boolean useDirectAccess;
         private final int valueColumnIndex;
+        private final int valueColumnType;
         private RecordCursor base;
+        // Native buffer: [payload(8), timestamp(8), value(8)] per entry.
+        // payload = rowId (fast path) or chainOffset (fallback path).
         private long buffer;
         private long bufferCapacity; // in entries
         private long bufferSize; // in entries
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private long currentBaseRow = -1;
         private boolean isBuffered;
+        private boolean isOpen;
+        private boolean isSorted;
+        // Fast path only: the base cursor's record, positioned via recordAt()
         private Record record;
         private long selectedCount;
         private long selectedIndex;
         private int targetPoints;
 
         private SubsampleRecordCursor(
+                @Nullable CairoConfiguration configuration,
                 int method,
                 int valueColumnIndex,
                 int timestampColumnIndex,
                 int subsamplePosition,
                 long gapThresholdMicros,
-                boolean supportsRandomAccess,
-                long maxRows
+                long maxRows,
+                int valueColumnType,
+                boolean useDirectAccess,
+                @Nullable io.questdb.cairo.sql.RecordMetadata metadata,
+                @Nullable RecordSink recordSink
         ) {
             this.method = method;
             this.valueColumnIndex = valueColumnIndex;
             this.timestampColumnIndex = timestampColumnIndex;
             this.subsamplePosition = subsamplePosition;
-            this.supportsRandomAccess = supportsRandomAccess;
+            if (maxRows > Integer.MAX_VALUE) {
+                throw CairoException.nonCritical().position(subsamplePosition)
+                        .put("cairo.sql.subsample.max.rows exceeds maximum of ")
+                        .put(Integer.MAX_VALUE);
+            }
             this.maxRows = maxRows;
+            this.valueColumnType = valueColumnType;
+            this.useDirectAccess = useDirectAccess;
             this.algorithm = switch (method) {
                 case METHOD_LTTB -> new LttbAlgorithm(gapThresholdMicros);
                 case METHOD_M4 -> M4Algorithm.INSTANCE;
@@ -190,36 +244,69 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                 default -> throw new IllegalArgumentException("unknown method: " + method);
             };
             this.selectedIndices = new DirectLongList(INITIAL_CAPACITY, MemoryTag.NATIVE_FUNC_RSS);
+            if (useDirectAccess) {
+                this.chain = null;
+            } else {
+                this.chain = new RecordChain(
+                        metadata,
+                        recordSink,
+                        configuration.getSqlSortValuePageSize(),
+                        configuration.getSqlSortValueMaxPages()
+                );
+            }
             this.buffer = 0;
             this.bufferCapacity = 0;
+            this.isOpen = true;
         }
 
         @Override
         public void close() {
-            base = Misc.free(base);
-            freeBuffer();
-            // Don't close selectedIndices here - the cursor instance is reused
-            // across getCursor() calls. DirectLongList is cleared in bufferAndSelect().
+            if (isOpen) {
+                base = Misc.free(base);
+                if (chain != null) {
+                    chain.clear();
+                }
+                freeBuffer();
+                isOpen = false;
+            }
         }
 
         void destroy() {
-            // Called from factory._close() for final cleanup
+            if (isOpen) {
+                close();
+            }
             freeBuffer();
             selectedIndices.close();
-        }
-
-        int getSubsamplePosition() {
-            return subsamplePosition;
+            Misc.free(chain);
+            if (algorithm instanceof LttbAlgorithm lttb) {
+                lttb.close();
+            }
         }
 
         @Override
         public Record getRecord() {
-            return record;
+            if (useDirectAccess) {
+                return record;
+            }
+            return chain.getRecord();
         }
 
         @Override
         public Record getRecordB() {
-            return base != null ? base.getRecordB() : null;
+            if (useDirectAccess) {
+                return base != null ? base.getRecordB() : null;
+            }
+            return chain.getRecordB();
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return base != null ? base.getSymbolTable(columnIndex) : null;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base != null ? base.newSymbolTable(columnIndex) : null;
         }
 
         @Override
@@ -236,14 +323,27 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             if (selectedIndex >= selectedCount) {
                 return false;
             }
-            // Skip rows in the base cursor to reach the next selected index
-            return advanceToSelectedRow();
+            long bufferIdx = selectedIndices.get(selectedIndex);
+            selectedIndex++;
+            long payload = getBufferedPayload(bufferIdx);
+            if (useDirectAccess) {
+                // Fast path: position via base cursor's recordAt()
+                base.recordAt(record, payload);
+            } else {
+                // Fallback: position via chain
+                chain.recordAt(chain.getRecord(), payload);
+            }
+            return true;
         }
 
         @Override
         public void recordAt(Record record, long atRowId) {
-            if (base != null) {
-                base.recordAt(record, atRowId);
+            if (useDirectAccess) {
+                if (base != null) {
+                    base.recordAt(record, atRowId);
+                }
+            } else {
+                chain.recordAt(record, atRowId);
             }
         }
 
@@ -255,81 +355,85 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             if (isBuffered) {
-                // Reset output iteration but keep the selected indices
                 selectedIndex = 0;
-                if (!supportsRandomAccess) {
-                    base.toTop();
-                    currentBaseRow = -1;
-                }
             }
         }
 
-        private boolean advanceToSelectedRow() {
-            long bufferIdx = selectedIndices.get(selectedIndex);
-            selectedIndex++;
-            long rowIdentifier = getBufferedRowIndex(bufferIdx);
+        int getSubsamplePosition() {
+            return subsamplePosition;
+        }
 
-            if (supportsRandomAccess) {
-                // Single-pass: jump directly to the selected row via rowId
-                base.recordAt(record, rowIdentifier);
-                return true;
-            } else {
-                // Two-pass: advance sequentially to the target row
-                while (currentBaseRow < rowIdentifier) {
-                    if (!base.hasNext()) {
-                        return false;
-                    }
-                    currentBaseRow++;
-                }
-                return true;
+        void of(RecordCursor baseCursor, SqlExecutionContext executionContext, int targetPoints) {
+            if (!isOpen) {
+                isOpen = true;
+            }
+            this.base = baseCursor;
+            this.record = baseCursor.getRecord();
+            this.circuitBreaker = executionContext.getCircuitBreaker();
+            this.targetPoints = targetPoints;
+            this.isBuffered = false;
+            this.selectedIndex = 0;
+            this.selectedCount = 0;
+            this.bufferSize = 0;
+            if (chain != null) {
+                chain.setSymbolTableResolver(baseCursor);
             }
         }
 
         private void bufferAndSelect() {
-            // Pass 1: read all input into native buffer
             bufferInput();
-            // Run the downsampling algorithm
+            // Sort only fallback path when timestamps are not monotonically ascending.
+            // Fast path requires SCAN_DIRECTION_FORWARD (guaranteed ascending).
+            // Fallback tracks monotonicity during buffering; if isSorted, skip sort.
+            if (!useDirectAccess && bufferSize > 1 && !isSorted) {
+                nativeSortBufferByTimestamp();
+            }
             if (bufferSize <= targetPoints) {
-                // No downsampling needed - select all rows
                 selectAll();
             } else {
                 algorithm.select(buffer, (int) bufferSize, targetPoints, selectedIndices, circuitBreaker);
                 selectedCount = selectedIndices.size();
             }
-            // For sequential access, rewind base cursor for pass 2.
-            // For random access, no rewind needed - we use recordAt().
-            if (!supportsRandomAccess) {
-                base.toTop();
-                currentBaseRow = -1;
-            }
         }
 
         private void bufferInput() {
             bufferSize = 0;
-            long baseRow = 0;
+            isSorted = true;
+            long prevTs = Long.MIN_VALUE;
+            if (chain != null) {
+                chain.clear();
+            }
             if (bufferCapacity == 0) {
                 bufferCapacity = INITIAL_CAPACITY;
                 buffer = Unsafe.malloc(bufferCapacity * ENTRY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
             }
+            final Record baseRecord = base.getRecord();
             while (base.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-                long ts = record.getTimestamp(timestampColumnIndex);
-                double value = record.getDouble(valueColumnIndex);
-                // For random-access bases, store the actual rowId for recordAt().
-                // For sequential bases, store a sequential counter for the two-pass scan.
-                long rowIdentifier = supportsRandomAccess ? record.getRowId() : baseRow;
-                baseRow++;
-                // Skip NaN values - don't buffer them
+                long ts = baseRecord.getTimestamp(timestampColumnIndex);
+                double value = getValueAsDouble(baseRecord);
                 if (Double.isNaN(value)) {
-                    continue;
+                    continue; // NaN-filtered rows don't affect monotonicity
+                }
+                // Track monotonicity for buffered rows only (after NaN filter)
+                if (ts < prevTs) {
+                    isSorted = false;
+                }
+                prevTs = ts;
+                if (bufferSize >= maxRows) {
+                    throw CairoException.nonCritical().position(subsamplePosition)
+                            .put("SUBSAMPLE input exceeds maximum of ")
+                            .put(maxRows).put(" rows");
+                }
+                // Compute payload: rowId for fast path, chainOffset for fallback
+                long payload;
+                if (useDirectAccess) {
+                    payload = baseRecord.getRowId();
+                } else {
+                    payload = chain.put(baseRecord, -1);
                 }
                 // Grow buffer if needed
                 if (bufferSize >= bufferCapacity) {
-                    if (bufferSize >= maxRows) {
-                        throw CairoException.nonCritical().position(subsamplePosition)
-                                .put("SUBSAMPLE input exceeds maximum of ")
-                                .put(maxRows).put(" rows");
-                    }
                     long newCapacity = Numbers.ceilPow2(bufferSize + 1);
                     if (newCapacity < bufferSize + 1) {
                         throw CairoException.nonCritical().position(subsamplePosition)
@@ -339,7 +443,7 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                     bufferCapacity = newCapacity;
                 }
                 long offset = bufferSize * ENTRY_SIZE;
-                Unsafe.getUnsafe().putLong(buffer + offset, rowIdentifier);
+                Unsafe.getUnsafe().putLong(buffer + offset, payload);
                 Unsafe.getUnsafe().putLong(buffer + offset + 8, ts);
                 Unsafe.getUnsafe().putDouble(buffer + offset + 16, value);
                 bufferSize++;
@@ -355,28 +459,26 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        private long getBufferedRowIndex(long index) {
+        private long getBufferedPayload(long index) {
             return Unsafe.getUnsafe().getLong(buffer + index * ENTRY_SIZE);
         }
 
-        private double getBufferedTimestamp(long index) {
-            return (double) Unsafe.getUnsafe().getLong(buffer + index * ENTRY_SIZE + 8);
-        }
-
-        private double getBufferedValue(long index) {
-            return Unsafe.getUnsafe().getDouble(buffer + index * ENTRY_SIZE + 16);
-        }
-
-        void of(RecordCursor baseCursor, SqlExecutionContext executionContext, int targetPoints) {
-            this.base = baseCursor;
-            this.record = baseCursor.getRecord();
-            this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.targetPoints = targetPoints;
-            this.isBuffered = false;
-            this.selectedIndex = 0;
-            this.selectedCount = 0;
-            this.currentBaseRow = -1;
-            this.bufferSize = 0;
+        private double getValueAsDouble(Record rec) {
+            return switch (valueColumnType) {
+                case ColumnType.DOUBLE -> rec.getDouble(valueColumnIndex);
+                case ColumnType.FLOAT -> rec.getFloat(valueColumnIndex);
+                case ColumnType.INT -> {
+                    int v = rec.getInt(valueColumnIndex);
+                    yield v != Numbers.INT_NULL ? (double) v : Double.NaN;
+                }
+                case ColumnType.LONG -> {
+                    long v = rec.getLong(valueColumnIndex);
+                    yield v != Numbers.LONG_NULL ? (double) v : Double.NaN;
+                }
+                case ColumnType.SHORT -> rec.getShort(valueColumnIndex);
+                case ColumnType.BYTE -> rec.getByte(valueColumnIndex);
+                default -> rec.getDouble(valueColumnIndex);
+            };
         }
 
         private void selectAll() {
@@ -385,6 +487,55 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                 selectedIndices.add(i);
             }
             selectedCount = bufferSize;
+        }
+
+        /**
+         * Sort the 24-byte buffer entries by timestamp using native quicksort.
+         * <p>
+         * Uses {@code Vect.quickSortLongIndexAscInPlace} which sorts
+         * {@code index_t = {uint64_t ts, uint64_t i}} pairs by ts as unsigned.
+         * To handle signed timestamps (negative = pre-1970), the sort key is
+         * stored as {@code ts ^ Long.MIN_VALUE}, which maps signed ordering to
+         * unsigned ordering. The first 8 bytes of each buffer entry (payload)
+         * are treated as opaque and carried along during reordering.
+         */
+        private void nativeSortBufferByTimestamp() {
+            final int n = (int) bufferSize;
+            final long indexSize = 16L * n;
+            final long workspaceSize = (long) ENTRY_SIZE * n;
+            long indexAddr = 0;
+            long workspaceAddr = 0;
+            try {
+                indexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_FUNC_RSS);
+                // Populate index: (sortableTimestamp, originalBufferIndex)
+                for (int i = 0; i < n; i++) {
+                    long ts = Unsafe.getUnsafe().getLong(buffer + (long) i * ENTRY_SIZE + 8);
+                    long indexOff = (long) i * 16;
+                    Unsafe.getUnsafe().putLong(indexAddr + indexOff, ts ^ Long.MIN_VALUE);
+                    Unsafe.getUnsafe().putLong(indexAddr + indexOff + 8, i);
+                }
+                // Native O(N log N) quicksort by the sortable key
+                Vect.quickSortLongIndexAscInPlace(indexAddr, n);
+                // Reorder buffer entries into workspace in sorted order
+                workspaceAddr = Unsafe.malloc(workspaceSize, MemoryTag.NATIVE_FUNC_RSS);
+                for (int i = 0; i < n; i++) {
+                    long origIdx = Unsafe.getUnsafe().getLong(indexAddr + (long) i * 16 + 8);
+                    long srcOff = origIdx * ENTRY_SIZE;
+                    long dstOff = (long) i * ENTRY_SIZE;
+                    Unsafe.getUnsafe().putLong(workspaceAddr + dstOff, Unsafe.getUnsafe().getLong(buffer + srcOff));
+                    Unsafe.getUnsafe().putLong(workspaceAddr + dstOff + 8, Unsafe.getUnsafe().getLong(buffer + srcOff + 8));
+                    Unsafe.getUnsafe().putLong(workspaceAddr + dstOff + 16, Unsafe.getUnsafe().getLong(buffer + srcOff + 16));
+                }
+                // Copy sorted entries back to buffer (preserves buffer pointer/capacity)
+                Unsafe.getUnsafe().copyMemory(workspaceAddr, buffer, workspaceSize);
+            } finally {
+                if (indexAddr != 0) {
+                    Unsafe.free(indexAddr, indexSize, MemoryTag.NATIVE_FUNC_RSS);
+                }
+                if (workspaceAddr != 0) {
+                    Unsafe.free(workspaceAddr, workspaceSize, MemoryTag.NATIVE_FUNC_RSS);
+                }
+            }
         }
     }
 }

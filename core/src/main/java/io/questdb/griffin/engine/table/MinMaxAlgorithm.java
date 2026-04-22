@@ -58,8 +58,9 @@ class MinMaxAlgorithm implements SubsampleAlgorithm {
         long minTs = SubsampleAlgorithm.getTimestamp(buffer, 0);
         long maxTs = SubsampleAlgorithm.getTimestamp(buffer, bufferSize - 1);
         if (minTs == maxTs) {
-            // All same timestamp - select all
-            for (long i = 0; i < bufferSize; i++) {
+            // All same timestamp - cap at targetPoints
+            int count = Math.min(bufferSize, targetPoints);
+            for (int i = 0; i < count; i++) {
                 selectedIndices.add(i);
             }
             return;
@@ -73,7 +74,7 @@ class MinMaxAlgorithm implements SubsampleAlgorithm {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
             long bucketStartTs = minTs + (long) (bucket * bucketWidth);
-            long bucketEndTs = (bucket == numBuckets - 1) ? maxTs + 1 : minTs + (long) ((bucket + 1) * bucketWidth);
+            long bucketEndTs = (bucket < numBuckets - 1) ? minTs + (long) ((bucket + 1) * bucketWidth) : Long.MAX_VALUE;
 
             int minIdx = -1;
             int maxIdx = -1;
@@ -82,7 +83,8 @@ class MinMaxAlgorithm implements SubsampleAlgorithm {
 
             while (dataIdx < bufferSize) {
                 long ts = Unsafe.getUnsafe().getLong(buffer + (long) dataIdx * ENTRY_SIZE + 8);
-                if (ts >= bucketEndTs) {
+                // Final bucket processes all remaining rows (no end boundary)
+                if (bucket < numBuckets - 1 && ts >= bucketEndTs) {
                     break;
                 }
                 if (ts >= bucketStartTs) {

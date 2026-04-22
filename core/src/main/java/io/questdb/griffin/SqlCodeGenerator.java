@@ -5865,30 +5865,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IQueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        // Check current model first
+        // Find SUBSAMPLE on the current model or its nested model chain.
+        // The optimizer may place SUBSAMPLE on different model levels during
+        // restructuring (CTE expansion, GROUP BY/WINDOW wrapping, etc.).
+        // We search the chain and apply SUBSAMPLE at the first level where
+        // the factory has a timestamp column and the value column can be resolved.
         ExpressionNode subsample = model.getSubsample();
         int subsamplePos = model.getSubsamplePosition();
 
-        // If not on current model, check nested models (for CTE/subquery cases
-        // where the optimizer places SUBSAMPLE on a nested model).
-        // Only pull from nested models if the current factory HAS a timestamp,
-        // to avoid pulling SUBSAMPLE to a level where it can't be applied.
-        if (subsample == null && factory.getMetadata().getTimestampIndex() != -1) {
-            IQueryModel nested = model.getNestedModel();
-            while (nested != null) {
-                if (nested.getSubsample() != null) {
-                    subsample = nested.getSubsample();
-                    subsamplePos = nested.getSubsamplePosition();
-                    nested.setSubsample(null, 0);
-                    break;
+        if (subsample != null) {
+            // Verify the SUBSAMPLE column can be resolved at this factory level.
+            // The optimizer may place SUBSAMPLE on a model where the column isn't
+            // available (e.g., count() wrapping a subquery with SUBSAMPLE inside).
+            // In that case, push SUBSAMPLE to the nested model for inner processing.
+            ExpressionNode columnNode = subsample.args.get(0);
+            int colIdx = factory.getMetadata().getColumnIndexQuiet(columnNode.token);
+            if (colIdx == -1) {
+                // Column not available here. Check if we can apply SELECT alias lookup.
+                final ObjList<QueryColumn> selectColumns = model.getColumns();
+                for (int i = 0, n = selectColumns.size(); i < n; i++) {
+                    final QueryColumn qc = selectColumns.getQuick(i);
+                    if (Chars.equalsIgnoreCase(qc.getAlias(), columnNode.token)
+                            || Chars.equalsIgnoreCase(qc.getName(), columnNode.token)) {
+                        colIdx = i;
+                        break;
+                    }
                 }
-                nested = nested.getNestedModel();
             }
-        } else if (subsample != null) {
+            if (colIdx == -1) {
+                model.setSubsample(null, 0);
+                throw SqlException.$(columnNode.position, "column not found: ").put(columnNode.token);
+            }
             if (factory.getMetadata().getTimestampIndex() == -1) {
-                // This model has SUBSAMPLE but the factory has no timestamp.
-                // If a nested model also has the timestamp, let that level handle it.
-                // If nothing has a timestamp, this is a genuine error.
+                // No designated timestamp. Allow if nested model has designated
+                // timestamp (SAMPLE BY/GROUP BY results lose designation).
                 boolean nestedHasTimestamp = false;
                 IQueryModel nested = model.getNestedModel();
                 while (nested != null) {
@@ -5898,22 +5908,67 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     nested = nested.getNestedModel();
                 }
-                if (!nestedHasTimestamp) {
+                if (!nestedHasTimestamp && !hasTimestampColumn(factory)) {
                     model.setSubsample(null, 0);
                     throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
                 }
-                // Leave SUBSAMPLE on the model - will be picked up by nested level's
-                // search, or inner generateQuery0Inner will find it
-                return factory;
+                if (!nestedHasTimestamp) {
+                    // Has TIMESTAMP column by type but not designated, and no
+                    // nested model has designated timestamp either. Error.
+                    model.setSubsample(null, 0);
+                    throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                }
+            }
+            // allowTypeScanFallback: only scan by TIMESTAMP type when a nested model
+            // confirms the chain originally had a designated timestamp (SAMPLE BY/GROUP BY
+            // results lose designation but the column is still the time axis).
+            boolean nestedHasDesignatedTs = factory.getMetadata().getTimestampIndex() != -1;
+            if (!nestedHasDesignatedTs) {
+                IQueryModel n = model.getNestedModel();
+                while (n != null) {
+                    if (n.getTimestamp() != null) {
+                        nestedHasDesignatedTs = true;
+                        break;
+                    }
+                    n = n.getNestedModel();
+                }
             }
             model.setSubsample(null, 0);
+            return generateSubsample(factory, subsample, subsamplePos, model, executionContext, nestedHasDesignatedTs);
         }
 
-        if (subsample == null) {
-            return factory;
+        // If not on current model, search nested models for SUBSAMPLE.
+        // The optimizer may place SUBSAMPLE on a nested model during restructuring.
+        IQueryModel nested = model.getNestedModel();
+        while (nested != null) {
+            if (nested.getSubsample() != null) {
+                ExpressionNode candidateCol = nested.getSubsample().args.get(0);
+                // Check: column resolvable AND factory has designated timestamp
+                // (or nested chain confirms designation was lost by aggregation)
+                boolean hasDesignatedTs = factory.getMetadata().getTimestampIndex() != -1;
+                if (!hasDesignatedTs) {
+                    IQueryModel n = model.getNestedModel();
+                    while (n != null) {
+                        if (n.getTimestamp() != null) {
+                            hasDesignatedTs = true;
+                            break;
+                        }
+                        n = n.getNestedModel();
+                    }
+                }
+                if (factory.getMetadata().getColumnIndexQuiet(candidateCol.token) != -1
+                        && hasDesignatedTs) {
+                    subsample = nested.getSubsample();
+                    subsamplePos = nested.getSubsamplePosition();
+                    nested.setSubsample(null, 0);
+                    return generateSubsample(factory, subsample, subsamplePos, model, executionContext, true);
+                }
+                break; // Column not resolvable or no timestamp - leave for inner level
+            }
+            nested = nested.getNestedModel();
         }
 
-        return generateSubsample(factory, subsample, subsamplePos, model, executionContext);
+        return factory;
     }
 
     private RecordCursorFactory generateSubsample(
@@ -5921,7 +5976,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode subsample,
             int subsamplePos,
             IQueryModel model,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            boolean allowTypeScanFallback
     ) throws SqlException {
         final CharSequence methodName = subsample.token;
 
@@ -5938,10 +5994,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     .put(". Supported methods: lttb, m4, minmax");
         }
 
-        // Validate argument count: method(column, n)
+        // Validate argument count per method
         if (subsample.paramCount < 2) {
             throw SqlException.$(subsample.position, "SUBSAMPLE ")
                     .put(methodName).put("() requires at least 2 arguments: column and target points");
+        }
+        if (method == SubsampleRecordCursorFactory.METHOD_M4 || method == SubsampleRecordCursorFactory.METHOD_MINMAX) {
+            if (subsample.paramCount > 2) {
+                throw SqlException.$(subsample.args.get(2).position, methodName)
+                        .put("() accepts exactly 2 arguments: column and target points");
+            }
+        } else if (method == SubsampleRecordCursorFactory.METHOD_LTTB) {
+            if (subsample.paramCount > 3) {
+                throw SqlException.$(subsample.args.get(3).position, "lttb() accepts at most 3 arguments: column, target points, and optional gap threshold");
+            }
         }
 
         // Args are in parse order: args[0]=column, args[1]=n, args[2]=gap (optional)
@@ -5984,9 +6050,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(targetFunc);
             throw SqlException.$(targetNode.position, "target point count must be a constant or bind variable");
         }
+        // Validate the function type is integer-compatible
+        final int targetType = ColumnType.tagOf(targetFunc.getType());
+        if (targetType != ColumnType.INT && targetType != ColumnType.LONG
+                && targetType != ColumnType.SHORT && targetType != ColumnType.BYTE) {
+            Misc.free(targetFunc);
+            throw SqlException.$(targetNode.position, "integer expected for target point count");
+        }
         // Validate at compile time if the value is known
         if (targetFunc.isConstant()) {
-            int targetPoints = targetFunc.getInt(null);
+            int targetPoints = getTargetPoints(targetFunc, targetType, targetNode.position);
             if (targetPoints < 2) {
                 Misc.free(targetFunc);
                 throw SqlException.$(targetNode.position, "target points must be at least 2");
@@ -6016,23 +6089,96 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             };
         }
 
-        // Find timestamp column index
+        // Find timestamp column index. First try the factory's designated timestamp.
+        // If not designated, only fall back to type scan when the caller confirms
+        // the model chain originally had a designated timestamp (SAMPLE BY/GROUP BY
+        // results lose designation). Do not grab arbitrary TIMESTAMP columns from
+        // tables without designated timestamp.
         int timestampIndex = factory.getMetadata().getTimestampIndex();
+        if (timestampIndex == -1 && allowTypeScanFallback) {
+            for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
+                if (ColumnType.tagOf(factory.getMetadata().getColumnType(i)) == ColumnType.TIMESTAMP) {
+                    timestampIndex = i;
+                    break;
+                }
+            }
+        }
         if (timestampIndex == -1) {
             throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
         }
 
+        // Fast path: direct random access with designated timestamp and forward scan.
+        // The factory promises recordAt() returns the same record shape as
+        // sequential iteration, including computed/virtual columns.
+        // Fallback: RecordChain materialization for aggregate cursors or
+        // non-random-access/non-forward scans.
+        final boolean useDirectAccess = factory.recordCursorSupportsRandomAccess()
+                && factory.getMetadata().getTimestampIndex() != -1
+                && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
+
         try {
+            RecordSink recordSink = null;
+            if (!useDirectAccess) {
+                entityColumnFilter.of(factory.getMetadata().getColumnCount());
+                recordSink = RecordSinkFactory.getInstance(
+                        configuration, asm, factory.getMetadata(), entityColumnFilter
+                );
+            }
             return new SubsampleRecordCursorFactory(
+                    useDirectAccess ? null : configuration,
                     factory, method, targetFunc,
                     valueColumnIndex, timestampIndex, subsamplePos,
                     gapThresholdMicros,
-                    configuration.getSubsampleMaxRows()
+                    configuration.getSubsampleMaxRows(),
+                    columnType,
+                    recordSink,
+                    useDirectAccess
             );
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
         }
+    }
+
+    /**
+     * Read the target point count from a Function, handling both INT and LONG types.
+     * LONG support is needed for PG wire / Grafana bind variables.
+     *
+     * @return the target point count as int, or throws if out of valid range
+     */
+    static int getTargetPoints(Function targetFunc, int targetType, int position) throws SqlException {
+        long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "target point count must be set");
+            }
+        } else {
+            int intVal = targetFunc.getInt(null);
+            if (intVal == Numbers.INT_NULL) {
+                throw SqlException.$(position, "target point count must be set");
+            }
+            value = intVal;
+        }
+        if (value < 2) {
+            throw SqlException.$(position, "target points must be at least 2");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return (int) value;
+    }
+
+    private static boolean hasTimestampColumn(RecordCursorFactory factory) {
+        if (factory.getMetadata().getTimestampIndex() != -1) {
+            return true;
+        }
+        for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
+            if (ColumnType.tagOf(factory.getMetadata().getColumnType(i)) == ColumnType.TIMESTAMP) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private RecordCursorFactory generateLimit(
@@ -6888,13 +7034,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0Inner(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        // Pull SUBSAMPLE from nested models to this level when it was placed
-        // on a nested model that also has SAMPLE BY or GROUP BY. The optimizer
-        // restructures aggregation queries, creating wrapper models. SUBSAMPLE
-        // needs to wrap the aggregated result, not the raw scan.
-        // No pull-up here - SUBSAMPLE is applied at the model level where it
-        // was set. For SAMPLE BY queries, it propagates via the optimizer's
-        // moveSubsampleFrom in rewriteSelectClause0.
+        // Pull SUBSAMPLE from nested models to this level before generateSelect
+        // consumes them. generateSelect processes GROUP BY/SAMPLE BY models
+        // internally without calling generateQuery0Inner, so SUBSAMPLE placed
+        // on those flat nested models by the optimizer would be lost otherwise.
+        // Only pull up if the SUBSAMPLE column can be resolved in this model's
+        // columns (prevents pulling from a parenthesized subquery whose columns
+        // differ from the outer query, e.g. count() wrapping a subsample).
+        if (model.getSubsample() == null) {
+            IQueryModel nested = model.getNestedModel();
+            while (nested != null) {
+                if (nested.getSubsample() != null) {
+                    // Check if the SUBSAMPLE column exists in the current model's columns
+                    CharSequence colName = nested.getSubsample().args.get(0).token;
+                    boolean columnResolvable = false;
+                    ObjList<QueryColumn> cols = model.getColumns();
+                    for (int i = 0, n = cols.size(); i < n; i++) {
+                        QueryColumn qc = cols.getQuick(i);
+                        if (Chars.equalsIgnoreCase(qc.getAlias(), colName)
+                                || Chars.equalsIgnoreCase(qc.getName(), colName)) {
+                            columnResolvable = true;
+                            break;
+                        }
+                    }
+                    if (columnResolvable) {
+                        model.setSubsample(nested.getSubsample(), nested.getSubsamplePosition());
+                        nested.setSubsample(null, 0);
+                    }
+                    break;
+                }
+                nested = nested.getNestedModel();
+            }
+        }
 
         // Remember the last model with non-empty ORDER BY as we descend through nested models.
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
@@ -6916,8 +7087,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             factory = generateSelect(model, executionContext, processJoins);
             factory = generateFilter(factory, model, executionContext);
             factory = generateLatestBy(factory, model);
-            factory = generateOrderBy(factory, model, executionContext);
             factory = generateSubsampleFromModelChain(factory, model, executionContext);
+            factory = generateOrderBy(factory, model, executionContext);
             factory = generateLimit(factory, model, executionContext);
 
             return factory;

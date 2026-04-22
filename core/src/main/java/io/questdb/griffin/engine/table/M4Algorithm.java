@@ -56,7 +56,11 @@ class M4Algorithm implements SubsampleAlgorithm {
         long minTs = SubsampleAlgorithm.getTimestamp(buffer, 0);
         long maxTs = SubsampleAlgorithm.getTimestamp(buffer, bufferSize - 1);
         if (minTs == maxTs) {
-            selectAll(selectedIndices, bufferSize);
+            // All same timestamp - cap at targetPoints
+            int count = Math.min(bufferSize, targetPoints);
+            for (int i = 0; i < count; i++) {
+                selectedIndices.add(i);
+            }
             return;
         }
 
@@ -68,7 +72,7 @@ class M4Algorithm implements SubsampleAlgorithm {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
             long bucketStartTs = minTs + (long) (bucket * bucketWidth);
-            long bucketEndTs = (bucket == numBuckets - 1) ? maxTs + 1 : minTs + (long) ((bucket + 1) * bucketWidth);
+            long bucketEndTs = (bucket < numBuckets - 1) ? minTs + (long) ((bucket + 1) * bucketWidth) : Long.MAX_VALUE;
 
             int firstIdx = -1;
             int lastIdx = -1;
@@ -79,7 +83,8 @@ class M4Algorithm implements SubsampleAlgorithm {
 
             while (dataIdx < bufferSize) {
                 long ts = Unsafe.getUnsafe().getLong(buffer + (long) dataIdx * ENTRY_SIZE + 8);
-                if (ts >= bucketEndTs) {
+                // Final bucket processes all remaining rows (no end boundary)
+                if (bucket < numBuckets - 1 && ts >= bucketEndTs) {
                     break;
                 }
                 if (ts >= bucketStartTs) {
@@ -151,9 +156,4 @@ class M4Algorithm implements SubsampleAlgorithm {
         }
     }
 
-    private static void selectAll(DirectLongList selectedIndices, int bufferSize) {
-        for (long i = 0; i < bufferSize; i++) {
-            selectedIndices.add(i);
-        }
-    }
 }
