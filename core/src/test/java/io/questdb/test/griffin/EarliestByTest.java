@@ -3034,5 +3034,273 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
+
+    // Shared dataset builder for the filtered-indexed plan-pin tests below.
+    // 12 rows in a single partition; PAGE_FRAME_MAX_ROWS=4 is set at call sites
+    // to exercise the frame-max config path through the filtered indexed cursors.
+    private void buildIndexedDataset() throws SqlException {
+        execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO t VALUES " +
+                "('a', 1, '1970-01-01T00:00:00'), " +
+                "('b', 2, '1970-01-01T00:00:01'), " +
+                "('a', 3, '1970-01-01T00:00:02'), " +
+                "('b', 4, '1970-01-01T00:00:03'), " +
+                "('a', 5, '1970-01-01T00:00:04'), " +
+                "('b', 6, '1970-01-01T00:00:05'), " +
+                "('a', 7, '1970-01-01T00:00:06'), " +
+                "('b', 8, '1970-01-01T00:00:07'), " +
+                "('c', 9, '1970-01-01T00:00:08'), " +
+                "('c', 10, '1970-01-01T00:00:09'), " +
+                "('c', 11, '1970-01-01T00:00:10'), " +
+                "('c', 12, '1970-01-01T00:00:11')");
+    }
+
+    @Test
+    public void testEarliestByIndexedSingleValueFilteredPlanAssertion() throws Exception {
+        // Pins EarliestByValueIndexedFilteredRecordCursorFactory: single indexed
+        // symbol value with a generic filter. PAGE_FRAME_MAX_ROWS=4 exercises
+        // the frame-max config path; the filter forces the cursor to read the
+        // row payload via setRowIndex.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 4);
+        assertMemoryLeak(() -> {
+            buildIndexedDataset();
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            String q = "SELECT s, v, ts FROM t WHERE s IN ('c') AND v > 5 EARLIEST ON ts PARTITION BY s";
+
+            assertPlanNoLeakCheck(
+                    q,
+                    "Index forward scan on: s\n" +
+                            "  filter: 5<v\n" +
+                            "  symbolFilter: s=3\n" +
+                            "    Frame forward scan on: t\n"
+            );
+
+            assertSql(
+                    "s\tv\tts\n" +
+                            "c\t9\t1970-01-01T00:00:08.000000" + suffix + "\n",
+                    q
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedValueListFilteredPlanAssertion() throws Exception {
+        // Pins EarliestByValuesIndexedFilteredRecordCursorFactory: IN-list over
+        // an indexed symbol with a generic filter. The two-value IN list
+        // exercises the multi-key path.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 4);
+        assertMemoryLeak(() -> {
+            buildIndexedDataset();
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            String q = "SELECT s, v, ts FROM t WHERE s IN ('a', 'c') AND v > 1 EARLIEST ON ts PARTITION BY s";
+
+            assertPlanNoLeakCheck(
+                    q,
+                    "Index forward scan on: s\n" +
+                            "  filter: 1<v\n" +
+                            "  symbolFilter: s in [1,3]\n" +
+                            "    Frame forward scan on: t\n"
+            );
+
+            assertSql(
+                    "s\tv\tts\n" +
+                            "a\t3\t1970-01-01T00:00:02.000000" + suffix + "\n" +
+                            "c\t9\t1970-01-01T00:00:08.000000" + suffix + "\n",
+                    q
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedValueListPlanAssertion() throws Exception {
+        // Pins EarliestByValuesIndexedRecordCursor: IN-list over an indexed
+        // symbol, no generic filter. Same dataset as the filtered variant, to
+        // guard the non-filtered multi-value indexed path.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 4);
+        assertMemoryLeak(() -> {
+            buildIndexedDataset();
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            String q = "SELECT s, v, ts FROM t WHERE s IN ('a', 'c') EARLIEST ON ts PARTITION BY s";
+
+            assertPlanNoLeakCheck(
+                    q,
+                    "Index forward scan on: s\n" +
+                            "  symbolFilter: s in [1,3]\n" +
+                            "    Frame forward scan on: t\n"
+            );
+
+            assertSql(
+                    "s\tv\tts\n" +
+                            "a\t1\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "c\t9\t1970-01-01T00:00:08.000000" + suffix + "\n",
+                    q
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByDeferredListValuesFilteredPlanAssertion() throws Exception {
+        // Pins factory selection for EarliestByDeferredListValuesFilteredRecordCursorFactory:
+        // PARTITION BY on a non-indexed symbol with only a generic filter routes
+        // through the deferred-list values factory (literal/deferred symbol sets
+        // both empty). Guards against a regression that silently selects a less
+        // efficient factory. No ORDER BY, so output order is factory-defined.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', 1, '1970-01-01T00:00:00'), " +
+                    "('b', 2, '1970-01-01T00:00:01'), " +
+                    "('a', 3, '1970-01-01T00:00:02'), " +
+                    "('b', 4, '1970-01-01T00:00:03')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            String q = "SELECT s, v, ts FROM t WHERE v > 1 EARLIEST ON ts PARTITION BY s";
+
+            assertPlanNoLeakCheck(
+                    q,
+                    "EarliestByDeferredListValuesFiltered\n" +
+                            "  filter: 1<v\n" +
+                            "    Frame forward scan on: t\n"
+            );
+
+            assertSql(
+                    "s\tv\tts\n" +
+                            "b\t2\t1970-01-01T00:00:01.000000" + suffix + "\n" +
+                            "a\t3\t1970-01-01T00:00:02.000000" + suffix + "\n",
+                    q
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByValueFilteredPlanAssertion() throws Exception {
+        // Pins factory selection for EarliestByValueFilteredRecordCursorFactory:
+        // single non-indexed value with a generic filter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', 1, '1970-01-01T00:00:00'), " +
+                    "('b', 2, '1970-01-01T00:00:01'), " +
+                    "('a', 3, '1970-01-01T00:00:02'), " +
+                    "('b', 4, '1970-01-01T00:00:03')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            String q = "SELECT s, v, ts FROM t WHERE s = 'a' AND v > 1 EARLIEST ON ts PARTITION BY s";
+
+            assertPlanNoLeakCheck(
+                    q,
+                    "EarliestByValueFiltered\n" +
+                            "    Row forward scan\n" +
+                            "      symbolFilter: s=0\n" +
+                            "      filter: 1<v\n" +
+                            "    Frame forward scan on: t\n"
+            );
+
+            assertSql(
+                    "s\tv\tts\n" +
+                            "a\t3\t1970-01-01T00:00:02.000000" + suffix + "\n",
+                    q
+            );
+        });
+    }
+
+    // Shared dataset for the retry-via-getCursor() regression tests below.
+    // Partitions 2 and 3 are the only ones that contain 'c'; queries for 'c'
+    // (or IN-lists that include 'c') therefore must open partition 2. The
+    // filesystem fault injector blocks that open, so the first cursor throws
+    // mid-scan. The test then re-acquires a cursor from the same factory,
+    // which invokes of() on the reused cursor instance, and verifies it
+    // produces the full, correct result set. This pins the contract that
+    // of() fully resets after an exception — the same contract LATEST BY
+    // relies on.
+    private void insertRetryIndexedDataset() throws SqlException {
+        execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO t VALUES " +
+                "('a', 1, '1970-01-01T00:00:00'), ('b', 2, '1970-01-01T01:00:00'), " +
+                "('a', 3, '1970-01-02T00:00:00'), ('b', 4, '1970-01-02T01:00:00'), ('c', 5, '1970-01-02T02:00:00'), " +
+                "('a', 6, '1970-01-03T00:00:00'), ('b', 7, '1970-01-03T01:00:00'), ('c', 8, '1970-01-03T02:00:00')");
+    }
+
+    private void runRetryAfterMidScanException(String query, String expected) throws Exception {
+        final AtomicBoolean failNext = new AtomicBoolean(true);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNext.get() && Utf8s.containsAscii(name, "1970-01-02")) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            insertRetryIndexedDataset();
+
+            try (RecordCursorFactory factory = select(query)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                        // Drain until the FS fault triggers.
+                    }
+                    Assert.fail("expected CairoException from injected FS failure");
+                } catch (CairoException expected2) {
+                    // pass — cursor threw mid-scan
+                }
+
+                // Allow partition 2 to open on the retry.
+                failNext.set(false);
+                assertCursor(expected, factory, true, true, true);
+            }
+        });
+    }
+
+    @Test
+    public void testEarliestByValueIndexedFilteredReentrantAfterException() throws Exception {
+        // Covers EarliestByValueIndexedFilteredRecordCursor: verifies that the
+        // cursor fully resets after an exception, so the second getCursor()
+        // returns correct results from a clean scan. Query is for 'c' which
+        // only exists in partitions 2+; the SINGLE-value cursor must open
+        // partition 2 to find its first match, triggering the injected fault.
+        String suffix = getTimestampSuffix(timestampType.getTypeName());
+        runRetryAfterMidScanException(
+                "SELECT s, v, ts FROM t WHERE s IN ('c') AND v > 0 EARLIEST ON ts PARTITION BY s",
+                "s\tv\tts\n" +
+                        "c\t5\t1970-01-02T02:00:00.000000" + suffix + "\n"
+        );
+    }
+
+    @Test
+    public void testEarliestByValuesIndexedReentrantAfterException() throws Exception {
+        // Covers EarliestByValuesIndexedRecordCursor: IN-list over an indexed
+        // symbol, no filter. 'c' only exists in partitions 2+, so the cursor
+        // must open partition 2 to satisfy the full IN-list, triggering the
+        // injected fault on the first pass.
+        String suffix = getTimestampSuffix(timestampType.getTypeName());
+        runRetryAfterMidScanException(
+                "SELECT s, v, ts FROM t WHERE s IN ('a', 'b', 'c') EARLIEST ON ts PARTITION BY s",
+                "s\tv\tts\n" +
+                        "a\t1\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                        "b\t2\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                        "c\t5\t1970-01-02T02:00:00.000000" + suffix + "\n"
+        );
+    }
+
+    @Test
+    public void testEarliestByValuesIndexedFilteredReentrantAfterException() throws Exception {
+        // Covers EarliestByValuesIndexedFilteredRecordCursor: IN-list over an
+        // indexed symbol with a generic filter. The filter forces setRowIndex
+        // plus a row read before each "found" record is locked in. 'c' is only
+        // in partitions 2+, so the cursor opens partition 2 and trips the
+        // injected fault on the first pass.
+        String suffix = getTimestampSuffix(timestampType.getTypeName());
+        runRetryAfterMidScanException(
+                "SELECT s, v, ts FROM t WHERE s IN ('a', 'b', 'c') AND v > 0 EARLIEST ON ts PARTITION BY s",
+                "s\tv\tts\n" +
+                        "a\t1\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                        "b\t2\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                        "c\t5\t1970-01-02T02:00:00.000000" + suffix + "\n"
+        );
+    }
 }
 

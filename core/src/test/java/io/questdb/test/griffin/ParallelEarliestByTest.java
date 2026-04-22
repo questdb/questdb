@@ -159,10 +159,6 @@ public class ParallelEarliestByTest extends AbstractTest {
         executeVanilla(this::testEarliestByWithin);
     }
 
-    static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(code);
-    }
-
     private static void execute(
             @Nullable WorkerPool pool,
             EarliestByRunnable runnable,
@@ -191,6 +187,10 @@ public class ParallelEarliestByTest extends AbstractTest {
                 }
             }
         }
+    }
+
+    static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(code);
     }
 
     private static void executeVanilla(EarliestByRunnable code) throws Exception {
