@@ -31,6 +31,7 @@ Phase 17 applies a narrow principle to PR body edits (D-01 below): a body row is
 - m8b Single-row keyed + FROM/TO test.
 - m8c Tighten `testFillPrevRejectNoArg` (exact-substring + `getPosition()`).
 - m9 PR title rename.
+- M-unit (surfaced 2026-04-22 via pending todo): cross-column `FILL(PREV(col))` silently copies raw long across TIMESTAMP_MICRO <-> TIMESTAMP_NANO and INTERVAL_TIMESTAMP_MICRO <-> INTERVAL_TIMESTAMP_NANO, producing 1000x unit drift. Same review source (`/review-pr 6946`). Fix: extend `needsExactTypeMatch` in `SqlCodeGenerator.generateFill` to include TIMESTAMP and INTERVAL tags; add rejection test. Folded in under D-01 because it is a correctness bug (currently-wrong behavior in the PR), not regression recovery - see D-26.
 
 **Out of scope:**
 - Alias-guard test for M3.1 Fix B. Internal hardening without a review-driven justification; skip-fill path provides indirect coverage.
@@ -133,10 +134,31 @@ Phase 17 applies a narrow principle to PR body edits (D-01 below): a body row is
 
 - **D-24** - Rename PR #6946 title from `feat(sql): add FILL(PREV) support on GROUP BY fast path` to `feat(sql): add cross-column FILL(PREV) and move SAMPLE BY FILL onto fast path` per plan file. Leads with the new grammar feature (cross-column PREV); fast-path move is the secondary clause. Accurately scoped - bare FILL(PREV) already existed on cursor path. Update via `gh pr edit 6946 --title "..."`.
 
+### M-unit: cross-column FILL(PREV) TIMESTAMP/INTERVAL unit mismatch
+
+- **D-26** - Reject cross-column `FILL(PREV(col))` across unit-mismatched TIMESTAMP and INTERVAL pairs. `ColumnType.tagOf(t)` returns `t & 0xFF`, so TIMESTAMP_MICRO (tag 8) and TIMESTAMP_NANO (`(1<<18) | 8`) share a tag; same for INTERVAL_TIMESTAMP_MICRO vs _NANO. The current `needsExactTypeMatch` predicate at `SqlCodeGenerator.java:3605-3611` only forces full-int equality for DECIMAL / GEOHASH / ARRAY, so a MICRO-sourced PREV populates a NANO target via raw long copy through `FillRecord.getTimestamp` / `getInterval`, yielding silent 1000x drift. Net-new bug surfaced by `/review-pr 6946` (pending todo `2026-04-22-reject-cross-column-fill-prev-timestamp-unit-mismatch.md`); NOT regression recovery - D-01 does not suppress documentation here, but there is no PR body row either because the PR currently has no body claim about cross-column PREV TIMESTAMP/INTERVAL - the fix just makes the rejection honest.
+
+  Fix: widen the `needsExactTypeMatch` clause to cover both tags:
+
+  ```
+  final boolean needsExactTypeMatch =
+          ColumnType.isDecimal(targetType)
+                  || ColumnType.isGeoHash(targetType)
+                  || targetTag == ColumnType.ARRAY
+                  || targetTag == ColumnType.TIMESTAMP
+                  || targetTag == ColumnType.INTERVAL;
+  ```
+
+  Rejects MICRO <-> NANO mixes at codegen with the existing error message ("source type TIMESTAMP_MICRO cannot fill target column of type TIMESTAMP_NANO"). No runtime conversion - cross-column PREV is rare enough that strict rejection is preferred (per the todo's own follow-up note).
+
+- **D-27** - Regression test `testFillPrevCrossColumnTimestampUnitMismatch` in `SampleByFillTest` modeled on the DECIMAL precision-mismatch test (`testFillPrevCrossColumnDecimalPrecisionMismatch`). Two table variants cover both unit pairs: TIMESTAMP_MICRO column + TIMESTAMP_NANO column; INTERVAL_TIMESTAMP_MICRO column + INTERVAL_TIMESTAMP_NANO column. Assert the SqlException is raised with the expected message and position (pointing at `fillExpr.rhs.position`). Paired same-commit with D-26 per Phase 15 D-02.
+
+- **D-28** - After D-26/D-27 land, move `.planning/todos/pending/2026-04-22-reject-cross-column-fill-prev-timestamp-unit-mismatch.md` to `.planning/todos/completed/` with a `completed_at:` field and a back-reference to the Phase 17 plan ID that shipped the fix.
+
 ### Plan / commit structure
 
 - **D-25** - Planner decides plan partitioning and commit boundaries. Suggested (non-binding) clustering:
-  - Cluster A (code/test, by file): m1 slot-null + m2 field ordering + m3 IntList/BitSet refactor (+benchmark) all touch `SampleByFillCursor` / `SqlCodeGenerator` / `SampleByFillRecordCursorFactory`; m5 + m6 comments in `SampleByFillRecordCursorFactory`; m7 toSink0 in `QueryModel`; M-new CB at :603 + test; M2 test + two comments; m4 property test; m8a/b/c tests.
+  - Cluster A (code/test, by file): m1 slot-null + m2 field ordering + m3 IntList/BitSet refactor (+benchmark) all touch `SampleByFillCursor` / `SqlCodeGenerator` / `SampleByFillRecordCursorFactory`; m5 + m6 comments in `SampleByFillRecordCursorFactory`; m7 toSink0 in `QueryModel`; M-new CB at :603 + test; M2 test + two comments; m4 property test; m8a/b/c tests; M-unit D-26/D-27 cross-column TIMESTAMP/INTERVAL unit guard + paired rejection test.
   - Cluster B (PR body + title, single commit): M1 row + M3.2 K x B bullet rewrite + M3.4 two stale-sentence rewrites (+ optional row from D-05) + M3.5 count lines removal + m9 title rename.
 
   Cluster B lands last so counts in the Test plan (if kept) reflect post-cluster-A state. Phase 15 D-02 same-commit rule still applies for any restored-test-body pair that cannot pass without a paired codegen fix.
@@ -181,8 +203,13 @@ Phase 17 applies a narrow principle to PR body edits (D-01 below): a body row is
   - `SampleByFillCursor` inner class private-instance field declarations - D-15 alphabetical merge target; `outputColToKeyPos`/`keyPresent` fields - D-16 refactor target.
 
 - `core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java`
+  - `:3605-3611` - D-26 `needsExactTypeMatch` predicate; widen to include `TIMESTAMP` and `INTERVAL` tags.
+  - `:3612-3618` - existing `!isTypeCompatible` throw path; D-26 reuses its error message verbatim (no wording change).
   - `:3647-3659` - D-14 m1 slot-null fix target (per-column FILL_CONSTANT TIMESTAMP branch introduced in `9df205bac5`).
   - `:3663` - existing ownership-transfer `setQuick(i, null)` pattern (template for D-14).
+
+- `core/src/main/java/io/questdb/cairo/ColumnType.java`
+  - `:85` `TIMESTAMP = DATE + 1` (= 8) and `:136` `INTERVAL = PARAMETER + 1` (= 39) - tag constants referenced by D-26 `needsExactTypeMatch` clause. `tagOf(t)` = `t & 0xFF` so MICRO vs NANO variants collapse to the same tag without the widened predicate.
 
 - `core/src/main/java/io/questdb/griffin/model/QueryModel.java`
   - `toSink0` method - D-19 m7 fillOffset emission target.
@@ -201,6 +228,7 @@ Phase 17 applies a narrow principle to PR body edits (D-01 below): a body row is
   - `testFillWithOffsetAndTimezoneAcrossDst` - D-21 m8a companion target (spring-forward is the missing sibling).
   - `testFillPrevRejectNoArg` - D-23 m8c tightening target.
   - `testFillSubDayTimezoneFromOffset{,Empty,Plan}` (landed with `289d43090a`) - reference tests for D-05 M3.4 master-support probe; M3.4 does not add new tests.
+  - `testFillPrevCrossColumnDecimalPrecisionMismatch` - D-27 template for `testFillPrevCrossColumnTimestampUnitMismatch` (rejection test pattern: build two aggregates of mismatched full-type, fill one from the other, assertException on expected message + position).
 
 - `core/src/test/java/io/questdb/test/griffin/engine/groupby/SampleByNanoTimestampTest.java` - nano mirrors land for any new test requiring nano parity (D-09 pass-1 CB test, per Phase 15 D-02 symmetric-landing pattern). Planner decides whether M2, m4, m8a, m8b, m8c need nano twins based on the fixture's unit-sensitivity.
 
