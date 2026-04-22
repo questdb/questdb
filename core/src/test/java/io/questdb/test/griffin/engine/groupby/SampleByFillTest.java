@@ -483,7 +483,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\t2\t20.0
                             2024-01-01T02:00:00.000000Z\t1\tnull
                             """,
-                    "SELECT ts, cast(x AS STRING) k, first(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    "SELECT ts, x::STRING k, first(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
                     "ts", false, false
             );
         });
@@ -498,7 +498,7 @@ public class SampleByFillTest extends AbstractCairoTest {
             // (no infinite loop) and output is monotonically time-ordered.
             execute("CREATE TABLE y AS (" +
                     "SELECT x::DOUBLE AS val, " +
-                    "timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' AS TIMESTAMP), 600_000_000) k " +
+                    "timestamp_sequence('2021-10-31T00:00:00.000000Z'::TIMESTAMP, 600_000_000) k " +
                     "FROM long_sequence(100)) TIMESTAMP(k) PARTITION BY NONE");
             assertQueryNoLeakCheck(
                     """
@@ -1227,7 +1227,7 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevCastMultiKey() throws Exception {
-        // Two distinct cast(x AS STRING) keys across three buckets produce
+        // Two distinct x::STRING keys across three buckets produce
         // 2 x 3 = 6 cartesian rows. Captured via probe-and-freeze.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1245,7 +1245,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\t2\t20.0
                             2024-01-01T02:00:00.000000Z\t1\t10.0
                             """,
-                    "SELECT ts, cast(x AS STRING) k, first(v) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "SELECT ts, x::STRING k, first(v) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
         });

@@ -179,6 +179,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 ### Pending Todos
 
 - _Completed 2026-04-21 via Phase 16 Plan 01_: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys — landed in commit 82865efbc0.
+- **2026-04-22** Reject cross-column FILL(PREV) across TIMESTAMP and INTERVAL unit mismatches — tag equality accepts MICRO↔NANO mixes, raw long copy drifts by 1000x. Found in `/review-pr` on PR #6946. File: `.planning/todos/pending/2026-04-22-reject-cross-column-fill-prev-timestamp-unit-mismatch.md`.
 
 ### Blockers/Concerns
 

@@ -249,7 +249,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     protected void _close() {
         Misc.free(cursor);
-        base.close();
+        Misc.free(base);
         Misc.free(fromFunc);
         Misc.free(toFunc);
         Misc.freeObjList(constantFills);
