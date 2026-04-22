@@ -117,6 +117,54 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshResolvesPerTxnSymbolKeys() throws Exception {
+        // Regression for the SYMBOL key collision: the WAL writer assigns symbol
+        // keys as `initialSymCount + localId`, with `localId` reset between commits.
+        // When initialSymCount stays at zero (no WAL apply has refreshed the clean
+        // count), every transaction reuses local ids 0, 1, 2... so two transactions
+        // can have key 0 mapping to different symbols. Without per-txn translation,
+        // the cumulative symbolMaps in WalReader resolves all rows to the last-seen
+        // symbol. Here that would have been MSFT (last INSERT), giving rows
+        // GOOG/AAPL/MSFT all the symbol "MSFT".
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_sym LAG 1s RETENTION 1h AS" +
+                " SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades");
+        drainLiveViewQueue();
+
+        // Bootstrap with one row so the next refresh takes the incremental branch.
+        execute("INSERT INTO trades VALUES ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // Three INSERTs queued before drain produce three separate WAL transactions.
+        // Each transaction's diff entries use local id 0 for its single new symbol;
+        // per-txn overlay must map them to GOOG / AAPL / MSFT respectively.
+        execute("INSERT INTO trades VALUES ('GOOG', 200.0, '2024-01-01T00:00:01.000000Z')");
+        execute("INSERT INTO trades VALUES ('AAPL', 300.0, '2024-01-01T00:00:02.000000Z')");
+        execute("INSERT INTO trades VALUES ('MSFT', 400.0, '2024-01-01T00:00:03.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t200.0\t2024-01-01T00:00:01.000000Z\t2\n" +
+                        "AAPL\t300.0\t2024-01-01T00:00:02.000000Z\t3\n" +
+                        "MSFT\t400.0\t2024-01-01T00:00:03.000000Z\t4\n",
+                "SELECT * FROM live_sym",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_sym");
+    }
+
+    @Test
     public void testIncrementalRefreshAccumulatesWindowState() throws Exception {
         // Regression for the broken incremental-refresh path (bugs A/B/C):
         // (A) bootstrap with seqTxn=-1 must advance lastProcessedSeqTxn so the next

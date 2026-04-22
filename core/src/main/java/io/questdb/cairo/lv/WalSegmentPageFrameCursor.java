@@ -39,9 +39,13 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.wal.SymbolMapDiff;
+import io.questdb.cairo.wal.SymbolMapDiffCursor;
+import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -82,6 +86,15 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     private final LongList pageAddresses = new LongList();
     private final LongList pageSizes = new LongList();
     private final ObjList<WalSymbolTable> symbolTables = new ObjList<>();
+    // Per-txn SYMBOL key -> value overlay, keyed by base-table writer index
+    // (matching columnIndexes). Repopulated per {@link #of} call from the
+    // current WAL transaction's SymbolMapDiff. Takes precedence over
+    // WalReader.getSymbolValue, which is prone to stale entries when the WAL
+    // writer reuses local ids 0..K-1 across transactions (see DataType=
+    // WAL_DEDUP_MODE_DEFAULT behavior in WalWriter.getKeyOrNextSymbolKey).
+    // A null entry at a given index means that column had no diff in this
+    // transaction, so resolution falls through to the reader.
+    private final ObjList<IntObjHashMap<CharSequence>> txnSymbolDiffs = new ObjList<>();
     private boolean consumed;
     private WalReader reader;
     private long rowHi;
@@ -166,6 +179,16 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
      * column in {@link #getColumnMapping()}; pass the live view's base-table
      * {@link RecordMetadata}.
      * <p>
+     * {@code txnDiffs}, when non-null, supplies the current transaction's
+     * {@link SymbolMapDiff} entries. The cursor consumes the cursor into a per-column
+     * {@code key -> value} overlay that takes precedence over
+     * {@link WalReader#getSymbolValue} for this transaction's rows. This is how
+     * symbol columns resolve correctly when the WAL writer reuses local ids across
+     * transactions (the writer assigns keys {@code initialSymCount + localId} with
+     * {@code localId} reset between commits; when {@code initialSymCount} stays at
+     * zero because no WAL apply has refreshed the clean count, transactions collide
+     * on key 0, and the reader's cumulative map returns the last-written symbol).
+     * <p>
      * Reuses internal buffers across calls; callers should {@link #close()} the
      * cursor when all segments have been consumed.
      */
@@ -176,7 +199,8 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             long segmentRowCount,
             long rowLo,
             long rowHi,
-            @NotNull RecordMetadata metadata
+            @NotNull RecordMetadata metadata,
+            @Nullable SymbolMapDiffCursor txnDiffs
     ) {
         assert rowLo >= 0 && rowHi >= rowLo && rowHi <= segmentRowCount;
         reader = Misc.free(reader);
@@ -187,9 +211,46 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         reader = new WalReader(configuration, tableToken, walName, segmentId, segmentRowCount);
         this.rowLo = rowLo;
         this.rowHi = rowHi;
+        buildTxnSymbolDiffs(txnDiffs);
         computeFrame(metadata);
         toTop();
         return this;
+    }
+
+    /**
+     * Consumes {@code txnDiffs} into {@link #txnSymbolDiffs}, clearing any overlay
+     * entries left behind by the previous {@link #of} call. Each entry lands in the
+     * map at index {@code diff.getColumnIndex()}, which matches the base-table writer
+     * index that {@code LiveViewRefreshJob.buildColumnMappings} stores in
+     * {@link #columnIndexes}.
+     */
+    private void buildTxnSymbolDiffs(@Nullable SymbolMapDiffCursor txnDiffs) {
+        for (int i = 0, n = txnSymbolDiffs.size(); i < n; i++) {
+            IntObjHashMap<CharSequence> m = txnSymbolDiffs.getQuick(i);
+            if (m != null) {
+                m.clear();
+            }
+        }
+        if (txnDiffs == null) {
+            return;
+        }
+        SymbolMapDiff diff = txnDiffs.nextSymbolMapDiff();
+        while (diff != null) {
+            int colIdx = diff.getColumnIndex();
+            IntObjHashMap<CharSequence> map = colIdx < txnSymbolDiffs.size() ? txnSymbolDiffs.getQuick(colIdx) : null;
+            if (map == null) {
+                map = new IntObjHashMap<>();
+                txnSymbolDiffs.extendAndSet(colIdx, map);
+            }
+            SymbolMapDiffEntry entry = diff.nextEntry();
+            while (entry != null) {
+                // String.valueOf copies the transient CharSequence so the overlay survives
+                // past this entry's re-use on the next nextEntry() call.
+                map.put(entry.getKey(), String.valueOf(entry.getSymbol()));
+                entry = diff.nextEntry();
+            }
+            diff = txnDiffs.nextSymbolMapDiff();
+        }
     }
 
     @Override
@@ -270,7 +331,11 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                     symTab = new WalSymbolTable();
                     symbolTables.setQuick(i, symTab);
                 }
-                symTab.of(walColumnIndex, reader);
+                IntObjHashMap<CharSequence> diff = walColumnIndex < txnSymbolDiffs.size()
+                        ? txnSymbolDiffs.getQuick(walColumnIndex)
+                        : null;
+                // Pass an empty map as null — valueOf short-circuits to the reader.
+                symTab.of(walColumnIndex, reader, (diff != null && diff.size() > 0) ? diff : null);
             } else {
                 symbolTables.setQuick(i, null);
             }
@@ -297,6 +362,10 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     }
 
     private static final class WalSymbolTable implements StaticSymbolTable {
+        // Per-transaction overlay (key -> symbol) built from the current txn's
+        // SymbolMapDiff. Null when the txn has no diff entries for this column;
+        // resolution falls straight through to the reader.
+        private IntObjHashMap<CharSequence> txnDiff;
         private WalReader reader;
         private int walColumnIndex;
 
@@ -319,18 +388,31 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             return SymbolTable.VALUE_NOT_FOUND;
         }
 
-        public void of(int walColumnIndex, WalReader reader) {
+        public void of(int walColumnIndex, WalReader reader, @Nullable IntObjHashMap<CharSequence> txnDiff) {
             this.walColumnIndex = walColumnIndex;
             this.reader = reader;
+            this.txnDiff = txnDiff;
         }
 
         @Override
         public CharSequence valueBOf(int key) {
-            return reader.getSymbolValue(walColumnIndex, key);
+            return valueOf(key);
         }
 
         @Override
         public CharSequence valueOf(int key) {
+            // Check the per-txn overlay first. The reader's cumulative symbol map
+            // can have stale entries for colliding local ids across transactions,
+            // so we cannot trust it for keys that belong to this transaction's diff.
+            // For keys < cleanSymbolCount (loaded from the table's clean symbol
+            // files), the overlay does not have them and the reader resolves them
+            // correctly.
+            if (txnDiff != null) {
+                CharSequence value = txnDiff.get(key);
+                if (value != null) {
+                    return value;
+                }
+            }
             return reader.getSymbolValue(walColumnIndex, key);
         }
     }

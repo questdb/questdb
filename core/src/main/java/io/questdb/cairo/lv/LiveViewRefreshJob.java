@@ -243,14 +243,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * we resolve names through the engine's metadata cache. Live views invalidate on
      * any base-table schema change, so this mapping is stable for the lifetime of one
      * incremental refresh.
-     * <p>
-     * Throws {@link CairoException} if any column is SYMBOL — the WAL writer encodes
-     * symbol keys per-transaction (via local ids that get translated to global table
-     * keys at WAL apply time), and the live view refresh path does not yet replicate
-     * that translation. {@link #incrementalRefresh} catches the exception and falls
-     * back to {@link #fullRecompute}, which reads through {@code TableReader} where
-     * symbol keys are already global. Removing this guard requires teaching
-     * {@link WalSegmentPageFrameCursor} to do per-txn symbol translation.
      */
     private void buildColumnMappings(RecordMetadata baseMetadata, TableToken baseToken) {
         columnIndexes.clear();
@@ -261,11 +253,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 throw CairoException.tableDoesNotExist(baseToken.getTableName());
             }
             for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
-                int type = baseMetadata.getColumnType(i);
-                if (ColumnType.tagOf(type) == ColumnType.SYMBOL) {
-                    throw CairoException.nonCritical()
-                            .put("incremental refresh of SYMBOL columns is not supported, falling back to full recompute");
-                }
                 CharSequence colName = baseMetadata.getColumnName(i);
                 CairoColumn col = baseTable.getColumnQuiet(colName);
                 if (col == null) {
@@ -274,6 +261,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             .put(", column=").put(colName).put(']');
                 }
                 columnIndexes.add(col.getWriterIndex());
+                int type = baseMetadata.getColumnType(i);
                 if (ColumnType.isVarSize(type)) {
                     columnSizeShifts.add(0);
                 } else {
@@ -458,7 +446,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
                     walNameSink.clear();
                     walNameSink.put(WAL_NAME_BASE).put(walId);
-                    frameCursor.of(baseToken, walNameSink, segmentId, endRow, startRow, endRow, baseMetadata);
+                    // dataInfo doubles as the txn's SymbolMapDiffCursor. The cursor
+                    // consumes it into a per-column overlay so SYMBOL resolution uses
+                    // this transaction's diff entries rather than the WalReader's
+                    // cumulative (and potentially collision-overwritten) symbol map.
+                    frameCursor.of(baseToken, walNameSink, segmentId, endRow, startRow, endRow, baseMetadata, dataInfo);
                     walRecordCursor.of(frameCursor, baseMetadata);
 
                     RecordCursor source = walRecordCursor;
