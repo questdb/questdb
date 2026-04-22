@@ -595,12 +595,19 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    private void recordCommittedTable(CharSequence tableName, CharSequence tableDirName, long seqTxn) {
+    private void recordCommittedTable(String tableName, String tableDirName, long seqTxn) {
         if (seqTxn < 0) {
             return;
         }
         pendingAckSeqTxns.put(tableName, seqTxn);
-        tableDirNames.put(tableName, tableDirName.toString());
+        String oldDirName = tableDirNames.get(tableName);
+        if (oldDirName != null && !oldDirName.equals(tableDirName)) {
+            // Table was dropped and re-created with a new dir name.
+            // Reset the durable watermark so the new incarnation's
+            // uploads are properly reported.
+            lastDurableSeqTxns.put(tableName, -1L);
+        }
+        tableDirNames.put(tableName, tableDirName);
     }
 
     private void rejectCommitError(Throwable th) {

@@ -231,6 +231,59 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCollectDurableProgressDroppedTableThenRecreated() throws Exception {
+        // Regression: when a table is dropped and re-created with the same name
+        // on the same connection, lastDurableSeqTxns retains MAX_VALUE from the
+        // drop. Without resetting it on dir name change, durable acks for the
+        // re-created table would never be reported.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // 1. Commit to "orders" (dir "orders~1")
+                fake.queueCommit(new String[]{"orders"}, new String[]{"orders~1"}, new long[]{10L});
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+                registry.set("orders~1", 10L);
+                io.questdb.std.CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                state.onDurableAckSent();
+
+                // 2. Table dropped — registry sets MAX_VALUE sentinel
+                registry.set("orders~1", Long.MAX_VALUE);
+                progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(Long.MAX_VALUE, progress.get("orders"));
+                state.onDurableAckSent();
+
+                // 3. Table re-created with same name, new dir "orders~2"
+                fake.queueCommit(new String[]{"orders"}, new String[]{"orders~2"}, new long[]{5L});
+                state.setHighestProcessedSequence(1);
+                state.commit();
+
+                // 4. Upload completes for new incarnation
+                registry.set("orders~2", 5L);
+                progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(
+                        "durable ack must be reported for re-created table",
+                        1, progress.size()
+                );
+                Assert.assertEquals(5L, progress.get("orders"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testCollectDurableProgressIsEmptyWhenDisabled() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -627,7 +680,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 long[] capturedSeq = new long[]{Long.MIN_VALUE};
                 try {
                     cache.commitAll((tableName, tableDirName, seqTxn) -> {
-                        captured.add(new Utf8String(tableDirName.toString()));
+                        captured.add(new Utf8String(tableDirName));
                         capturedSeq[0] = seqTxn;
                     });
                 } catch (Exception e) {
@@ -1824,9 +1877,9 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     private static final class FakeConsumerTudCache extends QwpTudCache {
-        private CharSequence[] commitDirNames;
+        private String[] commitDirNames;
         private long[] commitSeqTxns;
-        private CharSequence[] commitTableNames;
+        private String[] commitTableNames;
         private Throwable commitThrow;
 
         FakeConsumerTudCache(io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig) {
@@ -1850,7 +1903,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             commitSeqTxns = null;
         }
 
-        void queueCommit(CharSequence[] tableNames, CharSequence[] dirNames, long[] seqTxns) {
+        void queueCommit(String[] tableNames, String[] dirNames, long[] seqTxns) {
             this.commitTableNames = tableNames;
             this.commitDirNames = dirNames;
             this.commitSeqTxns = seqTxns;

@@ -370,7 +370,7 @@ public class QwpTudCache implements QuietCloseable {
      */
     @FunctionalInterface
     public interface CommittedTxnConsumer {
-        void accept(CharSequence tableName, CharSequence tableDirName, long seqTxn);
+        void accept(String tableName, String tableDirName, long seqTxn);
     }
 
     private static boolean isValidQwpSchemaColumnName(QwpColumnDef columnDef, int maxFileNameLength) {
