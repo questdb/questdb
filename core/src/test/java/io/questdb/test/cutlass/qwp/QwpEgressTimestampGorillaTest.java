@@ -101,7 +101,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                             @Override
                             public void onBatch(QwpColumnBatch batch) {
                                 for (int r = 0; r < batch.getRowCount(); r++) {
-                                    sum[0] += batch.getLong(0, r);
+                                    sum[0] += batch.getLongValue(0, r);
                                     rowCount[0]++;
                                 }
                             }
@@ -149,7 +149,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             bytes[0] += batch.payloadLimit() - batch.payloadAddr();
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                sum[0] += batch.getLong(0, r);
+                                sum[0] += batch.getLongValue(0, r);
                                 rowCount[0]++;
                             }
                         }
@@ -206,7 +206,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             totalBytes[0] += batch.payloadLimit() - batch.payloadAddr();
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                long ts = batch.getLong(0, r);
+                                long ts = batch.getLongValue(0, r);
                                 Assert.assertTrue("row " + r + " non-monotonic",
                                         ts > lastSeen[0] || lastSeen[0] == Long.MIN_VALUE);
                                 lastSeen[0] = ts;
@@ -269,8 +269,8 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                tsSum[0] += batch.getLong(0, r);
-                                scrambledSum[0] += batch.getLong(1, r);
+                                tsSum[0] += batch.getLongValue(0, r);
+                                scrambledSum[0] += batch.getLongValue(1, r);
                                 rowCount[0]++;
                             }
                         }
@@ -332,7 +332,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             batches[0]++;
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                long ts = batch.getLong(0, r);
+                                long ts = batch.getLongValue(0, r);
                                 Assert.assertTrue("non-monotonic at " + rowCount[0] +
                                                 " (prev=" + lastSeen[0] + ", got=" + ts + ')',
                                         ts > lastSeen[0] || lastSeen[0] == Long.MIN_VALUE);
@@ -386,7 +386,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                                 public void onBatch(QwpColumnBatch batch) {
                                     bytes[0] += batch.payloadLimit() - batch.payloadAddr();
                                     for (int r = 0; r < batch.getRowCount(); r++) {
-                                        long ts = batch.getLong(0, r);
+                                        long ts = batch.getLongValue(0, r);
                                         Assert.assertTrue("non-monotonic",
                                                 ts > lastSeen[0] || lastSeen[0] == Long.MIN_VALUE);
                                         lastSeen[0] = ts;
@@ -438,7 +438,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                checksum[0] ^= batch.getLong(0, r);
+                                checksum[0] ^= batch.getLongValue(0, r);
                                 rowCount[0]++;
                             }
                         }
@@ -486,7 +486,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                sum[0] += batch.getLong(0, r);
+                                sum[0] += batch.getLongValue(0, r);
                                 rowCount[0]++;
                             }
                         }
@@ -534,7 +534,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++) {
                                 if (batch.isNull(0, r)) nullCount[0]++;
-                                else nonNullSum[0] += batch.getLong(0, r);
+                                else nonNullSum[0] += batch.getLongValue(0, r);
                                 rowCount[0]++;
                             }
                         }

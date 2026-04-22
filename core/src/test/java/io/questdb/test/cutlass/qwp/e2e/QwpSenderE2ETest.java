@@ -1002,7 +1002,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE test_da_from_str (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             assertCoercionError(port, "test_da_from_str",
                     (s, t) -> s.table(t).stringColumn("v", "not an array").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write STRING", "DOUBLE[]");
+                    "cannot write VARCHAR", "DOUBLE[]");
         });
     }
 

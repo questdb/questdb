@@ -219,7 +219,7 @@ public class QwpEgressReadBenchmark {
                         long id = io.questdb.client.std.Unsafe.getUnsafe().getLong(idBase + 8L * idIdx[r]);
                         long priceBits = io.questdb.client.std.Unsafe.getUnsafe().getLong(priceBase + 8L * priceIdx[r]);
                         DirectUtf8Sequence sym = batch.getStrA(3, r);
-                        DirectUtf8Sequence note = batch.getVarcharB(4, r);
+                        DirectUtf8Sequence note = batch.getStrB(4, r);
                         checksum[0] ^= ts ^ id ^ priceBits
                                 ^ (sym != null ? sym.size() : 0)
                                 ^ (note != null ? note.size() : 0);

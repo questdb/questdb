@@ -145,10 +145,10 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
                                     int n = batch.getRowCount();
                                     for (int r = 0; r < n; r++) {
                                         if (batch.isNull(0, r)) idNullCount[0]++;
-                                        else idChecksum[0] ^= batch.getLong(0, r);
+                                        else idChecksum[0] ^= batch.getLongValue(0, r);
                                         if (batch.isNull(1, r)) priceNullCount[0]++;
-                                        else priceChecksum[0] ^= Double.doubleToLongBits(batch.getDouble(1, r));
-                                        DirectUtf8Sequence note = batch.getVarcharA(2, r);
+                                        else priceChecksum[0] ^= Double.doubleToLongBits(batch.getDoubleValue(1, r));
+                                        DirectUtf8Sequence note = batch.getStrA(2, r);
                                         if (note == null) noteNullCount[0]++;
                                         else noteLenSum[0] += note.size();
                                         DirectUtf8Sequence str = batch.getStrA(3, r);
@@ -281,7 +281,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             Assert.assertEquals(1, batch.getRowCount());
-                            observed[0] = batch.getLong(0, 0);
+                            observed[0] = batch.getLongValue(0, 0);
                         }
 
                         @Override
@@ -364,7 +364,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                sum[0] += batch.getLong(0, r);
+                                sum[0] += batch.getLongValue(0, r);
                                 matchCount[0]++;
                             }
                         }
@@ -414,7 +414,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
                             int n = batch.getRowCount();
                             for (int r = 0; r < n; r++) {
                                 if (batch.isNull(0, r)) nullCount[0]++;
-                                else nonNullSum[0] += batch.getLong(0, r);
+                                else nonNullSum[0] += batch.getLongValue(0, r);
                             }
                             rowCount[0] += n;
                         }
@@ -470,8 +470,8 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             int n = batch.getRowCount();
                             for (int r = 0; r < n; r++) {
-                                sum[0] += batch.getLong(0, r);
-                                DirectUtf8Sequence v = batch.getVarcharA(1, r);
+                                sum[0] += batch.getLongValue(0, r);
+                                DirectUtf8Sequence v = batch.getStrA(1, r);
                                 Assert.assertNotNull(v);
                                 varcharLenSum[0] += v.size();
                             }
@@ -668,7 +668,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             int n = batch.getRowCount();
                             for (int r = 0; r < n; r++) {
-                                DirectUtf8Sequence v = batch.getVarcharA(0, r);
+                                DirectUtf8Sequence v = batch.getStrA(0, r);
                                 Assert.assertNotNull("row " + r + " should be non-null", v);
                                 lenSum[0] += v.size();
                             }

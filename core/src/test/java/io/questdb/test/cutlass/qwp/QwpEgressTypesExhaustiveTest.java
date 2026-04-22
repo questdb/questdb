@@ -29,7 +29,12 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.client.std.bytes.DirectByteSequence;
+import io.questdb.client.std.Long256Impl;
+import io.questdb.client.std.Uuid;
+import io.questdb.client.std.str.StringSink;
 import io.questdb.client.std.str.Utf8Sequence;
+import io.questdb.client.std.str.Utf8StringSink;
+import io.questdb.client.std.str.Utf8s;
 import io.questdb.std.BoolList;
 import io.questdb.std.LongList;
 import io.questdb.test.AbstractBootstrapTest;
@@ -213,7 +218,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                 3,
                 (batch, results) -> {
                     for (int r = 0; r < 3; r++) {
-                        results.add(new Object[]{batch.isNull(0, r), batch.getBool(0, r)});
+                        results.add(new Object[]{batch.isNull(0, r), batch.getBoolValue(0, r)});
                     }
                 },
                 rows -> {
@@ -442,6 +447,75 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testDecimalScalesAcrossColumns() throws Exception {
+        // Covers two things:
+        // 1. Decoder reads the per-column scale byte for every DECIMAL column
+        //    independently. One shared field in the decoder would collapse all
+        //    scales to the last column's value.
+        // 2. Scale=0 byte decodes correctly (not confused with "scale unset").
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("""
+                        CREATE TABLE t(
+                            d64_0   DECIMAL(18, 0),
+                            d64_4   DECIMAL(18, 4),
+                            d128_0  DECIMAL(38, 0),
+                            d128_20 DECIMAL(38, 20),
+                            d256_0  DECIMAL(76, 0),
+                            d256_38 DECIMAL(76, 38),
+                            part_ts TIMESTAMP
+                        ) TIMESTAMP(part_ts) PARTITION BY DAY WAL
+                        """);
+                serverMain.execute("""
+                        INSERT INTO t VALUES (
+                            42m,
+                            1.2345m,
+                            1000m,
+                            3.14159265358979323846m,
+                            9999999999999999999999999999999999999m,
+                            1.12345678901234567890123456789012345678m,
+                            1::TIMESTAMP
+                        )
+                        """);
+                serverMain.awaitTable("t");
+
+                final byte[] wireTypes = new byte[6];
+                final int[] scales = new int[6];
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute(
+                            "SELECT d64_0, d64_4, d128_0, d128_20, d256_0, d256_38 FROM t",
+                            new QwpColumnBatchHandler() {
+                                @Override
+                                public void onBatch(QwpColumnBatch batch) {
+                                    for (int c = 0; c < 6; c++) {
+                                        wireTypes[c] = batch.getColumnWireType(c);
+                                        scales[c] = batch.getDecimalScale(c);
+                                    }
+                                }
+
+                                @Override
+                                public void onEnd(long totalRows) {
+                                }
+
+                                @Override
+                                public void onError(byte status, String message) {
+                                    Assert.fail(message);
+                                }
+                            });
+                }
+                Assert.assertEquals(QwpConstants.TYPE_DECIMAL64, wireTypes[0]);
+                Assert.assertEquals(QwpConstants.TYPE_DECIMAL64, wireTypes[1]);
+                Assert.assertEquals(QwpConstants.TYPE_DECIMAL128, wireTypes[2]);
+                Assert.assertEquals(QwpConstants.TYPE_DECIMAL128, wireTypes[3]);
+                Assert.assertEquals(QwpConstants.TYPE_DECIMAL256, wireTypes[4]);
+                Assert.assertEquals(QwpConstants.TYPE_DECIMAL256, wireTypes[5]);
+                Assert.assertArrayEquals(new int[]{0, 4, 0, 20, 0, 38}, scales);
+            }
+        });
+    }
+
+    @Test
     public void testDouble() throws Exception {
         runRoundTrip(
                 "CREATE TABLE t(d DOUBLE)",
@@ -450,7 +524,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                 5,
                 (batch, results) -> {
                     for (int r = 0; r < 5; r++) {
-                        results.add(new Object[]{batch.isNull(0, r), batch.getDouble(0, r)});
+                        results.add(new Object[]{batch.isNull(0, r), batch.getDoubleValue(0, r)});
                     }
                 },
                 rows -> {
@@ -516,7 +590,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                 5,
                 (batch, results) -> {
                     for (int r = 0; r < 5; r++) {
-                        results.add(new Object[]{batch.isNull(0, r), batch.getFloat(0, r)});
+                        results.add(new Object[]{batch.isNull(0, r), batch.getFloatValue(0, r)});
                     }
                 },
                 rows -> {
@@ -620,7 +694,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                             wireType[0] = batch.getColumnWireType(0);
                             for (int r = 0; r < batch.getRowCount(); r++) {
                                 nullSeen[r] = batch.isNull(0, r);
-                                values.add(nullSeen[r] ? 0L : batch.getLong(0, r));
+                                values.add(nullSeen[r] ? 0L : batch.getIntValue(0, r));
                             }
                         }
 
@@ -750,6 +824,60 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testLong256Sink() throws Exception {
+        // Same data as testLong256, but read via the single-call Long256Sink API.
+        // A reusable Long256Impl is handed to the batch for every row; the
+        // four-word copy happens inside getLong256 with one virtual dispatch.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE t(l256 LONG256, part_ts TIMESTAMP) "
+                        + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            (CAST('0x01' AS LONG256),               1::TIMESTAMP),
+                            (CAST('0xFFFFFFFFFFFFFFFF' AS LONG256), 2::TIMESTAMP),
+                            (CAST(NULL AS LONG256),                 3::TIMESTAMP)
+                        """);
+                serverMain.awaitTable("t");
+
+                final List<long[]> words = new ArrayList<>();
+                final boolean[] hits = new boolean[3];
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT l256 FROM t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            // Reused across rows -- the whole point of the sink API.
+                            Long256Impl sink = new Long256Impl();
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                hits[r] = batch.getLong256(0, r, sink);
+                                words.add(hits[r]
+                                        ? new long[]{sink.getLong0(), sink.getLong1(), sink.getLong2(), sink.getLong3()}
+                                        : null);
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertArrayEquals(new long[]{1L, 0L, 0L, 0L}, words.get(0));
+                Assert.assertArrayEquals(new long[]{-1L, 0L, 0L, 0L}, words.get(1));
+                Assert.assertNull(words.get(2));
+                Assert.assertTrue(hits[0]);
+                Assert.assertTrue(hits[1]);
+                Assert.assertFalse("getLong256 must return false for NULL row", hits[2]);
+            }
+        });
+    }
+
+    @Test
     public void testShort() throws Exception {
         runRoundTrip(
                 "CREATE TABLE t(s SHORT)",
@@ -770,7 +898,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testString() throws Exception {
-        // Cover: empty, ASCII, multi-byte UTF-8, large, NULL, dual-view A/B.
+        // Cover: empty, ASCII, multi-byte UTF-8, large, NULL.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE t(s STRING, part_ts TIMESTAMP) "
@@ -797,23 +925,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                             wireType[0] = batch.getColumnWireType(0);
                             for (int r = 0; r < batch.getRowCount(); r++) {
                                 nullSeen[r] = batch.isNull(0, r);
-                                if (!nullSeen[r]) {
-                                    // Dual view: A and B should hold different cells simultaneously
-                                    Utf8Sequence a = batch.getStrA(0, r);
-                                    // Reference B on a different cell to prove A isn't clobbered;
-                                    // the other cell may itself be null (e.g. the NULL row), which
-                                    // is fine -- we assert on A below.
-                                    batch.getStrB(0, (r + 1) % batch.getRowCount());
-                                    Assert.assertNotNull(a);
-                                    // Convert to String for assertion via heap copy
-                                    values.add(batch.getString(0, r));
-                                    // B is a different cell: confirm A bytes still match the cell we asked
-                                    Assert.assertEquals("dual-view A must not be clobbered",
-                                            values.get(values.size() - 1).getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
-                                            a.size());
-                                } else {
-                                    values.add(null);
-                                }
+                                values.add(nullSeen[r] ? null : batch.getString(0, r));
                             }
                         }
 
@@ -836,6 +948,130 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                 Assert.assertEquals("a string of moderate length to exercise heap growth", values.get(4));
                 Assert.assertNull(values.get(5));
                 Assert.assertTrue(nullSeen[5]);
+            }
+        });
+    }
+
+    @Test
+    public void testStringDualView() throws Exception {
+        // Realistic dual-view usage: run-length-style transition counting within a
+        // single batch. A single flyweight would be clobbered by the second call,
+        // so the caller needs getStrA(current row) + getStrB(previous row) to hold
+        // both bytes concurrently for the comparison.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE t(sym SYMBOL, part_ts TIMESTAMP) "
+                        + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                // Expected transitions in designated-ts order:
+                //   A,A,B,B,B,C,A -> A->B at idx 2, B->C at idx 5, C->A at idx 6 = 3 transitions
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            ('A', 1::TIMESTAMP),
+                            ('A', 2::TIMESTAMP),
+                            ('B', 3::TIMESTAMP),
+                            ('B', 4::TIMESTAMP),
+                            ('B', 5::TIMESTAMP),
+                            ('C', 6::TIMESTAMP),
+                            ('A', 7::TIMESTAMP)
+                        """);
+                serverMain.awaitTable("t");
+
+                final int[] transitions = {0};
+                final int[] rowsSeen = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT sym FROM t ORDER BY part_ts", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            int n = batch.getRowCount();
+                            for (int r = 1; r < n; r++) {
+                                Utf8Sequence cur = batch.getStrA(0, r);
+                                Utf8Sequence prev = batch.getStrB(0, r - 1);
+                                if (!Utf8s.equals(prev, cur)) transitions[0]++;
+                            }
+                            rowsSeen[0] += n;
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertEquals(7, rowsSeen[0]);
+                Assert.assertEquals(3, transitions[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testStringSink() throws Exception {
+        // Exercises the zero-allocation getString(col, row, CharSink) overload on
+        // both Utf16Sink (transcodes to UTF-16) and Utf8Sink (pass-through).
+        // Multi-byte UTF-8 input catches any single-byte-only transcoding bug.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE t(s STRING, part_ts TIMESTAMP) "
+                        + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            ('hello',       1::TIMESTAMP),
+                            ('héllo wörld', 2::TIMESTAMP),
+                            (NULL,          3::TIMESTAMP)
+                        """);
+                serverMain.awaitTable("t");
+
+                final List<String> utf16Values = new ArrayList<>();
+                final List<byte[]> utf8Values = new ArrayList<>();
+                final boolean[] nullWrite = new boolean[3];
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT s FROM t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            StringSink utf16 = new StringSink();
+                            Utf8StringSink utf8 = new Utf8StringSink();
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                utf16.clear();
+                                utf8.clear();
+                                boolean wrote16 = batch.getString(0, r, utf16);
+                                boolean wrote8 = batch.getString(0, r, utf8);
+                                // Must agree on null vs non-null
+                                Assert.assertEquals("utf16 vs utf8 null agreement at row " + r, wrote16, wrote8);
+                                if (wrote16) {
+                                    utf16Values.add(utf16.toString());
+                                    byte[] bytes = new byte[utf8.size()];
+                                    for (int i = 0; i < utf8.size(); i++) bytes[i] = utf8.byteAt(i);
+                                    utf8Values.add(bytes);
+                                } else {
+                                    utf16Values.add(null);
+                                    utf8Values.add(null);
+                                    nullWrite[r] = true;
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertEquals("hello", utf16Values.get(0));
+                Assert.assertEquals("héllo wörld", utf16Values.get(1));
+                Assert.assertNull(utf16Values.get(2));
+                Assert.assertArrayEquals("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8), utf8Values.get(0));
+                Assert.assertArrayEquals("héllo wörld".getBytes(java.nio.charset.StandardCharsets.UTF_8), utf8Values.get(1));
+                Assert.assertNull(utf8Values.get(2));
+                Assert.assertTrue(nullWrite[2]);
             }
         });
     }
@@ -887,6 +1123,88 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                 Assert.assertEquals("'' SYMBOL must surface as empty string, not null", "", values.get(4));
                 Assert.assertEquals("A", values.get(5));
                 Assert.assertNull("NULL SYMBOL must surface as null", values.get(6));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCache() throws Exception {
+        // Pins the caching invariant for SYMBOL: a scan over N rows with K
+        // distinct symbols returns K String instances, not N. Also exercises
+        // the id-based API (getSymbolId / getSymbolForId / getSymbolDictSize)
+        // and verifies getString shares the same cache.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE t(sym SYMBOL, part_ts TIMESTAMP) "
+                        + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                // 3 distinct symbols repeated across 6 rows + 1 NULL.
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            ('AAPL', 1::TIMESTAMP),
+                            ('MSFT', 2::TIMESTAMP),
+                            ('AAPL', 3::TIMESTAMP),
+                            ('GOOG', 4::TIMESTAMP),
+                            ('MSFT', 5::TIMESTAMP),
+                            ('AAPL', 6::TIMESTAMP),
+                            (NULL,   7::TIMESTAMP)
+                        """);
+                serverMain.awaitTable("t");
+
+                final int[] dictSize = {-1};
+                final int[] rowIds = new int[7];
+                final String[] viaGetSymbol = new String[7];
+                final String[] viaGetString = new String[7];
+                final java.util.IdentityHashMap<String, Boolean> distinctInstances = new java.util.IdentityHashMap<>();
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT sym FROM t ORDER BY part_ts", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            dictSize[0] = batch.getSymbolDictSize(0);
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                rowIds[r] = batch.getSymbolId(0, r);
+                                viaGetSymbol[r] = batch.getSymbol(0, r);
+                                viaGetString[r] = batch.getString(0, r);
+                                if (viaGetSymbol[r] != null) distinctInstances.put(viaGetSymbol[r], Boolean.TRUE);
+                            }
+                            // getSymbolForId must resolve to the same cached instance as getSymbol(col, row).
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                if (rowIds[r] < 0) continue;
+                                Assert.assertSame("getSymbolForId must hit the per-dict cache",
+                                        viaGetSymbol[r], batch.getSymbolForId(0, rowIds[r]));
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertEquals(3, dictSize[0]);
+                Assert.assertEquals("AAPL", viaGetSymbol[0]);
+                Assert.assertEquals("MSFT", viaGetSymbol[1]);
+                Assert.assertEquals("AAPL", viaGetSymbol[2]);
+                Assert.assertEquals("GOOG", viaGetSymbol[3]);
+                Assert.assertEquals("MSFT", viaGetSymbol[4]);
+                Assert.assertEquals("AAPL", viaGetSymbol[5]);
+                Assert.assertNull(viaGetSymbol[6]);
+                Assert.assertEquals(-1, rowIds[6]);
+                // Identity: every row sharing a dict entry returns the SAME String instance.
+                Assert.assertSame("rows 0/2/5 share dict entry for 'AAPL'", viaGetSymbol[0], viaGetSymbol[2]);
+                Assert.assertSame(viaGetSymbol[0], viaGetSymbol[5]);
+                Assert.assertSame("rows 1/4 share dict entry for 'MSFT'", viaGetSymbol[1], viaGetSymbol[4]);
+                // getString on a SYMBOL column must hit the same cache as getSymbol.
+                for (int r = 0; r < 6; r++) {
+                    Assert.assertSame("getString must delegate to symbol cache at row " + r,
+                            viaGetSymbol[r], viaGetString[r]);
+                }
+                // 6 non-null rows, 3 distinct dict entries, 3 cached String instances.
+                Assert.assertEquals(3, distinctInstances.size());
             }
         });
     }
@@ -1019,6 +1337,64 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testUuidSink() throws Exception {
+        // Same data as testUuid, but read via the single-call Uuid sink API.
+        // Pins that getUuid returns false for NULL rows and leaves the sink
+        // untouched (the caller's previous value stays intact).
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE t(u UUID, part_ts TIMESTAMP) "
+                        + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 1::TIMESTAMP),
+                            (CAST(NULL AS UUID),                     2::TIMESTAMP)
+                        """);
+                serverMain.awaitTable("t");
+
+                final long[] loSeen = new long[2];
+                final long[] hiSeen = new long[2];
+                final boolean[] hits = new boolean[2];
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT u FROM t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            Uuid sink = new Uuid();
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                // Re-seed with a sentinel before every call so "untouched on NULL"
+                                // is detectable independently of the previous row's contents.
+                                sink.setAll(0xDEADBEEFL, 0xCAFEBABEL);
+                                hits[r] = batch.getUuid(0, r, sink);
+                                loSeen[r] = sink.getLo();
+                                hiSeen[r] = sink.getHi();
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertTrue(hits[0]);
+                // Cross-check against the part-wise accessors via parsed literal:
+                // 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' -> hi=0xa0eebc999c0b4ef8, lo=0xbb6d6bb9bd380a11
+                Assert.assertEquals(0xa0eebc999c0b4ef8L, hiSeen[0]);
+                Assert.assertEquals(0xbb6d6bb9bd380a11L, loSeen[0]);
+                // NULL row: sink untouched, still holds the pre-seed values.
+                Assert.assertFalse("getUuid must return false for NULL row", hits[1]);
+                Assert.assertEquals(0xDEADBEEFL, loSeen[1]);
+                Assert.assertEquals(0xCAFEBABEL, hiSeen[1]);
+            }
+        });
+    }
+
+    @Test
     public void testVarchar() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
@@ -1033,7 +1409,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                         """);
                 serverMain.awaitTable("t");
 
-                final List<byte[]> values = new ArrayList<>();
+                final List<String> values = new ArrayList<>();
                 final byte[] wireType = {0};
                 try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
@@ -1042,7 +1418,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             wireType[0] = batch.getColumnWireType(0);
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                values.add(batch.getVarchar(0, r));
+                                values.add(batch.getString(0, r));
                             }
                         }
 
@@ -1057,9 +1433,9 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                     });
                 }
                 Assert.assertEquals(QwpConstants.TYPE_VARCHAR, wireType[0]);
-                Assert.assertArrayEquals(new byte[]{}, values.get(0));
-                Assert.assertArrayEquals("plain".getBytes(java.nio.charset.StandardCharsets.UTF_8), values.get(1));
-                Assert.assertArrayEquals("héllo".getBytes(java.nio.charset.StandardCharsets.UTF_8), values.get(2));
+                Assert.assertEquals("", values.get(0));
+                Assert.assertEquals("plain", values.get(1));
+                Assert.assertEquals("héllo", values.get(2));
                 Assert.assertNull(values.get(3));
             }
         });

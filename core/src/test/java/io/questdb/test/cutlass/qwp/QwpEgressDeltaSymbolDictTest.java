@@ -252,7 +252,7 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                sum[0] += batch.getLong(0, r);
+                                sum[0] += batch.getLongValue(0, r);
                                 rowCount[0]++;
                             }
                         }

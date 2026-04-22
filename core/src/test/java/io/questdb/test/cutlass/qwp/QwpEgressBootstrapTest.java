@@ -91,11 +91,10 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         """);
                 serverMain.awaitTable("allp");
 
-                final Object[][] row = new Object[2][];
                 try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                     client.connect();
                     // Explicit column list (not SELECT *) so the test still sees 13 columns and
-                    // the assertions at row[r][0..12] keep addressing the same logical columns.
+                    // the per-column assertions keep addressing the same logical columns.
                     client.execute(
                             "SELECT b, bt, sh, ch, i, l, f, d, dt, ts, s, v, sy FROM allp",
                             new QwpColumnBatchHandler() {
@@ -103,13 +102,33 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                                 public void onBatch(QwpColumnBatch batch) {
                                     Assert.assertEquals(13, batch.getColumnCount());
                                     Assert.assertEquals(2, batch.getRowCount());
-                                    for (int r = 0; r < 2; r++) {
-                                        Object[] cells = new Object[13];
-                                        for (int c = 0; c < 13; c++) {
-                                            cells[c] = batch.isNull(c, r) ? null : batch.getValue(c, r);
-                                        }
-                                        row[r] = cells;
-                                    }
+
+                                    // Row 0 assertions
+                                    Assert.assertTrue(batch.getBoolValue(0, 0));                       // BOOLEAN
+                                    Assert.assertEquals((byte) 127, batch.getByteValue(1, 0));         // BYTE
+                                    Assert.assertEquals((short) 32767, batch.getShortValue(2, 0));     // SHORT
+                                    Assert.assertEquals('A', batch.getCharValue(3, 0));                // CHAR
+                                    Assert.assertEquals(999, batch.getIntValue(4, 0));                 // INT
+                                    Assert.assertEquals(999_999_999_999L, batch.getLongValue(5, 0));   // LONG
+                                    Assert.assertEquals(1.5f, batch.getFloatValue(6, 0), 0.0f);        // FLOAT
+                                    Assert.assertEquals(3.14, batch.getDoubleValue(7, 0), 1e-9);       // DOUBLE
+                                    Assert.assertTrue(batch.getLongValue(8, 0) > 0);                   // DATE
+                                    Assert.assertTrue(batch.getLongValue(9, 0) > 0);                   // TIMESTAMP
+                                    Assert.assertEquals("hello", batch.getString(10, 0));         // STRING
+                                    Assert.assertEquals("world", batch.getString(11, 0));         // VARCHAR
+                                    Assert.assertEquals("SYM1", batch.getString(12, 0));          // SYMBOL
+
+                                    // Row 1: NULL-capable types come back as null
+                                    Assert.assertTrue(batch.isNull(4, 1));   // INT
+                                    Assert.assertTrue(batch.isNull(5, 1));   // LONG
+                                    Assert.assertTrue(batch.isNull(6, 1));   // FLOAT
+                                    Assert.assertTrue(batch.isNull(7, 1));   // DOUBLE
+                                    Assert.assertTrue(batch.isNull(8, 1));   // DATE
+                                    Assert.assertTrue(batch.isNull(9, 1));   // TIMESTAMP
+                                    Assert.assertTrue(batch.isNull(10, 1));  // STRING
+                                    Assert.assertTrue(batch.isNull(11, 1));  // VARCHAR
+                                    Assert.assertTrue(batch.isNull(12, 1));  // SYMBOL
+                                    // BOOLEAN/BYTE/SHORT/CHAR cannot represent NULL in QuestDB -- stored values round-trip.
                                 }
 
                                 @Override
@@ -122,33 +141,6 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                                 }
                             });
                 }
-
-                // Row 0 assertions
-                Assert.assertEquals(Boolean.TRUE, row[0][0]);                        // BOOLEAN
-                Assert.assertEquals(127L, row[0][1]);                                // BYTE
-                Assert.assertEquals(32767L, row[0][2]);                              // SHORT
-                Assert.assertEquals((long) 'A', row[0][3]);                          // CHAR
-                Assert.assertEquals(999L, row[0][4]);                                // INT
-                Assert.assertEquals(999_999_999_999L, row[0][5]);                    // LONG
-                Assert.assertEquals(1.5f, (Float) row[0][6], 0.0f);                  // FLOAT
-                Assert.assertEquals(3.14, (Double) row[0][7], 1e-9);                 // DOUBLE
-                Assert.assertTrue((Long) row[0][8] > 0);                             // DATE
-                Assert.assertTrue((Long) row[0][9] > 0);                             // TIMESTAMP
-                Assert.assertEquals("hello", row[0][10]);                            // STRING
-                Assert.assertArrayEquals("world".getBytes(), (byte[]) row[0][11]);   // VARCHAR
-                Assert.assertEquals("SYM1", row[0][12]);                             // SYMBOL
-
-                // Row 1: NULL-capable types come back as null
-                Assert.assertNull(row[1][4]);  // INT
-                Assert.assertNull(row[1][5]);  // LONG
-                Assert.assertNull(row[1][6]);  // FLOAT
-                Assert.assertNull(row[1][7]);  // DOUBLE
-                Assert.assertNull(row[1][8]);  // DATE
-                Assert.assertNull(row[1][9]);  // TIMESTAMP
-                Assert.assertNull(row[1][10]); // STRING
-                Assert.assertNull(row[1][11]); // VARCHAR
-                Assert.assertNull(row[1][12]); // SYMBOL
-                // BOOLEAN/BYTE/SHORT/CHAR cannot represent NULL in QuestDB -- stored values round-trip.
             }
         });
     }
@@ -458,8 +450,11 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                d64[r] = batch.isNull(0, r) ? null : batch.getLong(0, r);
-                                d128[r] = batch.isNull(1, r) ? null : batch.getLongArray(1, r);
+                                d64[r] = batch.isNull(0, r) ? null : batch.getLongValue(0, r);
+                                d128[r] = batch.isNull(1, r) ? null : new long[]{
+                                        batch.getDecimal128Low(1, r),
+                                        batch.getDecimal128High(1, r)
+                                };
                             }
                         }
 
@@ -610,7 +605,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                rows.add(batch.getLong(0, r));
+                                rows.add(batch.getLongValue(0, r));
                             }
                         }
 
@@ -677,8 +672,8 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                             precisionBits[0] = batch.getGeohashPrecisionBits(0);
                             precisionBits[1] = batch.getGeohashPrecisionBits(1);
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                g20Values[r] = batch.isNull(0, r) ? null : batch.getLong(0, r);
-                                g40Values[r] = batch.isNull(1, r) ? null : batch.getLong(1, r);
+                                g20Values[r] = batch.isNull(0, r) ? null : batch.getGeohashValue(0, r);
+                                g40Values[r] = batch.isNull(1, r) ? null : batch.getGeohashValue(1, r);
                             }
                         }
 
@@ -804,7 +799,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                             for (int r = 0; r < batch.getRowCount(); r++, count[0]++) {
                                 nullSeen[count[0]] = batch.isNull(0, r);
                                 if (!nullSeen[count[0]]) {
-                                    valueSeen[count[0]] = batch.getLong(0, r);
+                                    valueSeen[count[0]] = batch.getIntValue(0, r);
                                 }
                             }
                         }
@@ -856,7 +851,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             batches[0]++;
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                sum[0] += batch.getLong(0, r);
+                                sum[0] += batch.getLongValue(0, r);
                                 count[0]++;
                             }
                         }
@@ -965,7 +960,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                             // (rows are 1-indexed). Any duplicate batch with different rows
                             // shows up here as a non-contiguous start value.
                             if (batch.getRowCount() > 0 && firstValuePerBatch[0] == -1) {
-                                firstValuePerBatch[0] = batch.getLong(0, 0);
+                                firstValuePerBatch[0] = batch.getLongValue(0, 0);
                             }
                             totalRows[0] += batch.getRowCount();
                         }
@@ -1136,7 +1131,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                             Assert.assertEquals(1, batch.getColumnCount());
                             Assert.assertEquals("x", batch.getColumnName(0));
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                collected.add(batch.getLong(0, r));
+                                collected.add(batch.getLongValue(0, r));
                             }
                         }
 
@@ -1187,8 +1182,8 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             Assert.assertEquals(4, batch.getColumnCount());
                             for (int r = 0; r < batch.getRowCount(); r++, rows[0]++) {
-                                Assert.assertEquals(rows[0] + 1, batch.getLong(0, r));
-                                Assert.assertEquals(expectedPx[rows[0]], batch.getDouble(1, r), 1e-9);
+                                Assert.assertEquals(rows[0] + 1, batch.getLongValue(0, r));
+                                Assert.assertEquals(expectedPx[rows[0]], batch.getDoubleValue(1, r), 1e-9);
                                 Assert.assertEquals(expectedSym[rows[0]], batch.getString(2, r));
                             }
                         }
@@ -1226,7 +1221,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++) {
                                 rows.add(new Object[]{
-                                        batch.isNull(0, r) ? null : batch.getLong(0, r),
+                                        batch.isNull(0, r) ? null : batch.getLongValue(0, r),
                                         batch.getString(1, r)
                                 });
                             }
@@ -1292,7 +1287,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             batches[0]++;
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                sum[0] += batch.getLong(0, r);
+                                sum[0] += batch.getLongValue(0, r);
                                 rows[0]++;
                             }
                             if (batches[0] <= 3) {
@@ -1423,7 +1418,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0, n = batch.getRowCount(); r < n; r++) {
-                                secondSum[0] += batch.getLong(0, r);
+                                secondSum[0] += batch.getLongValue(0, r);
                                 secondRows[0]++;
                             }
                         }
@@ -1572,8 +1567,8 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                             Assert.assertEquals(io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP_NANOS,
                                     batch.getColumnWireType(0));
                             for (int r = 0; r < batch.getRowCount(); r++, count[0]++) {
-                                if (count[0] == 0) firstTs[0] = batch.getLong(0, r);
-                                if (count[0] == 1) secondTs[0] = batch.getLong(0, r);
+                                if (count[0] == 0) firstTs[0] = batch.getLongValue(0, r);
+                                if (count[0] == 1) secondTs[0] = batch.getLongValue(0, r);
                             }
                         }
 
@@ -1619,8 +1614,16 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                             Assert.assertEquals(2, batch.getRowCount());
                             for (int r = 0; r < 2; r++) {
                                 rows[r] = new Object[]{
-                                        batch.isNull(0, r) ? null : batch.getLongArray(0, r),
-                                        batch.isNull(1, r) ? null : batch.getLongArray(1, r)
+                                        batch.isNull(0, r) ? null : new long[]{
+                                                batch.getUuidLo(0, r),
+                                                batch.getUuidHi(0, r)
+                                        },
+                                        batch.isNull(1, r) ? null : new long[]{
+                                                batch.getLong256Word(1, r, 0),
+                                                batch.getLong256Word(1, r, 1),
+                                                batch.getLong256Word(1, r, 2),
+                                                batch.getLong256Word(1, r, 3)
+                                        }
                                 };
                             }
                         }
@@ -1672,7 +1675,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             batches[0]++;
                             for (int r = 0; r < batch.getRowCount(); r++) {
-                                sum[0] += batch.getLong(0, r);
+                                sum[0] += batch.getLongValue(0, r);
                                 count[0]++;
                             }
                         }

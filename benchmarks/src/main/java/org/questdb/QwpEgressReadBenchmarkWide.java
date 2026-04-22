@@ -386,7 +386,7 @@ public class QwpEgressReadBenchmarkWide {
                                 long d4 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d4Base + 8L * d4Idx[r]);
                                 long d5 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d5Base + 8L * d5Idx[r]);
                                 DirectUtf8Sequence sym = batch.getStrA(3, r);
-                                DirectUtf8Sequence note = batch.getVarcharB(4, r);
+                                DirectUtf8Sequence note = batch.getStrB(4, r);
                                 DirectUtf8Sequence s1 = batch.getStrA(10, r);
                                 DirectUtf8Sequence s2 = batch.getStrA(11, r);
                                 DirectUtf8Sequence s3 = batch.getStrA(12, r);

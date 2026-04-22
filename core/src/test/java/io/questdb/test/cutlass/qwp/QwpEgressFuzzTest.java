@@ -346,7 +346,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
                                 Assert.assertEquals("shape 1 id @ row " + (startRow + r),
                                         expectedId, batch.getLongValue(0, r));
                                 Assert.assertEquals("shape 1 v @ row " + (startRow + r),
-                                        expectedV(expectedId), batch.getDouble(1, r), 0.0);
+                                        expectedV(expectedId), batch.getDoubleValue(1, r), 0.0);
                             }
                             return startRow + n;
                         });
@@ -581,7 +581,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
                 return;
             case "v":
                 Assert.assertEquals(tag + " v @ row id=" + id,
-                        expectedV(id), batch.getDouble(col, batchRow), 0.0);
+                        expectedV(id), batch.getDoubleValue(col, batchRow), 0.0);
                 return;
             case "cat": {
                 DirectUtf8Sequence seq = batch.getStrA(col, batchRow);
@@ -967,7 +967,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     private static final class BooleanGenerator implements ColumnGenerator {
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            return batch.getBool(col, row) ? 1 : 0;
+            return batch.getBoolValue(col, row) ? 1 : 0;
         }
 
         @Override
@@ -1039,7 +1039,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     private static final class DateGenerator implements ColumnGenerator {
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            return batch.getLong(col, row);
+            return batch.getLongValue(col, row);
         }
 
         @Override
@@ -1127,7 +1127,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
 
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            return batch.getLong(col, row);
+            return batch.getLongValue(col, row);
         }
 
         @Override
@@ -1197,7 +1197,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     private static final class DoubleGenerator implements ColumnGenerator {
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            return Double.doubleToRawLongBits(batch.getDouble(col, row));
+            return Double.doubleToRawLongBits(batch.getDoubleValue(col, row));
         }
 
         @Override
@@ -1220,7 +1220,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     private static final class FloatGenerator implements ColumnGenerator {
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            return Float.floatToRawIntBits(batch.getFloat(col, row));
+            return Float.floatToRawIntBits(batch.getFloatValue(col, row));
         }
 
         @Override
@@ -1248,7 +1248,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
 
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            batch.getLong(col, row);
+            batch.getGeohashValue(col, row);
             return 1;
         }
 
@@ -1292,7 +1292,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     private static final class Ipv4Generator implements ColumnGenerator {
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            return batch.getLong(col, row) & 0xFFFFFFFFL;
+            return batch.getIntValue(col, row) & 0xFFFFFFFFL;
         }
 
         @Override
@@ -1339,7 +1339,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     private static final class LongGenerator implements ColumnGenerator {
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            return batch.getLong(col, row);
+            return batch.getLongValue(col, row);
         }
 
         @Override
@@ -1454,7 +1454,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     private static final class TimestampGenerator implements ColumnGenerator {
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            return batch.getLong(col, row);
+            return batch.getLongValue(col, row);
         }
 
         @Override
@@ -1473,7 +1473,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     private static final class TimestampNanosGenerator implements ColumnGenerator {
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            return batch.getLong(col, row);
+            return batch.getLongValue(col, row);
         }
 
         @Override
@@ -1515,7 +1515,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
     private static final class VarcharGenerator implements ColumnGenerator {
         @Override
         public long observedHash(QwpColumnBatch batch, int col, int row) {
-            DirectUtf8Sequence v = batch.getVarcharA(col, row);
+            DirectUtf8Sequence v = batch.getStrA(col, row);
             return v == null ? 0 : hashBytes(v);
         }
 
