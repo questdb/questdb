@@ -11460,8 +11460,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Every row shares the same ORDER BY key, so cume_dist = 1.0 for all rows.
             assertSql(
-                    "min\tmax\tcount\n" +
-                            "1.0\t1.0\t50000\n",
+                    """
+                            min\tmax\tcount
+                            1.0\t1.0\t50000
+                            """,
                     "select min(cd) min, max(cd) max, count(*) count from (" +
                             "select cume_dist() over (order by val) cd from tab)"
             );
@@ -11469,8 +11471,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Partitioned variant: many partitions, each with a single giant peer group.
             // Exercises CumeDistOverPartitionFunction's per-partition deferred slice growth.
             assertSql(
-                    "min\tmax\tcount\n" +
-                            "1.0\t1.0\t50000\n",
+                    """
+                            min\tmax\tcount
+                            1.0\t1.0\t50000
+                            """,
                     "select min(cd) min, max(cd) max, count(*) count from (" +
                             "select cume_dist() over (partition by (x % 20) order by val) cd " +
                             "from (select x, 1.0 val from long_sequence(50_000)))"
@@ -11489,8 +11493,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x % 1_000, rnd_double() from long_sequence(10_000)");
 
             assertSql(
-                    "min_cd\tmax_cd\tcount\n" +
-                            "true\t1.0\t10000\n",
+                    """
+                            min_cd\tmax_cd\tcount
+                            true\t1.0\t10000
+                            """,
                     "select min(cd) > 0.0 min_cd, max(cd) max_cd, count(*) count from (" +
                             "select cume_dist() over (partition by i order by val) cd from tab)"
             );
@@ -11829,6 +11835,29 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValuePartitionedRangeFrameReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t50.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNthValuePartitionedRangeUnboundedAlreadyFoundFastPath() throws Exception {
         // Partition-level RANGE between UNBOUNDED PRECEDING and K microseconds PRECEDING.
         // Once a partition's frame has grown to contain n rows, the n-th value is locked
@@ -11913,12 +11942,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
             assertQueryNoLeakCheck(
-                    "i\tnv\n" +
-                            "1\t10.0\n" +
-                            "1\t10.0\n" +
-                            "1\t10.0\n" +
-                            "2\t40.0\n" +
-                            "2\t40.0\n",
+                    """
+                            i\tnv
+                            1\t10.0
+                            1\t10.0
+                            1\t10.0
+                            2\t40.0
+                            2\t40.0
+                            """,
                     "select i, nth_value(val, 1) over (partition by i) nv from tab order by i, ts",
                     null,
                     true,
@@ -12061,13 +12092,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // nth_value(val, 2) per partition: i=1 -> row 2 = null, i=2 -> row 2 = 20.0.
             // Without ORDER BY the result is constant per partition.
             assertQueryNoLeakCheck(
-                    "i\tnv\n" +
-                            "1\tnull\n" +
-                            "1\tnull\n" +
-                            "1\tnull\n" +
-                            "2\t20.0\n" +
-                            "2\t20.0\n" +
-                            "2\t20.0\n",
+                    """
+                            i\tnv
+                            1\tnull
+                            1\tnull
+                            1\tnull
+                            2\t20.0
+                            2\t20.0
+                            2\t20.0
+                            """,
                     "select i, nth_value(val, 2) over (partition by i) nv from tab",
                     null,
                     true,
@@ -12452,7 +12485,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t20.0\t2
                             1970-01-01T00:00:00.000003Z\t30.0\t3
                             """),
-                    "select ts, val, ntile(2147483647) over (order by ts) bucket from tab",
+                    "select ts, val, ntile(2_147_483_647) over (order by ts) bucket from tab",
                     "ts",
                     true,
                     true
@@ -12473,7 +12506,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t20.0\tnull
                             1970-01-01T00:00:00.000003Z\t30.0\tnull
                             """),
-                    "select ts, val, nth_value(val, 2147483647) over (order by ts) nv from tab",
+                    "select ts, val, nth_value(val, 2_147_483_647) over (order by ts) nv from tab",
                     "ts",
                     false,
                     true
@@ -12673,6 +12706,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValuePartitionedRowsFrameReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\t50.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNthValueRowsFrameExcludingCurrent() throws Exception {
         // Non-partitioned ROWS frame with both bounds N PRECEDING — strengthens
         // NthValueOverRowsFrameFunction coverage (existing test uses rowsHi=current row).
@@ -12754,6 +12812,29 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, cume_dist() over (partition by i) cd from tab",
                     "ts",
                     false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 20), (4, 2, 30), (5, 2, 40)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t0.3333333333333333
+                            1970-01-01T00:00:00.000002Z\t1\t1.0
+                            1970-01-01T00:00:00.000003Z\t1\t1.0
+                            1970-01-01T00:00:00.000004Z\t2\t0.5
+                            1970-01-01T00:00:00.000005Z\t2\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i order by val) cd from tab",
+                    "ts",
+                    true,
                     true
             );
         });
@@ -13627,6 +13708,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\tnull\t1.0
                             """),
                     "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistOrderByNullColumn() throws Exception {
+        // NULLs sort first in QuestDB, so {null, null} is the first peer group.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, null), (3, 20), (4, null), (5, 20)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t10\t0.6
+                            1970-01-01T00:00:00.000002Z\tnull\t0.4
+                            1970-01-01T00:00:00.000003Z\t20\t1.0
+                            1970-01-01T00:00:00.000004Z\tnull\t0.4
+                            1970-01-01T00:00:00.000005Z\t20\t1.0
+                            """),
+                    "select ts, val, cume_dist() over (order by val) cd from tab",
                     "ts",
                     true,
                     true

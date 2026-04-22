@@ -132,6 +132,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
      * @return 1-based bucket number
      */
     private static long computeNtile(long rowNumber, long totalRows, int bucketCount) {
+        assert totalRows > 0 && bucketCount > 0;
         long bucketSize = totalRows / bucketCount;
         long remainder = totalRows % bucketCount;
         long threshold = remainder * (bucketSize + 1);
@@ -166,7 +167,6 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            // Store the 1-based row number
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
             count++;
         }
@@ -220,7 +220,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
         private int columnIndex;
-        private Map map;
+        private final Map map;
 
         public NtileOverPartitionFunction(
                 int bucketCount,
@@ -270,7 +270,6 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
                 rowNumber = mapValue.getLong(0) + 1;
             }
             mapValue.putLong(0, rowNumber);
-            // Store 1-based row number in the output column
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rowNumber);
         }
 
@@ -282,7 +281,6 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
             MapValue mapValue = key.findValue();
 
             long rowNumber = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
-            // The map stores the final row number (i.e. total rows in this partition)
             long totalRows = mapValue.getLong(0);
             long bucket = computeNtile(rowNumber, totalRows, bucketCount);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), bucket);

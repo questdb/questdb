@@ -457,7 +457,6 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             MapValue value = key.createValue();
 
             if (value.isNew()) {
-                // first row in partition: count = 1
                 if (n == 1) {
                     value.putDouble(0, arg.getDouble(record));
                 } else {
@@ -581,7 +580,8 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 firstIdx = mapValue.getLong(4);
 
                 if (!frameLoBounded && frameSize >= n) {
-                    // nth value already found and won't change
+                    // Once frameSize >= n on an unbounded-preceding frame the n-th value is locked;
+                    // all map state (size, frameSize, firstIdx, capacity) stays frozen.
                     long nthIdx = (firstIdx + n - 1) % capacity;
                     nthValue = memory.getDouble(startOffset + nthIdx * RECORD_SIZE + Long.BYTES);
                     return;
@@ -767,7 +767,6 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         @Override
         public void computeNext(Record record) {
-            // Map value slot layout: 0=loIdx, 1=startOffset, 2=count (capped at bufferSize).
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -915,7 +914,6 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         @Override
         public void computeNext(Record record) {
-            // Map value slot layout: 0=count (uncapped), 1=lockedValue (double bits as long).
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1209,8 +1207,9 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         public NthValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int n) {
             super(arg);
-            assert rowsLo > Long.MIN_VALUE; // use NthValueOverRowsFrameUnboundedFunction for the unbounded-lo case
-            assert rowsLo != Long.MIN_VALUE || rowsHi != 0; // use NthValueOverUnboundedRowsFrameFunction for (Long.MIN_VALUE, 0)
+            // unbounded-lo cases route elsewhere: (MIN_VALUE, MAX_VALUE) -> NthValueOverWholeResultSetFunction,
+            // (MIN_VALUE, 0) -> NthValueOverUnboundedRowsFrameFunction, (MIN_VALUE, K<0) -> NthValueOverRowsFrameUnboundedFunction
+            assert rowsLo > Long.MIN_VALUE;
             frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
             bufferSize = (int) Math.abs(rowsLo);
             excludeCount = rowsHi < 0 ? (int) Math.abs(rowsHi) : 0;
@@ -1243,7 +1242,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 if (frameIncludesCurrentValue) {
                     if (n <= currentFrameElements) {
                         long nthIdx = (frameStartIdx + n - 1) % bufferSize;
-                        nthValue = buffer.getDouble((long) nthIdx * Double.BYTES);
+                        nthValue = buffer.getDouble(nthIdx * Double.BYTES);
                     } else if (n == currentFrameElements + 1) {
                         nthValue = d;
                     } else {
@@ -1252,7 +1251,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 } else {
                     if (n <= currentFrameElements) {
                         long nthIdx = (frameStartIdx + n - 1) % bufferSize;
-                        nthValue = buffer.getDouble((long) nthIdx * Double.BYTES);
+                        nthValue = buffer.getDouble(nthIdx * Double.BYTES);
                     } else {
                         nthValue = Double.NaN;
                     }
@@ -1510,7 +1509,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     public static class NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDoubleFunction {
         protected final int n;
         protected long count;
-        protected boolean found;
+        protected boolean isFound;
         protected double value = Double.NaN;
 
         public NthValueOverUnboundedRowsFrameFunction(Function arg, int n) {
@@ -1520,11 +1519,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         @Override
         public void computeNext(Record record) {
-            if (!found) {
+            if (!isFound) {
                 count++;
                 if (count == n) {
                     value = arg.getDouble(record);
-                    found = true;
+                    isFound = true;
                 }
             }
         }
@@ -1554,7 +1553,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         public void reset() {
             super.reset();
             count = 0;
-            found = false;
+            isFound = false;
             value = Double.NaN;
         }
 
@@ -1569,7 +1568,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         public void toTop() {
             super.toTop();
             count = 0;
-            found = false;
+            isFound = false;
             value = Double.NaN;
         }
     }
@@ -1579,7 +1578,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     public static class NthValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDoubleFunction {
         protected final int n;
         protected long count;
-        protected boolean found;
+        protected boolean isFound;
         protected double value = Double.NaN;
 
         public NthValueOverWholeResultSetFunction(Function arg, int n) {
@@ -1599,11 +1598,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            if (!found) {
+            if (!isFound) {
                 count++;
                 if (count == n) {
                     value = arg.getDouble(record);
-                    found = true;
+                    isFound = true;
                 }
             }
         }
@@ -1617,7 +1616,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         public void reset() {
             super.reset();
             count = 0;
-            found = false;
+            isFound = false;
             value = Double.NaN;
         }
 
@@ -1632,7 +1631,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         public void toTop() {
             super.toTop();
             count = 0;
-            found = false;
+            isFound = false;
             value = Double.NaN;
         }
     }

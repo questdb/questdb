@@ -198,8 +198,13 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                                          ObjList<ExpressionNode> orderBy,
                                          IntList orderByDirection) throws SqlException {
             IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
-            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
-            this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
+            try {
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
+                this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
+            } catch (Throwable t) {
+                Misc.free(deferredOffsets);
+                throw t;
+            }
         }
 
         @Override
@@ -213,7 +218,6 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                 }
             }
             lastRecordOffset = recordOffset;
-            // Store rank temporarily in the output column (as long)
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
             count++;
         }
@@ -232,7 +236,6 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                 deferredSize = 0;
             }
 
-            // Write tentative 1.0 (correct for the last peer group: totalRows / totalRows)
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), 1.0);
             deferredOffsets.putLong(deferredSize * Long.BYTES, recordOffset);
             deferredSize++;
@@ -347,15 +350,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
-            sink.val("()");
-            if (partitionByRecord != null) {
-                sink.val(" over (");
-                sink.val("partition by ");
-                sink.val(partitionByRecord.getFunctions());
-                sink.val(')');
-            } else {
-                sink.val(" over ()");
-            }
+            PercentRankFunctionFactory.PercentRankNoOrderFunction.toSink0(sink, partitionByRecord);
         }
     }
 
@@ -434,16 +429,17 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                                          ObjList<ExpressionNode> orderBy,
                                          IntList orderByDirection) throws SqlException {
             IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
-            map = MapFactory.createUnorderedMap(
-                    configuration,
-                    keyColumnTypes,
-                    CUME_DIST_COLUMN_TYPES
-            );
             try {
+                map = MapFactory.createUnorderedMap(
+                        configuration,
+                        keyColumnTypes,
+                        CUME_DIST_COLUMN_TYPES
+                );
                 this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
             } catch (Throwable t) {
                 map = Misc.free(map);
+                Misc.free(deferredOffsets);
                 throw t;
             }
         }
@@ -477,7 +473,6 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             mapValue.putLong(0, recordOffset);
             mapValue.putLong(1, rank);
             mapValue.putLong(2, count + 1);
-            // Store rank temporarily in the output column (as long)
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
         }
 
@@ -488,13 +483,8 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.findValue();
 
-            // Read rank stored in pass1
             long storedRank = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
-
-            // Get total rows for this partition (count was incremented after each row, so subtract 1)
             long totalRows = mapValue.getLong(2) - 1;
-
-            // Column 1 is reused as prevRank in pass2 (reset in preparePass2)
             long prevRank = mapValue.getLong(1);
             long startOffset = mapValue.getLong(3);
             long size = mapValue.getLong(4);
@@ -519,14 +509,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                 startOffset = memoryDesc.startOffset;
             }
 
-            // Append current row's offset to the deferred slice.
             deferredOffsets.putLong(startOffset + size * Long.BYTES, recordOffset);
             size++;
-
-            // Write tentative 1.0 (correct for the last peer group: totalRows / totalRows).
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), 1.0);
-
-            // Persist updated slice bookkeeping and prevRank.
             mapValue.putLong(1, storedRank);
             mapValue.putLong(3, startOffset);
             mapValue.putLong(4, size);
