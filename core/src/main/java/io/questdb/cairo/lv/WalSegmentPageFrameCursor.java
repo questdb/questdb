@@ -224,6 +224,14 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
      * index that {@code LiveViewRefreshJob.buildColumnMappings} stores in
      * {@link #columnIndexes}.
      */
+    // TODO(live-view): zero-GC — allocates a String per diff entry via String.valueOf (the
+    //  entry's CharSequence view is rebound on the next nextEntry() call, so a stable copy
+    //  is required) and uses IntObjHashMap<CharSequence> which boxes int keys and may
+    //  rehash. Replace with an off-heap byte buffer + (key -> (offset, length)) primitive
+    //  map: copy entry bytes via entry.appendSymbolTo(buffer) and serve lookups through a
+    //  reusable DirectString view. Aligns with the similar TODO on InMemoryTable.putSymbol
+    //  and the long-standing pattern in WalReader.openSymbolMaps. Refresh-hot-path cost
+    //  today is O(new-symbols-per-txn) strings per incremental cycle.
     private void buildTxnSymbolDiffs(@Nullable SymbolMapDiffCursor txnDiffs) {
         for (int i = 0, n = txnSymbolDiffs.size(); i < n; i++) {
             IntObjHashMap<CharSequence> m = txnSymbolDiffs.getQuick(i);

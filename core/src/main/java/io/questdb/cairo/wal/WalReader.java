@@ -237,6 +237,15 @@ public class WalReader implements Closeable {
         }
     }
 
+    // TODO(live-view): zero-GC — allocates a String per clean-file symbol (SymbolMapReaderImpl.valueOf
+    //  returns a reusable CharSequence view, so we copy via String.valueOf) and per diff
+    //  entry (same reason, see SymbolMapDiffImpl.Entry.getSymbol), and uses
+    //  IntObjHashMap<CharSequence> which boxes int keys and may rehash. On the live-view
+    //  refresh hot path the cursor is constructed per WAL transaction per segment, so
+    //  these run O(clean + diff) allocations per refresh cycle. Aligns with the TODO on
+    //  WalSegmentPageFrameCursor.buildTxnSymbolDiffs and InMemoryTable.putSymbol; a future
+    //  sweep should back both symbol paths with an off-heap byte buffer plus a
+    //  (key -> (offset, length)) primitive map served through a reusable DirectString.
     private void openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration) {
         while (eventCursor.hasNext()) {
             if (WalTxnType.isDataType(eventCursor.getType())) {
