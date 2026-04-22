@@ -505,11 +505,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     public long openAndMapRO(FilesFacade ff, LPSZ path) {
         final long fd = ff.openRO(path);
         if (fd < 0) {
+            clear();
             return 0;
         }
         try {
             final long parquetMetaFileSize = ff.readNonNegativeLong(fd, 0);
             if (parquetMetaFileSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE) {
+                clear();
                 return 0;
             }
             final long addr = TableUtils.mapRO(ff, fd, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
