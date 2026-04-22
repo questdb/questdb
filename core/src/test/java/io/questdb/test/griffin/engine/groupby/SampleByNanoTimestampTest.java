@@ -337,6 +337,33 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullSubDayTimezoneFromOffsetNano() throws Exception {
+        // Nanosecond parity for sub-day SAMPLE BY + FROM + TIME ZONE + WITH OFFSET
+        // + FILL(NULL). Fill-cursor bucket grid must align with
+        // timestamp_floor_utc at microsecond scale and carry through to
+        // nanosecond timestamps unchanged.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-06-01T01:45:00.000000000Z', 42.0)""");
+            assertSql(
+                    """
+                            ts\tx
+                            2024-05-31T23:30:00.000000000Z\tnull
+                            2024-06-01T00:30:00.000000000Z\tnull
+                            2024-06-01T01:30:00.000000000Z\t42.0
+                            2024-06-01T02:30:00.000000000Z\tnull
+                            """,
+                    """
+                            SELECT ts, sum(x) x FROM t
+                            SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000000Z'
+                            FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'"""
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevNumericWithTimezoneNano() throws Exception {
         assertMemoryLeak(() -> {
             // Nanosecond parity for numeric PREV with timezone.

@@ -8307,10 +8307,20 @@ public class SqlOptimiser implements Mutable {
                         ? createToUtcCall(sampleByTo, sampleByTimezoneName) : sampleByTo);
                 nested.setFillStride(sampleBy);
                 nested.setFillValues(sampleByFill);
-                // Propagate offset only for non-timezone queries. When a timezone
-                // is present, timestamp_floor_utc already accounts for the offset
-                // in its bucket computation, so the fill cursor must not shift again.
-                if (sampleByTimezoneName == null) {
+                // Propagate offset to the fill cursor whenever timestamp_floor_utc
+                // bucketizes purely in UTC space so the sampler can reproduce the
+                // same grid by adding offset to fillFrom.
+                //   - No timezone: effectiveOffset = from + offset, grid anchored
+                //     at fromTs + offset directly.
+                //   - Sub-day stride + timezone + FROM: timestamp_floor_utc is
+                //     invoked with tz=null and from=to_utc(FROM, tz) (see above),
+                //     so fillFrom is to_utc(FROM, tz) and the same
+                //     fromTs + offset shift matches the group-by grid.
+                // When a timezone is present without these conditions (day-granular
+                // or sub-day without FROM), timestamp_floor_utc applies timezone
+                // rules per row and the fill sampler anchors on the already-floored
+                // firstTs instead, so the offset must not be applied again.
+                if (sampleByTimezoneName == null || (hasSubDayTimezoneWrap && sampleByFrom != null)) {
                     nested.setFillOffset(sampleByOffset);
                 }
 

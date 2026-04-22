@@ -3343,4 +3343,99 @@ public class SampleByFillTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testFillSubDayTimezoneFromOffset() throws Exception {
+        // Sub-day SAMPLE BY + FROM + TIME ZONE + WITH OFFSET + FILL(NULL).
+        // The fill bucket grid must match timestamp_floor_utc's grid.
+        // With FROM='2024-06-01' and TIME ZONE='Europe/London' (BST = UTC+1 in June),
+        // to_utc('2024-06-01', 'Europe/London') = 2024-05-31T23:00:00Z. Adding the
+        // 30-minute offset yields the grid anchor 2024-05-31T23:30:00Z, so buckets
+        // land at UTC ...:30 boundaries. TO='2024-06-01T04:00:00Z' wraps to
+        // 2024-06-01T03:00:00Z, so the last bucket is strictly below 03:00Z.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-06-01T01:45:00.000000Z', 42.0)""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tx
+                            2024-05-31T23:30:00.000000Z\tnull
+                            2024-06-01T00:30:00.000000Z\tnull
+                            2024-06-01T01:30:00.000000Z\t42.0
+                            2024-06-01T02:30:00.000000Z\tnull
+                            """,
+                    """
+                            SELECT ts, sum(x) x FROM t
+                            SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000Z'
+                            FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'""",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillSubDayTimezoneFromOffsetEmpty() throws Exception {
+        // Sub-day SAMPLE BY + FROM + TIME ZONE + WITH OFFSET + FILL(NULL),
+        // but WHERE filter yields zero base rows. The fill cursor must still
+        // generate the pure-fill bucket grid anchored at to_utc(FROM, tz) + offset
+        // so that leading/middle gap buckets align with timestamp_floor_utc.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-06-01T00:00:00.000000Z', 'other', 1.0)""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tx
+                            2024-05-31T23:30:00.000000Z\tnull
+                            2024-06-01T00:30:00.000000Z\tnull
+                            2024-06-01T01:30:00.000000Z\tnull
+                            2024-06-01T02:30:00.000000Z\tnull
+                            """,
+                    """
+                            SELECT ts, sum(x) x FROM t
+                            WHERE sym = 'never_matches'
+                            SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000Z'
+                            FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'""",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillSubDayTimezoneFromOffsetPlan() throws Exception {
+        // Guard the Async Group By + Sample By Fill fast path for the
+        // sub-day + FROM + TIME ZONE + WITH OFFSET shape. The key-function
+        // receives from=to_utc(FROM, tz) as a pre-resolved UTC instant and
+        // offset='00:30' directly; no timezone is re-applied inside floor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-06-01T01:45:00.000000Z', 42.0)");
+            assertPlanNoLeakCheck(
+                    """
+                            SELECT ts, sum(x) x FROM t
+                            SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000Z'
+                            FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'""",
+                    """
+                            Sample By Fill
+                              range: (2024-05-31T23:00:00.000000Z,2024-06-01T03:00:00.000000Z)
+                              stride: '1h'
+                              fill: null
+                                Sort
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-05-31T23:30:00.000Z')]
+                                      values: [sum(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t
+                                              intervals: [("2024-05-31T23:00:00.000000Z","2024-06-01T02:59:59.999999Z")]
+                            """
+            );
+        });
+    }
 }
