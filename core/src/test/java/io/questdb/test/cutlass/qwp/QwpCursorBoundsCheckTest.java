@@ -640,7 +640,7 @@ public class QwpCursorBoundsCheckTest {
         QwpTableBuffer.ColumnBuffer dateCol = buffer.getOrCreateColumn("b_date", TYPE_DATE, true);
         QwpTableBuffer.ColumnBuffer doubleCol = buffer.getOrCreateColumn("b_double", TYPE_DOUBLE, false);
         QwpTableBuffer.ColumnBuffer symCol = buffer.getOrCreateColumn("b_sym", TYPE_SYMBOL, true);
-        QwpTableBuffer.ColumnBuffer strCol = buffer.getOrCreateColumn("b_str", TYPE_STRING, true);
+        QwpTableBuffer.ColumnBuffer strCol = buffer.getOrCreateColumn("b_str", TYPE_VARCHAR, true);
         QwpTableBuffer.ColumnBuffer varcharCol = buffer.getOrCreateColumn("b_varchar", TYPE_VARCHAR, false);
         QwpTableBuffer.ColumnBuffer uuidCol = buffer.getOrCreateColumn("b_uuid", TYPE_UUID, true);
         QwpTableBuffer.ColumnBuffer long256Col = buffer.getOrCreateColumn("b_l256", TYPE_LONG256, true);

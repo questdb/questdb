@@ -106,7 +106,7 @@ public class QwpStringDecoderTest {
 
     @Test
     public void testDecodeVarcharSameAsString() throws Exception {
-        assertRoundTrip(new String[]{"varchar", "test", "values"}, null, TYPE_VARCHAR);
+        assertRoundTrip(new String[]{"varchar", "test", "values"}, null);
     }
 
     @Test
@@ -308,7 +308,7 @@ public class QwpStringDecoderTest {
     private static int findStringColumnIndex(QwpTableBlockCursor table) {
         for (int c = 0; c < table.getColumnCount(); c++) {
             byte code = table.getColumnDef(c).getTypeCode();
-            if (code == TYPE_STRING || code == TYPE_VARCHAR) {
+            if (code == TYPE_VARCHAR) {
                 return c;
             }
         }
@@ -316,15 +316,11 @@ public class QwpStringDecoderTest {
     }
 
     private void assertRoundTrip(String[] values, boolean[] nulls) throws Exception {
-        assertRoundTrip(values, nulls, TYPE_STRING);
-    }
-
-    private void assertRoundTrip(String[] values, boolean[] nulls, byte typeCode) throws Exception {
         assertMemoryLeak(() -> {
             boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_string");
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", typeCode, useNullBitmap);
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_VARCHAR, useNullBitmap);
                 QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < values.length; i++) {
