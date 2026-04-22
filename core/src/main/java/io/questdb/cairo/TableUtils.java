@@ -276,7 +276,8 @@ public final class TableUtils {
         if (existingIndex < 0) {
             throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
         }
-        String columnNameStr = columnMetadata.getQuick(existingIndex).getColumnName();
+        TableColumnMetadata existingMeta = columnMetadata.getQuick(existingIndex);
+        String columnNameStr = existingMeta.getColumnName();
         int columnIndex = columnMetadata.size();
         columnMetadata.add(
                 new TableColumnMetadata(
@@ -290,7 +291,8 @@ public final class TableUtils {
                         false,
                         existingIndex + 1, // replacing column index by convention can be 0 if not in use
                         symbolCacheFlag,
-                        symbolCapacity
+                        symbolCapacity,
+                        existingMeta.getOriginalWriterIndex()
                 )
         );
         columnMetadata.getQuick(existingIndex).markDeleted();

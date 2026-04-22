@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.cairo.parquet;
 
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
@@ -38,16 +38,9 @@ import org.junit.Test;
  * Rust-handled conversions tested here:
  * <ul>
  *     <li>Fixed-to-Fixed: pairs among BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP,
- *         FLOAT, DOUBLE (excluding X-to-BOOLEAN — see note below)</li>
+ *         FLOAT, DOUBLE</li>
  *     <li>Var-to-Var: STRING to VARCHAR (UTF-8 kept), VARCHAR to STRING (UTF-8 to UTF-16)</li>
  * </ul>
- * <p>
- * <b>Note on BOOLEAN target:</b> X-to-BOOLEAN conversions are excluded because the Rust
- * decoder truncates the source value to i8 (lower byte), while the native JNI converter
- * normalizes non-zero values to 1. QuestDB's {@code getBool()} checks {@code byte == 1},
- * so truncated values like 0xFF (-1) read as {@code false} from the parquet path but
- * {@code true} from the native path. BOOLEAN-to-X (expansion via {@code expand_bool})
- * works correctly since it only produces 0/1.
  * <p>
  * Each test inserts data (including nulls and boundary values) into two identical WAL
  * tables, converts one to parquet, alters the column type on both, and asserts that
@@ -89,7 +82,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (-1, '2024-01-01T00:00:03.000000Z'),
                     (127, '2024-01-01T00:00:04.000000Z'),
                     (-128, '2024-01-01T00:00:05.000000Z')""";
-            for (String target : new String[]{"SHORT", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
+            for (String target : new String[]{"BOOLEAN", "SHORT", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("BYTE", target, values);
             }
         });
@@ -107,7 +100,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:00.000Z', '2024-01-01T00:00:02.000000Z'),
                     ('2020-06-15T12:00:00.999Z', '2024-01-01T00:00:03.000000Z'),
                     (NULL, '2024-01-01T00:00:04.000000Z')""";
-            for (String target : new String[]{"BYTE", "SHORT", "INT", "LONG", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
+            for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("DATE", target, values);
             }
         });
@@ -153,7 +146,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (1.0/0.0, '2024-01-01T00:00:05.000000Z'),
                     (-1.0/0.0, '2024-01-01T00:00:06.000000Z'),
                     (NULL, '2024-01-01T00:00:07.000000Z')""";
-            for (String target : new String[]{"BYTE", "SHORT", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT"}) {
+            for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT"}) {
                 assertConversion("DOUBLE", target, values);
             }
         });
@@ -264,7 +257,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (cast(1.0/0.0 as float), '2024-01-01T00:00:04.000000Z'),
                     (cast(-1.0/0.0 as float), '2024-01-01T00:00:05.000000Z'),
                     (NULL, '2024-01-01T00:00:06.000000Z')""";
-            for (String target : new String[]{"BYTE", "SHORT", "INT", "LONG", "DATE", "TIMESTAMP", "DOUBLE"}) {
+            for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "DATE", "TIMESTAMP", "DOUBLE"}) {
                 assertConversion("FLOAT", target, values);
             }
         });
@@ -309,7 +302,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (256, '2024-01-01T00:00:04.000000Z'),
                     (2_147_483_647, '2024-01-01T00:00:05.000000Z'),
                     (NULL, '2024-01-01T00:00:06.000000Z')""";
-            for (String target : new String[]{"BYTE", "SHORT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
+            for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("INT", target, values);
             }
         });
@@ -342,7 +335,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (256, '2024-01-01T00:00:04.000000Z'),
                     (2_147_483_648, '2024-01-01T00:00:05.000000Z'),
                     (NULL, '2024-01-01T00:00:06.000000Z')""";
-            for (String target : new String[]{"BYTE", "SHORT", "INT", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
+            for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("LONG", target, values);
             }
         });
@@ -357,7 +350,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (-1, '2024-01-01T00:00:03.000000Z'),
                     (32767, '2024-01-01T00:00:04.000000Z'),
                     (-32768, '2024-01-01T00:00:05.000000Z')""";
-            for (String target : new String[]{"BYTE", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
+            for (String target : new String[]{"BOOLEAN", "BYTE", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("SHORT", target, values);
             }
         });
@@ -510,7 +503,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     ('2020-06-15T12:30:00.000001Z', '2024-01-01T00:00:03.000000Z'),
                     ('2020-06-15T12:30:00.999999Z', '2024-01-01T00:00:04.000000Z'),
                     (NULL, '2024-01-01T00:00:05.000000Z')""";
-            for (String target : new String[]{"BYTE", "SHORT", "INT", "LONG", "DATE", "FLOAT", "DOUBLE"}) {
+            for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "DATE", "FLOAT", "DOUBLE"}) {
                 assertConversion("TIMESTAMP", target, values);
             }
         });

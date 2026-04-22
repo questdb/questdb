@@ -2411,11 +2411,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     decodeType = (srcTag == ColumnType.VARCHAR)
                             ? ColumnType.VARCHAR_SLICE : srcType;
                 } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
-                    // Symbol→non-symbol: must use native VARCHAR (not VARCHAR_SLICE) because
-                    // the merge path and parquet write path expect native VARCHAR aux format.
-                    // VarcharSlice aux entries have bit 0 set in the header, which the native
-                    // VARCHAR reader misinterprets as HEADER_FLAG_INLINED.
-                    decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR;
+                    if (ColumnType.isVarSize(dstTag)) {
+                        // Symbol→var: must use native VARCHAR (not VARCHAR_SLICE) because
+                        // the merge path and parquet write path expect native VARCHAR aux format.
+                        // VarcharSlice aux entries have bit 0 set in the header, which the native
+                        // VARCHAR reader misinterprets as HEADER_FLAG_INLINED.
+                        decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR;
+                    } else {
+                        // Symbol→fixed: must use VARCHAR_SLICE because convertVarColumnToFixed()
+                        // reads VarcharSlice aux layout (4-byte header + absolute pointer at offset 8).
+                        decodeType = ColumnType.VARCHAR_SLICE;
+                    }
                 } else if (!ColumnType.isVarSize(srcTag) && !ColumnType.isSymbol(srcTag)
                         && ColumnType.isVarSize(dstTag)) {
                     // Fixed→var: Rust cannot produce var-size output from fixed input.
@@ -3612,11 +3618,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     decodeType = (srcTag == ColumnType.VARCHAR)
                             ? ColumnType.VARCHAR_SLICE : srcType;
                 } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
-                    // Symbol→non-symbol: must use native VARCHAR (not VARCHAR_SLICE) because
-                    // the merge path and parquet write path expect native VARCHAR aux format.
-                    // VarcharSlice aux entries have bit 0 set in the header, which the native
-                    // VARCHAR reader misinterprets as HEADER_FLAG_INLINED.
-                    decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR;
+                    if (ColumnType.isVarSize(dstTag)) {
+                        // Symbol→var: must use native VARCHAR (not VARCHAR_SLICE) because
+                        // the merge path and parquet write path expect native VARCHAR aux format.
+                        // VarcharSlice aux entries have bit 0 set in the header, which the native
+                        // VARCHAR reader misinterprets as HEADER_FLAG_INLINED.
+                        decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR;
+                    } else {
+                        // Symbol→fixed: must use VARCHAR_SLICE because convertVarColumnToFixed()
+                        // reads VarcharSlice aux layout (4-byte header + absolute pointer at offset 8).
+                        decodeType = ColumnType.VARCHAR_SLICE;
+                    }
                 } else if (!ColumnType.isVarSize(srcTag) && !ColumnType.isSymbol(srcTag)
                         && ColumnType.isVarSize(dstTag)) {
                     // Fixed→var: Rust cannot produce var-size output from fixed input.

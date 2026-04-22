@@ -17,7 +17,7 @@ use parquet2::encoding::Encoding;
 use parquet2::metadata::FileMetaData;
 use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
-use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
+use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
 use std::{cmp, mem::size_of, ptr, slice};
 
 // The metadata fields are accessed from Java.
@@ -129,6 +129,26 @@ fn post_convert(
         (ColumnTypeTag::Boolean, ColumnTypeTag::Double) => {
             expand_bool::<f64>(&mut bufs.data_vec)?;
         }
+        // Fixed → Boolean: contract decoded source-sized values to 1-byte booleans.
+        // Null sentinels (i32::MIN, i64::MIN, NaN) map to 0 (false), not 1.
+        (ColumnTypeTag::Byte, ColumnTypeTag::Boolean) => {
+            contract_to_bool::<i8>(&mut bufs.data_vec, |_| false);
+        }
+        (ColumnTypeTag::Short | ColumnTypeTag::Char, ColumnTypeTag::Boolean) => {
+            contract_to_bool::<i16>(&mut bufs.data_vec, |_| false);
+        }
+        (ColumnTypeTag::Int | ColumnTypeTag::IPv4, ColumnTypeTag::Boolean) => {
+            contract_to_bool::<i32>(&mut bufs.data_vec, |v| v == nulls::INT);
+        }
+        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Boolean) => {
+            contract_to_bool::<i64>(&mut bufs.data_vec, |v| v == nulls::LONG);
+        }
+        (ColumnTypeTag::Float, ColumnTypeTag::Boolean) => {
+            contract_to_bool::<f32>(&mut bufs.data_vec, |v| v.is_nan());
+        }
+        (ColumnTypeTag::Double, ColumnTypeTag::Boolean) => {
+            contract_to_bool::<f64>(&mut bufs.data_vec, |v| v.is_nan());
+        }
         (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) => {
             // Date milliseconds → Timestamp microseconds: multiply by 1000.
             scale_i64_in_place(&mut bufs.data_vec, 1000, false);
@@ -179,6 +199,29 @@ fn expand_bool<T: From<u8> + Copy>(data: &mut AcVec<u8>) -> ParquetResult<()> {
         unsafe { (ptr.add(i * size_of::<T>()) as *mut T).write_unaligned(val) };
     }
     Ok(())
+}
+
+/// Contract wider fixed-size values to 1-byte booleans in place.
+/// Non-zero, non-null values become 1; zero and null-sentinel values become 0.
+/// The `is_null` predicate identifies the source type's null sentinel (e.g. `i32::MIN`
+/// for INT, `NaN` for FLOAT/DOUBLE) so that NULL maps to `false` rather than `true`.
+/// Iterates forward because the destination (1 byte) is always <= the source size.
+fn contract_to_bool<T: Default + PartialEq + Copy>(
+    data: &mut AcVec<u8>,
+    is_null: impl Fn(T) -> bool,
+) {
+    let elem_size = size_of::<T>();
+    let n = data.len() / elem_size;
+    if n == 0 {
+        return;
+    }
+    let ptr = data.as_mut_ptr();
+    let zero = T::default();
+    for i in 0..n {
+        let val: T = unsafe { (ptr.add(i * elem_size) as *const T).read_unaligned() };
+        unsafe { *ptr.add(i) = if val != zero && !is_null(val) { 1 } else { 0 } };
+    }
+    unsafe { data.set_len(n) };
 }
 
 /// Multiply or divide every non-null i64 in the buffer by `factor`.
@@ -718,12 +761,14 @@ impl ParquetDecoder {
                     (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) |
                     // Timestamp nano ↔ micro (needs post-decode scaling)
                     (ColumnTypeTag::Timestamp, ColumnTypeTag::Timestamp) |
-                    // Fixed → Boolean
+                    // Fixed → Boolean: keep source type for decode so each
+                    // value is decoded at full width; post_convert contracts
+                    // to 1-byte booleans (non-zero → 1, zero → 0).
                     (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
                      ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp |
                      ColumnTypeTag::Float | ColumnTypeTag::Double,
                      ColumnTypeTag::Boolean) => {
-                        column_type = to_column_type;
+                        // Keep column_type as source type.
                     }
                     // Boolean → Int: decode as boolean, post-expand to i32
                     (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
@@ -963,12 +1008,13 @@ impl ParquetDecoder {
                     (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) |
                     // Timestamp nano ↔ micro (needs post-decode scaling)
                     (ColumnTypeTag::Timestamp, ColumnTypeTag::Timestamp) |
-                    // Fixed → Boolean
+                    // Fixed → Boolean: keep source type for decode;
+                    // post_convert contracts to 1-byte booleans.
                     (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
                      ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp |
                      ColumnTypeTag::Float | ColumnTypeTag::Double,
                      ColumnTypeTag::Boolean) => {
-                        column_type = to_column_type;
+                        // Keep column_type as source type.
                     }
                     // Boolean → Int: decode as boolean, post-expand to i32
                     (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
