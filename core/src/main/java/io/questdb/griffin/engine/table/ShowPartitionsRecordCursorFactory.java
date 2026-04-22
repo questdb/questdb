@@ -380,6 +380,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                             ff.close(fd);
                         }
                     }
+                } else {
+                    minTimestamp = Long.MIN_VALUE;
+                    maxTimestamp = Long.MIN_VALUE;
                 }
             }
         }
