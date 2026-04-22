@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 17 Plan 04 complete -- all 4 plans landed; SC#8 (/review-pr 6946 re-run) pending user action
-last_updated: "2026-04-22T18:15:00.000Z"
+stopped_at: Phase 17 Plan 05 complete -- test-hygiene addendum landed; SC#8 (/review-pr 6946 re-run) pending user action
+last_updated: "2026-04-22T19:50:00.000Z"
 last_activity: 2026-04-22
 progress:
   total_phases: 17
   completed_phases: 16
-  total_plans: 34
-  completed_plans: 34
+  total_plans: 35
+  completed_plans: 35
   percent: 100
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 17 (verify-pr-6946-body-drift-against-landed-commits-decide-code) -- COMPLETE (pending SC#8 /review-pr 6946 re-run)
-Plan: 4 of 4 (ALL PLANS COMPLETE)
-Status: Plan 17-04 shipped; todo move commit 4529631666 on sm_fill_prev_fast_path; PR #6946 body (5 edits) + title renamed via external gh edits; phase-wide ASCII normalization applied (41 non-ASCII bytes -> 0); D-26 todo retired to .planning/todos/completed/ with completed_in: 17-01-PLAN.md
+Plan: 5 of 5 (ALL PLANS COMPLETE, Plan 05 test-hygiene addendum landed)
+Status: Plan 17-05 shipped; Task 1 commit d6d4b1628b (SampleByFillTest D-29 try/finally + D-30 typed catch), Task 2 commit 6bdb014f2d (SqlOptimiserTest D-31 probe-and-freeze plan assertion) on sm_fill_prev_fast_path; both source todos retired to .planning/todos/completed/ with completed_in: 17-05-PLAN.md; SC#8 still pending user-run /review-pr 6946
 Last activity: 2026-04-22
 
 Progress: [##########] 100%
@@ -80,6 +80,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 17 P02 | ~40min | 3 tasks | 5 files |
 | Phase 17 P03 | ~35min | 2 tasks | 3 files |
 | Phase 17 P04 | ~15min | 1 tasks | 1 files (+ 2 external artefacts) |
+| Phase 17 P05 | ~25min | 3 tasks | 2 files (+ 2 todo moves + STATE + ROADMAP + SUMMARY) |
 
 ## Accumulated Context
 
@@ -178,6 +179,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 17]: Plan 04 (PR body + title + D-28 todo retirement) closed the drift-audit cycle. Five PR body edits landed via gh pr edit: D-11 M1 pre-1970 row in "What's covered" block 2, D-03 K x B bullet rewrite with cancellation-CB disambiguation parenthetical, D-05 two stale M3.4 sentence rewrites (Implementation-notes pitfall + "ALIGN TO CALENDAR WITH OFFSET + FILL without TO" row), D-06 drop of both test-count lines from Test plan. Title renamed per D-24 to "feat(sql): add cross-column FILL(PREV) and move SAMPLE BY FILL onto fast path". D-28 todo moved from pending to completed with completed_at + completed_in: 17-01-PLAN.md YAML fields. Single commit 4529631666 captures the todo move (PR body + title are external artefacts, no git commits). Optional "sub-day + TZ + FROM + OFFSET" row NOT added per RESEARCH.md D-05 master-support verdict (master's cursor path supported the shape via SampleByFillNullRecordCursorFactory timezone+offset constructor args; under D-01 rule (a) fast-path participation is an implementation detail, not net-new behavior)
 - [Phase 17]: Plan 04 deviation (Rule 2 - phase-wide ASCII normalization): Current PR body contained 41 pre-existing non-ASCII bytes outside the five Plan 04 edit sites (34 em-dashes U+2014, 2 Unicode multiplication signs U+00D7, 4 right-arrows U+2192, 1 robot emoji U+1F916). The plan's acceptance criterion "non-ASCII byte count on updated body == 0" is only satisfiable by normalizing the whole body, not just the new/rewritten text. Applied Unicode -> ASCII mapping table across the entire body via Python script; final body is pure ASCII (verified via LC_ALL=C byte scan). Robot emoji footer dropped entirely; ASCII "Generated with Claude Code" link text preserved
 - [Phase 17]: Plan 04 deviation (Rule 4 - SC#8 deferral): ROADMAP SC#8 (/review-pr 6946 re-run confirming all items closed or closed-under-D-01) deferred to post-commit manual step. Invoking the review-pr skill within Plan 04's single-task scope would require parallel-agent spawning outside the plan's atomic-commit boundary; deferred with explicit SUMMARY note pointing at the pending user action. All 11 Phase 17 findings are addressed in code/tests/body with the expected D-01 classification; SC#8 re-run should confirm zero regressions
+- [Phase 17 Plan 05]: Tighten three lax test assertions surfaced during Plan 03 execution via two auto-created todos on 2026-04-22T17:10:07 -- testFillKeyedRespectsCircuitBreaker wraps its body in try/finally nulling circuitBreakerConfiguration (D-29 finding 4.6, landed despite 4 sibling test classes leaving the field set; SampleByFillTest is the class with the highest future CB-test growth), testSortedRecordCursorFactoryConstructorThrow narrows catch (Throwable) to catch (CairoException) and replaces a 6-way substring disjunction with a single canonical "Maximum number of pages" assertion (D-30 finding 4.7; JVM-level Error subclasses now propagate and SqlException re-wraps would fail loud), and SqlOptimiserTest#testSampleByFromToKeyedQuery upgraded from bare printSql smoke to assertPlanNoLeakCheck pinning the fast-path plan -- Long Top K lo: 6 above Async Group By with keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')] (D-31 finding 4.1; captured via probe-and-freeze). Plan 05 ships two code commits (d6d4b1628b, 6bdb014f2d) plus the metadata commit; both source todos retired with completed_in: 17-05-PLAN.md. All three findings classified as D-01 test-quality improvements with no PR body rows. 7 pre-existing failures in SqlOptimiserTest#testSampleByFromToBasicWhereOptimisation* cluster are out of Plan 05 scope (confirmed pre-existing via git stash); logged to .planning/phases/17-.../deferred-items.md for follow-up investigation
 
 ### Roadmap Evolution
 
@@ -195,8 +197,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 
 - _Completed 2026-04-21 via Phase 16 Plan 01_: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys — landed in commit 82865efbc0.
 - _Completed 2026-04-22 via Phase 17 Plan 01 commit 889a4676b9_: Reject cross-column FILL(PREV) across TIMESTAMP and INTERVAL unit mismatches — widened needsExactTypeMatch + Variant A regression test landed. Variant B (INTERVAL DDL) deferred: no user-facing DDL keyword maps to INTERVAL_TIMESTAMP_NANO; production widening covers INTERVAL for future DDL. D-28 retirement landed in Phase 17 Plan 04 commit 4529631666; todo moved from .planning/todos/pending/ to .planning/todos/completed/ with completed_at: 2026-04-22 + completed_in: 17-01-PLAN.md.
-- Upgrade `SqlOptimiserTest#testSampleByFromToKeyedQuery` from `printSql` smoke test to plan assertion (or delete) — captured 2026-04-22 from `/review` finding 4.1; not covered by phase 17. See `.planning/todos/pending/2026-04-22-upgrade-sqloptimisertest-testsamplebyfromtokeyedquery-from-p.md`.
-- Tighten SampleByFillTest CB field reset and constructor-throw exception assertion — captured 2026-04-22 from `/review` findings 4.6+4.7; not covered by phase 17. See `.planning/todos/pending/2026-04-22-tighten-samplebyfilltest-cb-field-reset-and-constructor-thro.md`.
+- _Completed 2026-04-22 via Phase 17 Plan 05 commit 6bdb014f2d_: Upgrade `SqlOptimiserTest#testSampleByFromToKeyedQuery` from `printSql` smoke test to `assertPlanNoLeakCheck` pinning the fast-path Long Top K + Async Group By plan. Probe-and-freeze captured the plan. Todo moved to .planning/todos/completed/ with completed_in: 17-05-PLAN.md.
+- _Completed 2026-04-22 via Phase 17 Plan 05 commit d6d4b1628b_: Tighten SampleByFillTest CB field reset (D-29 try/finally nulls circuitBreakerConfiguration) and constructor-throw exception assertion (D-30 typed catch on CairoException + single "Maximum number of pages" substring). Todo moved to .planning/todos/completed/ with completed_in: 17-05-PLAN.md.
 
 ### Blockers/Concerns
 
@@ -208,6 +210,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-22T18:15:00.000Z
-Stopped at: Phase 17 Plan 04 complete -- todo move commit 4529631666 on sm_fill_prev_fast_path; PR #6946 body (5 edits) + title renamed via external gh edits; all 4 phase 17 plans landed. SC#8 (/review-pr 6946 re-run confirming all items closed or closed-under-D-01) pending user action.
+Last session: 2026-04-22T19:50:00.000Z
+Stopped at: Phase 17 Plan 05 complete -- test-hygiene addendum shipped (3 tasks, 2 code commits + metadata commit). Task 1 d6d4b1628b (SampleByFillTest D-29 try/finally + D-30 typed catch), Task 2 6bdb014f2d (SqlOptimiserTest D-31 probe-and-freeze plan assertion). Both source todos retired with completed_in: 17-05-PLAN.md. SC#8 (/review-pr 6946 re-run confirming all items closed or closed-under-D-01) still pending user action.
 Resume file: N/A (phase complete); next action is user-run /review-pr 6946
