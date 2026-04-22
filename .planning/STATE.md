@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 17 Plan 01 complete
-last_updated: "2026-04-22T15:59:42.000Z"
+stopped_at: Phase 17 Plan 02 complete
+last_updated: "2026-04-22T17:43:28.000Z"
 last_activity: 2026-04-22
 progress:
   total_phases: 17
   completed_phases: 15
   total_plans: 33
-  completed_plans: 30
-  percent: 91
+  completed_plans: 31
+  percent: 94
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 17 (verify-pr-6946-body-drift-against-landed-commits-decide-code) — EXECUTING
-Plan: 2 of 4 (Plan 01 complete; Plan 02 ready — minor code hygiene)
-Status: Plan 17-01 shipped; two commits on sm_fill_prev_fast_path (f05fa2eb25 + 889a4676b9)
+Plan: 3 of 4 (Plans 01 and 02 complete; Plan 03 ready — test-only additions)
+Status: Plan 17-02 shipped; three commits on sm_fill_prev_fast_path (2a4070b851 + 3dbbbde82d + 8838de6801)
 Last activity: 2026-04-22
 
-Progress: [#########-] 91%
+Progress: [#########-] 94%
 
 ## Performance Metrics
 
@@ -77,6 +77,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 15 P04 | 5min | 1 tasks | 1 files |
 | Phase 16 P01 | ~25min | 5 tasks | 2 files |
 | Phase 17 P01 | ~25min | 2 tasks | 3 files |
+| Phase 17 P02 | ~40min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -167,6 +168,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 16]: Plan 01: single commit 82865efbc0 per CONTEXT.md D-05 same-commit rule; 43-char title, no Conventional Commits prefix, long-form body per CLAUDE.md; 5 new regression tests alphabetically placed (testFillNullCastMultiKey, testFillPrevCastMultiKey, testFillPrevConcatMultiKey, testFillPrevConcatOperatorMultiKey, testFillPrevIntervalMultiKey)
 - [Phase 17]: Plan 01: pass-1 CB poll at SampleByFillRecordCursorFactory.java:604 shipped standalone — no paired regression test, deviation from plan's Phase 15 D-02 spec approved by user after prior-session checkpoint surfaced that upstream SortedRecordCursor.buildChain() -> AsyncGroupByRecordCursor.buildMap():237 polls the cancellation CB before our :604 poll executes, making a differential test infeasible; commit body documents master-parity (origin/master:SampleByFillPrevRecordCursor.java:171 + SampleByFillValueRecordCursor.java:183) as the defense-in-depth justification (commit f05fa2eb25)
 - [Phase 17]: Plan 01: widened SqlCodeGenerator needsExactTypeMatch to include TIMESTAMP and INTERVAL tags; testFillPrevCrossColumnTimestampUnitMismatch pins the Variant A path (TIMESTAMP_MICRO source -> TIMESTAMP_NS target rejection); Variant B (INTERVAL unit mismatch) dropped after DDL spike found no user-facing keyword maps to INTERVAL_TIMESTAMP_NANO (ColumnType.nameTypeMap only exposes 'interval' -> INTERVAL_TIMESTAMP_MICRO) — production widening still covers INTERVAL for future DDL; regression-coverage self-check confirmed reverting two new predicate lines makes test fail within ~3s (commit 889a4676b9)
+- [Phase 17]: Plan 02: m1 slot-null + m2 field reorder (single alphabetical block) + m5 rationale comment + m6 Record.getLong256(CharSink) contract comment + m7 QueryModel.toSink0 fillOffset emission landed as one commit (2a4070b851); inline Misc.free(...) ownership-transfer form relies on Misc.free returning the freed object so the slot is nulled synchronously, guarding against a latent double-close if TimestampConstant.newInstance ever throws
+- [Phase 17]: Plan 02: m3 PARTIAL refactor gated on new SampleByFillKeyedResetBenchmark (JMH @Param({10,100,1000,10000}) uniqueKeys, @Warmup(3)/@Measurement(5)/@Fork(1)). int[] outputColToKeyPos -> IntList LANDS at 30.5 ns/op vs 47.4 ns/op (1.55x faster, setAll reuses backing array). boolean[] keyPresent -> BitSet REVERTS at 939.6 vs 47.4 ns/op (20x slower at uniqueKeys=1000, way past the 5% gate; BitSet.set()'s per-call wordIndex+checkCapacity+OR dominates even though clear() is O(words)). Benchmark retained in-repo for future BitSet re-evaluation (commit 3dbbbde82d)
+- [Phase 17]: Plan 02: m4 FillRecordDispatchTest shipped as standalone file (not inline in SampleByFillTest.java) with 30 @Test methods covering 35 typed-getter names across FILL_KEY / FILL_PREV_SELF / FILL_CONSTANT / cross-col-PREV-to-aggregate / default-null-sentinel dispatch branches. Plan's original synthetic-FillRecord-via-reflection-or-visibility-widening approach dropped per D-20 Claude's Discretion clause: FillRecord is a private class inside a private static class; SQL-level per-getter property tests are more robust to future refactors and don't leak internal dispatch surface. 4 failing scenarios on first draft (bucket keyed ordering, geohash constants, first(long256) returning null) all fixed via ORDER BY wrap / rnd_geohash + count assertion / key-column FILL_KEY path instead of first() aggregate (commit 8838de6801)
 
 ### Roadmap Evolution
 
@@ -195,6 +199,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-22T15:59:42.000Z
-Stopped at: Phase 17 Plan 01 complete — two commits on sm_fill_prev_fast_path (f05fa2eb25 pass-1 CB poll, 889a4676b9 cross-column PREV unit mismatch); Plan 02 ready
-Resume file: .planning/phases/17-verify-pr-6946-body-drift-against-landed-commits-decide-code/17-02-PLAN.md
+Last session: 2026-04-22T17:43:28.000Z
+Stopped at: Phase 17 Plan 02 complete — three commits on sm_fill_prev_fast_path (2a4070b851 m1/m2/m5/m6/m7 bundle, 3dbbbde82d m3 partial refactor + JMH benchmark, 8838de6801 FillRecordDispatchTest); Plan 03 ready
+Resume file: .planning/phases/17-verify-pr-6946-body-drift-against-landed-commits-decide-code/17-03-PLAN.md
