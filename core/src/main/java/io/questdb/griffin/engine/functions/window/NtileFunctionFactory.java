@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.window;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -101,13 +100,22 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         int bucketCount = (int) bucketCountLong;
 
         if (windowContext.getPartitionByRecord() != null) {
-            return new NtileOverPartitionFunction(
-                    bucketCount,
+            Map map = MapFactory.createUnorderedMap(
+                    configuration,
                     windowContext.getPartitionByKeyTypes(),
-                    windowContext.getPartitionByRecord(),
-                    windowContext.getPartitionBySink(),
-                    configuration
+                    NTILE_COLUMN_TYPES
             );
+            try {
+                return new NtileOverPartitionFunction(
+                        bucketCount,
+                        map,
+                        windowContext.getPartitionByRecord(),
+                        windowContext.getPartitionBySink()
+                );
+            } catch (Throwable t) {
+                Misc.free(map);
+                throw t;
+            }
         } else {
             return new NtileFunction(bucketCount);
         }
@@ -216,19 +224,14 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
 
         public NtileOverPartitionFunction(
                 int bucketCount,
-                ColumnTypes keyColumnTypes,
+                Map map,
                 VirtualRecord partitionByRecord,
-                RecordSink partitionBySink,
-                CairoConfiguration configuration
+                RecordSink partitionBySink
         ) {
             this.bucketCount = bucketCount;
+            this.map = map;
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
-            this.map = MapFactory.createUnorderedMap(
-                    configuration,
-                    keyColumnTypes,
-                    NTILE_COLUMN_TYPES
-            );
         }
 
         @Override
