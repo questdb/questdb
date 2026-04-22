@@ -80,7 +80,8 @@ where
         }
     };
 
-    let column_chunk = build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
+    let column_chunk =
+        build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
 
     // write metadata
     let mut protocol = TCompactOutputProtocol::new(writer);
@@ -168,7 +169,8 @@ where
     let bloom_filter_offset = None;
     let bloom_filter_length = None;
 
-    let column_chunk = build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
+    let column_chunk =
+        build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
 
     // write metadata
     let mut protocol = TCompactOutputStreamProtocol::new(writer);
@@ -189,20 +191,7 @@ fn build_column_chunk(
     bloom_filter_length: Option<i32>,
 ) -> Result<ColumnChunk> {
     // compute stats to build header at the end of the chunk
-
-    let compression = specs
-        .iter()
-        .map(|spec| spec.compression)
-        .collect::<HashSet<_>>();
-    if compression.len() > 1 {
-        return Err(crate::error::Error::oos(
-            "All pages within a column chunk must be compressed with the same codec",
-        ));
-    }
-    let compression = compression
-        .into_iter()
-        .next()
-        .unwrap_or(Compression::Uncompressed);
+    let compression = extract_compression(specs)?;
 
     // SPEC: the total compressed size is the total compressed size of each page + the header size
     let total_compressed_size = specs
@@ -214,7 +203,7 @@ fn build_column_chunk(
         .iter()
         .map(|x| x.header_size as i64 + x.header.uncompressed_page_size as i64)
         .sum();
-    let data_page_offset = specs.first().map(|spec| spec.offset).unwrap_or(0) as i64;
+
     let num_values = specs
         .iter()
         .map(|spec| {
@@ -258,6 +247,8 @@ fn build_column_chunk(
         .into_iter() // to vec
         .collect::<Vec<_>>();
 
+    let (data_page_offset, dictionary_page_offset) = extract_page_offsets(specs)?;
+
     // Sort the encodings to have deterministic metadata
     encodings.sort();
 
@@ -278,7 +269,7 @@ fn build_column_chunk(
         key_value_metadata: None,
         data_page_offset,
         index_page_offset: None,
-        dictionary_page_offset: None,
+        dictionary_page_offset,
         statistics,
         encoding_stats: None,
         bloom_filter_offset,
@@ -296,4 +287,246 @@ fn build_column_chunk(
         crypto_metadata: None,
         encrypted_column_metadata: None,
     })
+}
+
+/// Extract the offsets of the first data page and dictionary page from the page write specs.
+fn extract_page_offsets(specs: &[PageWriteSpec]) -> Result<(i64, Option<i64>)> {
+    let mut data_page_offset: i64 = 0;
+    let mut dict_page_offset: Option<i64> = None;
+    for spec in specs {
+        match spec.header.type_ {
+            parquet_format_safe::PageType::DATA_PAGE
+            | parquet_format_safe::PageType::DATA_PAGE_V2 => {
+                data_page_offset = spec.offset as i64;
+                break; // data page must come after dictionary page, so we can stop looking for offsets once we see the first data page
+            }
+            parquet_format_safe::PageType::DICTIONARY_PAGE => {
+                if dict_page_offset.is_none() {
+                    dict_page_offset = Some(spec.offset as i64);
+                } else {
+                    return Err(crate::error::Error::oos(
+                        "Multiple dictionary pages found in a single column chunk",
+                    ));
+                }
+            }
+            _ => {
+                // Ignore other page types
+            }
+        }
+    }
+    Ok((data_page_offset, dict_page_offset))
+}
+
+fn extract_compression(specs: &[PageWriteSpec]) -> Result<Compression> {
+    let mut compression = None;
+    for spec in specs {
+        if let Some(c) = compression {
+            if c != spec.compression {
+                return Err(crate::error::Error::oos(
+                    "All pages within a column chunk must be compressed with the same codec",
+                ));
+            }
+        } else {
+            compression = Some(spec.compression);
+        }
+    }
+    Ok(compression.unwrap_or(Compression::Uncompressed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dict_page_spec(offset: u64, compression: Compression) -> PageWriteSpec {
+        PageWriteSpec {
+            offset,
+            header_size: 10,
+            header: parquet_format_safe::PageHeader {
+                type_: parquet_format_safe::PageType::DICTIONARY_PAGE,
+                uncompressed_page_size: 100,
+                compressed_page_size: 80,
+                dictionary_page_header: Some(parquet_format_safe::DictionaryPageHeader {
+                    num_values: 5,
+                    encoding: parquet_format_safe::Encoding::PLAIN,
+                    is_sorted: None,
+                }),
+                data_page_header: None,
+                data_page_header_v2: None,
+                crc: None,
+                index_page_header: None,
+            },
+            statistics: None,
+            compression,
+            bytes_written: 90,
+            num_rows: None,
+            num_values: 0,
+        }
+    }
+
+    fn data_page_spec(offset: u64, compression: Compression) -> PageWriteSpec {
+        PageWriteSpec {
+            offset,
+            header_size: 10,
+            header: parquet_format_safe::PageHeader {
+                type_: parquet_format_safe::PageType::DATA_PAGE,
+                uncompressed_page_size: 200,
+                compressed_page_size: 150,
+                dictionary_page_header: None,
+                data_page_header: Some(parquet_format_safe::DataPageHeader {
+                    num_values: 10,
+                    encoding: parquet_format_safe::Encoding::RLE_DICTIONARY,
+                    definition_level_encoding: parquet_format_safe::Encoding::RLE,
+                    repetition_level_encoding: parquet_format_safe::Encoding::RLE,
+                    statistics: None,
+                }),
+                data_page_header_v2: None,
+                crc: None,
+                index_page_header: None,
+            },
+            statistics: None,
+            compression,
+            bytes_written: 160,
+            num_rows: None,
+            num_values: 10,
+        }
+    }
+
+    fn data_page_v2_spec(offset: u64, compression: Compression) -> PageWriteSpec {
+        PageWriteSpec {
+            offset,
+            header_size: 10,
+            header: parquet_format_safe::PageHeader {
+                type_: parquet_format_safe::PageType::DATA_PAGE_V2,
+                uncompressed_page_size: 200,
+                compressed_page_size: 150,
+                dictionary_page_header: None,
+                data_page_header: None,
+                data_page_header_v2: Some(parquet_format_safe::DataPageHeaderV2 {
+                    num_values: 10,
+                    num_nulls: 0,
+                    num_rows: 10,
+                    encoding: parquet_format_safe::Encoding::RLE_DICTIONARY,
+                    definition_levels_byte_length: 0,
+                    repetition_levels_byte_length: 0,
+                    is_compressed: Some(true),
+                    statistics: None,
+                }),
+                crc: None,
+                index_page_header: None,
+            },
+            statistics: None,
+            compression,
+            bytes_written: 160,
+            num_rows: Some(10),
+            num_values: 10,
+        }
+    }
+
+    #[test]
+    fn test_page_offsets_dict_present() {
+        let specs = vec![
+            dict_page_spec(0, Compression::Snappy),
+            data_page_spec(80, Compression::Snappy),
+        ];
+
+        let (data_offset, dict_offset) = extract_page_offsets(&specs).unwrap();
+        assert_eq!(data_offset, 80);
+        assert_eq!(dict_offset, Some(0));
+    }
+
+    #[test]
+    fn test_page_offsets_no_dict() {
+        let specs = vec![
+            data_page_spec(0, Compression::Snappy),
+            data_page_spec(160, Compression::Snappy),
+        ];
+
+        let (data_offset, dict_offset) = extract_page_offsets(&specs).unwrap();
+        assert_eq!(data_offset, 0);
+        assert_eq!(dict_offset, None);
+    }
+
+    #[test]
+    fn test_page_offsets_first_data_page_wins() {
+        // When multiple data pages follow a dict page, data_page_offset must
+        // point at the first data page (the one right after the dict).
+        let specs = vec![
+            dict_page_spec(0, Compression::Snappy),
+            data_page_spec(80, Compression::Snappy),
+            data_page_spec(240, Compression::Snappy),
+            data_page_spec(400, Compression::Snappy),
+        ];
+
+        let (data_offset, dict_offset) = extract_page_offsets(&specs).unwrap();
+        assert_eq!(data_offset, 80);
+        assert_eq!(dict_offset, Some(0));
+    }
+
+    #[test]
+    fn test_page_offsets_data_page_v2() {
+        let specs = vec![
+            dict_page_spec(0, Compression::Snappy),
+            data_page_v2_spec(80, Compression::Snappy),
+        ];
+
+        let (data_offset, dict_offset) = extract_page_offsets(&specs).unwrap();
+        assert_eq!(data_offset, 80);
+        assert_eq!(dict_offset, Some(0));
+    }
+
+    #[test]
+    fn test_page_offsets_empty_specs() {
+        let specs: Vec<PageWriteSpec> = vec![];
+        let (data_offset, dict_offset) = extract_page_offsets(&specs).unwrap();
+        assert_eq!(data_offset, 0);
+        assert_eq!(dict_offset, None);
+    }
+
+    #[test]
+    fn test_page_offsets_multiple_dict_pages_is_error() {
+        let specs = vec![
+            dict_page_spec(0, Compression::Snappy),
+            dict_page_spec(80, Compression::Snappy),
+            data_page_spec(160, Compression::Snappy),
+        ];
+
+        let err = extract_page_offsets(&specs).unwrap_err();
+        assert!(
+            err.to_string().contains("Multiple dictionary pages"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn test_extract_compression_uniform() {
+        let specs = vec![
+            dict_page_spec(0, Compression::Snappy),
+            data_page_spec(80, Compression::Snappy),
+        ];
+
+        assert_eq!(extract_compression(&specs).unwrap(), Compression::Snappy);
+    }
+
+    #[test]
+    fn test_extract_compression_empty_specs_defaults_to_uncompressed() {
+        let specs: Vec<PageWriteSpec> = vec![];
+        assert_eq!(
+            extract_compression(&specs).unwrap(),
+            Compression::Uncompressed
+        );
+    }
+
+    #[test]
+    fn test_extract_compression_mixed_is_error() {
+        let specs = vec![
+            dict_page_spec(0, Compression::Snappy),
+            data_page_spec(80, Compression::Gzip),
+        ];
+
+        let err = extract_compression(&specs).unwrap_err();
+        assert!(
+            err.to_string().contains("same codec"),
+            "unexpected error message: {err}"
+        );
+    }
 }
