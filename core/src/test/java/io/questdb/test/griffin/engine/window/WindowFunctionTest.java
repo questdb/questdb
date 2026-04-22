@@ -12418,6 +12418,70 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNtileDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 30), (3, 20), (4, 40)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10\t2
+                            1970-01-01T00:00:00.000002Z\t30\t1
+                            1970-01-01T00:00:00.000003Z\t20\t2
+                            1970-01-01T00:00:00.000004Z\t40\t1
+                            """),
+                    "select ts, val, ntile(2) over (order by val desc) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileAcceptsIntegerMaxValue() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10.0\t1
+                            1970-01-01T00:00:00.000002Z\t20.0\t2
+                            1970-01-01T00:00:00.000003Z\t30.0\t3
+                            """),
+                    "select ts, val, ntile(2147483647) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueAcceptsIntegerMaxValue() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tnv
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\tnull
+                            1970-01-01T00:00:00.000003Z\t30.0\tnull
+                            """),
+                    "select ts, val, nth_value(val, 2147483647) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testCumeDistDescOrder() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());

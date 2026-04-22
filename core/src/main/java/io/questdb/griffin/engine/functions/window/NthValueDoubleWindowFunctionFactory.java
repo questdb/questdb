@@ -977,7 +977,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
     // Handles nth_value() over ([order by ts] range between x preceding and [ y preceding | current row ] ); no partition by key
     public static class NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
-        protected final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        protected static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final long initialCapacity;
