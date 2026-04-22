@@ -533,15 +533,15 @@ Variant B — INTERVAL_TIMESTAMP_MICRO vs INTERVAL_TIMESTAMP_NANO: same structur
 
 After D-26/D-27 land: `mv .planning/todos/pending/2026-04-22-reject-cross-column-fill-prev-timestamp-unit-mismatch.md .planning/todos/completed/` + add `completed_at: <date>` and `completed_in: 17-...-PLAN.md` fields.
 
-## Open Questions for Planner
+## Open Questions (RESOLVED)
 
-1. **INTERVAL_TIMESTAMP_NANO column declarability** (from D-27 analysis) — can `CREATE TABLE ... (col INTERVAL_TIMESTAMP_NANO)` parse? If not, D-27 ships Variant A only. Low risk either way — the code path coverage is identical.
+1. **INTERVAL_TIMESTAMP_NANO column declarability** (from D-27 analysis) — can `CREATE TABLE ... (col INTERVAL_TIMESTAMP_NANO)` parse? If not, D-27 ships Variant A only. Low risk either way — the code path coverage is identical. **RESOLVED:** Plan 01 Task 2 — INTERVAL variant lands conditionally on a runtime spike; if the DDL does not parse, Variant A (TIMESTAMP pair) alone satisfies D-27 because the `needsExactTypeMatch` predicate applies identically to both tag families.
 
-2. **m3 benchmark landing order** (from D-16) — land refactor-with-benchmark as single commit, or land refactor first then benchmark in a follow-up? Recommendation: single commit; the benchmark documents the gate criterion and future reverts need it.
+2. **m3 benchmark landing order** (from D-16) — land refactor-with-benchmark as single commit, or land refactor first then benchmark in a follow-up? Recommendation: single commit; the benchmark documents the gate criterion and future reverts need it. **RESOLVED:** Plan 02 Task 2 — single commit carrying both the refactor and the new `SampleByFillKeyedResetBenchmark` JMH harness.
 
-3. **m4 test file location** (from D-20) — new `FillRecordDispatchTest.java` or inline in `SampleByFillTest`? Recommendation: new file (rationale in D-20 above). Planner has discretion.
+3. **m4 test file location** (from D-20) — new `FillRecordDispatchTest.java` or inline in `SampleByFillTest`? Recommendation: new file (rationale in D-20 above). Planner has discretion. **RESOLVED:** Plan 02 Task 3 — new file `core/src/test/java/io/questdb/test/griffin/engine/groupby/FillRecordDispatchTest.java` (Wave 0 dependency recorded in VALIDATION.md).
 
-4. **M2 D-13 comments in nano mirror** — should `testSampleByAlignToCalendarFillNullWithKey1/2` in `SampleByNanoTimestampTest` receive the same comment? Recommendation: yes — research surfaced them as 4 call sites, not 2. CONTEXT.md said "each of" but didn't pin the file count. Planner should confirm with user during discuss-gate or land comments on all 4 by default.
+4. **M2 D-13 comments in nano mirror** — should `testSampleByAlignToCalendarFillNullWithKey1/2` in `SampleByNanoTimestampTest` receive the same comment? Recommendation: yes — research surfaced them as 4 call sites, not 2. CONTEXT.md said "each of" but didn't pin the file count. Planner should confirm with user during discuss-gate or land comments on all 4 by default. **RESOLVED:** Plan 03 Task 1 — comments land on all 4 call sites (2 in `SampleByTest` + 2 in `SampleByNanoTimestampTest`); CONTEXT.md D-13 scope updated implicitly via this RESEARCH note.
 
 ## Validation Architecture
 
