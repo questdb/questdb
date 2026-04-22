@@ -380,4 +380,10 @@ The plan file (`~/.claude/plans/let-s-discuss-issues-one-gentle-elephant.md`) is
 
 **Plan source:** `~/.claude/plans/let-s-discuss-issues-one-gentle-elephant.md` — ingest as input to `/gsd-discuss-phase 17`. Discussion stage MUST cover M3 sub-items per-commit; other items may be skipped during discuss if the plan file's proposed resolution is unambiguous.
 
-**Plans:** 0/0 plans yet (to be created during /gsd-discuss-phase 17 and /gsd-plan-phase 17)
+**Plans:** 4 plans
+
+Plans:
+- [ ] 17-01-PLAN.md — Safety-critical codegen fixes (M-new pass-1 CB + M-unit TIMESTAMP/INTERVAL unit mismatch); 2 commits paired with regression tests per Phase 15 D-02
+- [ ] 17-02-PLAN.md — Minor code hygiene (m1 slot-null, m2 field order, m3 IntList/BitSet refactor + JMH benchmark, m5/m6 rationale comments, m7 QueryModel fillOffset, m4 FillRecordDispatchTest); 2-3 commits
+- [ ] 17-03-PLAN.md — Test-only additions (M2 pushdown test + EXPLAIN + 4 D-13 comments; m8a DST spring-forward + m8b single-row keyed FROM/TO + m8c tight reject-no-arg); 2 commits
+- [ ] 17-04-PLAN.md — PR body + title edits (D-11 M1 row, D-03 K x B bullet, D-05 two stale M3.4 sentences, D-06 drop test-count lines, D-24 title rename) + D-28 todo retirement
