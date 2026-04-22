@@ -38,8 +38,8 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.EpollFacadeImpl;
@@ -320,6 +320,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
+        Assert.assertEquals(2048, configuration.getCairoConfiguration().getGroupByBatchSize());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
         Assert.assertTrue(configuration.getCairoConfiguration().isGroupByPresizeEnabled());
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxCapacity());
@@ -544,82 +545,6 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.interval.default", "1000");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
-    }
-
-    @Test
-    public void testQwpUdpCommitIntervalUsesOwnProperties() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.LINE_TCP_ENABLED.getPropertyPath(), "false");
-        properties.setProperty(PropertyKey.LINE_HTTP_ENABLED.getPropertyPath(), "false");
-
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(PropServerConfiguration.COMMIT_INTERVAL_DEFAULT, configuration.getQwpUdpReceiverConfiguration().getCommitInterval());
-
-        properties.setProperty(PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath(), "2500");
-        configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(2500, configuration.getQwpUdpReceiverConfiguration().getCommitInterval());
-    }
-
-    @Test
-    public void testQwpUdpCommitIntervalRejectsZero() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath(), "0");
-        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_COMMIT_INTERVAL);
-    }
-
-    @Test
-    public void testQwpUdpMaxUncommittedDatagramsUsesOwnProperty() throws Exception {
-        Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(1_048_576, configuration.getQwpUdpReceiverConfiguration().getMaxUncommittedDatagrams());
-
-        properties.setProperty(PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS.getPropertyPath(), "123");
-        configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(123, configuration.getQwpUdpReceiverConfiguration().getMaxUncommittedDatagrams());
-    }
-
-    @Test
-    public void testQwpUdpMaxUncommittedDatagramsRejectsZero() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS.getPropertyPath(), "0");
-        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS);
-    }
-
-    @Test
-    public void testQwpUdpMsgBufferSizeRejectsValuesBelowHeaderSize() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.QWP_UDP_MSG_BUFFER_SIZE.getPropertyPath(), Integer.toString(QwpConstants.HEADER_SIZE - 1));
-        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MSG_BUFFER_SIZE);
-    }
-
-    @Test
-    public void testQwpUdpMsgCountRejectsZero() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.QWP_UDP_MSG_COUNT.getPropertyPath(), "0");
-        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MSG_COUNT);
-    }
-
-    @Test
-    public void testQwpUdpReceiveBufferSizeRejectsZero() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE.getPropertyPath(), "0");
-        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE);
-    }
-
-    @Test
-    public void testQwpUdpReceiveBufferSizeUsesSentinelMinusOne() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE.getPropertyPath(), "-1");
-
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(-1, configuration.getQwpUdpReceiverConfiguration().getReceiveBufferSize());
-    }
-
-    @Test
-    public void testQwpUdpOwnThreadAffinityRejectsValuesBelowMinusOne() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY.getPropertyPath(), "-2");
-        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY);
     }
 
     @Test
@@ -1164,6 +1089,42 @@ public class PropServerConfigurationTest {
         newPropServerConfiguration(properties);
     }
 
+    @Test
+    public void testInvalidGroupByBatchSizeNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.groupby.batch.size", "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.parallel.groupby.batch.size must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testInvalidGroupByBatchSizeTooLarge() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.groupby.batch.size", String.valueOf(io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 2));
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.parallel.groupby.batch.size must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testInvalidGroupByBatchSizeZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.groupby.batch.size", "0");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.parallel.groupby.batch.size must be between 1 and");
+        }
+    }
+
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidIPv4Address() throws Exception {
         Properties properties = new Properties();
@@ -1296,55 +1257,6 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testQwpMaxRowsPerTable() throws Exception {
-        Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE, configuration.getQwpUdpReceiverConfiguration().getMaxRowsPerTable());
-        Assert.assertEquals(
-                QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE,
-                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxRowsPerTable()
-        );
-
-        properties.setProperty(PropertyKey.QWP_MAX_ROWS_PER_TABLE.getPropertyPath(), "512");
-        configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(512, configuration.getQwpUdpReceiverConfiguration().getMaxRowsPerTable());
-        Assert.assertEquals(512, configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxRowsPerTable());
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testQwpMaxRowsPerTableRejectsValuesAboveProtocolDefault() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(
-                PropertyKey.QWP_MAX_ROWS_PER_TABLE.getPropertyPath(),
-                Integer.toString(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE + 1)
-        );
-        newPropServerConfiguration(properties);
-    }
-
-    @Test
-    public void testQwpMaxTablesPerConnection() throws Exception {
-        Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION, configuration.getQwpUdpReceiverConfiguration().getMaxTablesPerConnection());
-        Assert.assertEquals(
-                QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION,
-                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxTablesPerConnection()
-        );
-
-        properties.setProperty(PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath(), "500");
-        configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(500, configuration.getQwpUdpReceiverConfiguration().getMaxTablesPerConnection());
-        Assert.assertEquals(500, configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxTablesPerConnection());
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testQwpMaxTablesPerConnectionRejectsZero() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath(), "0");
-        newPropServerConfiguration(properties);
-    }
-
-    @Test
     public void testMinimum2SharedWorkers() throws Exception {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -1432,6 +1344,58 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testPageFrameMaxRowsAcceptsBatchedProbeUpperBound() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getPropertyPath(), Integer.toString(1 << 24));
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(1 << 24, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
+    }
+
+    @Test
+    public void testPageFrameMaxRowsRejectsOversize() throws Exception {
+        Properties properties = new Properties();
+        // One more than the 24-bit rowIndex field can represent; the batched GROUP BY
+        // probe would silently truncate, so we reject at config time.
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getPropertyPath(), Integer.toString((1 << 24) + 1));
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS);
+    }
+
+    @Test
+    public void testPageFrameMaxRowsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS);
+    }
+
+    @Test
+    public void testPageFrameMinRowsRejectsOversize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), Integer.toString((1 << 24) + 1));
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS);
+    }
+
+    @Test
+    public void testPageFrameMinRowsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS);
+    }
+
+    @Test
+    public void testPageFrameSmallMaxRowsRejectsOversize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS.getPropertyPath(), Integer.toString((1 << 24) + 1));
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS);
+    }
+
+    @Test
+    public void testPageFrameSmallMinRowsRejectsOversize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), Integer.toString((1 << 24) + 1));
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS);
+    }
+
+    @Test
     public void testPartitionBy() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -1463,6 +1427,131 @@ public class PropServerConfigurationTest {
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+    }
+
+    @Test
+    public void testQwpMaxRowsPerTable() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE, configuration.getQwpUdpReceiverConfiguration().getMaxRowsPerTable());
+        Assert.assertEquals(
+                QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxRowsPerTable()
+        );
+
+        properties.setProperty(PropertyKey.QWP_MAX_ROWS_PER_TABLE.getPropertyPath(), "512");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(512, configuration.getQwpUdpReceiverConfiguration().getMaxRowsPerTable());
+        Assert.assertEquals(512, configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxRowsPerTable());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testQwpMaxRowsPerTableRejectsValuesAboveProtocolDefault() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(
+                PropertyKey.QWP_MAX_ROWS_PER_TABLE.getPropertyPath(),
+                Integer.toString(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE + 1)
+        );
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testQwpMaxTablesPerConnection() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION, configuration.getQwpUdpReceiverConfiguration().getMaxTablesPerConnection());
+        Assert.assertEquals(
+                QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxTablesPerConnection()
+        );
+
+        properties.setProperty(PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath(), "500");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(500, configuration.getQwpUdpReceiverConfiguration().getMaxTablesPerConnection());
+        Assert.assertEquals(500, configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxTablesPerConnection());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testQwpMaxTablesPerConnectionRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath(), "0");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testQwpUdpCommitIntervalRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_COMMIT_INTERVAL);
+    }
+
+    @Test
+    public void testQwpUdpCommitIntervalUsesOwnProperties() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.LINE_TCP_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.LINE_HTTP_ENABLED.getPropertyPath(), "false");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(PropServerConfiguration.COMMIT_INTERVAL_DEFAULT, configuration.getQwpUdpReceiverConfiguration().getCommitInterval());
+
+        properties.setProperty(PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath(), "2500");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(2500, configuration.getQwpUdpReceiverConfiguration().getCommitInterval());
+    }
+
+    @Test
+    public void testQwpUdpMaxUncommittedDatagramsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS);
+    }
+
+    @Test
+    public void testQwpUdpMaxUncommittedDatagramsUsesOwnProperty() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(1_048_576, configuration.getQwpUdpReceiverConfiguration().getMaxUncommittedDatagrams());
+
+        properties.setProperty(PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS.getPropertyPath(), "123");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(123, configuration.getQwpUdpReceiverConfiguration().getMaxUncommittedDatagrams());
+    }
+
+    @Test
+    public void testQwpUdpMsgBufferSizeRejectsValuesBelowHeaderSize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_MSG_BUFFER_SIZE.getPropertyPath(), Integer.toString(QwpConstants.HEADER_SIZE - 1));
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MSG_BUFFER_SIZE);
+    }
+
+    @Test
+    public void testQwpUdpMsgCountRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_MSG_COUNT.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MSG_COUNT);
+    }
+
+    @Test
+    public void testQwpUdpOwnThreadAffinityRejectsValuesBelowMinusOne() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY.getPropertyPath(), "-2");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY);
+    }
+
+    @Test
+    public void testQwpUdpReceiveBufferSizeRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE);
+    }
+
+    @Test
+    public void testQwpUdpReceiveBufferSizeUsesSentinelMinusOne() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE.getPropertyPath(), "-1");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(-1, configuration.getQwpUdpReceiverConfiguration().getReceiveBufferSize());
     }
 
     @Test
@@ -1996,6 +2085,15 @@ public class PropServerConfigurationTest {
         }
     }
 
+    private void assertInvalidConfiguration(Properties properties, PropertyKey key) throws Exception {
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), key.getPropertyPath());
+        }
+    }
+
     private void assertTimestampTimezone(
             String expected,
             String timezone,
@@ -2173,6 +2271,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4096, configuration.getVectorAggregateQueueCapacity());
         Assert.assertEquals(8, configuration.getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(4, configuration.getPageFrameReduceColumnListCapacity());
+        Assert.assertEquals(512, configuration.getGroupByBatchSize());
         Assert.assertEquals(2048, configuration.getGroupByMergeShardQueueCapacity());
         Assert.assertEquals(100, configuration.getGroupByShardingThreshold());
         Assert.assertEquals(1000, configuration.getGroupByParallelTopKThreshold());
@@ -2241,15 +2340,6 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(10 * Numbers.SIZE_1MB, configuration.getWalMaxLagSize());
         Assert.assertEquals(50, configuration.getWalMaxSegmentFileDescriptorsCache());
-    }
-
-    private void assertInvalidConfiguration(Properties properties, PropertyKey key) throws Exception {
-        try {
-            newPropServerConfiguration(properties);
-            Assert.fail("expected ServerConfigurationException");
-        } catch (ServerConfigurationException e) {
-            TestUtils.assertContains(e.getMessage(), key.getPropertyPath());
-        }
     }
 
     private PropServerConfiguration.ValidationResult validate(Properties properties) {
