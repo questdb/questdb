@@ -51,8 +51,8 @@ public class TxReader implements Closeable, Mutable {
     public static final int PARTITION_SQUASH_COUNTER_MAX = 0xFFFF;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
-    protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
+    protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
     protected static final int PARTITION_MASK_READ_ONLY_BIT_OFFSET = 62;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_PARQUET_FILE_SIZE_OFFSET = 3;
@@ -351,7 +351,9 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionParquetFileSize(int partitionIndex) {
-        return getPartitionParquetFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+        final long fileSize = getPartitionParquetFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+        assert fileSize > 0 || !isPartitionParquet(partitionIndex);
+        return fileSize;
     }
 
     public long getPartitionRowCountByTimestamp(long ts) {
@@ -560,7 +562,7 @@ public class TxReader implements Closeable, Mutable {
             }
 
             long nameTxn = getPartitionNameTxnByRawIndex(i);
-            long parquetFileSize = getPartitionParquetFileSizeByRawIndex(i);
+            long parquetSize = getPartitionParquetFileSizeByRawIndex(i);
 
             if (i > 0) {
                 sink.put(",");
@@ -571,7 +573,7 @@ public class TxReader implements Closeable, Mutable {
             sink.put("', rowCount: ").put(rowCount);
             sink.put(", nameTxn: ").put(nameTxn);
             if (isPartitionParquet(i / LONGS_PER_TX_ATTACHED_PARTITION)) {
-                sink.put(", parquetFileSize: ").put(parquetFileSize);
+                sink.put(", parquetSize: ").put(parquetSize);
             }
             if (isPartitionReadOnlyByRawIndex(i)) {
                 sink.put(", readOnly=true");

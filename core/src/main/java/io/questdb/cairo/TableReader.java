@@ -1357,11 +1357,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     /**
      * Opens (or remaps) the _pm metadata file for the given partition and
      * returns the parquet file size derived from its footer metadata.
-     * <p>
-     * The mapping is sized from the header's {@code PARQUET_META_FILE_SIZE} field, not
-     * from {@code ff.length()} — the filesystem size is not a valid commit
-     * boundary (an in-progress, unpublished append may have already extended
-     * the file on disk).
      */
     private long openParquetMetadata(int partitionIndex, long partitionNameTxn) {
         final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);

@@ -3105,9 +3105,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(']');
             }
 
-            // Also hard-link the _pm sidecar so cold reads can resolve column
-            // chunks after the switch. Older partitions may not have _pm, so
-            // skip when the source file is missing.
             setPathForParquetPartitionMetadata(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
             if (ff.exists(path.$())) {
@@ -9511,10 +9508,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             assert parquetMetaReader.getRowGroupCount() > 0;
             return parquetMetaReader.getRowGroupMinTimestamp(0, parquetTsIndex);
         } finally {
-            if (parquetMetaReader.getAddr() != 0) {
-                ff.munmap(parquetMetaReader.getAddr(), parquetMetaReader.getFileSize(), MemoryTag.MMAP_PARQUET_METADATA_READER);
-                parquetMetaReader.clear();
-            }
+            parquetMetaReader.unmapAndClear(ff);
         }
     }
 
