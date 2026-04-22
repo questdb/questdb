@@ -24,9 +24,12 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -169,17 +172,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             // Bounded backfill: window functions see only the last RETENTION worth of
             // data. maxBaseTs is captured from the base TableReader; rows with
-            // ts <= maxBaseTs - retention are skipped during backfill.
+            // ts <= maxBaseTs - retention are skipped during backfill. The reader's
+            // seqTxn pins the high watermark of WAL transactions visible to the
+            // bootstrap, so the next incremental refresh resumes from there.
             // TODO(live-view): replace the linear skip with a partition-aware interval
             //  cursor so backfill cost is O(retained rows) rather than O(base rows).
             TableToken baseToken = instance.getDefinition().getBaseTableToken();
             long retentionMicros = instance.getDefinition().getRetentionMicros();
             long lowerBound = Long.MIN_VALUE;
+            long bootstrapSeqTxn;
             try (TableReader reader = engine.getReader(baseToken)) {
                 long maxTs = reader.getMaxTimestamp();
                 if (maxTs != Long.MIN_VALUE) {
                     lowerBound = maxTs - retentionMicros;
                 }
+                bootstrapSeqTxn = reader.getSeqTxn();
             }
             final int baseTsIdx = baseMetadata.getTimestampIndex();
 
@@ -216,23 +223,62 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             writeBuffer.applyRetention(instance.getDefinition().getRetentionMicros());
             instance.publishWriteBuffer();
+            // Advance the high watermark even when the inbound notification carried
+            // seqTxn=-1 (initial flush triggered by forceFlushAllViews). Without this,
+            // the next refresh re-enters the bootstrap branch and calls
+            // resetWindowFunctions(), clearing window state.
+            if (bootstrapSeqTxn > instance.getLastProcessedSeqTxn()) {
+                instance.setLastProcessedSeqTxn(bootstrapSeqTxn);
+            }
         } catch (Throwable t) {
             instance.abortWriteBuffer(writeBuffer);
             throw t;
         }
     }
 
-    private void buildColumnMappings(RecordMetadata baseMetadata) {
+    /**
+     * Maps each SQL output column to its writer-index slot in the base table's WAL
+     * segments. The SQL cursor's {@link RecordMetadata} carries column names and types
+     * but not writer indexes (they default to -1 for non-table-reader metadata), so
+     * we resolve names through the engine's metadata cache. Live views invalidate on
+     * any base-table schema change, so this mapping is stable for the lifetime of one
+     * incremental refresh.
+     * <p>
+     * Throws {@link CairoException} if any column is SYMBOL — the WAL writer encodes
+     * symbol keys per-transaction (via local ids that get translated to global table
+     * keys at WAL apply time), and the live view refresh path does not yet replicate
+     * that translation. {@link #incrementalRefresh} catches the exception and falls
+     * back to {@link #fullRecompute}, which reads through {@code TableReader} where
+     * symbol keys are already global. Removing this guard requires teaching
+     * {@link WalSegmentPageFrameCursor} to do per-txn symbol translation.
+     */
+    private void buildColumnMappings(RecordMetadata baseMetadata, TableToken baseToken) {
         columnIndexes.clear();
         columnSizeShifts.clear();
-        for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
-            int writerIndex = baseMetadata.getWriterIndex(i);
-            columnIndexes.add(writerIndex);
-            int type = baseMetadata.getColumnType(i);
-            if (ColumnType.isVarSize(type)) {
-                columnSizeShifts.add(0);
-            } else {
-                columnSizeShifts.add(Numbers.msb(ColumnType.sizeOf(type)));
+        try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
+            CairoTable baseTable = metaRO.getTable(baseToken);
+            if (baseTable == null) {
+                throw CairoException.tableDoesNotExist(baseToken.getTableName());
+            }
+            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+                int type = baseMetadata.getColumnType(i);
+                if (ColumnType.tagOf(type) == ColumnType.SYMBOL) {
+                    throw CairoException.nonCritical()
+                            .put("incremental refresh of SYMBOL columns is not supported, falling back to full recompute");
+                }
+                CharSequence colName = baseMetadata.getColumnName(i);
+                CairoColumn col = baseTable.getColumnQuiet(colName);
+                if (col == null) {
+                    throw CairoException.critical(0)
+                            .put("live view base column not found [view=").put(baseToken.getTableName())
+                            .put(", column=").put(colName).put(']');
+                }
+                columnIndexes.add(col.getWriterIndex());
+                if (ColumnType.isVarSize(type)) {
+                    columnSizeShifts.add(0);
+                } else {
+                    columnSizeShifts.add(Numbers.msb(ColumnType.sizeOf(type)));
+                }
             }
         }
     }
@@ -370,7 +416,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         TableToken baseToken = instance.getDefinition().getBaseTableToken();
         RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
 
-        buildColumnMappings(baseMetadata);
+        buildColumnMappings(baseMetadata, baseToken);
         MergeBuffer mergeBuffer = ensureMergeBuffer(instance, baseMetadata);
 
         WalSegmentPageFrameCursor frameCursor = new WalSegmentPageFrameCursor(

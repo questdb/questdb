@@ -180,8 +180,11 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     ) {
         assert rowLo >= 0 && rowHi >= rowLo && rowHi <= segmentRowCount;
         reader = Misc.free(reader);
+        // The WalReader constructor opens the segment via dataCursor.of(this) and
+        // mmaps all column files. A second openSegment() call here would mis-resolve
+        // them, because openSegment's finally trims path back to the WAL directory and
+        // the constructor's segment-id append is gone.
         reader = new WalReader(configuration, tableToken, walName, segmentId, segmentRowCount);
-        reader.openSegment();
         this.rowLo = rowLo;
         this.rowHi = rowHi;
         computeFrame(metadata);
@@ -216,7 +219,10 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         for (int i = 0; i < columnCount; i++) {
             final int walColumnIndex = columnIndexes.getQuick(i);
             final int columnType = reader.getColumnType(walColumnIndex);
-            columnMapping.addColumn(walColumnIndex, metadata.getWriterIndex(walColumnIndex));
+            // (SQL output position i, base-table writer index walColumnIndex). The
+            // mapping is stored for downstream consumers (parquet path uses it; the
+            // NATIVE WAL path here resolves via pageAddresses directly).
+            columnMapping.addColumn(i, walColumnIndex);
 
             // Matches WalReader.getPrimaryColumnIndex: two slots per column, offset by 2
             // for the implicit (row-id, timestamp) sentinel pair at the start.

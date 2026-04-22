@@ -117,6 +117,54 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshAccumulatesWindowState() throws Exception {
+        // Regression for the broken incremental-refresh path (bugs A/B/C):
+        // (A) bootstrap with seqTxn=-1 must advance lastProcessedSeqTxn so the next
+        //     refresh enters the incremental branch, not bootstrap;
+        // (B) WalSegmentPageFrameCursor.of must not call openSegment() a second time
+        //     after the WalReader constructor already opened it;
+        // (C) buildColumnMappings must look up writer indexes by name in the base
+        //     table's metadata cache (the SQL cursor's metadata reports -1).
+        // The non-partitioned row_number() OVER () counter is what the test inspects:
+        // with all three bugs in place every refresh fell through to fullRecompute and
+        // bounded backfill seeded the counter from the retained horizon (rn=1 each
+        // time). With the fixes, the counter accumulates across incremental refreshes.
+        execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_inc LAG 1s RETENTION 1h AS" +
+                " SELECT price, ts, row_number() OVER () AS rn FROM trades");
+        drainLiveViewQueue();
+
+        execute("INSERT INTO trades VALUES (100.0, '2024-01-01T00:00:00.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        execute("INSERT INTO trades VALUES (101.0, '2024-01-01T00:01:00.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        execute("INSERT INTO trades VALUES (102.0, '2024-01-01T00:02:00.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "price\tts\trn\n" +
+                        "100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "101.0\t2024-01-01T00:01:00.000000Z\t2\n" +
+                        "102.0\t2024-01-01T00:02:00.000000Z\t3\n",
+                "SELECT * FROM live_inc",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_inc");
+    }
+
+    @Test
     public void testBoundedBackfillEmptyBaseTable() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
