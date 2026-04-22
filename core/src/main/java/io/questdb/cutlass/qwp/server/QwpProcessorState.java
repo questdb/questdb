@@ -50,6 +50,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 /**
  * State management for QWP v1 processing.
@@ -214,7 +215,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         int size = 9 + 2;
         ObjList<CharSequence> keys = pendingAckSeqTxns.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
-            size += 2 + keys.getQuick(i).length() + 8;
+            size += 2 + Utf8s.utf8Bytes(keys.getQuick(i)) + 8;
         }
         return size;
     }
@@ -223,7 +224,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         int size = 1 + 2;
         ObjList<CharSequence> keys = durableProgressSnapshot.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
-            size += 2 + keys.getQuick(i).length() + 8;
+            size += 2 + Utf8s.utf8Bytes(keys.getQuick(i)) + 8;
         }
         return size;
     }
@@ -567,13 +568,11 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         offset += 2;
         for (int i = 0; i < count; i++) {
             CharSequence tableName = keys.getQuick(i);
-            int nameLen = tableName.length();
-            Unsafe.getUnsafe().putShort(addr + offset, (short) nameLen);
+            int utf8Len = Utf8s.utf8Bytes(tableName);
+            Unsafe.getUnsafe().putShort(addr + offset, (short) utf8Len);
             offset += 2;
-            for (int j = 0; j < nameLen; j++) {
-                Unsafe.getUnsafe().putByte(addr + offset + j, (byte) tableName.charAt(j));
-            }
-            offset += nameLen;
+            Utf8s.strCpyUtf8(tableName, addr + offset, utf8Len);
+            offset += utf8Len;
             Unsafe.getUnsafe().putLong(addr + offset, entries.get(tableName));
             offset += 8;
         }

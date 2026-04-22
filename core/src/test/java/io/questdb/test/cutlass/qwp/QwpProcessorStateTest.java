@@ -1244,6 +1244,55 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOnResumeDurableAckCompleteSimplePath() throws Exception {
+        // Simple path: durable-ack blocked → resume complete (no error).
+        // Verifies that lastDurableSeqTxns is updated so the next
+        // collectDurableProgress only reports further advances.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{10L});
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+                registry.set("t~1", 10L);
+
+                // Populate durableProgressSnapshot
+                io.questdb.std.CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+
+                // Simulate blocked send
+                state.onDurableAckBlocked();
+                Assert.assertEquals(4, state.getSendState()); // SEND_STATE_RESUME_DURABLE_ACK
+
+                // Resume completes
+                state.onResumeDurableAckComplete();
+                Assert.assertEquals(0, state.getSendState()); // SEND_STATE_READY
+
+                // Same watermark should not be reported again
+                progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(0, progress.size());
+
+                // Further advance is reported
+                registry.set("t~1", 15L);
+                progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(15L, progress.get("t"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testOnResumeDurableAckThenErrorTransition() throws Exception {
         // Full lifecycle: durable-ack blocked → error blocked → resume durable
         // ack complete → deferred error still pending → resume error complete.
@@ -1561,6 +1610,35 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(written, offset);
             } finally {
                 Unsafe.free(ptr, 256, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteTableSeqTxnEntriesNonAsciiTableName() throws Exception {
+        assertMemoryLeak(() -> {
+            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
+            // "caf\u00e9" — the \u00e9 encodes to two UTF-8 bytes (0xC3 0xA9),
+            // so UTF-8 byte length (5) differs from char length (4).
+            entries.put("caf\u00e9", 77L);
+            long ptr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
+            try {
+                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                // tableCount(2) + nameLen(2) + "caf\u00e9" UTF-8 (5 bytes) + seqTxn(8) = 17
+                Assert.assertEquals(17, written);
+                int tableCount = Unsafe.getUnsafe().getShort(ptr) & 0xFFFF;
+                Assert.assertEquals(1, tableCount);
+                int nameLen = Unsafe.getUnsafe().getShort(ptr + 2) & 0xFFFF;
+                Assert.assertEquals(5, nameLen);
+                // Verify UTF-8 bytes: 'c'=0x63, 'a'=0x61, 'f'=0x66, \u00e9=0xC3 0xA9
+                Assert.assertEquals((byte) 'c', Unsafe.getUnsafe().getByte(ptr + 4));
+                Assert.assertEquals((byte) 'a', Unsafe.getUnsafe().getByte(ptr + 5));
+                Assert.assertEquals((byte) 'f', Unsafe.getUnsafe().getByte(ptr + 6));
+                Assert.assertEquals((byte) 0xC3, Unsafe.getUnsafe().getByte(ptr + 7));
+                Assert.assertEquals((byte) 0xA9, Unsafe.getUnsafe().getByte(ptr + 8));
+                Assert.assertEquals(77L, Unsafe.getUnsafe().getLong(ptr + 9));
+            } finally {
+                Unsafe.free(ptr, 128, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
