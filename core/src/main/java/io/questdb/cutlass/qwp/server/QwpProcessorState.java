@@ -190,7 +190,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             CharSequence tableName = tableNames.getQuick(i);
             String dirName = tableDirNames.get(tableName);
             long uploadedSeqTxn = registry.getDurablyUploadedSeqTxn(dirName);
-            if (uploadedSeqTxn > 0) {
+            if (uploadedSeqTxn >= 0) {
                 long lastSent = lastDurableSeqTxns.get(tableName);
                 if (uploadedSeqTxn > lastSent) {
                     durableProgressSnapshot.put(tableName, uploadedSeqTxn);
