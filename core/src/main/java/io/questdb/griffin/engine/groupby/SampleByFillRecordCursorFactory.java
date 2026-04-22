@@ -285,27 +285,19 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
+        private RecordCursor baseCursor;
+        private Record baseRecord;
         private final long calendarOffset;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private final ObjList<Function> constantFills;
         private final IntList fillModes;
         private final FillRecord fillRecord = new FillRecord();
         private final FillTimestampConstant fillTimestampFunc;
         private final Function fromFunc;
-        private final boolean hasPrevFill;
-        private final RecordSink keySink;
-        private final Map keysMap;
-        private final int[] outputColToKeyPos;
-        private final IntList symbolTableColIndices;
-        private final TimestampDriver timestampDriver;
-        private final int timestampIndex;
-        private final TimestampSampler timestampSampler;
-        private final Function toFunc;
-        private RecordCursor baseCursor;
-        private Record baseRecord;
-        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean hasDataForCurrentBucket;
         private boolean hasExplicitTo;
         private boolean hasPendingRow;
+        private final boolean hasPrevFill;
         private boolean hasPrevForCurrentGap;
         private boolean hasSimplePrev;
         private boolean isBaseCursorExhausted;
@@ -313,13 +305,22 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean isInitialized;
         private int keyCount;
         private boolean[] keyPresent;
+        private final RecordSink keySink;
+        private final Map keysMap;
         private MapRecordCursor keysMapCursor;
         private MapRecord keysMapRecord;
         private long maxTimestamp;
         private long nextBucketTimestamp;
+        private final int[] outputColToKeyPos;
         private long pendingTs;
         private Record prevRecord;
         private long simplePrevRowId = -1L;
+        private final IntList symbolTableColIndices;
+        private final TimestampDriver timestampDriver;
+        private final int timestampIndex;
+        private final TimestampSampler timestampSampler;
+        private final Function toFunc;
+
 
         private SampleByFillCursor(
                 RecordMetadata metadata,
@@ -422,6 +423,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         MapKey mapKey = keysMap.withKey();
                         keySink.copy(baseRecord, mapKey);
                         MapValue value = mapKey.findValue();
+                        // Pass 2 iterates the same sorted cursor as pass 1, so every key must already be in
+                        // the map. A null hit implies a bug in SortedRecordCursor, OrderedMap, or RecordSink
+                        // -- internal corruption of a direct dependency, which matches CLAUDE.md's assert
+                        // pattern. The explicit throw below (on the "dataTs precedes nextBucketTimestamp"
+                        // branch) guards cross-component grid drift (sampler vs timestamp_floor_utc), which
+                        // was empirically triggered during this PR's development and must fail visibly
+                        // regardless of -ea.
                         assert value != null : "key discovered in pass 1 must exist in keysMap";
                         int keyIdx = (int) value.getLong(KEY_INDEX_SLOT);
                         keyPresent[keyIdx] = true;
@@ -1083,11 +1091,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_CONSTANT) {
                     constantFills.getQuick(col).getLong256(null, sink);
                 }
-                // Fall-through case (e.g., FILL_PREV_SELF with hasKeyPrev() == false)
-                // leaves the caller-owned sink untouched. CharSink<?> has no
-                // ofRawNull() counterpart to Decimal128/Decimal256 sinks, and
-                // NullMemoryCMR.getLong256(offset, CharSink) uses the same
-                // empty-body convention to render null as empty text.
+                // Per the Record.getLong256(int, CharSink) contract: null Long256 appends nothing to
+                // the sink. The caller owns the delimiters on both sides, and an empty segment reads
+                // as an empty text value -- this is how QuestDB renders null Long256 in text output.
+                // Do NOT call sink.clear() here: it would erase row-prefix content written by the
+                // caller (e.g., CursorPrinter before the cell is rendered).
             }
 
             @Override

@@ -3650,10 +3650,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             try {
                                 final long parsed = targetDriver.parseQuotedLiteral(fillExpr.token);
                                 // Free the stale (wrong-unit) function parsed by
-                                // functionParser before replacing the slot. The existing
-                                // transfer below moves the unit-correct replacement into
-                                // constantFillFuncs.
-                                Misc.free(fillValues.getQuick(fillIdx));
+                                // functionParser and null the slot in the same
+                                // statement before the replacement setQuick below
+                                // installs the unit-correct constant. Matches the
+                                // sibling ownership transfer at :3665.
+                                fillValues.setQuick(fillIdx, Misc.free(fillValues.getQuick(fillIdx)));
                                 fillValues.setQuick(fillIdx, TimestampConstant.newInstance(parsed, targetColType));
                             } catch (NumericException e) {
                                 throw SqlException.position(fillExpr.position)

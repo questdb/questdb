@@ -2323,6 +2323,11 @@ public class QueryModel implements IQueryModel {
             }
         }
 
+        if (fillOffset != null) {
+            sink.putAscii(" offset ");
+            sink.put(fillOffset);
+        }
+
         if (fillStride != null) {
             sink.putAscii(" stride ");
             sink.put(fillStride);
