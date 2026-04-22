@@ -24,10 +24,13 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.client.cutlass.qwp.client.ColumnView;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.client.cutlass.qwp.client.RowView;
 import io.questdb.client.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.client.std.Unsafe;
 import io.questdb.client.std.bytes.DirectByteSequence;
 import io.questdb.client.std.Long256Impl;
 import io.questdb.client.std.Uuid;
@@ -270,6 +273,137 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                     Assert.assertEquals('0', rows.get(2));
                 }
         );
+    }
+
+    @Test
+    public void testColumnView() throws Exception {
+        // Pins the column-pinned facade: column(c) returns a flyweight whose
+        // single-arg accessors match the (col, row) primitives across types and
+        // NULL rows. Two concurrent ColumnView instances must coexist.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE t(i INT, d DOUBLE, s SYMBOL, part_ts TIMESTAMP) "
+                        + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            (1,    1.5,  'AAPL', 1::TIMESTAMP),
+                            (NULL, 2.5,  'MSFT', 2::TIMESTAMP),
+                            (3,    NULL, NULL,   3::TIMESTAMP),
+                            (4,    4.5,  'AAPL', 4::TIMESTAMP)
+                        """);
+                serverMain.awaitTable("t");
+
+                final int[] intVals = new int[4];
+                final boolean[] intNulls = new boolean[4];
+                final double[] dblVals = new double[4];
+                final boolean[] dblNulls = new boolean[4];
+                final String[] symVals = new String[4];
+                final boolean[] sameInstance = {false};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT i, d, s FROM t ORDER BY part_ts", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            ColumnView ints = batch.column(0);
+                            ColumnView dbls = batch.column(1);
+                            ColumnView syms = batch.column(2);
+                            sameInstance[0] = batch.column(0) == ints;
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                intNulls[r] = ints.isNull(r);
+                                intVals[r] = ints.getIntValue(r);
+                                dblNulls[r] = dbls.isNull(r);
+                                dblVals[r] = dbls.getDoubleValue(r);
+                                symVals[r] = syms.getSymbol(r);
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertTrue("repeated column(c) returns the same instance", sameInstance[0]);
+                Assert.assertArrayEquals(new int[]{1, 0, 3, 4}, intVals);
+                Assert.assertArrayEquals(new boolean[]{false, true, false, false}, intNulls);
+                Assert.assertArrayEquals(new boolean[]{false, false, true, false}, dblNulls);
+                Assert.assertEquals(1.5, dblVals[0], 0.0);
+                Assert.assertEquals(2.5, dblVals[1], 0.0);
+                Assert.assertTrue(Double.isNaN(dblVals[2]));
+                Assert.assertEquals(4.5, dblVals[3], 0.0);
+                Assert.assertEquals("AAPL", symVals[0]);
+                Assert.assertEquals("MSFT", symVals[1]);
+                Assert.assertNull(symVals[2]);
+                Assert.assertEquals("AAPL", symVals[3]);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnViewRawAddrs() throws Exception {
+        // SIMD/JNI consumers iterate ColumnView.valuesAddr() directly. Assert
+        // that the raw addresses, stride, and null bitmap line up with what
+        // the typed accessors return.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE t(d DOUBLE, part_ts TIMESTAMP) "
+                        + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            (1.5,  1::TIMESTAMP),
+                            (2.5,  2::TIMESTAMP),
+                            (NULL, 3::TIMESTAMP),
+                            (4.5,  4::TIMESTAMP)
+                        """);
+                serverMain.awaitTable("t");
+
+                final long[] valuesAddr = {0};
+                final long[] nullBitmapAddr = {0};
+                final int[] stride = {0};
+                final int[] nonNullCount = {0};
+                final boolean[] nullForRow2 = {false};
+                final double[] decoded = new double[3];
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT d FROM t ORDER BY part_ts", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            ColumnView col = batch.column(0);
+                            valuesAddr[0] = col.valuesAddr();
+                            nullBitmapAddr[0] = col.nullBitmapAddr();
+                            stride[0] = col.bytesPerValue();
+                            nonNullCount[0] = col.nonNullCount();
+                            // Null bitmap: row 2 NULL; LSB-first within byte 0 -> bit 2 set.
+                            byte bm = Unsafe.getUnsafe().getByte(nullBitmapAddr[0]);
+                            nullForRow2[0] = (bm & (1 << 2)) != 0;
+                            // Walk the dense values array directly.
+                            for (int i = 0; i < nonNullCount[0]; i++) {
+                                decoded[i] = Unsafe.getUnsafe().getDouble(valuesAddr[0] + (long) stride[0] * i);
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertEquals("DOUBLE stride", 8, stride[0]);
+                Assert.assertEquals("3 non-null rows out of 4", 3, nonNullCount[0]);
+                Assert.assertNotEquals("values address must be set", 0L, valuesAddr[0]);
+                Assert.assertNotEquals("null bitmap must be set when nulls are present", 0L, nullBitmapAddr[0]);
+                Assert.assertTrue("row 2 NULL bit must be set", nullForRow2[0]);
+                Assert.assertArrayEquals(new double[]{1.5, 2.5, 4.5}, decoded, 0.0);
+            }
+        });
     }
 
     @Test
@@ -601,6 +735,82 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                     Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(4))[0]); // NaN -> null
                 }
         );
+    }
+
+    @Test
+    public void testForEachRow() throws Exception {
+        // Pins the row-pinned facade: forEachRow walks every row in order,
+        // RowView#getRowIndex tracks position, single-arg accessors match the
+        // (col, row) primitives, and the same flyweight instance is reused.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE t(i INT, d DOUBLE, s SYMBOL, part_ts TIMESTAMP) "
+                        + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            (1,    1.5,  'AAPL', 1::TIMESTAMP),
+                            (NULL, 2.5,  'MSFT', 2::TIMESTAMP),
+                            (3,    NULL, NULL,   3::TIMESTAMP)
+                        """);
+                serverMain.awaitTable("t");
+
+                final List<Object[]> rows = new ArrayList<>();
+                final java.util.IdentityHashMap<RowView, Boolean> seenInstances = new java.util.IdentityHashMap<>();
+                final boolean[] sawBatchAccessor = {false};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT i, d, s FROM t ORDER BY part_ts", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            sawBatchAccessor[0] = batch.row(0).batch() == batch;
+                            batch.forEachRow(row -> {
+                                seenInstances.put(row, Boolean.TRUE);
+                                rows.add(new Object[]{
+                                        row.getRowIndex(),
+                                        row.isNull(0), row.getIntValue(0),
+                                        row.isNull(1), row.getDoubleValue(1),
+                                        row.getSymbol(2)
+                                });
+                            });
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertTrue("row().batch() returns the parent batch", sawBatchAccessor[0]);
+                Assert.assertEquals("forEachRow reuses the same RowView", 1, seenInstances.size());
+                Assert.assertEquals(3, rows.size());
+
+                Object[] r0 = rows.get(0);
+                Assert.assertEquals(0, r0[0]);
+                Assert.assertEquals(Boolean.FALSE, r0[1]);
+                Assert.assertEquals(1, r0[2]);
+                Assert.assertEquals(Boolean.FALSE, r0[3]);
+                Assert.assertEquals(1.5, (Double) r0[4], 0.0);
+                Assert.assertEquals("AAPL", r0[5]);
+
+                Object[] r1 = rows.get(1);
+                Assert.assertEquals(1, r1[0]);
+                Assert.assertEquals(Boolean.TRUE, r1[1]);
+                Assert.assertEquals(0, r1[2]); // NULL INT -> 0
+                Assert.assertEquals(2.5, (Double) r1[4], 0.0);
+                Assert.assertEquals("MSFT", r1[5]);
+
+                Object[] r2 = rows.get(2);
+                Assert.assertEquals(2, r2[0]);
+                Assert.assertEquals(3, r2[2]);
+                Assert.assertEquals(Boolean.TRUE, r2[3]);
+                Assert.assertTrue("NULL DOUBLE -> NaN", Double.isNaN((Double) r2[4]));
+                Assert.assertNull(r2[5]);
+            }
+        });
     }
 
     @Test
