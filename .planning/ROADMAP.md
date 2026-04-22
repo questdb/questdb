@@ -383,7 +383,7 @@ The plan file (`~/.claude/plans/let-s-discuss-issues-one-gentle-elephant.md`) is
 **Plans:** 4 plans
 
 Plans:
-- [ ] 17-01-PLAN.md — Safety-critical codegen fixes (M-new pass-1 CB + M-unit TIMESTAMP/INTERVAL unit mismatch); 2 commits paired with regression tests per Phase 15 D-02
+- [x] 17-01-PLAN.md — Safety-critical codegen fixes: pass-1 CB poll at SampleByFillRecordCursorFactory.java:604 (master-parity, no paired test — user-approved deviation after upstream CB-layer finding made differential test infeasible) + widened needsExactTypeMatch including TIMESTAMP and INTERVAL tags with Variant A regression test; Variant B (INTERVAL DDL) dropped per spike — no user-facing DDL keyword maps to INTERVAL_TIMESTAMP_NANO (2 commits f05fa2eb25 + 889a4676b9; completed 2026-04-22)
 - [ ] 17-02-PLAN.md — Minor code hygiene (m1 slot-null, m2 field order, m3 IntList/BitSet refactor + JMH benchmark, m5/m6 rationale comments, m7 QueryModel fillOffset, m4 FillRecordDispatchTest); 2-3 commits
 - [ ] 17-03-PLAN.md — Test-only additions (M2 pushdown test + EXPLAIN + 4 D-13 comments; m8a DST spring-forward + m8b single-row keyed FROM/TO + m8c tight reject-no-arg); 2 commits
 - [ ] 17-04-PLAN.md — PR body + title edits (D-11 M1 row, D-03 K x B bullet, D-05 two stale M3.4 sentences, D-06 drop test-count lines, D-24 title rename) + D-28 todo retirement

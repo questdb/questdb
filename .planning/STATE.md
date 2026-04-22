@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Phase 17 context gathered
-last_updated: "2026-04-22T14:15:36.065Z"
-last_activity: 2026-04-21
+status: executing
+stopped_at: Phase 17 Plan 01 complete
+last_updated: "2026-04-22T15:59:42.000Z"
+last_activity: 2026-04-22
 progress:
   total_phases: 17
   completed_phases: 15
-  total_plans: 29
-  completed_plans: 29
-  percent: 100
+  total_plans: 33
+  completed_plans: 30
+  percent: 91
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** SAMPLE BY FILL queries execute on the GROUP BY fast path with identical output to the cursor path, enabling parallel execution.
-**Current focus:** Phase 16 — fix-multi-key-fill-prev-with-inline-function-grouping-keys
+**Current focus:** Phase 17 — verify-pr-6946-body-drift-against-landed-commits-decide-code
 
 ## Current Position
 
-Phase: 16 (fix-multi-key-fill-prev-with-inline-function-grouping-keys) — EXECUTING
-Plan: 1 of 1
-Status: Phase complete — ready for verification
-Last activity: 2026-04-21
+Phase: 17 (verify-pr-6946-body-drift-against-landed-commits-decide-code) — EXECUTING
+Plan: 2 of 4 (Plan 01 complete; Plan 02 ready — minor code hygiene)
+Status: Plan 17-01 shipped; two commits on sm_fill_prev_fast_path (f05fa2eb25 + 889a4676b9)
+Last activity: 2026-04-22
 
-Progress: [##########] 100%
+Progress: [#########-] 91%
 
 ## Performance Metrics
 
@@ -76,6 +76,7 @@ Phase 5 absorbed into phases 7–10; no direct execution time attributed.
 | Phase 15 P03 | 20min | 1 tasks | 1 files |
 | Phase 15 P04 | 5min | 1 tasks | 1 files |
 | Phase 16 P01 | ~25min | 5 tasks | 2 files |
+| Phase 17 P01 | ~25min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -164,6 +165,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 16]: Plan 01: D-06 cursor-side wiring verified unchanged per RESEARCH.md trace — SampleByFillRecordCursorFactory.java NOT modified; factoryColToUserFillIdx[-1] for function-key columns flows through both bare-FILL(PREV) and per-column branches to FILL_KEY, picked up by keyColIndices derivation at :3668 automatically
 - [Phase 16]: Plan 01: probe-and-freeze captured Interval.NULL rendering as literal `null` string (not empty text), disambiguating RESEARCH.md A2; row order within buckets matches testFillPrevKeyedIndependent precedent — new data row first, prior-discovered key forward-filled second
 - [Phase 16]: Plan 01: single commit 82865efbc0 per CONTEXT.md D-05 same-commit rule; 43-char title, no Conventional Commits prefix, long-form body per CLAUDE.md; 5 new regression tests alphabetically placed (testFillNullCastMultiKey, testFillPrevCastMultiKey, testFillPrevConcatMultiKey, testFillPrevConcatOperatorMultiKey, testFillPrevIntervalMultiKey)
+- [Phase 17]: Plan 01: pass-1 CB poll at SampleByFillRecordCursorFactory.java:604 shipped standalone — no paired regression test, deviation from plan's Phase 15 D-02 spec approved by user after prior-session checkpoint surfaced that upstream SortedRecordCursor.buildChain() -> AsyncGroupByRecordCursor.buildMap():237 polls the cancellation CB before our :604 poll executes, making a differential test infeasible; commit body documents master-parity (origin/master:SampleByFillPrevRecordCursor.java:171 + SampleByFillValueRecordCursor.java:183) as the defense-in-depth justification (commit f05fa2eb25)
+- [Phase 17]: Plan 01: widened SqlCodeGenerator needsExactTypeMatch to include TIMESTAMP and INTERVAL tags; testFillPrevCrossColumnTimestampUnitMismatch pins the Variant A path (TIMESTAMP_MICRO source -> TIMESTAMP_NS target rejection); Variant B (INTERVAL unit mismatch) dropped after DDL spike found no user-facing keyword maps to INTERVAL_TIMESTAMP_NANO (ColumnType.nameTypeMap only exposes 'interval' -> INTERVAL_TIMESTAMP_MICRO) — production widening still covers INTERVAL for future DDL; regression-coverage self-check confirmed reverting two new predicate lines makes test fail within ~3s (commit 889a4676b9)
 
 ### Roadmap Evolution
 
@@ -180,7 +183,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 ### Pending Todos
 
 - _Completed 2026-04-21 via Phase 16 Plan 01_: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys — landed in commit 82865efbc0.
-- **2026-04-22** Reject cross-column FILL(PREV) across TIMESTAMP and INTERVAL unit mismatches — tag equality accepts MICRO↔NANO mixes, raw long copy drifts by 1000x. Found in `/review-pr` on PR #6946. File: `.planning/todos/pending/2026-04-22-reject-cross-column-fill-prev-timestamp-unit-mismatch.md`.
+- _Completed 2026-04-22 via Phase 17 Plan 01 commit 889a4676b9_: Reject cross-column FILL(PREV) across TIMESTAMP and INTERVAL unit mismatches — widened needsExactTypeMatch + Variant A regression test landed. Variant B (INTERVAL DDL) deferred: no user-facing DDL keyword maps to INTERVAL_TIMESTAMP_NANO; production widening covers INTERVAL for future DDL. D-28 retirement pending Plan 04.
 
 ### Blockers/Concerns
 
@@ -192,6 +195,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-22T14:15:36.057Z
-Stopped at: Phase 17 context gathered
-Resume file: .planning/phases/17-verify-pr-6946-body-drift-against-landed-commits-decide-code/17-CONTEXT.md
+Last session: 2026-04-22T15:59:42.000Z
+Stopped at: Phase 17 Plan 01 complete — two commits on sm_fill_prev_fast_path (f05fa2eb25 pass-1 CB poll, 889a4676b9 cross-column PREV unit mismatch); Plan 02 ready
+Resume file: .planning/phases/17-verify-pr-6946-body-drift-against-landed-commits-decide-code/17-02-PLAN.md
