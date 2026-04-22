@@ -1,5 +1,7 @@
 ---
 created: 2026-04-22T00:00:00.000Z
+completed_at: 2026-04-22
+completed_in: 17-01-PLAN.md
 title: Reject cross-column FILL(PREV) across TIMESTAMP and INTERVAL unit mismatches
 area: sql
 files:
