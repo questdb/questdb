@@ -34,7 +34,7 @@ requires dispatcher-level dual-registration (READ + WRITE during streaming).
 | 3 | Lazy per-column decode on the client — skip decoding columns the user never reads | Small | Helps `COUNT(*)` / projection-heavy queries. Requires per-column dispatch on first access. |
 | 4 | Factor the duplicated codec into a shared module between parent and submodule | Small but cross-repo | Removes the "change wire format -> update 4 places" risk. |
 | 5 | Mid-stream CANCEL for unbounded-credit streams (see above) | Medium | Requires dispatcher dual-registration. Only credit-flow streams observe CANCEL today. |
-| 6 | Client-side bind encoder | Small | Server-side bind decoder already supports every scalar type; the `QwpQueryClient.execute` API doesn't yet expose a bind builder. |
+| ~~6~~ | ~~Client-side bind encoder~~ — done. `QwpBindValues` + new `execute(sql, binds, handler)` overload cover every scalar type the server decoder accepts (BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, TIMESTAMP, TIMESTAMP_NANOS, DATE, VARCHAR, UUID, LONG256, GEOHASH, DECIMAL64/128/256). Tests: `QwpBindEncoderTest` (submodule unit, 39), `QwpEgressBindRoundTripTest` (parent E2E, 31), `QwpEgressBindFuzzTest` (parent fuzz, 4). | Small | Server-side bind decoder already supports every scalar type; the `QwpQueryClient.execute` API now exposes a typed builder. |
 | 7 | Multiple in-flight queries per connection with a fair scheduler | Medium | Relevant for BI dashboard clients that want to multiplex several queries on one socket. Phase 1 hard-limits to one in-flight query. |
 | 8 | `wss://` (TLS) support in the client | Medium | Server already supports TLS; the client does not yet expose it. |
 
