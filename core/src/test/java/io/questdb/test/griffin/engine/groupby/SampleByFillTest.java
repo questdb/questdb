@@ -959,6 +959,66 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullPushdownEliminatesFilteredKeyFills() throws Exception {
+        assertMemoryLeak(() -> {
+            // Predicate pushdown past SAMPLE BY FILL: a WHERE clause on the key column
+            // applied to a FILL(NULL) sub-query pushes into the inner Async Group By's
+            // filter slot. The per-key-domain cartesian is computed only over keys
+            // matching the filter, so keys eliminated by the predicate never emit
+            // leading or trailing NULL-fill buckets outside their observed data range.
+            //
+            // This differs from master's cursor path, where FILL(NULL) materializes the
+            // full bucket grid for every key present in the base data and the outer
+            // filter only trims the already-emitted cartesian. See "Predicate pushdown
+            // past SAMPLE BY" Trade-off in PR #6946.
+            execute("CREATE TABLE t (s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('s1', 1.0, '2024-01-01T00:00:00.000000Z'), " +
+                    "('s1', 2.0, '2024-01-01T00:01:00.000000Z'), " +
+                    "('s1', 3.0, '2024-01-01T00:02:00.000000Z'), " +
+                    "('s2', 10.0, '2024-01-01T00:01:00.000000Z')");
+            final String sql = "SELECT * FROM (" +
+                    "SELECT ts, s, first(v) v FROM t " +
+                    "SAMPLE BY 1m FILL(NULL) ALIGN TO CALENDAR) " +
+                    "WHERE s = 's2'";
+
+            // s2 only has real data in the 00:01 bucket. No leading NULL-fill at 00:00
+            // and no trailing NULL-fill at 00:02 for s2 -- both would be present on the
+            // cursor path because s1 populates those buckets in the base cartesian.
+            assertQueryNoLeakCheck(
+                    "ts\ts\tv\n" +
+                            "2024-01-01T00:01:00.000000Z\ts2\t10.0\n",
+                    sql,
+                    "ts",
+                    false,
+                    false
+            );
+
+            // The key invariant: filter: s='s2' appears inside the inner Async Group By,
+            // nested below the outer Sample By Fill. This is the mechanism -- the inner
+            // cartesian only sees s2 rows, so no s1-driven buckets enter the fill grid.
+            assertPlanNoLeakCheck(
+                    sql,
+                    """
+                            Sample By Fill
+                              stride: '1m'
+                              fill: null
+                                Sort
+                                  keys: [ts]
+                                    Async JIT Group By workers: 1
+                                      keys: [ts,s]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts)]
+                                      values: [first(v)]
+                                      filter: s='s2'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFillNullSparseDataLargeRange() throws Exception {
         assertMemoryLeak(() -> {
             // 2 data points ~1 year apart, 1h stride = ~8760 empty buckets.

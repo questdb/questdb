@@ -4015,6 +4015,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         );
     }
 
+    // Expected output differs from master's cursor path: predicate pushdown past SAMPLE BY FILL
+    // now eliminates filter-matched keys from the inner cartesian. See "Predicate pushdown past SAMPLE BY"
+    // Trade-off in PR #6946.
     @Test
     public void testSampleByAlignToCalendarFillNullWithKey1() throws Exception {
         assertQuery(
@@ -4040,6 +4043,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         );
     }
 
+    // Expected output differs from master's cursor path: predicate pushdown past SAMPLE BY FILL
+    // now eliminates filter-matched keys from the inner cartesian. See "Predicate pushdown past SAMPLE BY"
+    // Trade-off in PR #6946.
     @Test
     public void testSampleByAlignToCalendarFillNullWithKey2() throws Exception {
         assertQuery(
