@@ -1027,9 +1027,9 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Propagates each literal only through inner window models above its origin:
-    // lower-indexed models can't resolve the literal from their nested chain, and
-    // the referencing site itself already has it.
+    // Lower-indexed inner window models can't resolve the literal from their
+    // nested chain, and the referencing site itself already exposes it, so only
+    // models strictly above the literal's origin and below upToExclusive get it.
     private void addLiteralPassThroughToInnerWindowModels(
             ExpressionNode node,
             ObjList<IQueryModel> innerWindowModels,
@@ -9749,9 +9749,10 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        // When an aggregate wraps a nested window, the inner window model sits between
-        // groupByModel and translatingModel. Propagate GROUP BY keys and aggregate-arg
-        // literals through the chain so groupByModel can resolve them.
+        // With an aggregate wrapping a nested window, the inner window model sits
+        // between groupByModel and translatingModel, so groupByModel can only see
+        // its GROUP BY keys and aggregate-arg literals if they pass through the
+        // inner chain.
         if (innerWindowModels.size() > 0 && (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
             final int nInner = innerWindowModels.size();
             ObjList<QueryColumn> groupByCols = groupByModel.getBottomUpColumns();

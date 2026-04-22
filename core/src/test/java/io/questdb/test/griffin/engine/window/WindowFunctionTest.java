@@ -68,6 +68,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -13196,6 +13197,54 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "SELECT x::DOUBLE AS x, " +
                         "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
                         "CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END AS cat2, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    @Ignore("GROUP BY on a non-aggregate expression combined with a nested window in an aggregate; the non-aggregate branch in SqlOptimiser propagates only the group-by alias, not the underlying literal. See PR #6955 scope notes.")
+    public void testWindowFunctionAsArgumentToAggregateWithGroupByExpression() throws Exception {
+        // Desired behavior: upper(cat) as GROUP BY key resolves through the inner window model.
+        // Currently fails with "Invalid column: cat".
+        assertQuery(
+                """
+                        upper_cat\tresult
+                        A\t5.0
+                        B\t5.0
+                        """,
+                "SELECT upper(cat) AS upper_cat, sum(avg(x) OVER ()) AS result " +
+                        "FROM tab GROUP BY upper(cat) ORDER BY upper_cat",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'a' ELSE 'b' END AS cat, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithSymbolGroupBy() throws Exception {
+        // Reproduces the shape from issue #6954: the original bug report used a SYMBOL
+        // column as the GROUP BY key. SYMBOL resolution goes through a distinct code path
+        // from STRING, so this guards against a regression specific to that type.
+        assertQuery(
+                """
+                        category\tresult
+                        A\t5.0
+                        B\t5.0
+                        """,
+                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, " +
+                        "(CASE WHEN x <= 2 THEN 'A' ELSE 'B' END)::SYMBOL AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY",
