@@ -21,6 +21,7 @@ QuestDB's SAMPLE BY FILL queries now execute on the parallel GROUP BY fast path 
 - [x] **Phase 13: Migrate FILL(PREV) snapshots from materialized values to rowId-based replay** — Replace per-type snapshot materialization in `SampleByFillRecordCursorFactory` with a single chain rowId per key, read lazily via `recordAt`. Ship prerequisite `SortedRecordCursor.chain.clear()` fix as its own commit. Borrowed from `sm_fill_prev_fast_all_types` branch (research verdict GO, candidate a) (completed 2026-04-19)
 - [x] **Phase 15: Address PR #6946 review findings and retro-document post-phase-14 fixes** — Fix 3 critical `/review-pr 6946` findings (TIMESTAMP fill constant unit conversion, unquoted numeric rejection for TIMESTAMP columns, keyed-fill circuit-breaker); absorb three selected moderate findings (getLong256 sink null sentinel, timestampIndex type check, lost output assertion in testSampleByFromToParallelSampleByRewriteWithKeys); retroactively document three post-Phase-14 commits (narrow-decimal FILL_KEY coverage, decimal128/256 sink fix + -ea assert, SampleByFillRecordCursorFactory clean-up) (completed 2026-04-21)
 - [x] **Phase 16: Fix multi-key FILL(PREV) with inline FUNCTION grouping keys** — Widened `SqlCodeGenerator.generateFill` classifier with a third `continue` branch for non-aggregate FUNCTION/OPERATION grouping keys (`interval(lo, hi)`, `concat(a, b)`, `cast(x AS STRING)`, `a || b`) + D-05 aggregate-arm `-ea` assertion locking the residual arm; landed 5 regression tests pinning the 2-key x 3-bucket cartesian contract across interval / concat FUNCTION / concat OPERATION / cast / FILL(NULL) variants; single commit, no cursor-side wiring change (completed 2026-04-21)
+- [ ] **Phase 17: Address `/review-pr 6946` follow-ups (plan document at `~/.claude/plans/let-s-discuss-issues-one-gentle-elephant.md`)** — 2 Moderate + 9 Minor verified findings covering M1 (pre-1970 guard doc), M2 (predicate-pushdown test), M3 (four stale commits + one wrong impl-note sentence + test-count drift — **requires discuss+plan research to decide per-item doc vs code vs test**), and m1–m9 (slot-null fix in SqlCodeGenerator, field ordering, IntList/BitSet refactor, FillRecord property test, assert/throw rationale comment, Long256 CharSink contract comment, fillOffset in toSink0, DST spring-forward + single-row keyed + tight error-match tests, PR title rename). M3 mandatorily goes through /gsd-discuss-phase because each of its four landed-commit claims may require additional code or tests rather than pure body edits; other items may also surface open questions during discussion but only M3 is known-ambiguous upfront.
 
 ## Phase Details
 
@@ -231,7 +232,7 @@ Plans:
 
 ## Progress
 
-**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16.
+**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -251,6 +252,7 @@ Plans:
 | 14. Fix issues from moderate list for M5/M6 mention in PR | 4/4 | Complete | 2026-04-20 |
 | 15. Address PR #6946 review findings and retro-document post-phase-14 fixes | 4/4 | Complete   | 2026-04-21 |
 | 16. Fix multi-key FILL(PREV) with inline FUNCTION grouping keys | 0/1 | Planned | |
+| 17. Address `/review-pr 6946` follow-ups (whole plan, M3 needs discuss) | 0/0 | Not planned yet | |
 
 ### Phase 14: Fix issues from moderate list, for m5 and m6 just mention in the existing PR description under the right section. Borrow ideas for tests from minor findings.
 
@@ -324,3 +326,58 @@ Both options should also re-check FILL(NULL) and FILL(constant) equivalents on t
 
 Plans:
 - [x] 16-01-PLAN.md — Widen generateFill classifier (D-02 FUNCTION/OPERATION predicate + D-05 aggregate-arm assert) + 5 multi-key regression tests (interval, concat FUNCTION, concat OPERATION, cast, FILL(NULL)); probe-and-freeze expected outputs; single commit
+
+### Phase 17: Address `/review-pr 6946` follow-ups — whole plan; M3 requires discuss+plan research
+
+**Goal:** Close all 11 verified findings from `/review-pr 6946` (2 Moderate + 9 Minor), captured in `~/.claude/plans/let-s-discuss-issues-one-gentle-elephant.md`. Each finding already has a proposed resolution in the plan file, but M3 specifically needs research in discuss/plan stages because each of its four sub-items may require a code fix or new test rather than a pure PR-body edit. Other items may also surface open questions during discussion but only M3 is known-ambiguous upfront.
+
+The plan file (`~/.claude/plans/let-s-discuss-issues-one-gentle-elephant.md`) is the canonical scope document for this phase and must be ingested at the top of `/gsd-discuss-phase 17`.
+
+**Scope (from the plan file):**
+
+| Finding | Proposed resolution | Needs discuss? |
+|---|---|---|
+| M1 — pre-1970 FILL guard removed | PR body: new row in "What's covered" block 2 | No |
+| M2 — pushdown cartesian semantic change | New dedicated test in `SampleByFillTest` | Maybe (test shape) |
+| **M3 — PR body stale against 4 landed commits** | **Mandatory research: per-commit verdict on doc vs code vs test** | **Yes** |
+| m1 — `Misc.free` slot-null pattern in `SqlCodeGenerator.java:3654` | Code fix | No |
+| m2 — `SampleByFillCursor` field ordering | Code cleanup | No |
+| m3 — `int[] outputColToKeyPos` / `boolean[] keyPresent` → `IntList` / `BitSet` | Code refactor + benchmark | Maybe (benchmark) |
+| m4 — `FillRecord` getter property test | New unit test | Maybe (test harness design) |
+| m5 — assert-vs-throw rationale comment at `SampleByFillRecordCursorFactory.java:425` | Code comment | No |
+| m6 — `getLong256(int, CharSink)` null-path comment | Code comment referencing `Record` contract | No |
+| m7 — emit `fillOffset` in `QueryModel.toSink0` | Code fix | No |
+| m8 — test gaps (DST spring-forward, single-row keyed+FROM/TO, `testFillPrevRejectNoArg` tightening) | Three new tests | Maybe (SQL shapes) |
+| m9 — PR title rename | PR metadata | No |
+
+**M3 sub-items requiring discuss/plan research:**
+
+- **M3.1** — `9df205bac5` (TIMESTAMP fill constant unit drift + non-TIMESTAMP alias guard). Verify both fixes against current source; decide whether a regression test is needed beyond the restored `testTimestampFillNullAndValue` / `testTimestampFillValueUnquoted`; draft the two new "What's covered" rows + test-plan note.
+- **M3.2** — `c1deb9b14d` (keyed-fill cancellation circuit-breaker regression). Verify the two `statefulThrowExceptionIfTripped()` sites are still in place; distinguish the landed cancellation CB from the unrelated K×B memory circuit-breaker future work; rewrite the Future-work bullet to disambiguate; add a "What's covered" row.
+- **M3.3** — `82865efbc0` (multi-key FILL(PREV) with inline FUNCTION grouping keys). Already Phase 16; verify classifier still catches all four grammar shapes (`interval`, `concat`, `||`, `cast`); add a "What's covered" row + an Implementation-notes bullet about the classifier third arm and aggregate-fall-through assert.
+- **M3.4** — `289d43090a` (TZ + FROM + WITH OFFSET fill-grid alignment). Verify the widened `setFillOffset` condition; rewrite the stale Implementation-notes sentence ("offset applied only when `sampleByTimezoneName == null`") and update the corresponding "What's covered" row; confirm no additional test is needed beyond what landed with the commit.
+- **M3.5** — Test plan counts (`SampleByFillTest` 110 → 123; `SampleByNanoTimestampTest` 278 → 279). Doc-only.
+
+**Requirements**: `/review-pr 6946` findings. No new requirement IDs — strengthens COR-01..04 via regression coverage and closes PR-body drift.
+
+**Depends on:** Phase 16
+
+**Success Criteria** (what must be TRUE):
+  1. Each finding in the plan file has a landed resolution (code change, PR body edit, new test, or explicit no-op with rationale).
+  2. For each of the four M3 commits (`9df205bac5`, `c1deb9b14d`, `82865efbc0`, `289d43090a`), a written verdict records: scope, what landed, remaining corner cases, and whether follow-up code or tests are needed.
+  3. A decision log per M3 sub-item splits the gap into (a) PR body edits, (b) code fixes, (c) new regression tests; any "code fix" / "new test" item becomes a plan in this phase.
+  4. PR #6946 body is updated:
+     - four new rows in "What's covered" block 2 (M3.1 × 2 — TIMESTAMP unit drift + non-TIMESTAMP alias guard, M3.2 cancellation CB regression, M3.4 TZ+FROM+OFFSET fill-grid) plus M1 pre-1970 row;
+     - one Implementation-notes sentence rewritten (M3.4 — offset propagation condition);
+     - one Implementation-notes bullet added (M3.3 — FUNCTION/OPERATION classifier third arm + assert);
+     - "K × B circuit-breaker" Future-work bullet disambiguated from the landed cancellation CB (M3.2);
+     - Test plan counts updated: SampleByFillTest 110 → 123, SampleByNanoTimestampTest 278 → 279 (M3.5);
+     - one Test plan note on previously-buggy expected outputs in `testTimestampFillNullAndValue` / `testTimestampFillValueUnquoted` restored by `9df205bac5` (M3.1).
+  5. All minor code-fix findings land: m1 slot-null fix, m2 field reorder, m3 IntList/BitSet swap (with benchmark note if reverted), m5 rationale comment, m6 Record-contract comment, m7 `QueryModel.toSink0` fillOffset emission.
+  6. All test findings land: M2 pushdown test, m4 FillRecord dispatch property test, m8a DST spring-forward, m8b single-row keyed+FROM/TO, m8c `testFillPrevRejectNoArg` tightening.
+  7. PR title renamed per m9.
+  8. `/review-pr 6946` re-run after this phase shows all items closed or explicitly deferred.
+
+**Plan source:** `~/.claude/plans/let-s-discuss-issues-one-gentle-elephant.md` — ingest as input to `/gsd-discuss-phase 17`. Discussion stage MUST cover M3 sub-items per-commit; other items may be skipped during discuss if the plan file's proposed resolution is unambiguous.
+
+**Plans:** 0/0 plans yet (to be created during /gsd-discuss-phase 17 and /gsd-plan-phase 17)
