@@ -339,6 +339,13 @@ fn pm_find_row_group_by_timestamp_impl(
         ));
     }
 
+    if parquet_file_ptr.is_null() || parquet_file_size == 0 {
+        return Err(fmt_err!(
+            InvalidType,
+            "parquet file pointer is null or size is zero"
+        ));
+    }
+
     let parquet_meta_reader: &ParquetMetaReader = unsafe { &*parquet_meta_reader_ptr }.reader();
 
     let decode_ts = |rg_idx, ts_col, row_lo, row_hi| {
