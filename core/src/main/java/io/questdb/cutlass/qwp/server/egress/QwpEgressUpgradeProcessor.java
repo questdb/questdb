@@ -120,8 +120,6 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietCloseable {
 
-    private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
-    private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     /**
      * Phase 1 batch cap. Size-based cap is indirectly enforced by the rawSocket
      * send buffer capacity (rejections become QUERY_ERROR). Larger batches
@@ -136,6 +134,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * into no-ops.
      */
     public static final int MAX_ROWS_PER_BATCH = 16_384;
+    private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
+    private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
