@@ -1080,7 +1080,10 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "count\n8761\n",
                     "SELECT count() FROM (" +
                             "SELECT ts, key, avg(val) FROM sparse " +
-                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)"
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)",
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -1695,7 +1698,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\t
                             2024-01-01T04:00:00.000000Z\t56.78
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -1719,7 +1724,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\t
                             2024-01-01T04:00:00.000000Z\t200.50
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -1944,7 +1951,10 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0
                             2024-01-01T03:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t30.0
                             """,
-                    "SELECT ts, interval(lo, hi) k, first(v) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
+                    "SELECT ts, interval(lo, hi) k, first(v) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false
+            );
         });
     }
 
@@ -2147,7 +2157,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tParis\t21.0
                             """,
                     "WITH sq AS (SELECT ts, city, avg(temp) AS a FROM weather SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR) " +
-                            "SELECT * FROM sq"
+                            "SELECT * FROM sq",
+                    "ts",
+                    false
             );
         });
     }
@@ -2269,7 +2281,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\t0x10
                             2024-01-01T04:00:00.000000Z\t0xabcdef
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -2749,7 +2763,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tK1\tgamma
                             2024-01-01T02:00:00.000000Z\tK2\tbeta
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -2776,7 +2792,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T05:00:00.000000Z\t
                             2024-01-01T06:00:00.000000Z\tlonger string that requires reallocation
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -2801,7 +2819,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tK1\tC
                             2024-01-01T02:00:00.000000Z\tK2\tB
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -2827,7 +2847,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T05:00:00.000000Z\tB
                             2024-01-01T06:00:00.000000Z\tC
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -2853,7 +2875,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\tA
                             2024-01-01T04:00:00.000000Z\t
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -2901,7 +2925,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tK1\t33333333-3333-3333-3333-333333333333
                             2024-01-01T02:00:00.000000Z\tK2\t22222222-2222-2222-2222-222222222222
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -2925,7 +2951,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\t
                             2024-01-01T04:00:00.000000Z\tbbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -2950,7 +2978,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tK1\tgamma
                             2024-01-01T02:00:00.000000Z\tK2\tbeta
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });
@@ -2976,7 +3006,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T05:00:00.000000Z\t
                             2024-01-01T06:00:00.000000Z\tunicode: \u20ac \u00f1
                             """,
-                    query
+                    query,
+                    "ts",
+                    false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
         });

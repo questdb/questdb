@@ -8320,7 +8320,14 @@ public class SqlOptimiser implements Mutable {
                 // or sub-day without FROM), timestamp_floor_utc applies timezone
                 // rules per row and the fill sampler anchors on the already-floored
                 // firstTs instead, so the offset must not be applied again.
-                if (sampleByTimezoneName == null || (hasSubDayTimezoneWrap && sampleByFrom != null)) {
+                // Only propagate a non-trivial offset. ZERO_OFFSET ('00:00') is the
+                // identity and the code generator already defaults calendarOffset to 0
+                // when fillOffset is null, so emitting it would just pollute the model.
+                // parseWithOffset() normalises explicit '00:00' to the ZERO_OFFSET
+                // singleton, so a simple identity check covers all zero-offset cases.
+                if ((sampleByTimezoneName == null || (hasSubDayTimezoneWrap && sampleByFrom != null))
+                        && sampleByOffset != null
+                        && sampleByOffset != SqlParser.ZERO_OFFSET) {
                     nested.setFillOffset(sampleByOffset);
                 }
 

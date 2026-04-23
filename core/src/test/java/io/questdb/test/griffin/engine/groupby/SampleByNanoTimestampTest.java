@@ -331,7 +331,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             1.0\t\t2024-01-01T01:00:00.000000000Z
                             3.0\tB\t2024-01-01T02:00:00.000000000Z
                             """,
-                    "SELECT sum(val), first(sym), ts FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR"
+                    "SELECT sum(val), first(sym), ts FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR",
+                    "ts",
+                    false
             );
         });
     }
@@ -358,7 +360,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     """
                             SELECT ts, sum(x) x FROM t
                             SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000000Z'
-                            FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'"""
+                            FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'""",
+                    "ts",
+                    false
             );
         });
     }
@@ -380,7 +384,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             2.0\t2024-01-01T03:00:00.000000000Z
                             3.0\t2024-01-01T04:00:00.000000000Z
                             """,
-                    "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'"
+                    "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "ts",
+                    false
             );
         });
     }
@@ -5023,7 +5029,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                 SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42, 42, 42)
                             )
                             GROUP BY ts
-                            ORDER BY ts"""
+                            ORDER BY ts""",
+                    "ts",
+                    false
             );
         });
     }
@@ -10652,6 +10660,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE");
 
             String query = "SELECT * FROM (select b, sum(a), k, k from x sample by 3h fill(prev)) ORDER BY k, b";
+            // Designated timestamp of the outer sort is the first k (idx 2),
+            // not the auto-aliased k1 (idx 3).
             assertQueryNoLeakCheck(
                     """
                             b\tsum\tk\tk1
@@ -10692,8 +10702,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z\t1970-01-03T18:00:00.000000000Z
                             """,
                     query,
-                    "k1",
-                    false
+                    "k",
+                    true
             );
 
             execute("insert into x select * from (" +
@@ -10794,8 +10804,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000000Z\t1970-01-04T09:00:00.000000000Z
                             """,
                     query,
-                    "k1",
-                    false
+                    "k",
+                    true
             );
         });
     }
@@ -10855,7 +10865,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             """,
                     query,
                     "k1",
-                    false
+                    true
             );
 
             execute("insert into x select * from (" +
@@ -10957,7 +10967,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             """,
                     query,
                     "k1",
-                    false
+                    true
             );
         });
     }

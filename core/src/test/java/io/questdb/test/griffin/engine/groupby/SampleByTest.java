@@ -7048,7 +7048,9 @@ public class SampleByTest extends AbstractCairoTest {
                                 SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42, 42, 42)
                             )
                             GROUP BY ts
-                            ORDER BY ts"""
+                            ORDER BY ts""",
+                    "ts",
+                    false
             );
         });
     }
@@ -13840,6 +13842,8 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE");
 
             String query = "SELECT * FROM (select b, sum(a), k, k from x sample by 3h fill(prev)) ORDER BY k, b";
+            // Designated timestamp of the outer sort is the first k (idx 2),
+            // not the auto-aliased k1 (idx 3).
             assertQueryNoLeakCheck(
                     """
                             b\tsum\tk\tk1
@@ -13880,8 +13884,8 @@ public class SampleByTest extends AbstractCairoTest {
                             VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
                             """,
                     query,
-                    "k1",
-                    false
+                    "k",
+                    true
             );
 
             execute("insert into x select * from (" +
@@ -13982,8 +13986,8 @@ public class SampleByTest extends AbstractCairoTest {
                             VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
                             """,
                     query,
-                    "k1",
-                    false
+                    "k",
+                    true
             );
         });
     }
@@ -14046,7 +14050,7 @@ public class SampleByTest extends AbstractCairoTest {
                             """,
                     query,
                     "k1",
-                    false
+                    true
             );
 
             execute("insert into x select * from (" +
@@ -14148,7 +14152,7 @@ public class SampleByTest extends AbstractCairoTest {
                             """,
                     query,
                     "k1",
-                    false
+                    true
             );
         });
     }
