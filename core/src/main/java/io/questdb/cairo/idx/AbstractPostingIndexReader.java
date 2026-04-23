@@ -201,9 +201,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         final int pLen = path.size();
 
         try {
+            LPSZ keyFile = PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            long keyFileSize = ff.length(keyFile);
+            if (keyFileSize >= 0 && keyFileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
+                throw CairoException.critical(0)
+                        .put("posting index key file too short [expected>=")
+                        .put(PostingIndexUtils.KEY_FILE_RESERVED)
+                        .put(", actual=").put(keyFileSize)
+                        .put(", path=").put(keyFile).put(']');
+            }
             keyMem.of(
                     ff,
-                    PostingIndexUtils.keyFileName(path, columnName, columnNameTxn),
+                    keyFile,
                     ff.getMapPageSize(),
                     PostingIndexUtils.KEY_FILE_RESERVED,
                     MemoryTag.MMAP_INDEX_READER,

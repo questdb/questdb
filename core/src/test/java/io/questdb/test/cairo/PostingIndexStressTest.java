@@ -1816,6 +1816,196 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testManySparseGensBwd() throws Exception {
+        assertMemoryLeak(() -> {
+            // Many sparse gens, each containing only a small subset of keys.
+            // Exercises both the SBBF skip path and (after the second cursor)
+            // the lazy cache replay path. BwdReader variant.
+            int activeKeyCount = 10;
+            int totalKeySpace = 1000;
+            int genCount = 50;
+
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < totalKeySpace; k++) {
+                    oracle.add(new LongList());
+                }
+
+                Rnd rnd = new Rnd(777, 777);
+                int[][] keyGenMap = new int[activeKeyCount][];
+                for (int k = 0; k < activeKeyCount; k++) {
+                    int numGens = 2 + rnd.nextInt(2);
+                    keyGenMap[k] = new int[numGens];
+                    for (int g = 0; g < numGens; g++) {
+                        keyGenMap[k][g] = rnd.nextInt(genCount);
+                    }
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "tier1_bwd", COLUMN_NAME_TXN_NONE)) {
+                    long maxVal = -1;
+                    long[] nextRowId = new long[totalKeySpace];
+                    for (int g = 0; g < genCount; g++) {
+                        boolean anyWritten = false;
+                        for (int k = 0; k < activeKeyCount; k++) {
+                            boolean inThisGen = false;
+                            for (int gIdx : keyGenMap[k]) {
+                                if (gIdx == g) {
+                                    inThisGen = true;
+                                    break;
+                                }
+                            }
+                            if (inThisGen) {
+                                int key = k * (totalKeySpace / activeKeyCount);
+                                for (int v = 0; v < 5; v++) {
+                                    long val = nextRowId[key]++;
+                                    writer.add(key, val);
+                                    oracle.getQuick(key).add(val);
+                                    if (val > maxVal) maxVal = val;
+                                }
+                                anyWritten = true;
+                            }
+                        }
+                        if (anyWritten) {
+                            writer.setMaxValue(maxVal);
+                            writer.commit();
+                        }
+                    }
+
+                    // Open reader INSIDE the writer scope (before seal) so sparse gens exist
+                    try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                            configuration, path.trimTo(plen), "tier1_bwd", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
+                        // Warm the lazy cache by running one cursor end-to-end.
+                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                            while (firstCursor.hasNext()) {
+                                firstCursor.next();
+                            }
+                        }
+
+                        for (int k = 0; k < totalKeySpace; k++) {
+                            LongList expected = oracle.getQuick(k);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                            int idx = expected.size() - 1;
+                            long prev = Long.MAX_VALUE;
+                            while (cursor.hasNext()) {
+                                long val = cursor.next();
+                                Assert.assertTrue("key=" + k + " not descending: " + prev + " -> " + val,
+                                        val < prev);
+                                Assert.assertTrue("key=" + k + " extra bwd values", idx >= 0);
+                                Assert.assertEquals("key=" + k + " bwd idx=" + idx,
+                                        expected.getQuick(idx), val);
+                                prev = val;
+                                idx--;
+                            }
+                            Assert.assertEquals("key=" + k + " bwd count", -1, idx);
+                            Misc.free(cursor);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testManySparseGensFwd() throws Exception {
+        assertMemoryLeak(() -> {
+            // 10 active keys spread across 50 sparse generations. Each key
+            // appears in only 2-3 of the 50 gens. Verifies that the SBBF
+            // skip path and lazy cache replay produce identical results.
+            int activeKeyCount = 10;
+            int totalKeySpace = 1000;
+            int genCount = 50;
+
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < totalKeySpace; k++) {
+                    oracle.add(new LongList());
+                }
+
+                Rnd rnd = new Rnd(777, 777);
+                // Precompute which gens each key appears in (2-3 gens per key)
+                int[][] keyGenMap = new int[activeKeyCount][];
+                for (int k = 0; k < activeKeyCount; k++) {
+                    int numGens = 2 + rnd.nextInt(2); // 2 or 3
+                    keyGenMap[k] = new int[numGens];
+                    for (int g = 0; g < numGens; g++) {
+                        keyGenMap[k][g] = rnd.nextInt(genCount);
+                    }
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "tier1_fwd", COLUMN_NAME_TXN_NONE)) {
+                    long maxVal = -1;
+                    long[] nextRowId = new long[totalKeySpace];
+                    for (int g = 0; g < genCount; g++) {
+                        boolean anyWritten = false;
+                        for (int k = 0; k < activeKeyCount; k++) {
+                            boolean inThisGen = false;
+                            for (int gIdx : keyGenMap[k]) {
+                                if (gIdx == g) {
+                                    inThisGen = true;
+                                    break;
+                                }
+                            }
+                            if (inThisGen) {
+                                int key = k * (totalKeySpace / activeKeyCount); // spread keys across key space
+                                for (int v = 0; v < 5; v++) {
+                                    long val = nextRowId[key]++;
+                                    writer.add(key, val);
+                                    oracle.getQuick(key).add(val);
+                                    if (val > maxVal) maxVal = val;
+                                }
+                                anyWritten = true;
+                            }
+                        }
+                        if (anyWritten) {
+                            writer.setMaxValue(maxVal);
+                            writer.commit();
+                        }
+                    }
+
+                    // Open reader INSIDE the writer scope (before seal) so sparse gens exist
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), "tier1_fwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        // Warm the lazy cache by running one cursor end-to-end.
+                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                            while (firstCursor.hasNext()) {
+                                firstCursor.next();
+                            }
+                        }
+
+                        for (int k = 0; k < totalKeySpace; k++) {
+                            LongList expected = oracle.getQuick(k);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                            int idx = 0;
+                            long prev = Long.MIN_VALUE;
+                            while (cursor.hasNext()) {
+                                long val = cursor.next();
+                                Assert.assertTrue("key=" + k + " idx=" + idx + " not ascending: " + prev + " -> " + val,
+                                        val > prev);
+                                Assert.assertTrue("key=" + k + " extra values at idx=" + idx,
+                                        idx < expected.size());
+                                Assert.assertEquals("key=" + k + " idx=" + idx,
+                                        expected.getQuick(idx), val);
+                                prev = val;
+                                idx++;
+                            }
+                            Assert.assertEquals("key=" + k + " count", expected.size(), idx);
+                            Misc.free(cursor);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // ===================================================================
+    // Compaction overlap test
+    // ===================================================================
+
+    @Test
     public void testMaxGenCountAutoSeal() throws Exception {
         // Write exactly MAX_GEN_COUNT+1 batches to trigger auto-seal.
         // The writer calls seal() inside flushAllPending when genCount > MAX_GEN_COUNT.
@@ -1876,6 +2066,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // Concurrent backward reader stress tests
+    // ===================================================================
+
     @Test
     public void testMultipleRollbacksBumpTxnSequentially() throws Exception {
         assertMemoryLeak(() -> {
@@ -1907,10 +2101,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ===================================================================
-    // Compaction overlap test
-    // ===================================================================
 
     @Test
     public void testMultipleSealCompactCyclesWithReaderVerification() throws Exception {
@@ -1971,10 +2161,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ===================================================================
-    // Concurrent backward reader stress tests
-    // ===================================================================
 
     @Test
     public void testPageFlipVisibility() throws Exception {
@@ -2051,6 +2237,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
         });
     }
+
+    // ===================================================================
+    // Double-buffered metadata page protocol tests
+    // ===================================================================
 
     @Test
     public void testPartialKeyFileRecovery() {
@@ -2135,6 +2325,11 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 succeeded = true;
             }
             Assert.assertTrue("should complete without JVM crash", succeeded);
+
+            try (Path keyPath = new Path().of(configuration.getDbRoot())) {
+                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                ff.remove(keyPath.$());
+            }
         }
     }
 
@@ -2228,10 +2423,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ===================================================================
-    // Double-buffered metadata page protocol tests
-    // ===================================================================
 
     @Test
     public void testReaderSurvivesWriterRollback() throws Exception {
@@ -2406,6 +2597,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // Corruption detection and crash safety tests
+    // ===================================================================
+
     @Test
     public void testRollbackAfterSeal() throws Exception {
         assertMemoryLeak(() -> {
@@ -2522,10 +2717,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ===================================================================
-    // Corruption detection and crash safety tests
-    // ===================================================================
 
     @Test
     public void testRollbackMiddle() throws Exception {
@@ -2729,6 +2920,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // Tier-specific lookup tests
+    // ===================================================================
+
     @Test
     public void testRollbackToZero() throws Exception {
         assertMemoryLeak(() -> {
@@ -2791,9 +2986,104 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Tier-specific lookup tests
-    // ===================================================================
+    @Test
+    public void testSbbfOnlyDisabledCache() throws Exception {
+        assertMemoryLeak(() -> {
+            // 20 sparse generations, ~30 keys per gen. Disables the lazy cache
+            // so every cursor goes through the in-band SBBF probe + prefix-sum
+            // path. Verifies that the SBBF correctly skips misses and the
+            // prefix-sum confirms hits across all keys.
+            int keyCount = 100;
+            int genCount = 20;
+
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < keyCount; k++) {
+                    oracle.add(new LongList());
+                }
+
+                Rnd rnd = new Rnd(42, 42);
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "tier2_sbbf", COLUMN_NAME_TXN_NONE)) {
+                    long maxVal = -1;
+                    long[] nextRowId = new long[keyCount];
+                    for (int g = 0; g < genCount; g++) {
+                        // Each gen has ~30 random keys active
+                        int activeInGen = 30;
+                        for (int i = 0; i < activeInGen; i++) {
+                            int key = rnd.nextInt(keyCount);
+                            for (int v = 0; v < 3; v++) {
+                                long val = nextRowId[key]++;
+                                writer.add(key, val);
+                                oracle.getQuick(key).add(val);
+                                if (val > maxVal) maxVal = val;
+                            }
+                        }
+                        writer.setMaxValue(maxVal);
+                        writer.commit();
+                    }
+
+                    // Open readers INSIDE the writer scope (before seal) so sparse gens exist
+
+                    // Forward reader with cache disabled — exercises SBBF-only path
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        reader.setGenLookupCacheBudget(0);
+
+                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                            while (firstCursor.hasNext()) {
+                                firstCursor.next();
+                            }
+                        }
+
+                        // Verify correctness for all keys
+                        for (int k = 0; k < keyCount; k++) {
+                            LongList expected = oracle.getQuick(k);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                            int idx = 0;
+                            while (cursor.hasNext()) {
+                                Assert.assertTrue("key=" + k + " extra values at idx=" + idx,
+                                        idx < expected.size());
+                                Assert.assertEquals("key=" + k + " idx=" + idx,
+                                        expected.getQuick(idx), cursor.next());
+                                idx++;
+                            }
+                            Assert.assertEquals("key=" + k + " count", expected.size(), idx);
+                            Misc.free(cursor);
+                        }
+                    }
+
+                    // Also verify backward reader with cache disabled
+                    try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                            configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
+                        reader.setGenLookupCacheBudget(0);
+
+                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                            while (firstCursor.hasNext()) {
+                                firstCursor.next();
+                            }
+                        }
+
+
+                        for (int k = 0; k < keyCount; k++) {
+                            LongList expected = oracle.getQuick(k);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                            int idx = expected.size() - 1;
+                            while (cursor.hasNext()) {
+                                Assert.assertTrue("key=" + k + " bwd extra", idx >= 0);
+                                Assert.assertEquals("key=" + k + " bwd idx=" + idx,
+                                        expected.getQuick(idx), cursor.next());
+                                idx--;
+                            }
+                            Assert.assertEquals("key=" + k + " bwd count", -1, idx);
+                            Misc.free(cursor);
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testSnapshotDecoupledFromPage() throws Exception {
@@ -2955,6 +3245,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // New-file safety tests: rollback and truncate create new .pv files
+    // ===================================================================
+
     @Test
     public void testStressHotKey() throws Exception {
         assertMemoryLeak(() -> {
@@ -3104,295 +3398,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals("cycle=" + cycle + " count", expectedTotal, count);
                         Misc.free(cursor);
-                    }
-                }
-            }
-        });
-    }
-
-    // ===================================================================
-    // New-file safety tests: rollback and truncate create new .pv files
-    // ===================================================================
-
-    @Test
-    public void testManySparseGensBwd() throws Exception {
-        assertMemoryLeak(() -> {
-            // Many sparse gens, each containing only a small subset of keys.
-            // Exercises both the SBBF skip path and (after the second cursor)
-            // the lazy cache replay path. BwdReader variant.
-            int activeKeyCount = 10;
-            int totalKeySpace = 1000;
-            int genCount = 50;
-
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                ObjList<LongList> oracle = new ObjList<>();
-                for (int k = 0; k < totalKeySpace; k++) {
-                    oracle.add(new LongList());
-                }
-
-                Rnd rnd = new Rnd(777, 777);
-                int[][] keyGenMap = new int[activeKeyCount][];
-                for (int k = 0; k < activeKeyCount; k++) {
-                    int numGens = 2 + rnd.nextInt(2);
-                    keyGenMap[k] = new int[numGens];
-                    for (int g = 0; g < numGens; g++) {
-                        keyGenMap[k][g] = rnd.nextInt(genCount);
-                    }
-                }
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "tier1_bwd", COLUMN_NAME_TXN_NONE)) {
-                    long maxVal = -1;
-                    long[] nextRowId = new long[totalKeySpace];
-                    for (int g = 0; g < genCount; g++) {
-                        boolean anyWritten = false;
-                        for (int k = 0; k < activeKeyCount; k++) {
-                            boolean inThisGen = false;
-                            for (int gIdx : keyGenMap[k]) {
-                                if (gIdx == g) {
-                                    inThisGen = true;
-                                    break;
-                                }
-                            }
-                            if (inThisGen) {
-                                int key = k * (totalKeySpace / activeKeyCount);
-                                for (int v = 0; v < 5; v++) {
-                                    long val = nextRowId[key]++;
-                                    writer.add(key, val);
-                                    oracle.getQuick(key).add(val);
-                                    if (val > maxVal) maxVal = val;
-                                }
-                                anyWritten = true;
-                            }
-                        }
-                        if (anyWritten) {
-                            writer.setMaxValue(maxVal);
-                            writer.commit();
-                        }
-                    }
-
-                    // Open reader INSIDE the writer scope (before seal) so sparse gens exist
-                    try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                            configuration, path.trimTo(plen), "tier1_bwd", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
-                        // Warm the lazy cache by running one cursor end-to-end.
-                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
-                            while (firstCursor.hasNext()) {
-                                firstCursor.next();
-                            }
-                        }
-
-                        for (int k = 0; k < totalKeySpace; k++) {
-                            LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
-                            int idx = expected.size() - 1;
-                            long prev = Long.MAX_VALUE;
-                            while (cursor.hasNext()) {
-                                long val = cursor.next();
-                                Assert.assertTrue("key=" + k + " not descending: " + prev + " -> " + val,
-                                        val < prev);
-                                Assert.assertTrue("key=" + k + " extra bwd values", idx >= 0);
-                                Assert.assertEquals("key=" + k + " bwd idx=" + idx,
-                                        expected.getQuick(idx), val);
-                                prev = val;
-                                idx--;
-                            }
-                            Assert.assertEquals("key=" + k + " bwd count", -1, idx);
-                            Misc.free(cursor);
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testManySparseGensFwd() throws Exception {
-        assertMemoryLeak(() -> {
-            // 10 active keys spread across 50 sparse generations. Each key
-            // appears in only 2-3 of the 50 gens. Verifies that the SBBF
-            // skip path and lazy cache replay produce identical results.
-            int activeKeyCount = 10;
-            int totalKeySpace = 1000;
-            int genCount = 50;
-
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                ObjList<LongList> oracle = new ObjList<>();
-                for (int k = 0; k < totalKeySpace; k++) {
-                    oracle.add(new LongList());
-                }
-
-                Rnd rnd = new Rnd(777, 777);
-                // Precompute which gens each key appears in (2-3 gens per key)
-                int[][] keyGenMap = new int[activeKeyCount][];
-                for (int k = 0; k < activeKeyCount; k++) {
-                    int numGens = 2 + rnd.nextInt(2); // 2 or 3
-                    keyGenMap[k] = new int[numGens];
-                    for (int g = 0; g < numGens; g++) {
-                        keyGenMap[k][g] = rnd.nextInt(genCount);
-                    }
-                }
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "tier1_fwd", COLUMN_NAME_TXN_NONE)) {
-                    long maxVal = -1;
-                    long[] nextRowId = new long[totalKeySpace];
-                    for (int g = 0; g < genCount; g++) {
-                        boolean anyWritten = false;
-                        for (int k = 0; k < activeKeyCount; k++) {
-                            boolean inThisGen = false;
-                            for (int gIdx : keyGenMap[k]) {
-                                if (gIdx == g) {
-                                    inThisGen = true;
-                                    break;
-                                }
-                            }
-                            if (inThisGen) {
-                                int key = k * (totalKeySpace / activeKeyCount); // spread keys across key space
-                                for (int v = 0; v < 5; v++) {
-                                    long val = nextRowId[key]++;
-                                    writer.add(key, val);
-                                    oracle.getQuick(key).add(val);
-                                    if (val > maxVal) maxVal = val;
-                                }
-                                anyWritten = true;
-                            }
-                        }
-                        if (anyWritten) {
-                            writer.setMaxValue(maxVal);
-                            writer.commit();
-                        }
-                    }
-
-                    // Open reader INSIDE the writer scope (before seal) so sparse gens exist
-                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), "tier1_fwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        // Warm the lazy cache by running one cursor end-to-end.
-                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
-                            while (firstCursor.hasNext()) {
-                                firstCursor.next();
-                            }
-                        }
-
-                        for (int k = 0; k < totalKeySpace; k++) {
-                            LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
-                            int idx = 0;
-                            long prev = Long.MIN_VALUE;
-                            while (cursor.hasNext()) {
-                                long val = cursor.next();
-                                Assert.assertTrue("key=" + k + " idx=" + idx + " not ascending: " + prev + " -> " + val,
-                                        val > prev);
-                                Assert.assertTrue("key=" + k + " extra values at idx=" + idx,
-                                        idx < expected.size());
-                                Assert.assertEquals("key=" + k + " idx=" + idx,
-                                        expected.getQuick(idx), val);
-                                prev = val;
-                                idx++;
-                            }
-                            Assert.assertEquals("key=" + k + " count", expected.size(), idx);
-                            Misc.free(cursor);
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testSbbfOnlyDisabledCache() throws Exception {
-        assertMemoryLeak(() -> {
-            // 20 sparse generations, ~30 keys per gen. Disables the lazy cache
-            // so every cursor goes through the in-band SBBF probe + prefix-sum
-            // path. Verifies that the SBBF correctly skips misses and the
-            // prefix-sum confirms hits across all keys.
-            int keyCount = 100;
-            int genCount = 20;
-
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                ObjList<LongList> oracle = new ObjList<>();
-                for (int k = 0; k < keyCount; k++) {
-                    oracle.add(new LongList());
-                }
-
-                Rnd rnd = new Rnd(42, 42);
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "tier2_sbbf", COLUMN_NAME_TXN_NONE)) {
-                    long maxVal = -1;
-                    long[] nextRowId = new long[keyCount];
-                    for (int g = 0; g < genCount; g++) {
-                        // Each gen has ~30 random keys active
-                        int activeInGen = 30;
-                        for (int i = 0; i < activeInGen; i++) {
-                            int key = rnd.nextInt(keyCount);
-                            for (int v = 0; v < 3; v++) {
-                                long val = nextRowId[key]++;
-                                writer.add(key, val);
-                                oracle.getQuick(key).add(val);
-                                if (val > maxVal) maxVal = val;
-                            }
-                        }
-                        writer.setMaxValue(maxVal);
-                        writer.commit();
-                    }
-
-                    // Open readers INSIDE the writer scope (before seal) so sparse gens exist
-
-                    // Forward reader with cache disabled — exercises SBBF-only path
-                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        reader.setGenLookupCacheBudget(0);
-
-                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
-                            while (firstCursor.hasNext()) {
-                                firstCursor.next();
-                            }
-                        }
-
-                        // Verify correctness for all keys
-                        for (int k = 0; k < keyCount; k++) {
-                            LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
-                            int idx = 0;
-                            while (cursor.hasNext()) {
-                                Assert.assertTrue("key=" + k + " extra values at idx=" + idx,
-                                        idx < expected.size());
-                                Assert.assertEquals("key=" + k + " idx=" + idx,
-                                        expected.getQuick(idx), cursor.next());
-                                idx++;
-                            }
-                            Assert.assertEquals("key=" + k + " count", expected.size(), idx);
-                            Misc.free(cursor);
-                        }
-                    }
-
-                    // Also verify backward reader with cache disabled
-                    try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                            configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
-                        reader.setGenLookupCacheBudget(0);
-
-                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
-                            while (firstCursor.hasNext()) {
-                                firstCursor.next();
-                            }
-                        }
-
-
-                        for (int k = 0; k < keyCount; k++) {
-                            LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
-                            int idx = expected.size() - 1;
-                            while (cursor.hasNext()) {
-                                Assert.assertTrue("key=" + k + " bwd extra", idx >= 0);
-                                Assert.assertEquals("key=" + k + " bwd idx=" + idx,
-                                        expected.getQuick(idx), cursor.next());
-                                idx--;
-                            }
-                            Assert.assertEquals("key=" + k + " bwd count", -1, idx);
-                            Misc.free(cursor);
-                        }
                     }
                 }
             }

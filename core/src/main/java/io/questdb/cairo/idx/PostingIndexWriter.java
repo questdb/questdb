@@ -97,6 +97,7 @@ public class PostingIndexWriter implements IndexWriter {
     private final StringSink indexName = new StringSink();
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
     private final Utf8StringSink lastOrphanScanPath = new Utf8StringSink();
+    private final LongList orphanSealTxns = new LongList();
     private final Utf8StringSink partitionPath = new Utf8StringSink();
     private final ObjList<PendingSealPurge> pendingPurgePool = new ObjList<>();
     private final ObjList<PendingSealPurge> pendingPurges = new ObjList<>();
@@ -111,7 +112,6 @@ public class PostingIndexWriter implements IndexWriter {
     private int[] activeKeyIds = new int[INITIAL_KEY_CAPACITY];
     private long activePageOffset;
     private int blockCapacity;
-    private long columnNameTxn;
     private int coverCount;
     private long[] coveredAuxReadAddrs;
     private long[] coveredAuxReadSizes;
@@ -144,12 +144,13 @@ public class PostingIndexWriter implements IndexWriter {
     // conservative scoreboard range.
     private long pendingPublishTableTxn = -1;
     private long pendingValuesAddr;
+    private long postingColumnNameTxn; // host column-instance txn
     private long prevPublishTableTxn = -1;
     private long[] savedSidecarBufs;
     private long[] savedSidecarSizes;
     private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
+    private long sealTxn;
     private MemoryMARW sidecarInfoMem;
-    private long sidecarTxn; // txn for sidecar file naming (.pk's txn, before VALUE_FILE_TXN override)
     private int spillArraysCapacity;
     private long spillKeyAddrsAddr;
     private long spillKeyCapacitiesAddr;
@@ -417,10 +418,6 @@ public class PostingIndexWriter implements IndexWriter {
         configureCovering(addrs, tops, shifts, indices, types, coverCount);
     }
 
-    public long getColumnNameTxn() {
-        return columnNameTxn;
-    }
-
     @TestOnly
     public RowCursor getCursor(int key) {
         flushAllPending();
@@ -537,7 +534,7 @@ public class PostingIndexWriter implements IndexWriter {
     /**
      * FD-based open — used by O3CopyJob and O3PartitionJob. These callers never
      * call configureCovering(), so coverCount stays 0 and sidecar operations are
-     * skipped. The sidecarTxn field is not set here (stays 0) which is safe
+     * skipped. The postingColumnNameTxn field is not set here (stays 0) which is safe
      * because no sidecar code path runs without coverCount > 0.
      */
     @Override
@@ -574,7 +571,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             if (init) {
                 this.activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
-                this.columnNameTxn = 0;
+                this.sealTxn = 0;
             } else {
                 determineActivePageOffset();
 
@@ -585,7 +582,7 @@ public class PostingIndexWriter implements IndexWriter {
                             .put(", expected=").put(FORMAT_VERSION)
                             .put(", actual=").put(version).put(']');
                 }
-                this.columnNameTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
+                this.sealTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
             }
 
             this.valueMemSize = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
@@ -639,10 +636,10 @@ public class PostingIndexWriter implements IndexWriter {
         partitionPath.put(path);
         indexName.clear();
         indexName.put(name);
-        // sidecarTxn is the stable column-instance txn; sealTxn (columnNameTxn field)
+        // postingColumnNameTxn is the stable column-instance txn; sealTxn
         // is a seal-count starting at 0 on fresh init, picked up from .pk on reopen.
-        this.sidecarTxn = columnNameTxn;
-        this.columnNameTxn = 0;
+        this.postingColumnNameTxn = columnNameTxn;
+        this.sealTxn = 0;
         final int plen = path.size();
         boolean kFdUnassigned = true;
 
@@ -688,12 +685,12 @@ public class PostingIndexWriter implements IndexWriter {
             this.genCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
 
             if (!init) {
-                this.columnNameTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
+                this.sealTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
             }
 
             valueMem.of(
                     ff,
-                    PostingIndexUtils.valueFileName(path.trimTo(plen), name, sidecarTxn, this.columnNameTxn),
+                    PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn),
                     configuration.getDataIndexValueAppendPageSize(),
                     init ? 0 : valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER
@@ -803,15 +800,15 @@ public class PostingIndexWriter implements IndexWriter {
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         if (gen0KeyCount >= 0) {
             // Already dense — just rewrite sidecars at a new sealTxn.
-            final long oldSealTxn = columnNameTxn;
-            final long newSealTxn = Math.max(1, columnNameTxn + 1);
+            final long oldSealTxn = sealTxn;
+            final long newSealTxn = Math.max(1, sealTxn + 1);
             if (partitionPath.size() > 0) {
-                openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, sidecarTxn, newSealTxn);
+                openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
             }
             try {
                 sealFull(newSealTxn);
             } finally {
-                if (columnNameTxn != oldSealTxn) {
+                if (sealTxn != oldSealTxn) {
                     recordPostingSealPurge(oldSealTxn);
                 }
             }
@@ -873,8 +870,8 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
 
-        final long oldSealTxn = columnNameTxn;
-        final long newSealTxn = Math.max(1, columnNameTxn + 1);
+        final long oldSealTxn = sealTxn;
+        final long newSealTxn = Math.max(1, sealTxn + 1);
 
         boolean haveSavedSidecars = false;
         if (coverCount > 0 && partitionPath.size() > 0) {
@@ -893,7 +890,7 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
                 long covT = getCoveredColumnNameTxn(c);
-                LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, sidecarTxn, covT, columnNameTxn);
+                LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, postingColumnNameTxn, covT, sealTxn);
                 if (ff.exists(pcFile)) {
                     long fileLen = ff.length(pcFile);
                     if (fileLen > 0) {
@@ -928,7 +925,7 @@ public class PostingIndexWriter implements IndexWriter {
             // disk yet, so the open creates them fresh — no truncation, no
             // racing with readers holding the previous-sealTxn files.
             if (coverCount > 0 && sidecarMems.size() == 0 && partitionPath.size() > 0) {
-                openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, sidecarTxn, newSealTxn);
+                openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
             }
 
             // Check if incremental seal is possible:
@@ -971,7 +968,7 @@ public class PostingIndexWriter implements IndexWriter {
                     }
                 }
             }
-            if (columnNameTxn != oldSealTxn) {
+            if (sealTxn != oldSealTxn) {
                 recordPostingSealPurge(oldSealTxn);
             }
         }
@@ -1047,19 +1044,19 @@ public class PostingIndexWriter implements IndexWriter {
             // concurrent readers with active mmaps don't SIGBUS.
             // If the new file open fails, valueMem is left closed — the writer
             // is degraded but safe to close() without further I/O errors.
-            final long oldSealTxn = columnNameTxn;
-            final long newTxn = Math.max(1, columnNameTxn + 1);
+            final long oldSealTxn = sealTxn;
+            final long newTxn = Math.max(1, sealTxn + 1);
             // Drop sidecar mappings tied to oldSealTxn — the next seal will
             // re-open them at the new sealTxn.
             closeSidecarMems();
             valueMem.close(false, (byte) 0);
             Path p = Path.getThreadLocal(partitionPath);
-            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, sidecarTxn, newTxn);
+            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
             valueMem.of(ff, fileName,
                     configuration.getDataIndexValueAppendPageSize(), 0L,
                     MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
-            columnNameTxn = newTxn;
-            initKeyMemory(keyMem, blockCapacity, columnNameTxn);
+            sealTxn = newTxn;
+            initKeyMemory(keyMem, blockCapacity, sealTxn);
             recordPostingSealPurge(oldSealTxn);
         } else {
             // fd-based writer (O3 path): no concurrent readers, safe to truncate in place
@@ -2034,51 +2031,23 @@ public class PostingIndexWriter implements IndexWriter {
         return coveredColumnNames.size() == 0 && coveredColumnAddrs.size() == 0;
     }
 
-    /**
-     * Scans the partition directory for sealed POSTING files at a
-     * {@code sealTxn} other than the live one (read from {@code .pk}) and
-     * pushes one purge entry per distinct orphan {@code sealTxn} into
-     * {@link #pendingPurges}. The next commit's {@link #publishPendingPurges}
-     * forwards them onto the global purge queue.
-     * <p>
-     * Such files arise from two sources:
-     * <ul>
-     *   <li>a previous-seal generation left on disk for active readers when
-     *       the writer's process exited before the purge job could collect it
-     *       (crash, kill, writer-pool eviction);</li>
-     *   <li>partial output from a writer crash that occurred between opening
-     *       the new {@code .pv} / {@code .pc<N>} files and atomically
-     *       publishing the new {@code sealTxn} into {@code .pk} — the new
-     *       files exist on disk but {@code .pk}'s {@code SEAL_TXN} still
-     *       points to the previous sealed version.</li>
-     * </ul>
-     * <p>
-     * The scoreboard window for an orphan is conservative: lower bound is
-     * {@link #sidecarTxn} (column-instance creation tableTxn — no reader can
-     * be from before that point); upper bound is {@link Long#MAX_VALUE},
-     * which {@code isRangeAvailable} resolves to "purge once the table has
-     * zero readers in the entire lifetime range". On a permanently busy
-     * table orphans persist until the next quiet window or DROP COLUMN.
-     */
     private void logOrphanSealedFiles(Path path, CharSequence name) {
-        final long liveSealTxn = this.columnNameTxn;
-        final long thisInstanceTxn = this.sidecarTxn;
+        final long liveSealTxn = this.sealTxn;
+        final long thisInstanceTxn = this.postingColumnNameTxn;
         final int initialPendingCount = pendingPurges.size();
-        // Dedupe orphan sealTxns (multiple .pv + .pc<N> files map to one
-        // purge task per distinct sealTxn).
-        final LongList seenSealTxns = new LongList();
+        orphanSealTxns.clear();
         PostingIndexUtils.scanSealedFiles(ff, path, path.size(), name, new PostingIndexUtils.SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
                 if (postingColumnNameTxn == thisInstanceTxn && sealTxn != liveSealTxn) {
-                    rememberOrphan(seenSealTxns, sealTxn, thisInstanceTxn);
+                    rememberOrphan(sealTxn, thisInstanceTxn);
                 }
             }
 
             @Override
             public void onValueFile(long postingColumnNameTxn, long sealTxn) {
                 if (postingColumnNameTxn == thisInstanceTxn && sealTxn != liveSealTxn) {
-                    rememberOrphan(seenSealTxns, sealTxn, thisInstanceTxn);
+                    rememberOrphan(sealTxn, thisInstanceTxn);
                 }
             }
         });
@@ -2209,7 +2178,7 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
         Path p = Path.getThreadLocal(partitionPath);
-        LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, sidecarTxn, newTxn);
+        LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
         sealValueMem.of(ff, fileName,
                 configuration.getDataIndexValueAppendPageSize(),
                 MemoryTag.MMAP_INDEX_WRITER,
@@ -2283,7 +2252,7 @@ public class PostingIndexWriter implements IndexWriter {
      * When reopening existing files, the .pci header is preserved as-is. This is
      * safe because the covered column configuration (INCLUDE clause) is part of
      * the table schema and cannot change within a column version — schema changes
-     * create new file versions via columnNameTxn bump.
+     * create new file versions via sealTxn bump.
      */
     private void openSidecarFilesForAppend(Path path, CharSequence name, long postingColumnNameTxn, long sealTxn) {
         if (coverCount <= 0) {
@@ -2368,7 +2337,7 @@ public class PostingIndexWriter implements IndexWriter {
             long oldPrev = prevPublishTableTxn;
             prevPublishTableTxn = oldCurrent;
             currentPublishTableTxn = publishTxn;
-            fromTxn = oldCurrent >= 0 ? oldCurrent : (oldPrev >= 0 ? oldPrev : sidecarTxn);
+            fromTxn = oldCurrent >= 0 ? oldCurrent : (oldPrev >= 0 ? oldPrev : postingColumnNameTxn);
             toTxn = publishTxn;
         } else {
             fromTxn = 0L;
@@ -2378,7 +2347,7 @@ public class PostingIndexWriter implements IndexWriter {
         PendingSealPurge entry = pendingPurgePool.size() > 0
                 ? pendingPurgePool.popLast()
                 : new PendingSealPurge();
-        entry.of(sidecarTxn, supersededSealTxn, fromTxn, toTxn);
+        entry.of(postingColumnNameTxn, supersededSealTxn, fromTxn, toTxn);
         pendingPurges.add(entry);
     }
 
@@ -2646,7 +2615,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                 // Re-encode into stride-indexed format in a new .pv file.
                 // The old .pv stays on disk for concurrent readers.
-                long newTxn = Math.max(1, columnNameTxn + 1);
+                long newTxn = Math.max(1, sealTxn + 1);
                 if (partitionPath.size() > 0) {
                     openSealValueFile(newTxn);
                 } else {
@@ -3043,16 +3012,16 @@ public class PostingIndexWriter implements IndexWriter {
     /**
      * Adds a fresh {@link PendingSealPurge} for the given orphan
      * {@code sealTxn} unless one is already enqueued. The dedup is O(N) over
-     * {@code seenSealTxns}, which is fine — N is the number of unrelated
+     * {@link #orphanSealTxns}, which is fine — N is the number of unrelated
      * orphan generations on disk, typically &lt; 10.
      */
-    private void rememberOrphan(LongList seenSealTxns, long sealTxn, long postingColumnNameTxn) {
-        for (int i = 0, n = seenSealTxns.size(); i < n; i++) {
-            if (seenSealTxns.getQuick(i) == sealTxn) {
+    private void rememberOrphan(long sealTxn, long postingColumnNameTxn) {
+        for (int i = 0, n = orphanSealTxns.size(); i < n; i++) {
+            if (orphanSealTxns.getQuick(i) == sealTxn) {
                 return;
             }
         }
-        seenSealTxns.add(sealTxn);
+        orphanSealTxns.add(sealTxn);
         PendingSealPurge entry = pendingPurgePool.size() > 0
                 ? pendingPurgePool.popLast()
                 : new PendingSealPurge();
@@ -3082,12 +3051,12 @@ public class PostingIndexWriter implements IndexWriter {
         // with active mmaps on the old .pv don't SIGSEGV. Allocate the rollback
         // sealTxn the same way seal() does so the new .pv stays distinct from
         // any prior sealed generation on disk.
-        final long oldSealTxn = columnNameTxn;
-        final long newSealTxn = Math.max(1, columnNameTxn + 1);
+        final long oldSealTxn = sealTxn;
+        final long newSealTxn = Math.max(1, sealTxn + 1);
         reencodeAllGenerations(newSealTxn, maxValue, maxValue);
         // Skip when reencode bypassed via truncate() — that path already
         // recorded its own purge entry.
-        if (columnNameTxn != oldSealTxn) {
+        if (sealTxn != oldSealTxn) {
             recordPostingSealPurge(oldSealTxn);
         }
     }
@@ -3364,7 +3333,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             genCount = 1;
             // Sync sealed file, switch writer to it, then publish metadata.
-            // columnNameTxn must be set BEFORE writeMetadataPage so the
+            // sealTxn must be set BEFORE writeMetadataPage so the
             // SEAL_TXN field in the metadata page reflects the new sealed files.
             sealValueMem.sync(false);
             switchToSealedValueFile(newSealTxn);
@@ -3447,13 +3416,13 @@ public class PostingIndexWriter implements IndexWriter {
         if (partitionPath.size() > 0) {
             Misc.free(valueMem); // close old .pv mapping (left on disk for readers)
             Path p = Path.getThreadLocal(partitionPath);
-            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, sidecarTxn, newTxn);
+            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
             valueMem.of(ff, fileName,
                     configuration.getDataIndexValueAppendPageSize(), appendOffset,
                     MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
             valueMem.jumpTo(appendOffset);
         }
-        columnNameTxn = newTxn;
+        sealTxn = newTxn;
     }
 
     private void unmapCoveredColumn(int c) {
@@ -3611,7 +3580,7 @@ public class PostingIndexWriter implements IndexWriter {
         keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, maxValue);
         keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT, genCount);
         keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION, FORMAT_VERSION);
-        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN, columnNameTxn);
+        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN, sealTxn);
 
         // Bulk copy gen dir entries that already exist on the active page, then
         // overwrite or append the new entry. The active page has (genCount - 1) valid
@@ -3888,7 +3857,7 @@ public class PostingIndexWriter implements IndexWriter {
         // sidecar from a prior seal). openSidecarFiles() truncates, which
         // is correct for seal but wrong here.
         if (sidecarMems.size() == 0 && partitionPath.size() > 0) {
-            openSidecarFilesForAppend(Path.getThreadLocal(partitionPath), indexName, sidecarTxn, columnNameTxn);
+            openSidecarFilesForAppend(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, sealTxn);
         }
         if (sidecarMems.size() == 0) {
             return;

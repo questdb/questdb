@@ -1118,17 +1118,6 @@ public final class PostingIndexUtils {
         path.trimTo(pathTrimTo);
     }
 
-    /**
-     * Enumerates every sealed file that belongs to {@code columnName} in the
-     * directory pointed at by {@code path} (truncated to {@code pathTrimTo}).
-     * <p>
-     * The visitor is invoked once per matching .pv or .pc&lt;N&gt; file with the
-     * txn components parsed out of the filename. Other files in the directory
-     * (.pk, .pci, partition data) are ignored.
-     * <p>
-     * Used by purge and crash-recovery paths that must enumerate all sealed
-     * generations regardless of the writer's current {@code sealTxn}.
-     */
     public static void scanSealedFiles(
             FilesFacade ff,
             Path path,
@@ -1275,6 +1264,15 @@ public final class PostingIndexUtils {
         return (int) (pos - destAddr);
     }
 
+    private static int nextDot(CharSequence s, int from, int end) {
+        for (int i = from; i < end; i++) {
+            if (s.charAt(i) == '.') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /**
      * Parses a directory entry name and dispatches to the visitor if it matches
      * a sealed-file pattern for {@code columnName}.
@@ -1375,15 +1373,6 @@ public final class PostingIndexUtils {
             return;
         }
         visitor.onCoverDataFile(includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
-    }
-
-    private static int nextDot(CharSequence s, int from, int end) {
-        for (int i = from; i < end; i++) {
-            if (s.charAt(i) == '.') {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private static long parseTxnSegment(CharSequence s, int from, int end) {
