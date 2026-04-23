@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.codec;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -167,13 +168,19 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
      * surfacing a connId the client has never been taught.
      * <p>
      * {@code targetSize == size} is a no-op. Passing a target outside
-     * {@code [0, size]} is a programming error.
+     * {@code [0, size]} is a programming error and raises {@link CairoException}
+     * so the caller surfaces a categorised internal error rather than relying on
+     * {@code -ea}.
      */
     public void rollbackTo(int targetSize) {
         if (targetSize == size) {
             return;
         }
-        assert targetSize >= 0 && targetSize < size;
+        if (targetSize < 0 || targetSize > size) {
+            throw CairoException.critical(0)
+                    .put("QWP egress: rollbackTo out of range [targetSize=").put(targetSize)
+                    .put(", size=").put(size).put(']');
+        }
         for (int i = targetSize; i < size; i++) {
             long start = heapAddr + entryStart(i);
             long end = heapAddr + entryEnd(i);

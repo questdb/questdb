@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 
 /**
@@ -34,10 +35,11 @@ import io.questdb.std.Unsafe;
  * Bits are packed LSB-first within each byte. The buffer accumulates up to 64
  * bits before flushing. All writes target direct memory.
  * <p>
- * Overflow throws {@link AssertionError}: callers must pre-validate the
- * required byte count via {@link QwpGorillaEncoder#calculateEncodedSizeIfSupported}
- * and allocate the buffer accordingly. A thrown error indicates an encoder bug,
- * not user data corruption.
+ * Overflow raises {@link CairoException} so the egress error classifier maps
+ * it to {@code STATUS_INTERNAL_ERROR}. Callers must pre-validate the required
+ * byte count via {@link QwpGorillaEncoder#calculateEncodedSizeIfSupported} and
+ * allocate the buffer accordingly; a thrown exception indicates an encoder
+ * bug, not user data corruption.
  */
 public class QwpBitWriter {
 
@@ -71,7 +73,7 @@ public class QwpBitWriter {
     public void flush() {
         if (bitsInBuffer > 0) {
             if (currentAddress >= endAddress) {
-                throw new AssertionError("QwpBitWriter buffer overflow");
+                throw CairoException.critical(0).put("QWP egress: QwpBitWriter buffer overflow on flush");
             }
             Unsafe.getUnsafe().putByte(currentAddress++, (byte) bitBuffer);
             bitBuffer = 0;
@@ -118,7 +120,9 @@ public class QwpBitWriter {
      */
     public void writeBits(long value, int numBits) {
         if (numBits <= 0 || numBits > 64) {
-            throw new AssertionError("Asked to write more than 64 bits of a long");
+            throw CairoException.critical(0)
+                    .put("QWP egress: QwpBitWriter writeBits numBits out of range [numBits=")
+                    .put(numBits).put(']');
         }
 
         if (numBits < 64) {
@@ -139,7 +143,7 @@ public class QwpBitWriter {
 
             while (bitsInBuffer >= 8) {
                 if (currentAddress >= endAddress) {
-                    throw new AssertionError("QwpBitWriter buffer overflow");
+                    throw CairoException.critical(0).put("QWP egress: QwpBitWriter buffer overflow on write");
                 }
                 Unsafe.getUnsafe().putByte(currentAddress++, (byte) bitBuffer);
                 bitBuffer >>>= 8;

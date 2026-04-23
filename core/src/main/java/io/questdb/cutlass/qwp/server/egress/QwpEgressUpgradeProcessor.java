@@ -136,6 +136,16 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      */
     public static final int MAX_ROWS_PER_BATCH = 16_384;
     /**
+     * Test-only. When {@code > 0}, the next entry into {@link #resumeSend} (or
+     * {@link #handleCredit} on the credit-suspended resume path) throws a
+     * synthetic {@link io.questdb.cairo.CairoException} before calling
+     * {@code streamResults}, so tests can reach the generic {@code Throwable}
+     * catch on those methods without orchestrating a real downstream failure.
+     * One-shot: the first trigger resets the field to {@code 0}. Production
+     * pays a single volatile read per resume call when left at the default.
+     */
+    public static volatile int DEBUG_FORCE_INTERNAL_ERROR_ON_RESUME = 0;
+    /**
      * Test-only: when set to {@code N > 0}, {@link #streamResults} throws
      * {@link PeerDisconnectedException#INSTANCE} once {@code N} batches have
      * already been committed on the current stream. That propagates through
@@ -506,6 +516,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     .$(", requestId=").$(state.getStreamingRequestId())
                     .$(", error=").$(t).I$();
             long failedRequestId = state.getStreamingRequestId();
+            // Roll back any connSymbolDict entries committed by the batch that was
+            // in flight when the exception fired. The batch frame never reached
+            // the wire, so those ids must not leak into the next query's dedup
+            // path; without this, a subsequent query on the same connection would
+            // hit the orphan ids via addEntry, emitDeltaSection would omit them
+            // ({@code id < batchDeltaStart}), and the client would fail to decode
+            // the ensuing RESULT_BATCH with a "delta symbol dict out of sync"
+            // error. Mirrors the catch in {@link #handleQueryRequest}.
+            state.getBatchBuffer().rollbackCurrentBatch();
             state.endStreaming();
             try {
                 sendQueryError(context, state, failedRequestId, mapErrorStatus(t),
@@ -856,6 +875,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             } catch (Throwable t) {
                 LOG.error().$("Egress CREDIT resume failed [fd=").$(context.getFd())
                         .$(", requestId=").$(targetRequestId).$(", error=").$(t).I$();
+                // Roll back the in-flight batch's connSymbolDict entries before
+                // endStreaming -- same invariant as the resumeSend catch above
+                // and handleQueryRequest's catch below. Without this, orphan
+                // ids leak across queries on the same connection and the
+                // client's next delta symbol section fails to decode.
+                state.getBatchBuffer().rollbackCurrentBatch();
                 state.endStreaming();
                 try {
                     sendQueryError(context, state, targetRequestId, mapErrorStatus(t),
@@ -1676,6 +1701,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 state.endStreaming();
                 sendResultEnd(context, state, requestId, finalSeq, totalRows);
                 return;
+            }
+            // Test-only: fire a synthetic internal error after this batch has
+            // been assembled (addEntry calls committed to connSymbolDict) but
+            // before any of its bytes reach the wire. Only fires after at
+            // least one prior batch has committed, so the thrown exception
+            // lands in the resumeSend / handleCredit Throwable catch rather
+            // than the first-pass catch in handleQueryRequest. One-shot: the
+            // first trigger resets the field to 0.
+            if (DEBUG_FORCE_INTERNAL_ERROR_ON_RESUME > 0 && state.getStreamingBatchSeq() > 0) {
+                DEBUG_FORCE_INTERNAL_ERROR_ON_RESUME = 0;
+                throw CairoException.critical(0)
+                        .put("synthetic internal error on resume (DEBUG_FORCE_INTERNAL_ERROR_ON_RESUME)");
             }
             // Advance the streaming sequence BEFORE the network send. HttpRawSocket.send commits
             // bytes to the response sink (buffer.onWrite) before flushSingle() -- which is what

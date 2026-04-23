@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 
 /**
@@ -197,7 +198,9 @@ public class QwpGorillaEncoder {
         int pos;
 
         if (capacity < 8) {
-            throw new AssertionError("Gorilla encoder buffer overflow");
+            throw CairoException.critical(0)
+                    .put("QWP egress: Gorilla encoder buffer overflow on first timestamp [capacity=")
+                    .put(capacity).put(']');
         }
         long ts0 = Unsafe.getUnsafe().getLong(srcAddress);
         Unsafe.getUnsafe().putLong(destAddress, ts0);
@@ -208,7 +211,9 @@ public class QwpGorillaEncoder {
         }
 
         if (capacity < pos + 8) {
-            throw new AssertionError("Gorilla encoder buffer overflow");
+            throw CairoException.critical(0)
+                    .put("QWP egress: Gorilla encoder buffer overflow on second timestamp [capacity=")
+                    .put(capacity).put(']');
         }
         long ts1 = Unsafe.getUnsafe().getLong(srcAddress + 8);
         Unsafe.getUnsafe().putLong(destAddress + pos, ts1);
