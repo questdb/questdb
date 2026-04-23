@@ -2283,6 +2283,42 @@ public class PropServerConfigurationTest {
         }
     }
 
+    @Test
+    public void testSubsampleMaxRowsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "0");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsAboveIntMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "2147483648");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
     @NotNull
     protected PropServerConfiguration newPropServerConfiguration(
             String root,

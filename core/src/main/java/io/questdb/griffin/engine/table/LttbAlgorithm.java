@@ -110,11 +110,23 @@ class LttbAlgorithm implements SubsampleAlgorithm {
 
         int segStart = 0;
         for (int i = 1; i <= n; i++) {
+            if ((i & 0xFFF) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
             boolean isGap = false;
             if (i < n) {
                 long prevTs = Unsafe.getUnsafe().getLong(buffer + (long) (i - 1) * ENTRY_SIZE + 8);
                 long currTs = Unsafe.getUnsafe().getLong(buffer + (long) i * ENTRY_SIZE + 8);
-                isGap = (currTs - prevTs > gapThresholdMicros);
+                // Overflow-safe gap detection: currTs - prevTs can overflow on
+                // extreme timestamp ranges. Use currTs > prevTs + threshold
+                // when the addition does not overflow. If it overflows, the
+                // gap threshold exceeds the representable range past prevTs,
+                // so currTs (bounded by Long.MAX_VALUE) cannot exceed it.
+                if (prevTs > Long.MAX_VALUE - gapThresholdMicros) {
+                    isGap = false;
+                } else {
+                    isGap = currTs > prevTs + gapThresholdMicros;
+                }
             }
             if (isGap || i == n) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -131,6 +143,9 @@ class LttbAlgorithm implements SubsampleAlgorithm {
         // One-row segments only need 1 point, not 2.
         int floorTotal = 0;
         for (int s = 0; s < segCount; s++) {
+            if ((s & 0xFFF) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
             int segSize = (int) segments.get(s * 2 + 1);
             floorTotal += Math.min(2, segSize);
         }
@@ -151,6 +166,9 @@ class LttbAlgorithm implements SubsampleAlgorithm {
             int budgetAboveFloor = totalPoints - floorTotal;
             int totalAllocated = 0;
             for (int s = 0; s < segCount; s++) {
+                if ((s & 0xFFF) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                }
                 int segSize = (int) segments.get(s * 2 + 1);
                 int floor = Math.min(2, segSize);
                 int extra = (int) ((long) segSize * budgetAboveFloor / n);
@@ -181,6 +199,9 @@ class LttbAlgorithm implements SubsampleAlgorithm {
             int segTarget = targets.get(s);
             if (size <= segTarget) {
                 for (int j = start; j < start + size; j++) {
+                    if ((j & 0xFFF) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                    }
                     selectedIndices.add(j);
                 }
             } else {
@@ -234,6 +255,9 @@ class LttbAlgorithm implements SubsampleAlgorithm {
             double avgY = 0;
             int nextBucketLen = nextBucketEnd - nextBucketStart;
             for (int j = nextBucketStart; j < nextBucketEnd; j++) {
+                if ((j & 0xFFF) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                }
                 avgX += (double) SubsampleAlgorithm.getTimestamp(buffer, j);
                 avgY += SubsampleAlgorithm.getValue(buffer, j);
             }
@@ -248,6 +272,9 @@ class LttbAlgorithm implements SubsampleAlgorithm {
             double maxArea = -1;
             int maxAreaIndex = bucketStart;
             for (int j = bucketStart; j < bucketEnd; j++) {
+                if ((j & 0xFFF) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                }
                 double bx = (double) SubsampleAlgorithm.getTimestamp(buffer, j);
                 double by = SubsampleAlgorithm.getValue(buffer, j);
                 double area = Math.abs(ax * (by - avgY) + bx * (avgY - ay) + avgX * (ay - by));

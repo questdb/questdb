@@ -5874,6 +5874,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         int subsamplePos = model.getSubsamplePosition();
 
         if (subsample != null) {
+            validateSubsampleArity(subsample);
             // Verify the SUBSAMPLE column can be resolved at this factory level.
             // The optimizer may place SUBSAMPLE on a model where the column isn't
             // available (e.g., count() wrapping a subquery with SUBSAMPLE inside).
@@ -5939,9 +5940,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // If not on current model, search nested models for SUBSAMPLE.
         // The optimizer may place SUBSAMPLE on a nested model during restructuring.
+        // Do not pull across user-authored subquery boundaries because the
+        // optimizer may have pushed outer WHERE into the inner model, changing
+        // the input set that SUBSAMPLE operates on.
         IQueryModel nested = model.getNestedModel();
+        boolean crossedSubquery = model.isNestedModelIsSubQuery();
         while (nested != null) {
             if (nested.getSubsample() != null) {
+                if (crossedSubquery) {
+                    break;
+                }
+                validateSubsampleArity(nested.getSubsample());
                 ExpressionNode candidateCol = nested.getSubsample().args.get(0);
                 // Check: column resolvable AND factory has designated timestamp
                 // (or nested chain confirms designation was lost by aggregation)
@@ -5964,6 +5973,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return generateSubsample(factory, subsample, subsamplePos, model, executionContext, true);
                 }
                 break; // Column not resolvable or no timestamp - leave for inner level
+            }
+            if (nested.isNestedModelIsSubQuery()) {
+                crossedSubquery = true;
             }
             nested = nested.getNestedModel();
         }
@@ -6051,6 +6063,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (!targetFunc.isConstant() && !targetFunc.isRuntimeConstant()) {
                 throw SqlException.$(targetNode.position, "target point count must be a constant or bind variable");
             }
+            // Coerce UNDEFINED bind variables to LONG (same pattern as LIMIT)
+            coerceRuntimeConstantType(targetFunc, ColumnType.LONG, executionContext,
+                    "target point count must be an integer", targetNode.position);
             final int targetType = ColumnType.tagOf(targetFunc.getType());
             if (targetType != ColumnType.INT && targetType != ColumnType.LONG
                     && targetType != ColumnType.SHORT && targetType != ColumnType.BYTE) {
@@ -6071,10 +6086,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         interval, k, gapNode.position, "gap threshold", Numbers.INT_NULL, '?'
                 );
                 gapThresholdMicros = switch (interval.charAt(k)) {
-                    case 's' -> n * Micros.SECOND_MICROS;
-                    case 'm' -> n * Micros.MINUTE_MICROS;
-                    case 'h' -> n * Micros.HOUR_MICROS;
-                    case 'd' -> n * Micros.DAY_MICROS;
+                    case 's' -> safeMultiplyMicros(n, Micros.SECOND_MICROS, gapNode.position);
+                    case 'm' -> safeMultiplyMicros(n, Micros.MINUTE_MICROS, gapNode.position);
+                    case 'h' -> safeMultiplyMicros(n, Micros.HOUR_MICROS, gapNode.position);
+                    case 'd' -> safeMultiplyMicros(n, Micros.DAY_MICROS, gapNode.position);
                     default ->
                             throw SqlException.$(gapNode.position + k, "unsupported interval unit: ").put(interval.charAt(k))
                                     .put(". Supported: s, m, h, d");
@@ -6083,12 +6098,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             int timestampIndex = factory.getMetadata().getTimestampIndex();
             if (timestampIndex == -1 && allowTypeScanFallback) {
-                for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
+                int candidateCount = 0;
+                int candidateIndex = -1;
+                for (int i = 0, nc = factory.getMetadata().getColumnCount(); i < nc; i++) {
                     if (ColumnType.tagOf(factory.getMetadata().getColumnType(i)) == ColumnType.TIMESTAMP) {
-                        timestampIndex = i;
-                        break;
+                        if (candidateCount == 0) {
+                            candidateIndex = i;
+                        }
+                        candidateCount++;
                     }
                 }
+                if (candidateCount > 1) {
+                    throw SqlException.$(subsamplePos, "ambiguous timestamp: multiple TIMESTAMP columns found");
+                }
+                timestampIndex = candidateIndex;
             }
             if (timestampIndex == -1) {
                 throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
@@ -6109,7 +6132,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     useDirectAccess ? null : configuration,
                     factory, method, targetFunc,
                     valueColumnIndex, timestampIndex, subsamplePos,
-                    gapThresholdMicros,
+                    targetNode.position, gapThresholdMicros,
                     configuration.getSubsampleMaxRows(),
                     columnType,
                     recordSink,
@@ -6149,6 +6172,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
         }
         return (int) value;
+    }
+
+    // parsePositiveInterval uses Numbers.parseInt (max Integer.MAX_VALUE).
+    // parseInt throws NumericException on overflow, so n is always in int range.
+    // However, n * DAY_MICROS (86_400_000_000) can overflow long for large n.
+    private static long safeMultiplyMicros(long n, long unitMicros, int pos) throws SqlException {
+        if (n > Long.MAX_VALUE / unitMicros) {
+            throw SqlException.$(pos, "gap threshold overflow");
+        }
+        return n * unitMicros;
+    }
+
+    private static void validateSubsampleArity(ExpressionNode subsample) throws SqlException {
+        if (subsample.paramCount < 2) {
+            throw SqlException.$(subsample.position, "SUBSAMPLE ")
+                    .put(subsample.token)
+                    .put("() requires at least 2 arguments: column and target points");
+        }
     }
 
     private static boolean hasTimestampColumn(RecordCursorFactory factory) {
@@ -7020,13 +7061,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // consumes them. generateSelect processes GROUP BY/SAMPLE BY models
         // internally without calling generateQuery0Inner, so SUBSAMPLE placed
         // on those flat nested models by the optimizer would be lost otherwise.
-        // Only pull up if the SUBSAMPLE column can be resolved in this model's
-        // columns (prevents pulling from a parenthesized subquery whose columns
-        // differ from the outer query, e.g. count() wrapping a subsample).
+        // Pull-up is allowed only across optimizer-generated nested models.
+        // Do not pull across user-authored subquery boundaries
+        // (isNestedModelIsSubQuery) because the optimizer may have pushed
+        // outer WHERE/LIMIT into the inner model chain, and hoisting
+        // SUBSAMPLE would place it after those filters, changing semantics.
         if (model.getSubsample() == null) {
             IQueryModel nested = model.getNestedModel();
+            boolean crossedSubqueryBoundary = model.isNestedModelIsSubQuery();
             while (nested != null) {
                 if (nested.getSubsample() != null) {
+                    if (crossedSubqueryBoundary) {
+                        break;
+                    }
+                    validateSubsampleArity(nested.getSubsample());
                     // Check if the SUBSAMPLE column exists in the current model's columns
                     CharSequence colName = nested.getSubsample().args.get(0).token;
                     boolean columnResolvable = false;
@@ -7044,6 +7092,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         nested.setSubsample(null, 0);
                     }
                     break;
+                }
+                if (nested.isNestedModelIsSubQuery()) {
+                    crossedSubqueryBoundary = true;
                 }
                 nested = nested.getNestedModel();
             }

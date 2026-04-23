@@ -48,6 +48,9 @@ class M4Algorithm implements SubsampleAlgorithm {
     public void select(long buffer, int bufferSize, int targetPoints,
                        DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         selectedIndices.clear();
+        if (bufferSize <= 0 || targetPoints <= 0) {
+            return;
+        }
         int numBuckets = targetPoints / 4;
         if (numBuckets < 1) {
             numBuckets = 1;
@@ -64,24 +67,28 @@ class M4Algorithm implements SubsampleAlgorithm {
             return;
         }
 
-        double timeRange = (double) (maxTs - minTs);
+        double timeRange = (double) maxTs - (double) minTs;
         double bucketWidth = timeRange / numBuckets;
 
         int dataIdx = 0;
         for (int bucket = 0; bucket < numBuckets; bucket++) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
-            long bucketStartTs = minTs + (long) (bucket * bucketWidth);
-            long bucketEndTs = (bucket < numBuckets - 1) ? minTs + (long) ((bucket + 1) * bucketWidth) : Long.MAX_VALUE;
+            long bucketStartTs = (long) ((double) minTs + bucket * bucketWidth);
+            long bucketEndTs = (bucket < numBuckets - 1) ? (long) ((double) minTs + (bucket + 1) * bucketWidth) : Long.MAX_VALUE;
 
             int firstIdx = -1;
             int lastIdx = -1;
             int minIdx = -1;
             int maxIdx = -1;
-            double minVal = Double.POSITIVE_INFINITY;
-            double maxVal = Double.NEGATIVE_INFINITY;
+            double minVal = 0;
+            double maxVal = 0;
+            boolean hasData = false;
 
             while (dataIdx < bufferSize) {
+                if ((dataIdx & 0xFFF) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                }
                 long ts = Unsafe.getUnsafe().getLong(buffer + (long) dataIdx * ENTRY_SIZE + 8);
                 // Final bucket processes all remaining rows (no end boundary)
                 if (bucket < numBuckets - 1 && ts >= bucketEndTs) {
@@ -93,13 +100,21 @@ class M4Algorithm implements SubsampleAlgorithm {
                     }
                     lastIdx = dataIdx;
                     double v = SubsampleAlgorithm.getValue(buffer, dataIdx);
-                    if (v < minVal) {
+                    if (!hasData) {
                         minVal = v;
                         minIdx = dataIdx;
-                    }
-                    if (v > maxVal) {
                         maxVal = v;
                         maxIdx = dataIdx;
+                        hasData = true;
+                    } else {
+                        if (v < minVal) {
+                            minVal = v;
+                            minIdx = dataIdx;
+                        }
+                        if (v > maxVal) {
+                            maxVal = v;
+                            maxIdx = dataIdx;
+                        }
                     }
                 }
                 dataIdx++;
@@ -111,6 +126,7 @@ class M4Algorithm implements SubsampleAlgorithm {
 
             // Sort 4 indices with a sorting network (5 comparisons, 0 allocations)
             // and deduplicate.
+            assert minIdx >= 0 && maxIdx >= 0 : "selected indices must not be negative";
             emitSorted4(selectedIndices, firstIdx, minIdx, maxIdx, lastIdx);
         }
         // Cap output to targetPoints. With small targets (e.g., 2 or 3),

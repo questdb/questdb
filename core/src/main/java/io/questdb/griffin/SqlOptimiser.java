@@ -1777,6 +1777,17 @@ public class SqlOptimiser implements Mutable {
     // pushing predicates to sample by model is only allowed for sample by fill none align to calendar and expressions on non-timestamp columns
     // pushing for other fill options or sample by first observation could alter a result
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+    private static boolean hasSubsampleInChain(IQueryModel model) {
+        IQueryModel m = model;
+        while (m != null) {
+            if (m.getSubsample() != null) {
+                return true;
+            }
+            m = m.getNestedModel();
+        }
+        return false;
+    }
+
     private boolean canPushToSampleBy(final IQueryModel model, ObjList<CharSequence> expressionColumns) {
         ObjList<ExpressionNode> fill = model.getSampleByFill();
         int fillCount = fill.size();
@@ -5004,6 +5015,7 @@ public class SqlOptimiser implements Mutable {
                             || nested.getLatestBy().size() > 0
                             || nested.getLimitLo() != null
                             || nested.getLimitHi() != null
+                            || hasSubsampleInChain(parent)
                             || (nested.getSampleBy() != null && !canPushToSampleBy(nested, literalCollectorANames))
                     ) {
                         // there is no nested model for this table, keep where clause element with this model

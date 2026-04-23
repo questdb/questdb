@@ -1697,6 +1697,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
             this.sqlStrFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
             this.subsampleMaxRows = getLong(properties, env, PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS, 100_000_000L);
+            if (this.subsampleMaxRows < 1 || this.subsampleMaxRows > Integer.MAX_VALUE) {
+                throw new ServerConfigurationException(
+                        PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath()
+                                + " must be between 1 and " + Integer.MAX_VALUE
+                );
+            }
             this.sqlWindowMaxRecursion = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 128);
             int sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE, Numbers.SIZE_1MB));
             this.sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, sqlWindowStorePageSize));

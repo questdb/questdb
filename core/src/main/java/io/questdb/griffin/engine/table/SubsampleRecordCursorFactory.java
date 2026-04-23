@@ -80,6 +80,7 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
     private final SubsampleRecordCursor cursor;
     private final int subsamplePosition;
     private final Function targetFunc;
+    private final int targetPosition;
     private final int targetType;
 
     public SubsampleRecordCursorFactory(
@@ -90,6 +91,7 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             int valueColumnIndex,
             int timestampColumnIndex,
             int subsamplePosition,
+            int targetPosition,
             long gapThresholdMicros,
             long maxRows,
             int valueColumnType,
@@ -101,6 +103,7 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
         this.targetFunc = targetFunc;
         this.targetType = ColumnType.tagOf(targetFunc.getType());
         this.subsamplePosition = subsamplePosition;
+        this.targetPosition = targetPosition;
         this.cursor = new SubsampleRecordCursor(
                 configuration, method, valueColumnIndex,
                 timestampColumnIndex, subsamplePosition,
@@ -163,20 +166,20 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
         if (targetType == ColumnType.LONG) {
             value = targetFunc.getLong(null);
             if (value == Numbers.LONG_NULL) {
-                throw SqlException.$(subsamplePosition, "target point count must be set");
+                throw SqlException.$(targetPosition, "target point count must be set");
             }
         } else {
             int intVal = targetFunc.getInt(null);
             if (intVal == Numbers.INT_NULL) {
-                throw SqlException.$(subsamplePosition, "target point count must be set");
+                throw SqlException.$(targetPosition, "target point count must be set");
             }
             value = intVal;
         }
         if (value < 2) {
-            throw SqlException.$(subsamplePosition, "target points must be at least 2");
+            throw SqlException.$(targetPosition, "target points must be at least 2");
         }
         if (value > Integer.MAX_VALUE) {
-            throw SqlException.$(subsamplePosition, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+            throw SqlException.$(targetPosition, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
         }
         return (int) value;
     }
@@ -305,16 +308,6 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return base != null ? base.newSymbolTable(columnIndex) : null;
-        }
-
-        @Override
-        public long preComputedStateSize() {
-            return isBuffered ? selectedCount : 0;
-        }
-
-        @Override
         public boolean hasNext() {
             if (!isBuffered) {
                 bufferAndSelect();
@@ -334,6 +327,16 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                 chain.recordAt(chain.getRecord(), payload);
             }
             return true;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base != null ? base.newSymbolTable(columnIndex) : null;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return isBuffered ? selectedCount : 0;
         }
 
         @Override
@@ -404,13 +407,21 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                 chain.clear();
             }
             if (bufferCapacity == 0) {
+                long newBuffer = Unsafe.malloc(INITIAL_CAPACITY * ENTRY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+                buffer = newBuffer;
                 bufferCapacity = INITIAL_CAPACITY;
-                buffer = Unsafe.malloc(bufferCapacity * ENTRY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
             }
             final Record baseRecord = base.getRecord();
             while (base.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 long ts = baseRecord.getTimestamp(timestampColumnIndex);
+                // Defensive: skip NULL timestamp sentinels. The designated
+                // timestamp column should never be NULL, but non-designated
+                // timestamp columns (used in the fallback path) can produce
+                // Long.MIN_VALUE from aggregates on empty groups.
+                if (ts == Numbers.LONG_NULL) {
+                    continue;
+                }
                 double value = getValueAsDouble(baseRecord);
                 if (Double.isNaN(value)) {
                     continue; // NaN-filtered rows don't affect monotonicity
@@ -439,7 +450,8 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                         throw CairoException.nonCritical().position(subsamplePosition)
                                 .put("SUBSAMPLE buffer capacity overflow");
                     }
-                    buffer = Unsafe.realloc(buffer, bufferCapacity * ENTRY_SIZE, newCapacity * ENTRY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+                    long newBuffer = Unsafe.realloc(buffer, bufferCapacity * ENTRY_SIZE, newCapacity * ENTRY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+                    buffer = newBuffer;
                     bufferCapacity = newCapacity;
                 }
                 long offset = bufferSize * ENTRY_SIZE;
@@ -479,14 +491,6 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                 case ColumnType.BYTE -> rec.getByte(valueColumnIndex);
                 default -> rec.getDouble(valueColumnIndex);
             };
-        }
-
-        private void selectAll() {
-            selectedIndices.clear();
-            for (long i = 0; i < bufferSize; i++) {
-                selectedIndices.add(i);
-            }
-            selectedCount = bufferSize;
         }
 
         /**
@@ -536,6 +540,14 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                     Unsafe.free(workspaceAddr, workspaceSize, MemoryTag.NATIVE_FUNC_RSS);
                 }
             }
+        }
+
+        private void selectAll() {
+            selectedIndices.clear();
+            for (long i = 0; i < bufferSize; i++) {
+                selectedIndices.add(i);
+            }
+            selectedCount = bufferSize;
         }
     }
 }
