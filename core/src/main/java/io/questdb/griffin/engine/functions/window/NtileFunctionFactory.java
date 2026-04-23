@@ -35,15 +35,18 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -57,7 +60,6 @@ import io.questdb.std.Unsafe;
 public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
 
     public static final String NAME = "ntile";
-    // Column types for partition-based function: row number within partition
     private static final ArrayColumnTypes NTILE_COLUMN_TYPES;
     // LONG signature so both INT literals (auto-widened) and LONG literals resolve; the value is
     // validated to fit in a positive int below.
@@ -149,6 +151,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         private final int bucketCount;
         private int columnIndex;
         private long count = 1;
+        private ObjList<ExpressionNode> orderBy;
         private long totalRows;
 
         public NtileFunction(int bucketCount) {
@@ -163,6 +166,16 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
+                                         RecordMetadata metadata,
+                                         ArrayColumnTypes chainTypes,
+                                         IntList orderIndices,
+                                         ObjList<ExpressionNode> orderBy,
+                                         IntList orderByDirection) throws SqlException {
+            this.orderBy = orderBy;
         }
 
         @Override
@@ -203,7 +216,14 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
             sink.val('(').val(bucketCount).val(')');
-            sink.val(" over ()");
+            if (orderBy != null) {
+                sink.val(" over (");
+                sink.val("order by ");
+                sink.val(orderBy);
+                sink.val(')');
+            } else {
+                sink.val(" over ()");
+            }
         }
 
         @Override
@@ -221,6 +241,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         private final RecordSink partitionBySink;
         private int columnIndex;
         private final Map map;
+        private ObjList<ExpressionNode> orderBy;
 
         public NtileOverPartitionFunction(
                 int bucketCount,
@@ -255,6 +276,16 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+        }
+
+        @Override
+        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
+                                         RecordMetadata metadata,
+                                         ArrayColumnTypes chainTypes,
+                                         IntList orderIndices,
+                                         ObjList<ExpressionNode> orderBy,
+                                         IntList orderByDirection) throws SqlException {
+            this.orderBy = orderBy;
         }
 
         @Override
@@ -315,6 +346,10 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
+            if (orderBy != null) {
+                sink.val(" order by ");
+                sink.val(orderBy);
+            }
             sink.val(')');
         }
 

@@ -157,6 +157,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         private long count = 1;
         private long deferredSize;
         private long lastRecordOffset;
+        private ObjList<ExpressionNode> orderBy;
         private long prevRank;
         private long rank;
         private ObjList<DirectIntList> rankMaps;
@@ -198,13 +199,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                                          ObjList<ExpressionNode> orderBy,
                                          IntList orderByDirection) throws SqlException {
             IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
-            try {
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
-                this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
-            } catch (Throwable t) {
-                Misc.free(deferredOffsets);
-                throw t;
-            }
+            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
+            this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
+            this.orderBy = orderBy;
         }
 
         @Override
@@ -273,7 +270,11 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
-            sink.val("() over ()");
+            sink.val("()");
+            sink.val(" over (");
+            sink.val("order by ");
+            sink.val(orderBy);
+            sink.val(')');
         }
 
         @Override
@@ -363,6 +364,8 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
     // resolved cumulative distribution value, then resets the slice for the next peer group.
     // Slices grow on demand via expandRingBuffer, recycling previously-freed blocks through
     // freeList (same pattern as NthValueOverPartitionRangeFrameFunction and friends).
+    // Per-partition slices are not released until close()/toTop(), so worst-case native memory
+    // is O(total rows across all partitions) when peer groups span entire partitions.
     static class CumeDistOverPartitionFunction extends DoubleFunction implements Function, WindowFunction, Reopenable {
 
         private final CairoConfiguration configuration;
@@ -375,6 +378,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         private final RecordSink partitionBySink;
         private int columnIndex;
         private Map map;
+        private ObjList<ExpressionNode> orderBy;
         private ObjList<DirectIntList> rankMaps;
         private RecordComparator recordComparator;
 
@@ -439,9 +443,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
             } catch (Throwable t) {
                 map = Misc.free(map);
-                Misc.free(deferredOffsets);
                 throw t;
             }
+            this.orderBy = orderBy;
         }
 
         @Override
@@ -560,6 +564,8 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
+            sink.val(" order by ");
+            sink.val(orderBy);
             sink.val(')');
         }
 

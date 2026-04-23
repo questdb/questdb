@@ -12107,7 +12107,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            // Variant 2: NthValueOverUnboundedPartitionRowsFrameFunction
+            // Variant 2: NthValueOverUnboundedPartitionFrameFunction
             // (unbounded preceding to current row). nth_value(val, 2).
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
@@ -13182,7 +13182,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, ntile(3) over (order by ts) from tab",
                     """
                             CachedWindow
-                              unorderedFunctions: [ntile(3) over ()]
+                              unorderedFunctions: [ntile(3) over (order by [ts])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
@@ -13192,7 +13192,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, ntile(2) over (partition by i order by ts) from tab",
                     """
                             CachedWindow
-                              unorderedFunctions: [ntile(2) over (partition by [i])]
+                              unorderedFunctions: [ntile(2) over (partition by [i] order by [ts])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
@@ -13206,13 +13206,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
-            // CumeDistFunction (ordered, no partition) -- toPlan drops ORDER BY
-            // to match the codebase convention (rank/dense_rank/row_number/ntile/nth_value).
+            // CumeDistFunction (ordered, no partition)
             assertPlanNoLeakCheck(
                     "select ts, cume_dist() over (order by ts) from tab",
                     """
                             CachedWindow
-                              unorderedFunctions: [cume_dist() over ()]
+                              unorderedFunctions: [cume_dist() over (order by [ts])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
@@ -13229,12 +13228,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                             """
             );
-            // CumeDistOverPartitionFunction -- toPlan drops ORDER BY.
+            // CumeDistOverPartitionFunction (ordered)
             assertPlanNoLeakCheck(
                     "select ts, i, cume_dist() over (partition by i order by ts) from tab",
                     """
                             CachedWindow
-                              unorderedFunctions: [cume_dist() over (partition by [i])]
+                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
@@ -13340,7 +13339,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                             """
             );
-            // NthValueOverUnboundedPartitionRowsFrameFunction, RANGE variant -- default frame
+            // NthValueOverUnboundedPartitionFrameFunction, RANGE variant -- default frame
             // for "partition by x order by y" is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
             assertPlanNoLeakCheck(
                     "select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab",
@@ -13352,7 +13351,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                             """
             );
-            // NthValueOverUnboundedPartitionRowsFrameFunction, ROWS variant -- same class as
+            // NthValueOverUnboundedPartitionFrameFunction, ROWS variant -- same class as
             // the RANGE variant, but the plan must report "rows".
             assertPlanNoLeakCheck(
                     "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) from tab",
@@ -13502,7 +13501,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNthValuePartitionedRowsUnboundedToCurrent() throws Exception {
         // Partitioned ROWS frame `unbounded preceding and current row`. Routes to
-        // NthValueOverUnboundedPartitionRowsFrameFunction (factory branch at lines 179-194).
+        // NthValueOverUnboundedPartitionFrameFunction (factory branch at lines 179-194).
         // nth(2) returns null until each partition has seen at least 2 rows, then locks on
         // that partition's row-2 value.
         assertMemoryLeak(() -> {

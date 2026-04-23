@@ -136,7 +136,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             NTH_VALUE_COLUMN_TYPES
                     );
                     try {
-                        return new NthValueOverUnboundedPartitionRowsFrameFunction(
+                        return new NthValueOverUnboundedPartitionFrameFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
@@ -210,7 +210,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                             NTH_VALUE_COLUMN_TYPES
                     );
                     try {
-                        return new NthValueOverUnboundedPartitionRowsFrameFunction(
+                        return new NthValueOverUnboundedPartitionFrameFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
@@ -1422,13 +1422,13 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     // - nth_value(a, n) over (partition by x order by ts range between unbounded preceding and current row)
     // The RANGE variant matches ROWS semantics here (frame ends at the current row without
     // looking ahead to peers); the flag only affects the EXPLAIN output.
-    static class NthValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    static class NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         protected final boolean isRange;
         protected final int n;
         protected double value;
 
-        public NthValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int n, boolean isRange) {
+        public NthValueOverUnboundedPartitionFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int n, boolean isRange) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.n = n;
             this.isRange = isRange;
@@ -1442,7 +1442,6 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             MapValue mapValue = key.createValue();
 
             if (mapValue.isNew()) {
-                // first row: count = 1
                 if (n == 1) {
                     double d = arg.getDouble(record);
                     mapValue.putDouble(0, d);
