@@ -54,12 +54,12 @@ import java.util.concurrent.TimeUnit;
  * {@code outputColToKeyPos}:
  * <p>
  * 1) {@code resetPrimitiveArrays} -- baseline: boolean[] + int[] with
- *    Arrays.fill. This is what shipped.
+ * Arrays.fill. This is what shipped.
  * 2) {@code resetBitSet} -- candidate that replaces boolean[] with BitSet.
- *    Per-bucket set() + clear() path.
+ * Per-bucket set() + clear() path.
  * 3) {@code resetIntListSetAll} -- cold-path init of IntList.setAll() used
- *    as a one-shot constructor-time replacement for
- *    new int[n] + Arrays.fill(-1).
+ * as a one-shot constructor-time replacement for
+ * new int[n] + Arrays.fill(-1).
  * <p>
  * Outcome captured on sm_fill_prev_fast_path at 2026-04-22: at uniqueKeys=1000
  * BitSet is ~20x slower than boolean[] (set() is the dominant cost because
