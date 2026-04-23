@@ -171,6 +171,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         Misc.free(base);
         Misc.free(cursor);
         GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
     }
 

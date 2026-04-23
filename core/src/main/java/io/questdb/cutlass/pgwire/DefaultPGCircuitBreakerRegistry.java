@@ -91,20 +91,29 @@ public final class DefaultPGCircuitBreakerRegistry implements PGCircuitBreakerRe
 
     @Override
     public void cancel(int circuitBreakerIdx, int secret) {
-        if (circuitBreakers.size() < circuitBreakerIdx || circuitBreakerIdx < 0) {
+        if (circuitBreakerIdx < 0) {
             throw CairoException.nonCritical().put("wrong circuit breaker idx [idx=").put(circuitBreakerIdx).put("]");
         }
 
-        NetworkSqlExecutionCircuitBreaker cb = circuitBreakers.getQuick(circuitBreakerIdx);
-        if (cb == null) {
-            throw CairoException.nonCritical().put("empty circuit breaker slot [idx=").put(circuitBreakerIdx).put("]");
+        lock.lock();
+        try {
+            if (circuitBreakerIdx >= circuitBreakers.size()) {
+                throw CairoException.nonCritical().put("wrong circuit breaker idx [idx=").put(circuitBreakerIdx).put("]");
+            }
+            NetworkSqlExecutionCircuitBreaker cb = circuitBreakers.getQuick(circuitBreakerIdx);
+            if (cb == null) {
+                throw CairoException.nonCritical().put("empty circuit breaker slot [idx=").put(circuitBreakerIdx).put("]");
+            }
+            // -1 is the sentinel used by clear() before a secret has been assigned; never let a
+            // client cancel against a half-initialized slot.
+            int expected = cb.getSecret();
+            if (expected == -1 || expected != secret) {
+                throw CairoException.nonCritical().put("wrong circuit breaker secret [idx=").put(circuitBreakerIdx).put("]");
+            }
+            cb.cancel();
+        } finally {
+            lock.unlock();
         }
-
-        if (cb.getSecret() != secret) {
-            throw CairoException.nonCritical().put("wrong circuit breaker secret [idx=").put(circuitBreakerIdx).put("]");
-        }
-
-        cb.cancel();
     }
 
     @Override

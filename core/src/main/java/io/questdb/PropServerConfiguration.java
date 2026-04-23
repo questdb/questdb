@@ -164,6 +164,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double cairoAutoScaleSymbolCapacityThreshold;
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
+    private final int cairoGroupByBatchSize;
     private final int cairoGroupByMergeShardQueueCapacity;
     private final boolean cairoGroupByPresizeEnabled;
     private final long cairoGroupByPresizeMaxCapacity;
@@ -1637,6 +1638,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
             this.sqlSmallPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
             this.sqlSmallPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+            // The batched GROUP BY probe packs the frame-relative row index into a
+            // 24-bit slot. Reject misconfigurations that would silently truncate.
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, this.sqlPageFrameMinRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, this.sqlPageFrameMaxRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, this.sqlSmallPageFrameMinRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, this.sqlSmallPageFrameMaxRows);
 
             this.sqlJitMode = getSqlJitMode(properties, env);
             this.sqlJitIRMemoryPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_IR_MEMORY_PAGE_SIZE, 8 * 1024);
@@ -2058,6 +2065,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             final int defaultReduceQueueCapacity = Math.min(4 * queryWorkers, 256);
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoGroupByBatchSize = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 2048);
+            validateGroupByBatchSize(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, this.cairoGroupByBatchSize);
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByTopKQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY, defaultReduceQueueCapacity));
@@ -2494,6 +2503,27 @@ public class PropServerConfiguration implements ServerConfiguration {
                             + ((httpIlpConnectionLimit > 0) ? PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", " : "")
                             + ((httpExportConnectionLimit > 0) ? PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", " : "")
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
+        }
+    }
+
+    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
+        // A non-positive batch size would turn the reducer loop
+        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
+        // into an infinite loop. Cap at the same 24-bit row index bound as
+        // page frames since the batch cannot exceed a single page frame.
+        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxBatchSize) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
+        }
+    }
+
+    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
+        // Frame-relative row indexes are packed into the 24-bit slot of every
+        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
+        // rows. Reject misconfigurations that would silently truncate.
+        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxRows) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
         }
     }
 
@@ -3669,6 +3699,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getGroupByAllocatorMaxChunkSize() {
             return sqlGroupByAllocatorMaxChunkSize;
+        }
+
+        @Override
+        public int getGroupByBatchSize() {
+            return cairoGroupByBatchSize;
         }
 
         @Override

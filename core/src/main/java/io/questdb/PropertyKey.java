@@ -116,6 +116,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP("cairo.sql.horizon.join.bwd.scan.min.gap"),
     CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR("cairo.sql.horizon.join.bwd.scan.switch.factor"),
     CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS("cairo.sql.horizon.join.max.offsets"),
+    CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE("cairo.sql.parallel.groupby.batch.size"),
     CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),
