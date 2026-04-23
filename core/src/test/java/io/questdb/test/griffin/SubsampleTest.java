@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -2874,9 +2873,8 @@ public class SubsampleTest extends AbstractCairoTest {
                     (100.0, '2024-01-01T09:00:00.000000Z')
                     """);
             drainWalQueue();
-            // Compute expected offset
-            Rnd rnd = new Rnd(42, 42);
-            int offset = rnd.nextInt(3);
+            // Compute expected offset using the same splitmix64 hash as production
+            int offset = deterministicCadenceOffset(42, 3);
             // Build expected rows: 0, then stride+offset, 2*stride+offset, ..., pin last=9
             String[] rows = {
                     "10.0\t2024-01-01T00:00:00.000000Z",
@@ -2929,7 +2927,7 @@ public class SubsampleTest extends AbstractCairoTest {
             int seedB = -1;
             int offsetA = -1;
             for (int s = 0; s < 100; s++) {
-                int off = new Rnd(s, s).nextInt(5);
+                int off = deterministicCadenceOffset(s, 5);
                 if (seedA == -1) {
                     seedA = s;
                     offsetA = off;
@@ -3295,5 +3293,15 @@ public class SubsampleTest extends AbstractCairoTest {
             String expected = sink.toString();
             assertSql(expected, "SELECT price, ts FROM t SUBSAMPLE cadence(3, 40 + 2)");
         });
+    }
+
+    // Mirrors the splitmix64 hash used in SubsampleRecordCursorFactory
+    // for deterministic cadence offset computation.
+    private static int deterministicCadenceOffset(long seed, int stride) {
+        long h = seed;
+        h = (h ^ (h >>> 30)) * 0xbf58476d1ce4e5b9L;
+        h = (h ^ (h >>> 27)) * 0x94d049bb133111ebL;
+        h = h ^ (h >>> 31);
+        return (int) (Math.abs(h) % stride);
     }
 }

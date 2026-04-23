@@ -486,16 +486,19 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             if (seedMode == SEED_MODE_RANDOM) {
                 return contextRnd.nextInt(stride);
             }
-            // SEED_MODE_DETERMINISTIC
+            // SEED_MODE_DETERMINISTIC: compute offset from seed without
+            // mutating shared RNG state or allocating. Uses a mixing hash
+            // (splitmix64 finalizer) bounded to [0, stride).
             long seedVal = seedFunc.getLong(null);
             if (seedVal == Numbers.LONG_NULL) {
                 throw CairoException.nonCritical().position(seedPosition)
                         .put("seed must be set");
             }
-            // Reuse the context Rnd by resetting with the seed value.
-            // This avoids allocating a new Rnd per execution.
-            contextRnd.reset(seedVal, seedVal);
-            return contextRnd.nextInt(stride);
+            long h = seedVal;
+            h = (h ^ (h >>> 30)) * 0xbf58476d1ce4e5b9L;
+            h = (h ^ (h >>> 27)) * 0x94d049bb133111ebL;
+            h = h ^ (h >>> 31);
+            return (int) (Math.abs(h) % stride);
         }
 
         private void bufferInput() {
