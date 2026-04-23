@@ -26,13 +26,17 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
+import io.questdb.std.Unsafe;
 
 public interface GroupByFunction extends Function, Mutable {
     int SAMPLE_BY_FILL_LINEAR = 4;
@@ -67,13 +71,13 @@ public interface GroupByFunction extends Function, Mutable {
      * </ul>
      *
      * @param mapValue   group state that must be updated with the aggregated result
-     * @param ptr        native memory address of the first buffered value for the group, or 0 for
+     * @param dataAddr   native memory address of the first buffered value for the group, or 0 for
      *                   no-arg functions (e.g. count(*))
-     * @param count      number of buffered values that can be read starting from {@code ptr}
+     * @param rowCount   number of buffered values that can be read starting from {@code ptr}
      * @param startRowId row id of the first record in the batch; the row id of the i-th
      *                   record is {@code startRowId + i}
      */
-    default void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
+    default void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         throw new UnsupportedOperationException();
     }
 
@@ -91,6 +95,55 @@ public interface GroupByFunction extends Function, Mutable {
      * @param rowId    row id; the value may be different from record.getRowId()
      */
     void computeFirst(MapValue mapValue, Record record, long rowId);
+
+    /**
+     * Aggregates {@code rowCount} input values into per-row output entries
+     * in the keyed GROUP BY path. The default implementation loops over the
+     * batch and delegates to {@link #computeFirst}/{@link #computeNext}
+     * through a {@link FlyweightPackedMapValue} flyweight, keeping map-value
+     * dispatch monomorphic regardless of the underlying map type.
+     * Individual functions may override with tight loops for direct column
+     * arguments. Overrides that need a per-function value-column offset should
+     * hoist it out of the hot loop via {@link FlyweightPackedMapValue#getOffset(int)}.
+     * <p>
+     * Each packed long in {@code batchAddr} has the layout:
+     * {@code [isNew:1][rowIndex:24][offset:39]}, where {@code offset} is the
+     * value-region-start offset relative to {@code entryBase}.
+     * <p>
+     * New entries are pre-initialized to the function's identity state via
+     * {@link #setEmpty(MapValue)} (see {@link io.questdb.cairo.map.Map#setBatchEmptyValue}),
+     * so overrides may safely skip the {@code isNew} branch when
+     * {@code computeNext} on the empty state yields the right result.
+     *
+     * @param record        page frame record, positioned via setRowIndex
+     * @param mapValue      pre-allocated packed flyweight, reused per row
+     * @param baseValueAddr stable base address for map values, pre-resolved by the reducer
+     * @param batchAddr     native pointer to {@code rowCount} packed longs (8 bytes each)
+     * @param rowCount      number of entries to process
+     * @param baseRowId     absolute row id of the first row in the sub-batch
+     */
+    default void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        for (long i = 0; i < rowCount; i++) {
+            long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            long valueOffset = Map.decodeBatchOffset(encoded);
+            int rowIndex = Map.decodeBatchRowIndex(encoded);
+            boolean isNew = Map.isNewBatchEntry(encoded);
+            record.setRowIndex(rowIndex);
+            mapValue.of(baseValueAddr + valueOffset);
+            if (isNew) {
+                computeFirst(mapValue, record, baseRowId + rowIndex);
+            } else {
+                computeNext(mapValue, record, baseRowId + rowIndex);
+            }
+        }
+    }
 
     /**
      * Performs a subsequent aggregation within a group.
