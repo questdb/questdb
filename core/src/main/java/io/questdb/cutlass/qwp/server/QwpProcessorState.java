@@ -178,31 +178,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     /**
-     * Writes per-table seqTxn entries from the given map to native memory.
-     * Format: tableCount(2) + [nameLen(2) + nameUtf8(N) + seqTxn(8)] * count
-     *
-     * @return number of bytes written
-     */
-    public static int writeTableSeqTxnEntries(long addr, CharSequenceLongHashMap entries) {
-        int offset = 0;
-        ObjList<CharSequence> keys = entries.keys();
-        int count = keys.size();
-        Unsafe.getUnsafe().putShort(addr + offset, (short) count);
-        offset += 2;
-        for (int i = 0; i < count; i++) {
-            CharSequence tableName = keys.getQuick(i);
-            int utf8Len = Utf8s.utf8Bytes(tableName);
-            Unsafe.getUnsafe().putShort(addr + offset, (short) utf8Len);
-            offset += 2;
-            Utf8s.strCpyUtf8(tableName, addr + offset, utf8Len);
-            offset += utf8Len;
-            Unsafe.getUnsafe().putLong(addr + offset, entries.get(tableName));
-            offset += 8;
-        }
-        return offset;
-    }
-
-    /**
      * Collects per-table durable progress from the registry. Returns the
      * snapshot map (owned by this instance) containing only tables whose
      * durable seqTxn has advanced since the last durable ack was sent.
@@ -590,6 +565,31 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     public boolean shouldSendAck(int batchSize) {
         return sendState == SEND_STATE_READY
                 && highestProcessedSequence - lastAckedSequence >= batchSize;
+    }
+
+    /**
+     * Writes per-table seqTxn entries from the given map to native memory.
+     * Format: tableCount(2) + [nameLen(2) + nameUtf8(N) + seqTxn(8)] * count
+     *
+     * @return number of bytes written
+     */
+    public static int writeTableSeqTxnEntries(long addr, CharSequenceLongHashMap entries) {
+        int offset = 0;
+        ObjList<CharSequence> keys = entries.keys();
+        int count = keys.size();
+        Unsafe.getUnsafe().putShort(addr + offset, (short) count);
+        offset += 2;
+        for (int i = 0; i < count; i++) {
+            CharSequence tableName = keys.getQuick(i);
+            int utf8Len = Utf8s.utf8Bytes(tableName);
+            Unsafe.getUnsafe().putShort(addr + offset, (short) utf8Len);
+            offset += 2;
+            Utf8s.strCpyUtf8(tableName, addr + offset, utf8Len);
+            offset += utf8Len;
+            Unsafe.getUnsafe().putLong(addr + offset, entries.get(tableName));
+            offset += 8;
+        }
+        return offset;
     }
 
     private static Status cairoExceptionStatus(CairoException e) {
