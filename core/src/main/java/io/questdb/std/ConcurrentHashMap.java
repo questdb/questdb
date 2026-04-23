@@ -3106,7 +3106,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         // values for lockState
         static final int WRITER = 1; // set while holding write lock
         private static final long LOCKSTATE;
-        private static final sun.misc.Unsafe U;
         volatile TreeNode<V> first;
         volatile int lockState;
         TreeNode<V> root;
@@ -3165,13 +3164,13 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             boolean waiting = false;
             for (int s; ; ) {
                 if (((s = lockState) & ~WAITER) == 0) {
-                    if (U.compareAndSwapInt(this, LOCKSTATE, s, WRITER)) {
+                    if (Unsafe.cas(this, LOCKSTATE, s, WRITER)) {
                         if (waiting)
                             waiter = null;
                         return;
                     }
                 } else if ((s & WAITER) == 0) {
-                    if (U.compareAndSwapInt(this, LOCKSTATE, s, s | WAITER)) {
+                    if (Unsafe.cas(this, LOCKSTATE, s, s | WAITER)) {
                         waiting = true;
                         waiter = Thread.currentThread();
                     }
@@ -3184,7 +3183,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * Acquires write lock for tree restructuring.
          */
         private void lockRoot() {
-            if (!U.compareAndSwapInt(this, LOCKSTATE, 0, WRITER))
+            if (!Unsafe.cas(this, LOCKSTATE, 0, WRITER))
                 contendedLock(); // offload to separate method
         }
 
@@ -3421,7 +3420,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                 ((ek = e.key) == k || (ek != null && keyEquals(k, ek, ics))))
                             return e;
                         e = e.next;
-                    } else if (U.compareAndSwapInt(this, LOCKSTATE, s,
+                    } else if (Unsafe.cas(this, LOCKSTATE, s,
                             s + READER)) {
                         TreeNode<V> r, p;
                         try {
@@ -3429,7 +3428,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                     r.findTreeNode(h, k, null));
                         } finally {
                             Thread w;
-                            if (U.getAndAddInt(this, LOCKSTATE, -READER) ==
+                            if (Unsafe.getAndAddInt(this, LOCKSTATE, -READER) ==
                                     (READER | WAITER) && (w = waiter) != null)
                                 LockSupport.unpark(w);
                         }
@@ -3610,9 +3609,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
 
         static {
             try {
-                U = Unsafe.getUnsafe();
                 Class<?> k = TreeBin.class;
-                LOCKSTATE = U.objectFieldOffset
+                LOCKSTATE = Unsafe.objectFieldOffset
                         (k.getDeclaredField("lockState"));
             } catch (Exception e) {
                 throw new Error(e);
