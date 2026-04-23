@@ -101,14 +101,13 @@ public class QwpServerInfoFrameTest {
         int cap = 128;
         long buf = Unsafe.getUnsafe().allocateMemory(cap);
         try {
-            long qwpStart = buf;
-            long bodyStart = QwpEgressFrameWriter.writeMessageHeader(qwpStart, QwpConstants.VERSION_2, (byte) 0, 0, 0);
+            long bodyStart = QwpEgressFrameWriter.writeMessageHeader(buf, QwpConstants.VERSION_2, (byte) 0, 0, 0);
             // Write a RESULT_END body instead of SERVER_INFO; decoder must reject.
             long bodyEnd = QwpEgressFrameWriter.writeResultEnd(bodyStart, 1L, 0L, 0L);
-            int qwpSize = (int) (bodyEnd - qwpStart);
+            int qwpSize = (int) (bodyEnd - buf);
             int payloadLen = qwpSize - QwpConstants.HEADER_SIZE;
-            QwpEgressFrameWriter.patchPayloadLength(qwpStart, payloadLen);
-            QwpServerInfoDecoder.decode(qwpStart, qwpSize);
+            QwpEgressFrameWriter.patchPayloadLength(buf, payloadLen);
+            QwpServerInfoDecoder.decode(buf, qwpSize);
         } finally {
             Unsafe.getUnsafe().freeMemory(buf);
         }
@@ -119,16 +118,15 @@ public class QwpServerInfoFrameTest {
         int cap = 128;
         long buf = Unsafe.getUnsafe().allocateMemory(cap);
         try {
-            long qwpStart = buf;
-            long bodyStart = QwpEgressFrameWriter.writeMessageHeader(qwpStart, QwpConstants.VERSION_2, (byte) 0, 0, 0);
+            long bodyStart = QwpEgressFrameWriter.writeMessageHeader(buf, QwpConstants.VERSION_2, (byte) 0, 0, 0);
             long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
                     bodyStart, 64,
                     io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.ROLE_PRIMARY,
                     1L, 0, 0L, "cluster", "node");
-            int fullQwpSize = (int) (bodyEnd - qwpStart);
-            QwpEgressFrameWriter.patchPayloadLength(qwpStart, fullQwpSize - QwpConstants.HEADER_SIZE);
+            int fullQwpSize = (int) (bodyEnd - buf);
+            QwpEgressFrameWriter.patchPayloadLength(buf, fullQwpSize - QwpConstants.HEADER_SIZE);
             // Shave off the last 4 bytes so node_id length declares more than is present.
-            QwpServerInfoDecoder.decode(qwpStart, fullQwpSize - 4);
+            QwpServerInfoDecoder.decode(buf, fullQwpSize - 4);
         } finally {
             Unsafe.getUnsafe().freeMemory(buf);
         }
@@ -176,17 +174,16 @@ public class QwpServerInfoFrameTest {
         int cap = 128 + (clusterId.length() + nodeId.length()) * 4;
         long buf = Unsafe.getUnsafe().allocateMemory(cap);
         try {
-            long qwpStart = buf;
             long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                    qwpStart, QwpConstants.VERSION_2, (byte) 0, 0, 0);
+                    buf, QwpConstants.VERSION_2, (byte) 0, 0, 0);
             int bodyCap = cap - QwpConstants.HEADER_SIZE;
             long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
                     bodyStart, bodyCap, role, epoch, capabilities, wallNs, clusterId, nodeId);
             Assert.assertTrue("writeServerInfo returned -1 with cap=" + cap, bodyEnd > 0);
-            int qwpSize = (int) (bodyEnd - qwpStart);
+            int qwpSize = (int) (bodyEnd - buf);
             int payloadLen = qwpSize - QwpConstants.HEADER_SIZE;
-            QwpEgressFrameWriter.patchPayloadLength(qwpStart, payloadLen);
-            return QwpServerInfoDecoder.decode(qwpStart, qwpSize);
+            QwpEgressFrameWriter.patchPayloadLength(buf, payloadLen);
+            return QwpServerInfoDecoder.decode(buf, qwpSize);
         } finally {
             Unsafe.getUnsafe().freeMemory(buf);
         }

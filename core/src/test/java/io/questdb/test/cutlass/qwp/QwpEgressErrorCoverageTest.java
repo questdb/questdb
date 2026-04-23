@@ -40,6 +40,8 @@ import java.io.InputStreamReader;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /**
  * End-to-end error-path coverage for egress. Complements the server-side
@@ -208,6 +210,8 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
                 serverMain.awaitTable("big");
 
                 // Client #1: close mid-stream.
+                final CountDownLatch firstBatchSeen = new CountDownLatch(1);
+                final Thread[] workerRef = new Thread[1];
                 try (QwpQueryClient c1 = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                     c1.connect();
                     // Run the query on a worker thread so this thread can close
@@ -218,6 +222,10 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
                             c1.execute("SELECT x FROM big ORDER BY x", new QwpColumnBatchHandler() {
                                 @Override
                                 public void onBatch(QwpColumnBatch batch) {
+                                    // Signal that the first batch has arrived so the
+                                    // test thread can close() and guarantee we are
+                                    // mid-stream rather than racing timer-based sleep.
+                                    firstBatchSeen.countDown();
                                     // Block inside the first batch callback so close()
                                     // fires while the server is mid-stream.
                                     try {
@@ -240,13 +248,22 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
                             // Close propagates as an error / interrupt; swallow.
                         }
                     });
-                    worker.setDaemon(true);
+                    workerRef[0] = worker;
                     worker.start();
-                    // Wait briefly so we're guaranteed to be mid-stream when close() fires.
-                    Thread.sleep(500);
+                    Assert.assertTrue(
+                            "first RESULT_BATCH did not arrive within 30s -- server may be stalled",
+                            firstBatchSeen.await(30, TimeUnit.SECONDS)
+                    );
                     // Leaves try-with-resources here, triggering close() which
                     // interrupts the worker and shuts the I/O thread.
                 }
+                // Join the worker so stray threads do not outlive the memory-leak
+                // check. It may still be parked in Thread.sleep(30_000) after the
+                // client close; interrupt() unblocks it so join() completes promptly.
+                workerRef[0].interrupt();
+                workerRef[0].join(5_000);
+                Assert.assertFalse("disconnect worker must not outlive the test",
+                        workerRef[0].isAlive());
 
                 // Client #2: fresh connection to the same server must work
                 // normally. Catches server-state corruption triggered by the

@@ -121,8 +121,6 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietCloseable {
 
-    private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
-    private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     /**
      * Phase 1 batch cap. Size-based cap is indirectly enforced by the rawSocket
      * send buffer capacity (rejections become QUERY_ERROR). Larger batches
@@ -154,6 +152,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * per batch, no effect on production streams.
      */
     public static volatile int DEBUG_FORCE_TRANSPORT_FAILURE_AFTER_BATCHES = 0;
+    private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
+    private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
     /**
      * Upper bound for the SERVER_INFO body: 26 bytes fixed fields plus 65535
@@ -170,13 +170,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
+    private final QwpEgressMetrics metrics;
     private final int recvBufferSize;
     /**
-     * Server-wide cache of compiled {@link RecordCursorFactory} keyed by SQL text.
-     * Shared across every connection handled by this processor, so repeat queries
-     * with the same text skip the compile + plan + factory-build pipeline. Mirrors
-     * the {@code HttpServer.selectCache} pattern (same cache shape, separate
-     * instance -- engine-level unification is a follow-up exercise).
+     * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
+     * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP
+     * worker, so each worker ends up with its own cache -- connections that land
+     * on the same worker share a hit, connections that land on different workers
+     * do not. Same cache shape as {@code HttpServer.selectCache}, separate
+     * instance; engine-level unification is a follow-up exercise.
      */
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final int sharedWorkerCount;
@@ -189,6 +191,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         this.engine = engine;
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
+        this.metrics = engine.getMetrics().qwpEgressMetrics();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.sharedWorkerCount = sharedWorkerCount;
         this.selectCache = httpConfiguration.isQueryCacheEnabled()
@@ -218,13 +221,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             // Explicit cancellation (setCancellation=true) surfaces as STATUS_CANCELLED.
             if (ce.isCancellation()) {
-                return QwpEgressMsgKind.STATUS_CANCELLED;
+                return QwpConstants.STATUS_CANCELLED;
             }
             // Non-cancellation interruptions (query timeout, circuit breaker) and
             // out-of-memory both map to STATUS_LIMIT_EXCEEDED -- the client can
             // distinguish them via the message text.
             if (ce.isInterruption() || ce.isOutOfMemory()) {
-                return QwpEgressMsgKind.STATUS_LIMIT_EXCEEDED;
+                return QwpConstants.STATUS_LIMIT_EXCEEDED;
             }
             return QwpConstants.STATUS_INTERNAL_ERROR;
         }
@@ -242,6 +245,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         QwpEgressProcessorState state = LV.get(context);
         if (state == null) {
             return;
+        }
+        // Decrement only when a state existed -- pairs with the increment in
+        // finalizeHandshake so half-open connections (failed upgrade) don't
+        // drift the gauge negative.
+        if (state.isWsHandshakeSent()) {
+            metrics.connectionCountGauge().dec();
         }
         try {
             state.onDisconnected();
@@ -732,6 +741,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         state.setWsHandshakeSent(true);
         state.setHandshakeFlushPending(false);
         state.setPendingHandshakeBytes(0);
+        // Count connections only after the upgrade actually succeeded; a failed
+        // handshake is an HTTP-level 400/403/etc. and never reaches this path.
+        metrics.connectionCountGauge().inc();
         LOG.info().$("Egress WebSocket handshake sent [fd=").$(context.getFd())
                 .$(", qwpVersion=").$(state.getNegotiatedVersion() & 0xFF).I$();
         context.switchProtocol();
@@ -810,8 +822,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private void handleCredit(HttpConnectionContext context, QwpEgressProcessorState state, long payload, int length)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
-            long targetRequestId = Unsafe.getUnsafe().getLong(payload + 1);
+            // decodeCredit validates length >= 10 before any payload read. Only
+            // then is the 8-byte unsafe read at (payload + 1) guaranteed to sit
+            // inside the declared frame; the earlier order let a truncated
+            // CREDIT frame read past payload+length.
             long additional = state.getDecoder().decodeCredit(payload, length);
+            long targetRequestId = Unsafe.getUnsafe().getLong(payload + 1);
             if (additional <= 0) {
                 LOG.error().$("Egress CREDIT rejected [fd=").$(context.getFd())
                         .$(", requestId=").$(targetRequestId)
@@ -872,12 +888,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long payload,
             int length
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        QwpEgressRequestDecoder decoder = state.getDecoder();
         long requestId = 0;
-        boolean streamingHandedOff = false;
-        RecordCursorFactory factory = null;
-        RecordCursor cursor = null;
-        PageFrameCursor pageFrameCursor = null;
         // Phase 1 supports a single in-flight query per connection. A second QUERY_REQUEST
         // arriving while the first is still streaming (e.g., the send side is parked on
         // PeerIsSlowToReadException) would overwrite streamingFactory/streamingCursor in
@@ -892,9 +903,24 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     "Phase 1 egress supports a single in-flight query per connection");
             return;
         }
+
+        QwpEgressRequestDecoder decoder = state.getDecoder();
+        boolean streamingHandedOff = false;
+        RecordCursorFactory factory = null;
+        RecordCursor cursor = null;
+        PageFrameCursor pageFrameCursor = null;
         try {
             decoder.decodeQueryRequest(payload, length, state.getBindVariableService());
             requestId = decoder.requestId;
+            metrics.markQueryStarted();
+            // Check connection-scoped cache caps BEFORE processing the new
+            // query. If any soft cap is over, emit a CACHE_RESET and flush the
+            // indicated caches so the query about to start allocates fresh
+            // ids (schema) / fresh dict entries. Doing this here -- between
+            // queries, not between batches -- guarantees the reset fires at
+            // a clean frame boundary and never interleaves with a RESULT_BATCH
+            // already staged in the response buffer.
+            maybeEmitCacheReset(context, state);
             LOG.info().$("Egress QUERY_REQUEST [fd=").$(context.getFd())
                     .$(", requestId=").$(requestId)
                     .$(", sqlLen=").$(decoder.sql.length()).I$();
@@ -917,12 +943,26 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // stale factory and recompile. Two consecutive occurrences means the
             // table changed mid-recompile -- rare and probably indicates an abusive
             // DDL pattern; propagate as a normal error.
+            //
+            // Schema-id allocation is intentionally OUTSIDE this loop. Mutating
+            // the per-connection schema cache before getCursor would let a
+            // TableReferenceOutOfDateException leave a fingerprint behind; the
+            // retry would then see the fingerprint as "reuse" and ship the first
+            // batch in reference mode against an id the client never registered.
+            // Skip the select cache when bind variables are present. Factories
+            // compiled with bound values can specialise on bind types, so a
+            // cache keyed by SQL text alone can return a factory whose bind
+            // signature does not match the current request. Mirrors pgwire's
+            // TypesAndSelect design, which keys its cache by SQL plus bind
+            // types for the same reason.
+            final boolean cacheableSelect = state.getBindVariableService().getIndexedVariableCount() == 0;
             int attempts = 0;
             while (true) {
                 attempts++;
                 try {
-                    // Cache lookup only on first attempt. Retry always recompiles.
-                    if (attempts == 1) {
+                    // Cache lookup only on first attempt, and only when the
+                    // request carries no binds. Retry always recompiles.
+                    if (attempts == 1 && cacheableSelect) {
                         factory = selectCache.poll(decoder.sql);
                     }
                     if (factory == null) {
@@ -940,59 +980,29 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                             factory = cq.getRecordCursorFactory();
                         }
                     }
-                    RecordMetadata metadata = factory.getMetadata();
-                    int columnCount = metadata.getColumnCount();
-                    ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
-                    for (int i = 0; i < columnCount; i++) {
-                        columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
-                    }
-                    int schemaId = state.findOrAllocateSchemaId(columnDefs);
-                    if (schemaId == QwpEgressProcessorState.SCHEMA_ID_EXHAUSTED) {
-                        // The connection has registered DEFAULT_MAX_SCHEMAS_PER_CONNECTION distinct
-                        // schemas already; this query's shape is new and would need a fresh id the
-                        // client would reject. Surface a controlled error and free the factory so
-                        // the connection stays usable for queries against schemas already cached.
-                        Misc.free(factory);
-                        factory = null;
-                        sendQueryError(context, state, requestId, QwpEgressMsgKind.STATUS_LIMIT_EXCEEDED,
-                                "connection schema cache exhausted ("
-                                        + QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
-                                        + " distinct schemas); reconnect to reset");
-                        return;
-                    }
-                    boolean schemaAlreadyKnown = state.wasLastSchemaIdReuse();
-                    // Prefer the PageFrameCursor fast path when the factory supports it: it
-                    // hands us flat column addresses per frame and lets the SYMBOL fast path
-                    // resolve dict keys via PageFrameMemoryRecord.getInt. Factories that don't
-                    // support it (filtered/joined/grouped queries) keep the existing
-                    // RecordCursor path without change.
+                    // Acquire the cursor inside the retry loop --
+                    // TableReferenceOutOfDateException can fire only here, never from
+                    // factory or metadata access. Prefer the PageFrameCursor fast path
+                    // when the factory supports it: it hands us flat column addresses
+                    // per frame and lets the SYMBOL fast path resolve dict keys via
+                    // PageFrameMemoryRecord.getInt. Factories that don't support it
+                    // (filtered/joined/grouped queries) keep the existing RecordCursor
+                    // path without change.
                     if (factory.supportsPageFrameCursor()) {
                         int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
                                 ? PartitionFrameCursorFactory.ORDER_DESC
                                 : PartitionFrameCursorFactory.ORDER_ASC;
                         pageFrameCursor = factory.getPageFrameCursor(sqlCtx, order);
                     }
-                    if (pageFrameCursor != null) {
-                        // Streaming mode asks the cursor to release page cache pages
-                        // after reading, so a 10M-row scan doesn't evict the server's
-                        // working set. Same hint used by the parquet exporter.
-                        pageFrameCursor.setStreamingMode(true);
-                        state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
-                                columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
-                    } else {
+                    if (pageFrameCursor == null) {
                         cursor = factory.getCursor(sqlCtx);
-                        state.beginStreaming(requestId, factory, cursor,
-                                columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
                     }
-                    streamingHandedOff = true;     // ownership of factory + cursor passed to state
-                    break; // setup completed; fall through to streamResults outside the loop
+                    break; // cursor acquired; finish setup outside the loop
                 } catch (TableReferenceOutOfDateException e) {
                     // Free any partially-acquired resources from this attempt. After
                     // beginStreaming{,PageFrame} they'd be owned by state, but the
                     // exception fires BEFORE that (on getCursor / getPageFrameCursor),
                     // so we still own them here.
-                    pageFrameCursor = Misc.free(pageFrameCursor);
-                    cursor = Misc.free(cursor);
                     factory = Misc.free(factory);
                     if (attempts >= 2) {
                         // Fresh compile also raced with a DDL -- unusual, propagate.
@@ -1003,6 +1013,47 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                             .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 }
             }
+            // Cursor acquired without TableReferenceOutOfDateException -- safe to
+            // mutate the per-connection schema cache now. (See loop comment.)
+            RecordMetadata metadata = factory.getMetadata();
+            int columnCount = metadata.getColumnCount();
+            ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
+            }
+            int schemaId = state.findOrAllocateSchemaId(columnDefs);
+            if (schemaId == QwpEgressProcessorState.SCHEMA_ID_EXHAUSTED) {
+                // The connection has registered DEFAULT_MAX_SCHEMAS_PER_CONNECTION distinct
+                // schemas already; this query's shape is new and would need a fresh id the
+                // client would reject. Surface a controlled error and free the
+                // factory + cursor so the connection stays usable for queries against
+                // schemas already cached.
+                pageFrameCursor = Misc.free(pageFrameCursor);
+                cursor = Misc.free(cursor);
+                factory = Misc.free(factory);
+                sendQueryError(context, state, requestId, QwpConstants.STATUS_LIMIT_EXCEEDED,
+                        "connection schema cache exhausted ("
+                                + QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
+                                + " distinct schemas); reconnect to reset");
+                return;
+            }
+            boolean schemaAlreadyKnown = state.wasLastSchemaIdReuse();
+            // Pass a null SQL key when the query carries binds so the factory
+            // is not returned to the select cache on completion. The key is
+            // also what cacheStreamingFactoryIfAvailable consults.
+            CharSequence cacheKey = cacheableSelect ? decoder.sql : null;
+            if (pageFrameCursor != null) {
+                // Streaming mode asks the cursor to release page cache pages
+                // after reading, so a 10M-row scan doesn't evict the server's
+                // working set. Same hint used by the parquet exporter.
+                pageFrameCursor.setStreamingMode(true);
+                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
+                        columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, cacheKey);
+            } else {
+                state.beginStreaming(requestId, factory, cursor,
+                        columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, cacheKey);
+            }
+            streamingHandedOff = true;     // ownership of factory + cursor passed to state
             // Streaming may complete here (cursor short and fast), or throw PeerIsSlowToReadException
             // (we'll be re-entered via resumeSend) or another exception (handled below).
             streamResults(context, state);
@@ -1027,6 +1078,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     .$(", requestId=").$(requestId)
                     .$(", error=").$(e).I$();
             if (state.isStreamingActive()) {
+                // Roll back any connSymbolDict entries committed by the batch that was
+                // in flight when the exception fired. The batch frame never reached the
+                // wire, so those ids must not leak into the next query's dedup path.
+                state.getBatchBuffer().rollbackCurrentBatch();
                 state.endStreaming();
             } else if (!streamingHandedOff) {
                 // Free anything we allocated before handing ownership to the state. Without this,
@@ -1037,6 +1092,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 Misc.free(factory);
             }
             byte status = mapErrorStatus(e);
+            if (status == QwpConstants.STATUS_CANCELLED) {
+                metrics.markQueryCancelled();
+            } else {
+                metrics.markQueryErrored();
+            }
             try {
                 sendQueryError(context, state, requestId, status,
                         e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
@@ -1148,6 +1208,51 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     // Outbound frame serialisation
 
     /**
+     * Checks whether any connection-scoped cache has exceeded its soft cap and,
+     * if so, emits a {@code CACHE_RESET} frame and applies the matching server-
+     * side reset so both peers stay in lockstep. Called at query-completion
+     * boundaries (after {@code RESULT_END}, {@code EXEC_DONE}, or
+     * {@code QUERY_ERROR}) -- never mid-stream, because resetting the dict or
+     * the schema cache mid-stream would invalidate ids referenced by in-flight
+     * RESULT_BATCH frames.
+     */
+    private void maybeEmitCacheReset(
+            HttpConnectionContext context,
+            QwpEgressProcessorState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        byte resetMask = state.computeCacheResetMask();
+        if (resetMask == 0) {
+            return;
+        }
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufAddr = rawSocket.getBufferAddress();
+        long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
+        long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
+                qwpStart, state.getNegotiatedVersion(), (byte) 0, 0, 0 /* payload len patched */);
+        long bodyEnd = QwpEgressFrameWriter.writeCacheReset(bodyStart, resetMask);
+        int qwpSize = (int) (bodyEnd - qwpStart);
+        int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
+        QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
+        // Apply the local reset BEFORE sending. rawSocket.send commits bytes
+        // to the response sink before it attempts the flush that may throw
+        // PeerIsSlowToReadException; bytes queued that way flush on resume,
+        // so the client is guaranteed to see the CACHE_RESET frame once the
+        // connection drains. Applying the reset first keeps server and client
+        // views aligned even on the parked-send path.
+        state.applyCacheReset(resetMask);
+        if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
+            metrics.markCacheResetDict();
+        }
+        if ((resetMask & QwpEgressMsgKind.RESET_MASK_SCHEMAS) != 0) {
+            metrics.markCacheResetSchemas();
+        }
+        LOG.debug().$("Egress cache reset [fd=").$(context.getFd())
+                .$(", mask=0x").$(Integer.toHexString(resetMask & 0xFF))
+                .I$();
+        sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
+    }
+
+    /**
      * Ack for a non-SELECT query that completed successfully. Body is small and
      * always fits in the send buffer's header reservation plus a handful of bytes,
      * so this is a one-shot send -- no chunking.
@@ -1205,19 +1310,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * </pre>
      * After computing {@code qwpSize}, the method picks the real WS header size
      * and may memmove the QWP bytes left so the wire frame abuts offset 0
-     * (which is what {@link HttpRawSocket#send(int)} flushes).
-     *
-     * @return the WS payload size (QWP bytes) actually written -- used by the
-     * credit bookkeeping to debit the stream's remaining budget.
+     * (which is what {@link HttpRawSocket#send(int)} flushes). Credit debit
+     * and metric bookkeeping happen internally, right before the send call,
+     * so they survive a {@link PeerIsSlowToReadException} park.
      */
-    private int sendResultBatch(
+    private void sendResultBatch(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
             long requestId,
             long batchSeq,
             QwpResultBatchBuffer batchBuffer,
             long schemaId,
-            boolean writeFullSchema
+            boolean writeFullSchema,
+            int rowsThisBatch
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Asserts the caller bumped streamingBatchSeq (via state.onStreamingBatchSent)
         // BEFORE reaching the socket. See QwpEgressProcessorState.consumeBatchSeqCommit.
@@ -1269,6 +1374,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 if (compLen > 0 && compLen < bodyLen) {
                     Vect.memcpy(preludeEnd, scratch, compLen);
                     qwpEnd = preludeEnd + compLen;
+                    metrics.markBytesCompressedSaved((int) (bodyLen - compLen));
                     // Patch FLAG_ZSTD into the header's flags byte. writeMessageHeader
                     // already wrote FLAG_DELTA_SYMBOL_DICT | FLAG_GORILLA; we OR in
                     // the zstd bit without re-serialising the whole header.
@@ -1290,8 +1396,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
         QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
 
+        // Debit credit and record the metric BEFORE sendFrame: rawSocket.send
+        // commits bytes to the response sink and may then throw
+        // PeerIsSlowToReadException while the committed bytes are queued for
+        // resumeResponseSend. The bytes always reach the wire, so budget and
+        // counters must always shrink / advance. Post-send updates get skipped
+        // by PISR and the stream drifts (stale credit, under-reported rows).
+        state.consumeStreamingCredit(qwpSize);
+        metrics.markBatchSent(qwpSize, rowsThisBatch);
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
-        return qwpSize;
     }
 
     /**
@@ -1305,10 +1418,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * (~41 bytes incl. reservation) so the fallback only triggers for batches
      * that already fill the buffer to within tens of bytes of capacity.
      * <p>
-     * Returns the RESULT_BATCH payload size (not including RESULT_END), for the
-     * caller's credit-bookkeeping debit.
+     * Metric bookkeeping for the RESULT_BATCH portion happens internally,
+     * right before the send call, so it survives a
+     * {@link PeerIsSlowToReadException} park.
      */
-    private int sendResultBatchAndEnd(
+    private void sendResultBatchAndEnd(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
             long requestId,
@@ -1316,7 +1430,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             QwpResultBatchBuffer batchBuffer,
             long schemaId,
             boolean writeFullSchema,
-            long totalRows
+            long totalRows,
+            int rowsThisBatch
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         state.consumeBatchSeqCommit();
         HttpRawSocket rawSocket = context.getRawResponseSocket();
@@ -1355,6 +1470,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 if (compLen > 0 && compLen < bodyLen) {
                     Vect.memcpy(preludeEnd, scratch, compLen);
                     qwp1End = preludeEnd + compLen;
+                    metrics.markBytesCompressedSaved((int) (bodyLen - compLen));
                     long flagsAddr = qwp1Start + QwpConstants.HEADER_OFFSET_FLAGS;
                     byte flags = Unsafe.getUnsafe().getByte(flagsAddr);
                     Unsafe.getUnsafe().putByte(flagsAddr, (byte) (flags | QwpConstants.FLAG_ZSTD));
@@ -1383,10 +1499,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 Unsafe.getUnsafe().copyMemory(qwp1Start, bufAddr + ws1HeaderSize, qwp1Size);
             }
             WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwp1Size);
+            // Record the RESULT_BATCH metric BEFORE rawSocket.send: the send can
+            // park on PeerIsSlowToReadException after committing bytes to the
+            // sink; the bytes still reach the wire via resumeResponseSend, so
+            // the counters must always advance.
+            metrics.markBatchSent(qwp1Size, rowsThisBatch);
             rawSocket.send(frame1Size);
             state.endStreaming();
             sendResultEnd(context, state, requestId, batchSeq, totalRows);
-            return qwp1Size;
+            return;
         }
 
         // Shift RESULT_BATCH so it abuts offset 0 and write its WS header.
@@ -1415,8 +1536,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // client can observe RESULT_END and issue a DROP TABLE while we still
         // hold the TableReader. See the matching notes on the two-send paths.
         state.endStreaming();
+        // Record the RESULT_BATCH metric BEFORE rawSocket.send, same reasoning
+        // as the two-send fallback branch above.
+        metrics.markBatchSent(qwp1Size, rowsThisBatch);
         rawSocket.send(frame1Size + ws2HeaderSize + qwp2Size);
-        return qwp1Size;
     }
 
     private void sendResultEnd(
@@ -1485,7 +1608,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         .$(", rowsEmitted=").$(state.getStreamingRowsEmitted())
                         .I$();
                 state.endStreaming();
-                sendQueryError(context, state, requestId, QwpEgressMsgKind.STATUS_CANCELLED, "cancelled by client");
+                metrics.markQueryCancelled();
+                sendQueryError(context, state, requestId, QwpConstants.STATUS_CANCELLED, "cancelled by client");
                 return;
             }
             // Credit-limited streams park when the client-advertised budget hits
@@ -1534,10 +1658,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             boolean cursorExhausted = rowsThisBatch < batchCap;
             boolean writeFullSchema = !state.isStreamingFullSchemaSent();
-            // Empty trailing batch (cursor exhausted between full-batch boundary and this iteration)
-            // and we've already sent at least one batch with the schema -- skip straight to RESULT_END.
-            if (rowsThisBatch == 0 && state.isStreamingFullSchemaSent()) {
-                long finalSeq = state.getStreamingBatchSeq() == 0 ? 0 : state.getStreamingBatchSeq() - 1;
+            // Empty trailing batch AND we've already shipped at least one RESULT_BATCH on
+            // this query -- skip straight to RESULT_END. The getStreamingBatchSeq() > 0
+            // guard is load-bearing: without it, a query whose schema is already known on
+            // the connection (streamingFullSchemaSent primed to true at beginStreaming) and
+            // whose cursor is empty would take this shortcut on the very first iteration
+            // and ship zero RESULT_BATCH frames, violating spec section 7.
+            if (rowsThisBatch == 0 && state.getStreamingBatchSeq() > 0) {
+                long finalSeq = state.getStreamingBatchSeq() - 1;
                 long totalRows = state.getStreamingRowsEmitted();
                 // Detach factory + SQL text BEFORE endStreaming so endStreaming
                 // doesn't free the factory -- we put it back into the compile
@@ -1569,17 +1697,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // state.endStreaming() internally; after it runs, state no longer
                 // has the factory reference.
                 cacheStreamingFactoryIfAvailable(state);
-                int qwpBytes = sendResultBatchAndEnd(context, state, requestId, currentSeq,
-                        batchBuffer, schemaId, writeFullSchema, totalRows);
-                // Credit bookkeeping: debit only the RESULT_BATCH payload. RESULT_END
-                // is a control frame and not subject to flow control.
-                state.consumeStreamingCredit(qwpBytes);
+                sendResultBatchAndEnd(context, state, requestId, currentSeq,
+                        batchBuffer, schemaId, writeFullSchema, totalRows, rowsThisBatch);
+                // Metric is recorded inside sendResultBatchAndEnd before the
+                // send to survive a PeerIsSlowToReadException park. Credit
+                // bookkeeping is moot on the cursor-exhausted branch:
+                // sendResultBatchAndEnd calls state.endStreaming() before the
+                // send, which resets streamingCreditInitial to 0 and makes
+                // consumeStreamingCredit a no-op.
                 return;
             }
-            int qwpBytes = sendResultBatch(context, state, requestId, currentSeq, batchBuffer, schemaId, writeFullSchema);
-            // Credit bookkeeping: debit by the bytes we just committed to the wire.
-            // No-op when the stream isn't credit-limited (initialCredit==0).
-            state.consumeStreamingCredit(qwpBytes);
+            sendResultBatch(context, state, requestId, currentSeq, batchBuffer,
+                    schemaId, writeFullSchema, rowsThisBatch);
+            // Credit debit and metric update both live inside sendResultBatch
+            // so they survive a PeerIsSlowToReadException park.
         }
     }
 }

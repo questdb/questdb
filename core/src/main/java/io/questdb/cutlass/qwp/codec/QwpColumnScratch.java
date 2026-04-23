@@ -59,6 +59,15 @@ import io.questdb.std.str.Utf8Sequence;
 final class QwpColumnScratch implements QuietCloseable {
 
     private static final int INITIAL_BYTES = 4096;
+    // Growth factor to shrink to, vs. peak observed in the last query. Realloc
+    // target is max(INITIAL_BYTES, SHRINK_TARGET_FACTOR * peak). Combined with
+    // SHRINK_TRIGGER_FACTOR, this produces a stable hysteresis band: peaks
+    // trigger growth geometrically, idle queries trim back to ~2x the last
+    // peak, so a workload that oscillates within 2x does not reallocate.
+    private static final int SHRINK_TARGET_FACTOR = 2;
+    // Shrink threshold: a buffer whose capacity exceeds SHRINK_TRIGGER_FACTOR *
+    // peak-seen-in-the-query is eligible for a trim at query boundary.
+    private static final int SHRINK_TRIGGER_FACTOR = 4;
     final Decimal128 decimal128Sink = new Decimal128();
     final Decimal256 decimal256Sink = new Decimal256();
     // Dedup by native symbol-table key -> connection-scoped dict id. Persists across
@@ -74,6 +83,18 @@ final class QwpColumnScratch implements QuietCloseable {
     long nullBitmapAddr;
     int nullBitmapCapacity;
     int nullCount;
+    // Peak bytes observed for each buffer within the current query. Updated in
+    // {@link #beginBatch} (capturing the previous batch's footprint before
+    // positions reset) and again in {@link #resetForNewQuery} (capturing the
+    // final batch). Used to decide whether a buffer has outgrown its actual
+    // needs and should shrink at query boundary -- prevents a one-off wide
+    // batch from permanently retaining megabytes of native memory.
+    int peakArrayHeapBytes;
+    int peakNullBitmapBytes;
+    int peakStringHeapBytes;
+    int peakStringOffsetsBytes;
+    int peakSymbolIdsBytes;
+    int peakValuesBytes;
     int rowCount;
     long stringHeapAddr;
     int stringHeapCapacity;
@@ -126,8 +147,7 @@ final class QwpColumnScratch implements QuietCloseable {
     /**
      * UTF-8 encode {@code cs} into {@code heapAddr} starting at {@code pos}; returns
      * the position one past the last written byte. Caller must pre-size the heap for
-     * the worst case ({@code 4 * cs.length()} bytes). Shared between {@code appendString}
-     * so {@code appendString} doesn't duplicate the codec.
+     * the worst case ({@code 4 * cs.length()} bytes).
      */
     private static int encodeUtf8(CharSequence cs, long heapAddr, int pos) {
         final int charLen = cs.length();
@@ -146,6 +166,14 @@ final class QwpColumnScratch implements QuietCloseable {
                 Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 12) & 0x3F)));
                 Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 6) & 0x3F)));
                 Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (cp & 0x3F)));
+            } else if (Character.isSurrogate(c)) {
+                // RFC 3629 forbids encoding U+D800..U+DFFF directly. A lone
+                // surrogate (unpaired high, or any low) is substituted with the
+                // Unicode replacement character U+FFFD so the wire bytes always
+                // round-trip through a strict UTF-8 decoder.
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) 0xEF);
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) 0xBF);
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) 0xBD);
             } else {
                 Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xE0 | (c >> 12)));
                 Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((c >> 6) & 0x3F)));
@@ -694,6 +722,11 @@ final class QwpColumnScratch implements QuietCloseable {
 
     void beginBatch(QwpEgressColumnDef def) {
         this.def = def;
+        // Capture this column's footprint from the batch that just finished
+        // before the positions reset, so peak* tracks the largest batch seen
+        // since the last query boundary. Does nothing on the first batch of
+        // a query (all positions are already 0).
+        updatePeakUsage();
         this.rowCount = 0;
         this.nonNullCount = 0;
         this.nullCount = 0;
@@ -712,11 +745,109 @@ final class QwpColumnScratch implements QuietCloseable {
 
     /**
      * Clears the native-key -> connId map so native keys from a new query (which
-     * may live in a different symbol-table space) don't reuse stale mappings.
-     * Called once per query start by {@link QwpResultBatchBuffer#resetForNewQuery}.
+     * may live in a different symbol-table space) don't reuse stale mappings,
+     * and trims any native buffer whose capacity has outgrown this column's
+     * actual use by more than {@link #SHRINK_TRIGGER_FACTOR}x. Called once per
+     * query start by {@link QwpResultBatchBuffer#resetForNewQuery}.
+     * <p>
+     * Without the shrink pass, a single wide batch on a long-lived connection
+     * would permanently retain its peak-sized scratch until the connection
+     * drops -- a DoS surface for slow clients or bursty workloads.
      */
     void resetForNewQuery() {
         connKeyToConnId.clear();
+        // Roll the final batch of the previous query into the peak counters
+        // before we use them to decide whether to shrink.
+        updatePeakUsage();
+        // Trim each oversized buffer down to SHRINK_TARGET_FACTOR * peak. Manual
+        // per-buffer sequence rather than a helper-plus-setter so we don't
+        // allocate a capturing lambda on the shrink path (resetForNewQuery fires
+        // on every query boundary).
+        int target;
+        if (valuesCapacity > 0 && (peakValuesBytes == 0
+                || valuesCapacity >= (long) peakValuesBytes * SHRINK_TRIGGER_FACTOR)) {
+            target = shrinkTarget(peakValuesBytes);
+            if (target < valuesCapacity) {
+                valuesAddr = Unsafe.realloc(valuesAddr, valuesCapacity, target, MemoryTag.NATIVE_HTTP_CONN);
+                valuesCapacity = target;
+            }
+        }
+        if (nullBitmapCapacity > 0 && (peakNullBitmapBytes == 0
+                || nullBitmapCapacity >= (long) peakNullBitmapBytes * SHRINK_TRIGGER_FACTOR)) {
+            target = shrinkTarget(peakNullBitmapBytes);
+            if (target < nullBitmapCapacity) {
+                nullBitmapAddr = Unsafe.realloc(nullBitmapAddr, nullBitmapCapacity, target, MemoryTag.NATIVE_HTTP_CONN);
+                nullBitmapCapacity = target;
+            }
+        }
+        if (stringHeapCapacity > 0 && (peakStringHeapBytes == 0
+                || stringHeapCapacity >= (long) peakStringHeapBytes * SHRINK_TRIGGER_FACTOR)) {
+            target = shrinkTarget(peakStringHeapBytes);
+            if (target < stringHeapCapacity) {
+                stringHeapAddr = Unsafe.realloc(stringHeapAddr, stringHeapCapacity, target, MemoryTag.NATIVE_HTTP_CONN);
+                stringHeapCapacity = target;
+            }
+        }
+        if (stringOffsetsCapacity > 0 && (peakStringOffsetsBytes == 0
+                || stringOffsetsCapacity >= (long) peakStringOffsetsBytes * SHRINK_TRIGGER_FACTOR)) {
+            target = shrinkTarget(peakStringOffsetsBytes);
+            if (target < stringOffsetsCapacity) {
+                stringOffsetsAddr = Unsafe.realloc(stringOffsetsAddr, stringOffsetsCapacity, target, MemoryTag.NATIVE_HTTP_CONN);
+                stringOffsetsCapacity = target;
+            }
+        }
+        if (symbolIdsCapacity > 0 && (peakSymbolIdsBytes == 0
+                || symbolIdsCapacity >= (long) peakSymbolIdsBytes * SHRINK_TRIGGER_FACTOR)) {
+            target = shrinkTarget(peakSymbolIdsBytes);
+            if (target < symbolIdsCapacity) {
+                symbolIdsAddr = Unsafe.realloc(symbolIdsAddr, symbolIdsCapacity, target, MemoryTag.NATIVE_HTTP_CONN);
+                symbolIdsCapacity = target;
+            }
+        }
+        if (arrayHeapCapacity > 0 && (peakArrayHeapBytes == 0
+                || arrayHeapCapacity >= (long) peakArrayHeapBytes * SHRINK_TRIGGER_FACTOR)) {
+            target = shrinkTarget(peakArrayHeapBytes);
+            if (target < arrayHeapCapacity) {
+                arrayHeapAddr = Unsafe.realloc(arrayHeapAddr, arrayHeapCapacity, target, MemoryTag.NATIVE_HTTP_CONN);
+                arrayHeapCapacity = target;
+            }
+        }
+        peakValuesBytes = 0;
+        peakNullBitmapBytes = 0;
+        peakStringHeapBytes = 0;
+        peakStringOffsetsBytes = 0;
+        peakSymbolIdsBytes = 0;
+        peakArrayHeapBytes = 0;
+    }
+
+    /**
+     * Computes the shrink target for a buffer given its per-query peak usage.
+     * Never goes below {@link #INITIAL_BYTES}; rounds at
+     * {@link #SHRINK_TARGET_FACTOR} x peak for non-zero peaks.
+     */
+    private static int shrinkTarget(int peak) {
+        if (peak == 0) {
+            return INITIAL_BYTES;
+        }
+        long target = (long) peak * SHRINK_TARGET_FACTOR;
+        return (int) Math.max(INITIAL_BYTES, target);
+    }
+
+    /**
+     * Rolls the current batch's footprint into the peak counters. Called from
+     * {@link #beginBatch} (just before positions reset) and from
+     * {@link #resetForNewQuery} (to catch the final batch of a query).
+     */
+    private void updatePeakUsage() {
+        if (valuesPos > peakValuesBytes) peakValuesBytes = valuesPos;
+        if (stringHeapPos > peakStringHeapBytes) peakStringHeapBytes = stringHeapPos;
+        if (arrayHeapPos > peakArrayHeapBytes) peakArrayHeapBytes = arrayHeapPos;
+        int offsetsBytes = nonNullCount > 0 ? 4 * (nonNullCount + 1) : 0;
+        if (offsetsBytes > peakStringOffsetsBytes) peakStringOffsetsBytes = offsetsBytes;
+        int symIdsBytes = 4 * nonNullCount;
+        if (symIdsBytes > peakSymbolIdsBytes) peakSymbolIdsBytes = symIdsBytes;
+        int bitmapBytes = (rowCount + 7) >>> 3;
+        if (bitmapBytes > peakNullBitmapBytes) peakNullBitmapBytes = bitmapBytes;
     }
 
     void ensureArrayHeapCapacity(int required) {

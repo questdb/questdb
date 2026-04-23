@@ -660,18 +660,6 @@ public class HorizonJoinTimeFrameHelper {
         }
     }
 
-    public long getBackwardScanRows() {
-        return backwardScanRows;
-    }
-
-    /**
-     * Returns the current forward watermark (highest rowId we've forward-scanned).
-     * Returns Long.MIN_VALUE if no forward scanning has been done yet.
-     */
-    public long getForwardWatermark() {
-        return forwardWatermark;
-    }
-
     public Record getRecord() {
         return record;
     }
