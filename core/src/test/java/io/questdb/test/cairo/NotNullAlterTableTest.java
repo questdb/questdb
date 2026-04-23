@@ -39,18 +39,18 @@ import static org.junit.Assert.fail;
 /**
  * Targeted coverage for ALTER TABLE behaviors that interact with the NOT NULL
  * column modifier on populated tables. Splits two semantic gaps:
- *   - ADD COLUMN x ... NOT NULL on a table that already has rows
- *   - ALTER COLUMN x SET / DROP (SET NULL) NOT NULL on a populated column
- *
+ * - ADD COLUMN x ... NOT NULL on a table that already has rows
+ * - ALTER COLUMN x SET / DROP (SET NULL) NOT NULL on a populated column
+ * <p>
  * Findings (documented in each test):
- *   - ADD COLUMN x T NOT NULL succeeds without rejection or backfill. Existing
- *     rows fall under the new column's column_top, so reads of those positions
- *     return the type sentinel (printed numerically, not "null", because the
- *     column is NOT NULL). New writes are then enforced.
- *   - ALTER COLUMN x SET NOT NULL is a pure metadata flip; it does NOT scan
- *     existing data, so pre-existing NULLs survive the toggle. Only subsequent
- *     writes are enforced.
- *   - ADD COLUMN ... DEFAULT &lt;value&gt; is not supported at the parser level.
+ * - ADD COLUMN x T NOT NULL succeeds without rejection or backfill. Existing
+ * rows fall under the new column's column_top, so reads of those positions
+ * return the type sentinel (printed numerically, not "null", because the
+ * column is NOT NULL). New writes are then enforced.
+ * - ALTER COLUMN x SET NOT NULL is a pure metadata flip; it does NOT scan
+ * existing data, so pre-existing NULLs survive the toggle. Only subsequent
+ * writes are enforced.
+ * - ADD COLUMN ... DEFAULT &lt;value&gt; is not supported at the parser level.
  */
 public class NotNullAlterTableTest extends AbstractCairoTest {
 
