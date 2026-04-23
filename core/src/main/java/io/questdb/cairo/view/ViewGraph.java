@@ -27,7 +27,7 @@ package io.questdb.cairo.view;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -145,7 +145,7 @@ public class ViewGraph implements Mutable {
      * @param model     the query model containing referenced views
      * @throws CairoException if a circular dependency would be created
      */
-    public void validateNoCycle(TableToken viewToken, QueryModel model) {
+    public void validateNoCycle(TableToken viewToken, IQueryModel model) {
         final ObjList<ViewDefinition> referencedViews = model.getReferencedViews();
 
         for (int i = 0, n = referencedViews.size(); i < n; i++) {

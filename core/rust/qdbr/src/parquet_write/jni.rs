@@ -439,6 +439,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    squash_tracker: jlong,
 ) {
     let encode = || -> ParquetResult<()> {
         let partition = create_partition_descriptor(
@@ -510,6 +511,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_bloom_filter_columns(bloom_filter_cols)
             .with_bloom_filter_fpp(bloom_filter_fpp)
             .with_min_compression_ratio(min_compression_ratio)
+            .with_squash_tracker(squash_tracker)
             .finish(partition)
             .map(|_| ())
             .context("ParquetWriter::finish failed")
@@ -822,6 +824,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let (parquet_schema, additional_data) = crate::parquet_write::schema::to_parquet_schema(
             &partition_template,
             raw_array_encoding != 0,
+            -1,
         )?;
         // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
         let allocator = unsafe { &*allocator_ptr };

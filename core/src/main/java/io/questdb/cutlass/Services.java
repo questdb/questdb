@@ -50,8 +50,12 @@ import io.questdb.cutlass.pgwire.PGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
+import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
@@ -276,5 +280,29 @@ public class Services {
                         cairoEngine,
                         workerPoolManager.getSharedQueryWorkerCount()
                 ));
+    }
+
+    public QwpUdpReceiver createQwpUdpReceiver(
+            QwpUdpReceiverConfiguration config,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager
+    ) {
+        if (!config.isEnabled()) {
+            return null;
+        }
+        WorkerPool workerPool = workerPoolManager.getSharedPoolNetwork();
+        QwpUdpReceiver receiver;
+        if (Os.isLinux()) {
+            receiver = new LinuxMMQwpUdpReceiver(config, cairoEngine, workerPool);
+        } else {
+            receiver = new QwpUdpReceiver(config, cairoEngine, workerPool);
+        }
+        try {
+            receiver.start();
+        } catch (Throwable th) {
+            Misc.free(receiver);
+            throw th;
+        }
+        return receiver;
     }
 }

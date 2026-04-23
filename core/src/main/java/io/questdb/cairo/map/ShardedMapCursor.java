@@ -56,7 +56,7 @@ public class ShardedMapCursor implements MapRecordCursor {
 
     @Override
     public void close() {
-        Misc.freeObjList(shardCursors);
+        Misc.freeObjListAndKeepObjects(shardCursors);
     }
 
     @Override
@@ -97,6 +97,20 @@ public class ShardedMapCursor implements MapRecordCursor {
         shardCursors.clear();
         for (int i = 0, n = shards.size(); i < n; i++) {
             shardCursors.add(shards.getQuick(i).getCursor());
+        }
+        toTop();
+    }
+
+    public void ofShared(ObjList<Map> shards) {
+        if (shardCursors.size() == 0) {
+            for (int i = 0, n = shards.size(); i < n; i++) {
+                shardCursors.add(shards.getQuick(i).newCursor());
+            }
+        } else {
+            assert shardCursors.size() == shards.size();
+            for (int i = 0, n = shards.size(); i < n; i++) {
+                shards.getQuick(i).initCursor(shardCursors.getQuick(i));
+            }
         }
         toTop();
     }
@@ -351,6 +365,11 @@ public class ShardedMapCursor implements MapRecordCursor {
         @Override
         public long keyHashCode() {
             return baseRecord.keyHashCode();
+        }
+
+        @Override
+        public void of(long address) {
+            baseRecord.of(address);
         }
 
         @Override

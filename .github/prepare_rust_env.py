@@ -181,10 +181,7 @@ def ensure_rust_version(version, components):
         'rustup', 'toolchain', 'install', '--allow-downgrade', version]))
     subprocess.check_call(log_command([
         'rustup', 'default', version]))
-    if components:
-        subprocess.check_call(log_command([
-            'rustup', 'update']))
-        install_components(components)
+    install_components(components)
 
 
 def ensure_rust(version, components):

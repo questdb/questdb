@@ -94,6 +94,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<VectorAggregateFunction> vafList;
     private final WorkStealingStrategy workStealingStrategy;
     private final int workerCount;
+    private ObjList<RostiSharedCursor> sharedCursors;
 
     public GroupByRecordCursorFactory(
             CairoEngine engine,
@@ -227,6 +228,21 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        if (sharedCursors == null) {
+            sharedCursors = new ObjList<>();
+        }
+        int idx = sharedId - 1;
+        RostiSharedCursor shared = sharedCursors.getQuiet(idx);
+        if (shared == null) {
+            shared = new RostiSharedCursor();
+            sharedCursors.extendAndSet(idx, shared);
+        }
+        shared.of();
+        return shared;
+    }
+
+    @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
         final int columnType = getMetadata().getColumnType(columnIndex);
         return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
@@ -234,6 +250,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsSharedCursors() {
         return true;
     }
 
@@ -288,6 +309,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
         Misc.free(base);
+        // Shared cursors hold no native memory; primary state freed above covers it.
+        Misc.clear(sharedCursors);
     }
 
     private class RostiRecordCursor implements RecordCursor {
@@ -794,6 +817,133 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 return longs256B.getQuick(columnIndex);
             }
+        }
+    }
+
+    private class RostiSharedCursor implements RecordCursor {
+        private final RostiRecordCursor.RostiRecord record;
+        private long count;
+        private long ctrl;
+        private long ctrlStart;
+        private boolean isBuilt;
+        private RostiRecordCursor.RostiRecord recordB;
+        private long shift;
+        private long size;
+        private long slots;
+
+        RostiSharedCursor() {
+            this.record = cursor.new RostiRecord(cursor.columnCount);
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            buildRostiConditionally();
+            if (count < size) {
+                counter.add(size - count);
+                count = size;
+            }
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            if (recordB == null) {
+                recordB = cursor.new RostiRecord(cursor.columnCount);
+            }
+            return recordB;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return cursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            buildRostiConditionally();
+            while (count < size) {
+                byte b = Unsafe.getUnsafe().getByte(ctrl);
+                if ((b & 0x80) != 0) {
+                    ctrl++;
+                    continue;
+                }
+                count++;
+                record.of(slots + ((ctrl - ctrlStart) << shift));
+                ctrl++;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+            buildRostiConditionally();
+            final long offset = cursor.columnSkewIndex.getQuick(columnIndex);
+            while (count < size) {
+                byte b = Unsafe.getUnsafe().getByte(ctrl);
+                if ((b & 0x80) != 0) {
+                    ctrl++;
+                    continue;
+                }
+                count++;
+                final long pRow = slots + ((ctrl - ctrlStart) << shift);
+                final long v = Unsafe.getUnsafe().getLong(pRow + offset);
+                list.add(pRow, v);
+                ctrl++;
+            }
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return cursor.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            ((RostiRecordCursor.RostiRecord) record).of(atRowId);
+        }
+
+        @Override
+        public long size() {
+            return isBuilt ? size : -1;
+        }
+
+        @Override
+        public void toTop() {
+            ctrlStart = Rosti.getCtrl(cursor.pRostiBig);
+            ctrl = ctrlStart;
+            slots = Rosti.getSlots(cursor.pRostiBig);
+            shift = Rosti.getSlotShift(cursor.pRostiBig);
+            size = raf.getSize(cursor.pRostiBig);
+            count = 0;
+        }
+
+        private void buildRostiConditionally() {
+            if (!isBuilt) {
+                // isRostiBuilt and pRostiBig do not need to be volatile: both the primary cursor
+                // and all shared cursors are driven by the same SQL execution thread currently, so there
+                // is no cross-thread visibility concern.
+                cursor.buildRostiConditionally();
+                toTop();
+                isBuilt = true;
+            }
+        }
+
+        void of() {
+            isBuilt = false;
         }
     }
 }

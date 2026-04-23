@@ -794,6 +794,96 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitMidPartitionMaxSplitsConfigured() throws Exception {
+        // cairo.o3.mid.partition.max.splits controls how many splits a non-last
+        // (mid) logical partition is allowed to keep after commit. Raising the
+        // limit above the number of splits must leave them in place instead of
+        // squashing them back into a single partition.
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            overrides.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 3);
+
+            // 60*36 minute ticks span 2020-02-04 (1440 rows) and 2020-02-05 (720 rows),
+            // so 2020-02-04 is a mid partition (another logical partition follows it).
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x AS (" +
+                            "SELECT" +
+                            " cast(x AS int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) AS str," +
+                            " timestamp_sequence('2020-02-04T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " FROM long_sequence(60 * 36)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+
+            // O3 insert at 2020-02-04T20:01 creates a split inside the mid partition.
+            // With max.splits=3 (> 2 actual splits) the split must survive.
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT" +
+                            " cast(x AS int) * 1000000 i," +
+                            " -x - 1000000L AS j," +
+                            " rnd_str(5,16,2) AS str," +
+                            " timestamp_sequence('2020-02-04T20:01', 1000000L)::" + timestampType.getTypeName() + " ts" +
+                            " FROM long_sequence(200)"
+            );
+
+            String partitionsSql = "SELECT minTimestamp, numRows, name FROM table_partitions('x') ORDER BY minTimestamp";
+            assertSql(replaceTimestampSuffix1("""
+                    minTimestamp\tnumRows\tname
+                    2020-02-04T00:00:00.000000Z\t1201\t2020-02-04
+                    2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001
+                    2020-02-05T00:00:00.000000Z\t720\t2020-02-05
+                    """, timestampType.getTypeName()), partitionsSql);
+        });
+    }
+
+    @Test
+    public void testSplitMidPartitionMaxSplitsDefault() throws Exception {
+        // Default cairo.o3.mid.partition.max.splits=1 must squash O3 splits in a
+        // non-last (mid) logical partition back into a single partition on commit.
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+
+            // 60*36 minute ticks span 2020-02-04 (1440 rows) and 2020-02-05 (720 rows),
+            // so 2020-02-04 is a mid partition (another logical partition follows it).
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x AS (" +
+                            "SELECT" +
+                            " cast(x AS int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) AS str," +
+                            " timestamp_sequence('2020-02-04T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " FROM long_sequence(60 * 36)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+
+            // O3 insert at 2020-02-04T20:01 would split the mid partition, but the
+            // commit squashes it back because mid.partition.max.splits defaults to 1.
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT" +
+                            " cast(x AS int) * 1000000 i," +
+                            " -x - 1000000L AS j," +
+                            " rnd_str(5,16,2) AS str," +
+                            " timestamp_sequence('2020-02-04T20:01', 1000000L)::" + timestampType.getTypeName() + " ts" +
+                            " FROM long_sequence(200)"
+            );
+
+            String partitionsSql = "SELECT minTimestamp, numRows, name FROM table_partitions('x') ORDER BY minTimestamp";
+            assertSql(replaceTimestampSuffix1("""
+                    minTimestamp\tnumRows\tname
+                    2020-02-04T00:00:00.000000Z\t1640\t2020-02-04
+                    2020-02-05T00:00:00.000000Z\t720\t2020-02-05
+                    """, timestampType.getTypeName()), partitionsSql);
+        });
+    }
+
+    @Test
     public void testSplitMidPartitionOpenReader() throws Exception {
         assertMemoryLeak(() -> {
             execute(

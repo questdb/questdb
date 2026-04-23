@@ -22,33 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
-
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
+package io.questdb.cutlass.qwp.websocket;
 
 /**
- * Common interface for flyweight map values over off-heap memory.
+ * WebSocket close status codes as defined in RFC 6455.
  */
-public class DirectMapValueFactory {
+public final class WebSocketCloseCode {
+    /**
+     * Message too big (1009).
+     * The endpoint received a message that is too big to process.
+     */
+    public static final int MESSAGE_TOO_BIG = 1009;
+    /**
+     * Normal closure (1000).
+     * The connection successfully completed whatever purpose for which it was created.
+     */
+    public static final int NORMAL_CLOSURE = 1000;
+    /**
+     * Protocol error (1002).
+     * The endpoint is terminating the connection due to a protocol error.
+     */
+    public static final int PROTOCOL_ERROR = 1002;
+    /**
+     * Unsupported data (1003).
+     * The endpoint received a type of data it cannot accept
+     * (e.g., a binary-only endpoint received a text message).
+     */
+    public static final int UNSUPPORTED_DATA = 1003;
 
-    private DirectMapValueFactory() {
-    }
-
-    public static FlyweightMapValue createDirectMapValue(ColumnTypes valueTypes, boolean useCompactDirectMap) {
-        if (useCompactDirectMap) {
-            for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
-                final int size = ColumnType.sizeOf(valueTypes.getColumnType(i));
-                assert size > 0;
-                if (size > Long.BYTES) {
-                    useCompactDirectMap = false;
-                    break;
-                }
-            }
-        }
-        if (useCompactDirectMap) {
-            return new FlyweightCompactMapValue(valueTypes.getColumnCount());
-        }
-        return new FlyweightMapValueImpl(valueTypes.getColumnCount());
+    private WebSocketCloseCode() {
+        // Constants class
     }
 }

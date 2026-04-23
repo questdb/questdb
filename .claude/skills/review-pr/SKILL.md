@@ -180,7 +180,7 @@ Review the diff for:
 
 ### Commit messages
 - Plain English titles (no Conventional Commits prefix), under 50 chars
-- Full long-form body description
+- Full long-form body description, line breaks at 72 chars
 - Active voice, naming the acting subject
 
 ## Step 4: Output

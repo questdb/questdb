@@ -26,28 +26,35 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class SumIntGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public SumIntGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.INT);
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final long batchSum = Vect.sumInt(ptr, count);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long batchSum = Vect.sumInt(dataAddr, rowCount);
             if (batchSum != Numbers.LONG_NULL) {
                 final long existing = mapValue.getLong(valueIndex);
                 if (existing != Numbers.LONG_NULL) {
@@ -66,6 +73,44 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
             mapValue.putLong(valueIndex, value);
         } else {
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        }
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct int column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
+                if (value != Numbers.INT_NULL) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final long current = Unsafe.getUnsafe().getLong(addr);
+                    Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final int value = arg.getInt(record);
+                if (value != Numbers.INT_NULL) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final long current = Unsafe.getUnsafe().getLong(addr);
+                    Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
+                }
+            }
         }
     }
 
