@@ -28,15 +28,13 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
 
 public final class Hash {
-
-    // Constant from Rust compiler's FxHasher.
+    // Polynomial hash multiplier (from Rust compiler's FxHasher).
     private static final long M2 = 0x517cc1b727220a95L;
     private static final int MURMUR3_SEED = 95967;
     private static final long MURMUR3_X64_128_C1 = 0x87c37b91114253d5L;
     private static final long MURMUR3_X64_128_C2 = 0x4cf5ad432745937fL;
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
-    // xxh3 64-bit avalanche prime.
-    private static final long XXH3_PRIME = 0x165667919E3779F9L;
+    private static final long XXH3_PRIME_MX1 = 0x165667919E3779F9L;
 
     private Hash() {
     }
@@ -215,7 +213,7 @@ public final class Hash {
      */
     private static long xxh3Avalanche64(long h) {
         h ^= h >>> 37;
-        h *= XXH3_PRIME;
+        h *= XXH3_PRIME_MX1;
         return h ^ (h >>> 32);
     }
 }
