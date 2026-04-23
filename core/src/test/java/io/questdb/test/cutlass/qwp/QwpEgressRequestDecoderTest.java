@@ -107,6 +107,76 @@ public class QwpEgressRequestDecoderTest {
         });
     }
 
+    /**
+     * Bindless queries use the SQL text verbatim as the select-cache key,
+     * preserving the existing cache shape for the 99% path.
+     */
+    @Test
+    public void testSelectCacheKeyNoBindsEqualsSql() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int total = writeBindScaffold(buf, 0);
+            decoder.decodeQueryRequest(buf, total, bindVars);
+            CharSequence key = decoder.buildSelectCacheKey(bindVars);
+            Assert.assertSame("bindless key must be the sql sink itself (no composition)",
+                    decoder.sql, key);
+        });
+    }
+
+    /**
+     * Same SQL with the same bind type must produce the same composite key, so
+     * repeated {@code WHERE x = $1} queries with different INT values hit the
+     * select cache instead of recompiling each time.
+     */
+    @Test
+    public void testSelectCacheKeyStableAcrossSameTypeBinds() throws Exception {
+        runWithBuf(128, (buf, bindVars, decoder) -> {
+            int totalLen = writeBindScaffold(buf, 1);
+            long p = buf + totalLen;
+            p = writeNonNullBind(p, QwpConstants.TYPE_INT);
+            Unsafe.getUnsafe().putInt(p, 1);
+            decoder.decodeQueryRequest(buf, (int) (p + 4 - buf), bindVars);
+            String key1 = decoder.buildSelectCacheKey(bindVars).toString();
+
+            // Decode the same request shape again with a different bind VALUE
+            // but the same TYPE. decodeQueryRequest clears bindVars internally.
+            Unsafe.getUnsafe().putInt(p, 42);
+            decoder.decodeQueryRequest(buf, (int) (p + 4 - buf), bindVars);
+            String key2 = decoder.buildSelectCacheKey(bindVars).toString();
+
+            Assert.assertEquals("same SQL + same bind type must produce the same cache key",
+                    key1, key2);
+            Assert.assertTrue("composite key must carry a type prefix [...] on bound queries: " + key1,
+                    key1.startsWith("["));
+        });
+    }
+
+    /**
+     * Same SQL with a different bind type must produce a different composite key,
+     * so a factory compiled for {@code WHERE x = $1::INT} is never reused for
+     * {@code WHERE x = $1::VARCHAR}.
+     */
+    @Test
+    public void testSelectCacheKeyDiffersByBindType() throws Exception {
+        runWithBuf(128, (buf, bindVars, decoder) -> {
+            int totalLen = writeBindScaffold(buf, 1);
+            long p = buf + totalLen;
+            long saved = p;
+            p = writeNonNullBind(p, QwpConstants.TYPE_INT);
+            Unsafe.getUnsafe().putInt(p, 7);
+            decoder.decodeQueryRequest(buf, (int) (p + 4 - buf), bindVars);
+            String keyInt = decoder.buildSelectCacheKey(bindVars).toString();
+
+            // Rewrite the bind section as TYPE_LONG at the same offset.
+            p = writeNonNullBind(saved, QwpConstants.TYPE_LONG);
+            Unsafe.getUnsafe().putLong(p, 7L);
+            decoder.decodeQueryRequest(buf, (int) (p + 8 - buf), bindVars);
+            String keyLong = decoder.buildSelectCacheKey(bindVars).toString();
+
+            Assert.assertNotEquals("INT and LONG bind signatures must produce distinct cache keys",
+                    keyInt, keyLong);
+        });
+    }
+
     @Test
     public void testDecodeBooleanBind() throws Exception {
         runWithBuf(128, (buf, bindVars, decoder) -> {
