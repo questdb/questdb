@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Hash;
@@ -50,10 +51,9 @@ final class Unordered4MapRecord implements MapRecord {
     private final long[] columnOffsets;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
-    private final Unordered4MapValue value;
+    private final FlyweightPackedMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
-    private long limit;
     private long startAddress;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
@@ -61,13 +61,12 @@ final class Unordered4MapRecord implements MapRecord {
     Unordered4MapRecord(
             long valueSize,
             long[] valueOffsets,
-            Unordered4MapValue value,
+            FlyweightPackedMapValue value,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.value = value;
-        this.value.linkRecord(this); // provides feature to position this record at location of map value
 
         int nColumns;
         int keyIndexOffset;
@@ -119,7 +118,7 @@ final class Unordered4MapRecord implements MapRecord {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.columnOffsets = columnOffsets;
-        this.value = new Unordered4MapValue(valueSize, valueOffsets);
+        this.value = new FlyweightPackedMapValue(valueSize, valueOffsets);
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
     }
@@ -156,8 +155,8 @@ final class Unordered4MapRecord implements MapRecord {
 
     @Override
     public void copyValue(MapValue destValue) {
-        Unordered4MapValue destFastValue = (Unordered4MapValue) destValue;
-        destFastValue.copyRawValue(startAddress + Unordered4Map.KEY_SIZE);
+        FlyweightPackedMapValue destPackedValue = (FlyweightPackedMapValue) destValue;
+        destPackedValue.copyRawValue(startAddress + Unordered4Map.KEY_SIZE);
     }
 
     @Override
@@ -303,7 +302,7 @@ final class Unordered4MapRecord implements MapRecord {
 
     @Override
     public MapValue getValue() {
-        return value.of(startAddress, limit, false);
+        return value.of(startAddress, startAddress + Unordered4Map.KEY_SIZE, false);
     }
 
     @Override
@@ -311,12 +310,9 @@ final class Unordered4MapRecord implements MapRecord {
         return Hash.hashInt64(Unsafe.getUnsafe().getInt(startAddress));
     }
 
+    @Override
     public void of(long address) {
         this.startAddress = address;
-    }
-
-    public void setLimit(long limit) {
-        this.limit = limit;
     }
 
     @Override
