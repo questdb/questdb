@@ -63,7 +63,7 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
                 serverMain.awaitTable("t");
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")) {
                     client.connect();
 
                     // Sanity: a real query runs and delivers rows before any terminal
@@ -141,7 +141,7 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain ignored = startWithEnvVariables()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")) {
                     client.connect();
 
                     invokeRecordTerminalFailure(client, (byte) 1, "first failure");
@@ -169,6 +169,62 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
                     });
                     Assert.assertEquals(Byte.valueOf((byte) 1), status.get());
                     Assert.assertEquals("first failure", msg.get());
+                }
+            }
+        });
+    }
+
+    /**
+     * When the failover ceiling hits, {@link QwpQueryClient#execute} must
+     * surface an {@code onError} whose message identifies the ceiling (not a
+     * generic transport error), so monitoring can distinguish "one transient
+     * hiccup handled by failover" from "cluster is down for real". The test
+     * pins {@code failover_max_attempts=1}, latches a synthetic terminal
+     * failure, then runs {@code execute()} -- attempt=1 trips the ceiling
+     * immediately and the error carries the expected phrasing.
+     */
+    @Test
+    public void testFailoverCeilingHitSurfacesExplicitMessage() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE t2(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO t2 SELECT x, x::TIMESTAMP FROM long_sequence(1)");
+                serverMain.awaitTable("t2");
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=on;failover_max_attempts=1;")) {
+                    client.connect();
+                    // Latch a synthetic terminal failure -- execute() will see it
+                    // on entry and classify it as a transport failure.
+                    invokeRecordTerminalFailure(client, (byte) 42, "synthetic transport failure");
+
+                    AtomicReference<String> errMsg = new AtomicReference<>();
+                    AtomicReference<Byte> errStatus = new AtomicReference<>();
+                    client.execute("SELECT * FROM t2", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            Assert.fail("onBatch must not fire when the ceiling is hit on attempt 1");
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.fail("onEnd must not fire when the ceiling is hit on attempt 1");
+                        }
+
+                        @Override
+                        public void onError(byte s, String m) {
+                            errStatus.set(s);
+                            errMsg.set(m);
+                        }
+                    });
+
+                    Assert.assertEquals("stored status propagates",
+                            Byte.valueOf((byte) 42), errStatus.get());
+                    Assert.assertNotNull("onError must fire", errMsg.get());
+                    // Explicit ceiling phrasing -- monitoring filters on this.
+                    TestUtils.assertContains(errMsg.get(), "transport failure after 1 execute attempt");
+                    TestUtils.assertContains(errMsg.get(), "synthetic transport failure");
                 }
             }
         });

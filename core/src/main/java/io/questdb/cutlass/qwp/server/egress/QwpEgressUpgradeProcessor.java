@@ -46,6 +46,7 @@ import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressFrameWriter;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
@@ -136,7 +137,36 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * into no-ops.
      */
     public static final int MAX_ROWS_PER_BATCH = 16_384;
+    /**
+     * Test-only: when set to {@code N > 0}, {@link #streamResults} throws
+     * {@link PeerDisconnectedException#INSTANCE} once {@code N} batches have
+     * already been committed on the current stream. That propagates through
+     * the exact same teardown path the HTTP framework follows on a real peer
+     * disconnect (the fd is closed, the client's socket sees RST / FIN), so
+     * integration tests can exercise the client-side failover + replay path
+     * without an external signal. One-shot: the first trigger resets the
+     * field to {@code 0}, so a single armed value fires on exactly one
+     * connection and leaves subsequent streams alone.
+     * <p>
+     * Process-global: tests that use this must not run in parallel against
+     * the same JVM. Standard Surefire forks isolate them. A zero value (the
+     * default) is a no-op on the hot path: one volatile read and a compare
+     * per batch, no effect on production streams.
+     */
+    public static volatile int DEBUG_FORCE_TRANSPORT_FAILURE_AFTER_BATCHES = 0;
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
+    /**
+     * Upper bound for the SERVER_INFO body: 26 bytes fixed fields plus 65535
+     * bytes for each of cluster_id and node_id. The frame writer truncates each
+     * id at the u16 wire cap, so the bound is tight rather than defensive.
+     */
+    private static final int SERVER_INFO_BODY_MAX_BYTES = 26 + 0xFFFF + 0xFFFF;
+    /**
+     * Largest WebSocket frame header the server emits for its own frames:
+     * 2-byte base + 8-byte extended length (no masking on server-to-client).
+     * Used as a fit check when reserving space in the handshake send buffer.
+     */
+    private static final int WS_HEADER_MAX_BYTES = 10;
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
@@ -264,9 +294,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
         int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, contentEncodingHeader);
-        if (requiredHandshakeSize > bufferSize) {
+        // v2 appends a SERVER_INFO WebSocket frame right after the 101 response
+        // bytes, in the same send buffer. Reserve an upper-bound for the frame so
+        // a tiny send buffer that would fit the 101 response alone but not the
+        // follow-up frame is rejected here rather than silently truncating
+        // SERVER_INFO on the wire. The upper bound matches the fixed part of the
+        // frame plus the 16-bit-capped cluster + node id strings.
+        int serverInfoUpperBound = negotiatedVersion >= QwpConstants.VERSION_2
+                ? WS_HEADER_MAX_BYTES + QwpConstants.HEADER_SIZE + SERVER_INFO_BODY_MAX_BYTES
+                : 0;
+        if (requiredHandshakeSize + serverInfoUpperBound > bufferSize) {
             throw HttpException.instance("egress 101 handshake response does not fit send buffer [required=")
-                    .put(requiredHandshakeSize).put(", available=").put(bufferSize).put(']');
+                    .put(requiredHandshakeSize + serverInfoUpperBound).put(", available=").put(bufferSize).put(']');
         }
 
         QwpEgressProcessorState state = LV.get(context);
@@ -296,6 +335,29 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeader);
+        // For v2 and above, append an unsolicited SERVER_INFO WebSocket frame to
+        // the same send buffer. The client reads it as the first frame after the
+        // upgrade handshake completes, which lets it route reads to primary vs
+        // replica without a round trip. Old (v1) clients don't get this frame.
+        if (negotiatedVersion >= QwpConstants.VERSION_2) {
+            // server_wall_ns on the SERVER_INFO frame is spec'd as nanoseconds
+            // since the epoch. We source it from the configured MicrosecondClock
+            // (wall-clock µs) and upshift, which gives honest µs precision in a
+            // ns-typed field rather than the 1 ms quantum a currentTimeMillis
+            // upshift would leave on the wire.
+            long serverWallNs = engine.getConfiguration().getMicrosecondClock().getTicks() * 1000L;
+            int frameBytes = writeServerInfoFrame(
+                    bufferAddr + bytesWritten,
+                    bufferSize - bytesWritten,
+                    (byte) negotiatedVersion,
+                    engine.getConfiguration().getQwpServerInfoProvider(),
+                    serverWallNs
+            );
+            if (frameBytes < 0) {
+                throw HttpException.instance("egress SERVER_INFO frame does not fit send buffer");
+            }
+            bytesWritten += frameBytes;
+        }
         // The HttpRequestProcessor contract forbids PeerIsSlowToReadException
         // from onHeadersReady, so we defer the raw-socket send to
         // onRequestComplete where PISR propagates cleanly into the framework's
@@ -483,6 +545,67 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
         WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwpSize);
         rawSocket.send(wsHeaderSize + qwpSize);
+    }
+
+    /**
+     * Writes a self-contained {@code SERVER_INFO} WebSocket frame into the given
+     * buffer region and returns the total number of bytes written (WS header +
+     * QWP message). The frame has the shape {@code [WS header][QWP header][body]};
+     * the body layout is defined on {@link QwpEgressMsgKind#SERVER_INFO}.
+     * <p>
+     * Unlike {@link #sendFrame}, this helper builds the frame in place without
+     * the {@code WS_HEADER_RESERVATION} trick: the QWP payload is written at
+     * offset {@code +2} (the common-case WS header size for payloads below 126
+     * bytes), and on the rare path where a larger header is required the
+     * payload is memmoved to make room. SERVER_INFO with default cluster + node
+     * ids sits comfortably below 126 bytes, so the memmove is cold.
+     *
+     * @return total bytes written, or -1 if {@code bufSize} is too small
+     */
+    private static int writeServerInfoFrame(
+            long bufAddr,
+            int bufSize,
+            byte qwpVersion,
+            QwpServerInfoProvider provider,
+            long serverWallNs
+    ) {
+        int minSize = 2 + QwpConstants.HEADER_SIZE + 26;
+        if (bufSize < minSize) {
+            return -1;
+        }
+        // Optimistic 2-byte WS header; fix up after measuring the QWP payload.
+        long qwpStart = bufAddr + 2;
+        long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
+                qwpStart, qwpVersion, (byte) 0, 0, 0);
+        int bodyCap = bufSize - 2 - QwpConstants.HEADER_SIZE;
+        long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
+                bodyStart,
+                bodyCap,
+                provider.getRole(),
+                provider.getEpoch(),
+                provider.getCapabilities(),
+                serverWallNs,
+                provider.getClusterId(),
+                provider.getNodeId()
+        );
+        if (bodyEnd < 0) {
+            return -1;
+        }
+        int qwpSize = (int) (bodyEnd - qwpStart);
+        int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
+        QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
+
+        int wsHeaderSize = WebSocketFrameWriter.headerSize(qwpSize, false);
+        if (wsHeaderSize != 2) {
+            // Rare branch: SERVER_INFO body grew past the 2-byte-header threshold.
+            // Shift the QWP bytes to make room for the longer WS header.
+            if (bufSize < wsHeaderSize + qwpSize) {
+                return -1;
+            }
+            Unsafe.getUnsafe().copyMemory(qwpStart, bufAddr + wsHeaderSize, qwpSize);
+        }
+        WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwpSize);
+        return wsHeaderSize + qwpSize;
     }
 
     /**
@@ -1333,6 +1456,25 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         final RecordCursor cursor = pageFrame ? null : state.getStreamingCursor();
 
         while (true) {
+            // Test-only: when the global counter is armed, fire a simulated
+            // mid-stream transport failure once the streaming sequence has
+            // emitted at least the configured number of batches. The compare
+            // uses getStreamingBatchSeq() (= the next batch sequence number =
+            // count of batches already committed) so the counter reads as
+            // "fail after N batches". One-shot: first trigger resets the
+            // field to 0 so the subsequent failover reconnect's new stream is
+            // unaffected. Production streams leave the counter at 0 and pay
+            // a single volatile read per batch.
+            int failAfter = DEBUG_FORCE_TRANSPORT_FAILURE_AFTER_BATCHES;
+            if (failAfter > 0 && state.getStreamingBatchSeq() >= failAfter) {
+                DEBUG_FORCE_TRANSPORT_FAILURE_AFTER_BATCHES = 0;
+                LOG.info().$("Egress DEBUG_FORCE_TRANSPORT_FAILURE_AFTER_BATCHES triggered [fd=")
+                        .$(context.getFd())
+                        .$(", requestId=").$(requestId)
+                        .$(", batchSeq=").$(state.getStreamingBatchSeq())
+                        .$(", rowsEmitted=").$(state.getStreamingRowsEmitted()).I$();
+                throw PeerDisconnectedException.INSTANCE;
+            }
             // CANCEL arriving while the query is streaming sets a flag on state.
             // We observe it between batches (not mid-batch -- Phase 1 doesn't plumb
             // a circuit breaker into the SQL layer) and abort with STATUS_CANCELLED.

@@ -102,6 +102,51 @@ public final class QwpEgressFrameWriter {
     }
 
     /**
+     * Writes a SERVER_INFO frame body at {@code bodyAddr}. Both {@code clusterId}
+     * and {@code nodeId} are written as u16-length-prefixed UTF-8. Each string
+     * is truncated at 65535 UTF-8 bytes (the wire cap) and further truncated at
+     * {@code bodyCapBytes} minus the fixed fields so the body always fits the
+     * caller's buffer. A null {@code CharSequence} is encoded as a zero-length
+     * string, matching the wire contract in {@link QwpEgressMsgKind#SERVER_INFO}.
+     *
+     * @return address just past the body, or -1 if {@code bodyCapBytes} is too
+     * small to hold the fixed fields (1+1+8+4+8+2+2 = 26 bytes)
+     */
+    public static long writeServerInfo(
+            long bodyAddr,
+            int bodyCapBytes,
+            byte role,
+            long epoch,
+            int capabilities,
+            long serverWallNs,
+            CharSequence clusterId,
+            CharSequence nodeId
+    ) {
+        final int fixedBytes = 1 + 1 + 8 + 4 + 8 + 2 + 2;
+        if (bodyCapBytes < fixedBytes) {
+            return -1;
+        }
+        Unsafe.getUnsafe().putByte(bodyAddr, QwpEgressMsgKind.SERVER_INFO);
+        Unsafe.getUnsafe().putByte(bodyAddr + 1, role);
+        Unsafe.getUnsafe().putLong(bodyAddr + 2, epoch);
+        Unsafe.getUnsafe().putInt(bodyAddr + 10, capabilities);
+        Unsafe.getUnsafe().putLong(bodyAddr + 14, serverWallNs);
+        long clusterLenAddr = bodyAddr + 22;
+        long clusterStart = clusterLenAddr + 2;
+        int remaining = bodyCapBytes - fixedBytes;
+        int clusterBudget = Math.min(0xFFFF, Math.max(0, remaining));
+        int clusterWritten = writeUtf8Truncated(clusterStart, clusterId, clusterBudget);
+        Unsafe.getUnsafe().putShort(clusterLenAddr, (short) clusterWritten);
+        long nodeLenAddr = clusterStart + clusterWritten;
+        long nodeStart = nodeLenAddr + 2;
+        remaining -= clusterWritten;
+        int nodeBudget = Math.min(0xFFFF, Math.max(0, remaining));
+        int nodeWritten = writeUtf8Truncated(nodeStart, nodeId, nodeBudget);
+        Unsafe.getUnsafe().putShort(nodeLenAddr, (short) nodeWritten);
+        return nodeStart + nodeWritten;
+    }
+
+    /**
      * Writes a RESULT_END frame body: msg_kind + request_id + final_seq + total_rows.
      *
      * @return address just past the body
@@ -126,42 +171,58 @@ public final class QwpEgressFrameWriter {
         Unsafe.getUnsafe().putLong(bufAddr + 1, requestId);
         Unsafe.getUnsafe().putByte(bufAddr + 9, status);
         long bytesStart = bufAddr + 12;
-        int written = 0;
-        if (msg != null) {
-            int charLen = msg.length();
-            int cap = Math.min(msgCapBytes, 0xFFFF);
-            for (int i = 0; i < charLen && written < cap; i++) {
-                char c = msg.charAt(i);
-                if (c < 0x80) {
-                    if (written + 1 > cap) break;
-                    Unsafe.getUnsafe().putByte(bytesStart + written, (byte) c);
-                    written++;
-                } else if (c < 0x800) {
-                    if (written + 2 > cap) break;
-                    Unsafe.getUnsafe().putByte(bytesStart + written, (byte) (0xC0 | (c >> 6)));
-                    Unsafe.getUnsafe().putByte(bytesStart + written + 1, (byte) (0x80 | (c & 0x3F)));
-                    written += 2;
-                } else if (Character.isHighSurrogate(c) && i + 1 < charLen
-                        && Character.isLowSurrogate(msg.charAt(i + 1))) {
-                    if (written + 4 > cap) break;
-                    int cp = Character.toCodePoint(c, msg.charAt(i + 1));
-                    i++;
-                    Unsafe.getUnsafe().putByte(bytesStart + written, (byte) (0xF0 | (cp >> 18)));
-                    Unsafe.getUnsafe().putByte(bytesStart + written + 1, (byte) (0x80 | ((cp >> 12) & 0x3F)));
-                    Unsafe.getUnsafe().putByte(bytesStart + written + 2, (byte) (0x80 | ((cp >> 6) & 0x3F)));
-                    Unsafe.getUnsafe().putByte(bytesStart + written + 3, (byte) (0x80 | (cp & 0x3F)));
-                    written += 4;
-                } else {
-                    if (written + 3 > cap) break;
-                    Unsafe.getUnsafe().putByte(bytesStart + written, (byte) (0xE0 | (c >> 12)));
-                    Unsafe.getUnsafe().putByte(bytesStart + written + 1, (byte) (0x80 | ((c >> 6) & 0x3F)));
-                    Unsafe.getUnsafe().putByte(bytesStart + written + 2, (byte) (0x80 | (c & 0x3F)));
-                    written += 3;
-                }
-            }
-        }
+        int cap = Math.min(msgCapBytes, 0xFFFF);
+        int written = writeUtf8Truncated(bytesStart, msg, cap);
         Unsafe.getUnsafe().putShort(bufAddr + 10, (short) written);
         return bytesStart + written;
+    }
+
+    /**
+     * UTF-8 encodes {@code s} directly into the native buffer at {@code dst},
+     * truncating if the encoded size exceeds {@code cap} bytes. Avoids the
+     * {@code String.getBytes(UTF_8)} + {@code byte[]} round-trip that the error
+     * and handshake paths would otherwise pay on every hot-path frame. Never
+     * writes a partial multi-byte sequence -- if the next code unit would
+     * overflow the cap, encoding stops before the first byte of that unit.
+     *
+     * @return number of bytes written, always in {@code [0, cap]}
+     */
+    private static int writeUtf8Truncated(long dst, CharSequence s, int cap) {
+        if (s == null || cap <= 0) {
+            return 0;
+        }
+        int charLen = s.length();
+        int written = 0;
+        for (int i = 0; i < charLen && written < cap; i++) {
+            char c = s.charAt(i);
+            if (c < 0x80) {
+                if (written + 1 > cap) break;
+                Unsafe.getUnsafe().putByte(dst + written, (byte) c);
+                written++;
+            } else if (c < 0x800) {
+                if (written + 2 > cap) break;
+                Unsafe.getUnsafe().putByte(dst + written, (byte) (0xC0 | (c >> 6)));
+                Unsafe.getUnsafe().putByte(dst + written + 1, (byte) (0x80 | (c & 0x3F)));
+                written += 2;
+            } else if (Character.isHighSurrogate(c) && i + 1 < charLen
+                    && Character.isLowSurrogate(s.charAt(i + 1))) {
+                if (written + 4 > cap) break;
+                int cp = Character.toCodePoint(c, s.charAt(i + 1));
+                i++;
+                Unsafe.getUnsafe().putByte(dst + written, (byte) (0xF0 | (cp >> 18)));
+                Unsafe.getUnsafe().putByte(dst + written + 1, (byte) (0x80 | ((cp >> 12) & 0x3F)));
+                Unsafe.getUnsafe().putByte(dst + written + 2, (byte) (0x80 | ((cp >> 6) & 0x3F)));
+                Unsafe.getUnsafe().putByte(dst + written + 3, (byte) (0x80 | (cp & 0x3F)));
+                written += 4;
+            } else {
+                if (written + 3 > cap) break;
+                Unsafe.getUnsafe().putByte(dst + written, (byte) (0xE0 | (c >> 12)));
+                Unsafe.getUnsafe().putByte(dst + written + 1, (byte) (0x80 | ((c >> 6) & 0x3F)));
+                Unsafe.getUnsafe().putByte(dst + written + 2, (byte) (0x80 | (c & 0x3F)));
+                written += 3;
+            }
+        }
+        return written;
     }
 
 }

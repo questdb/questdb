@@ -43,8 +43,43 @@ public final class QwpEgressMsgKind {
     public static final byte QUERY_REQUEST = 0x10;
     public static final byte RESULT_BATCH = 0x11;
     public static final byte RESULT_END = 0x12;
-
-    // Egress-specific status codes (extend ingress QwpConstants.STATUS_* namespace).
+    /**
+     * Role value on {@code SERVER_INFO.role}: the authoritative write node. Reads
+     * here see the most recent commits without replication lag. A cluster has at
+     * most one {@link #ROLE_PRIMARY} at any given epoch.
+     */
+    public static final byte ROLE_PRIMARY = 1;
+    /**
+     * Role value on {@code SERVER_INFO.role}: promotion-in-progress. The node
+     * believes it is primary but is still uploading in-flight WAL segments to
+     * the shared object store before accepting writes. Clients that insist on
+     * primary-only reads may still route here; clients that need write-visible
+     * reads should wait for {@link #ROLE_PRIMARY}.
+     */
+    public static final byte ROLE_PRIMARY_CATCHUP = 3;
+    /**
+     * Role value on {@code SERVER_INFO.role}: the node is a read-only replica
+     * that pulls WAL segments from the shared object store. Reads may lag the
+     * primary by the replication poll interval plus transport time.
+     */
+    public static final byte ROLE_REPLICA = 2;
+    /**
+     * Role value on {@code SERVER_INFO.role}: no replication is configured. The
+     * standalone OSS default; behaves like a primary for routing purposes.
+     */
+    public static final byte ROLE_STANDALONE = 0;
+    /**
+     * Server-to-client. Unsolicited frame delivered as the first QWP message on
+     * every v2 WebSocket connection (see {@code QwpConstants.VERSION_2}). Carries
+     * the server's replication role, monotonic role epoch, cluster and node
+     * identifiers, a capabilities bitfield, and the server's wall-clock
+     * nanoseconds at send time.
+     * <p>
+     * Body layout (little-endian): {@code msg_kind:u8, role:u8, epoch:u64,
+     * capabilities:u32, server_wall_ns:i64, cluster_id:u16_len+utf8,
+     * node_id:u16_len+utf8}.
+     */
+    public static final byte SERVER_INFO = 0x17;
     public static final byte STATUS_CANCELLED = 0x0A;
     public static final byte STATUS_LIMIT_EXCEEDED = 0x0B;
 

@@ -87,8 +87,12 @@ are negotiated at the HTTP upgrade:
 | `X-QWP-Version`          | S -> C    | Yes      | Negotiated version = `min(clientMax, serverMax)`.                                 |
 | `X-QWP-Content-Encoding` | S -> C    | No       | Server's selected encoding from the client's accept list. Omitted means `raw`.    |
 
-Egress is introduced at version 1; future protocol changes bump the version
-on both endpoints together.
+Egress was introduced at version 1. Version 2 adds an unsolicited
+`SERVER_INFO` frame (§11.7) delivered as the first WebSocket frame after the
+upgrade response; the frame carries the server's replication role,
+cluster/node identity, and a capabilities bitfield so clients can route reads
+to primary vs replica. Ingest is pinned to version 1 because the v2 bump has
+no ingest semantics.
 
 The connection-level contract from the ingress spec applies: every message's
 header version byte must equal the negotiated version, and the server rejects
@@ -163,8 +167,9 @@ Endpoint disambiguation is sufficient because connections are direction-pure.
 | `0x14` | CANCEL            | C -> S    | Stop a running query                  |
 | `0x15` | CREDIT            | C -> S    | Extend the byte window                |
 | `0x16` | EXEC_DONE         | S -> C    | Non-SELECT statement acknowledgement  |
+| `0x17` | SERVER_INFO       | S -> C    | Unsolicited, first frame on v2 only; carries role + cluster identity |
 
-`0x17` through `0x1F` are reserved for future egress kinds (prepared
+`0x18` through `0x1F` are reserved for future egress kinds (prepared
 statements, transactions, server-driven keepalives). `0x20+` is reserved for
 future protocol extensions.
 
@@ -420,6 +425,87 @@ statements — the stream collapses to a single acknowledgement.
 not expect any further frames for this `request_id`.
 
 If the statement fails, the server sends `QUERY_ERROR` (§9) instead.
+
+## 11.7 SERVER_INFO (0x17)
+
+Server to client. Unsolicited frame delivered as the **first WebSocket frame
+after the HTTP upgrade response**, and only when the negotiated version is 2
+or above. A v1-only client never sees it; a v2 client must consume it before
+submitting the first `QUERY_REQUEST`.
+
+```
++---------------------------------------------------------+
+| msg_kind:        uint8    0x17                          |
+| role:            uint8    see role table below          |
+| epoch:           uint64   monotonic role epoch          |
+| capabilities:    uint32   reserved bitfield (0 in v2)   |
+| server_wall_ns:  int64    server wall-clock, ns since   |
+|                           1970-01-01T00:00Z             |
+| cluster_id_len:  uint16   UTF-8 byte length             |
+| cluster_id:      bytes    UTF-8, up to 65535 bytes      |
+| node_id_len:     uint16   UTF-8 byte length             |
+| node_id:         bytes    UTF-8, up to 65535 bytes      |
++---------------------------------------------------------+
+```
+
+| Value  | Role               | Semantics                                                                                |
+|--------|--------------------|------------------------------------------------------------------------------------------|
+| `0x00` | `STANDALONE`       | No replication configured. OSS single-node default; behaves like a primary for routing. |
+| `0x01` | `PRIMARY`          | Authoritative write node; reads see latest commits.                                      |
+| `0x02` | `REPLICA`          | Read-only replica; reads may lag the primary by up to the replication poll interval.    |
+| `0x03` | `PRIMARY_CATCHUP`  | Promotion in flight; behaves like a primary but is still uploading in-flight segments.  |
+
+The `epoch` field is monotonic across role transitions on the same node
+(replica promoted to primary, primary demoted to replica). Clients tracking a
+specific primary use it to refuse a stale reconnect that lands on a node
+which no longer believes it is primary at the current cluster epoch. The
+field is 0 on releases where no fencing has been wired up yet; it is safe
+for clients to ignore it as a hint rather than a guarantee.
+
+`cluster_id` and `node_id` are free-form identifiers supplied by the server
+operator. Clients may surface them in diagnostics and in error messages
+produced by the role filter (§"Client routing" below).
+
+The `capabilities` field is a reserved bitfield for future protocol
+extensions (freshness-watermark reads, multi-query multiplexing, etc.). v2
+servers and clients set it to zero.
+
+`SERVER_INFO` is delivered in the same TCP/WebSocket send buffer as the 101
+upgrade response, so on a healthy connection the frame is already in the
+client's kernel recv buffer by the time the client parses the upgrade. If the
+server negotiates v1 it omits the frame entirely and clients fall back to
+the "role unknown" path (equivalent to `STANDALONE` for routing purposes).
+
+### Client routing (`target=` and `failover=`)
+
+Clients that support v2 accept a comma-separated list of endpoints and a
+`target=` filter on the connection string:
+
+```
+ws::addr=db-a:9000,db-b:9000,db-c:9000;target=primary;failover=on;
+```
+
+| Target        | Accepted roles                                                                                 |
+|---------------|-----------------------------------------------------------------------------------------------|
+| `any` (default) | `STANDALONE`, `PRIMARY`, `PRIMARY_CATCHUP`, `REPLICA`                                         |
+| `primary`     | `STANDALONE`, `PRIMARY`, `PRIMARY_CATCHUP`                                                     |
+| `replica`     | `REPLICA`                                                                                      |
+
+On `connect()` the client walks the endpoint list in order, reads each
+endpoint's `SERVER_INFO`, and picks the first one whose role passes the
+filter. Endpoints that don't match are closed and skipped. When every
+endpoint is tried and none matches the filter, the client raises a
+role-mismatch error and attaches the most recent `SERVER_INFO` observed so
+callers can distinguish "no primary available" from "all endpoints
+unreachable".
+
+With `failover=on` (the default), a transport failure mid-query triggers a
+transparent reconnect to another endpoint that still matches the filter, and
+the client re-submits the in-flight `QUERY_REQUEST`. Accumulating handlers
+observe a `onFailoverReset` callback (in the Java client) just before
+replayed batches start arriving with `batch_seq` restarting at 0 on the new
+node. `failover=off` restores the pre-v2 behaviour where transport failures
+surface directly through `onError`.
 
 ## 12. Schema and Symbol Dictionary Scope
 

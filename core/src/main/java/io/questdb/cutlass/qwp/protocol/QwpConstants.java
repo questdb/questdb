@@ -258,9 +258,28 @@ public final class QwpConstants {
      */
     public static final byte VERSION_1 = 1;
     /**
-     * Maximum protocol version supported by this build.
+     * Protocol v2 adds an unsolicited {@code SERVER_INFO} control frame delivered
+     * as the first WebSocket frame after the 101 upgrade. Carries the server's
+     * replication role, cluster/node identity, and a capabilities bitfield so
+     * clients can route reads to primary vs replica and react to role changes
+     * across reconnects.
      */
-    public static final byte MAX_SUPPORTED_VERSION = VERSION_1;
+    public static final byte VERSION_2 = 2;
+    /**
+     * Maximum protocol version accepted by the QWP ingest path (WebSocket
+     * binary ingest + UDP). Pinned to v1 because the v2 bump only adds the
+     * egress {@code SERVER_INFO} frame, which has no ingest semantics; bumping
+     * ingest to v2 would be a no-op on the wire and would silently accept
+     * version bytes that a v1-only server would reject.
+     */
+    public static final byte MAX_SUPPORTED_INGEST_VERSION = VERSION_1;
+    /**
+     * Maximum protocol version supported by this build. Egress advertises this
+     * value in its {@code X-QWP-Version} handshake header; the shared message-
+     * header validator accepts any version in {@code [VERSION_1, MAX_SUPPORTED_VERSION]}.
+     * Ingest pins to {@link #MAX_SUPPORTED_INGEST_VERSION} instead.
+     */
+    public static final byte MAX_SUPPORTED_VERSION = VERSION_2;
 
     private QwpConstants() {
         // utility class
