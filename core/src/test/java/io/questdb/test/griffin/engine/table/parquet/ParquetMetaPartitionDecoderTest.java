@@ -72,8 +72,8 @@ public class ParquetMetaPartitionDecoderTest extends AbstractCairoTest {
                     decoder.of(
                             file1.dataPtr,
                             file1.dataLen,
-                            file1.dataPtr,
-                            file1.dataLen,
+                            0L,
+                            Long.MAX_VALUE,
                             MemoryTag.NATIVE_DEFAULT
                     );
                     try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
@@ -86,8 +86,8 @@ public class ParquetMetaPartitionDecoderTest extends AbstractCairoTest {
                     decoder.of(
                             file2.dataPtr,
                             file2.dataLen,
-                            file2.dataPtr,
-                            file2.dataLen,
+                            0L,
+                            Long.MAX_VALUE,
                             MemoryTag.NATIVE_DEFAULT
                     );
                     Assert.assertEquals(2, decoder.metadata().getColumnCount());
@@ -119,8 +119,8 @@ public class ParquetMetaPartitionDecoderTest extends AbstractCairoTest {
                     source.of(
                             file.dataPtr,
                             file.dataLen,
-                            file.dataPtr,
-                            file.dataLen,
+                            0L,
+                            Long.MAX_VALUE,
                             MemoryTag.NATIVE_DEFAULT
                     );
 
