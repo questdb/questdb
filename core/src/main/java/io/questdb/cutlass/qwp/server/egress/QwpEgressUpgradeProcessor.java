@@ -795,6 +795,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // stale factory and recompile. Two consecutive occurrences means the
             // table changed mid-recompile -- rare and probably indicates an abusive
             // DDL pattern; propagate as a normal error.
+            //
+            // Schema-id allocation is intentionally OUTSIDE this loop. Mutating
+            // the per-connection schema cache before getCursor would let a
+            // TableReferenceOutOfDateException leave a fingerprint behind; the
+            // retry would then see the fingerprint as "reuse" and ship the first
+            // batch in reference mode against an id the client never registered.
             int attempts = 0;
             while (true) {
                 attempts++;
@@ -818,52 +824,24 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                             factory = cq.getRecordCursorFactory();
                         }
                     }
-                    RecordMetadata metadata = factory.getMetadata();
-                    int columnCount = metadata.getColumnCount();
-                    ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
-                    for (int i = 0; i < columnCount; i++) {
-                        columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
-                    }
-                    int schemaId = state.findOrAllocateSchemaId(columnDefs);
-                    if (schemaId == QwpEgressProcessorState.SCHEMA_ID_EXHAUSTED) {
-                        // The connection has registered DEFAULT_MAX_SCHEMAS_PER_CONNECTION distinct
-                        // schemas already; this query's shape is new and would need a fresh id the
-                        // client would reject. Surface a controlled error and free the factory so
-                        // the connection stays usable for queries against schemas already cached.
-                        Misc.free(factory);
-                        factory = null;
-                        sendQueryError(context, state, requestId, QwpEgressMsgKind.STATUS_LIMIT_EXCEEDED,
-                                "connection schema cache exhausted ("
-                                        + QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
-                                        + " distinct schemas); reconnect to reset");
-                        return;
-                    }
-                    boolean schemaAlreadyKnown = state.wasLastSchemaIdReuse();
-                    // Prefer the PageFrameCursor fast path when the factory supports it: it
-                    // hands us flat column addresses per frame and lets the SYMBOL fast path
-                    // resolve dict keys via PageFrameMemoryRecord.getInt. Factories that don't
-                    // support it (filtered/joined/grouped queries) keep the existing
-                    // RecordCursor path without change.
+                    // Acquire the cursor inside the retry loop --
+                    // TableReferenceOutOfDateException can fire only here, never from
+                    // factory or metadata access. Prefer the PageFrameCursor fast path
+                    // when the factory supports it: it hands us flat column addresses
+                    // per frame and lets the SYMBOL fast path resolve dict keys via
+                    // PageFrameMemoryRecord.getInt. Factories that don't support it
+                    // (filtered/joined/grouped queries) keep the existing RecordCursor
+                    // path without change.
                     if (factory.supportsPageFrameCursor()) {
                         int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
                                 ? PartitionFrameCursorFactory.ORDER_DESC
                                 : PartitionFrameCursorFactory.ORDER_ASC;
                         pageFrameCursor = factory.getPageFrameCursor(sqlCtx, order);
                     }
-                    if (pageFrameCursor != null) {
-                        // Streaming mode asks the cursor to release page cache pages
-                        // after reading, so a 10M-row scan doesn't evict the server's
-                        // working set. Same hint used by the parquet exporter.
-                        pageFrameCursor.setStreamingMode(true);
-                        state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
-                                columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
-                    } else {
+                    if (pageFrameCursor == null) {
                         cursor = factory.getCursor(sqlCtx);
-                        state.beginStreaming(requestId, factory, cursor,
-                                columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
                     }
-                    streamingHandedOff = true;     // ownership of factory + cursor passed to state
-                    break; // setup completed; fall through to streamResults outside the loop
+                    break; // cursor acquired; finish setup outside the loop
                 } catch (TableReferenceOutOfDateException e) {
                     // Free any partially-acquired resources from this attempt. After
                     // beginStreaming{,PageFrame} they'd be owned by state, but the
@@ -879,6 +857,43 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                             .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 }
             }
+            // Cursor acquired without TableReferenceOutOfDateException -- safe to
+            // mutate the per-connection schema cache now. (See loop comment.)
+            RecordMetadata metadata = factory.getMetadata();
+            int columnCount = metadata.getColumnCount();
+            ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
+            }
+            int schemaId = state.findOrAllocateSchemaId(columnDefs);
+            if (schemaId == QwpEgressProcessorState.SCHEMA_ID_EXHAUSTED) {
+                // The connection has registered DEFAULT_MAX_SCHEMAS_PER_CONNECTION distinct
+                // schemas already; this query's shape is new and would need a fresh id the
+                // client would reject. Surface a controlled error and free the
+                // factory + cursor so the connection stays usable for queries against
+                // schemas already cached.
+                pageFrameCursor = Misc.free(pageFrameCursor);
+                cursor = Misc.free(cursor);
+                factory = Misc.free(factory);
+                sendQueryError(context, state, requestId, QwpEgressMsgKind.STATUS_LIMIT_EXCEEDED,
+                        "connection schema cache exhausted ("
+                                + QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
+                                + " distinct schemas); reconnect to reset");
+                return;
+            }
+            boolean schemaAlreadyKnown = state.wasLastSchemaIdReuse();
+            if (pageFrameCursor != null) {
+                // Streaming mode asks the cursor to release page cache pages
+                // after reading, so a 10M-row scan doesn't evict the server's
+                // working set. Same hint used by the parquet exporter.
+                pageFrameCursor.setStreamingMode(true);
+                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
+                        columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
+            } else {
+                state.beginStreaming(requestId, factory, cursor,
+                        columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, decoder.sql);
+            }
+            streamingHandedOff = true;     // ownership of factory + cursor passed to state
             // Streaming may complete here (cursor short and fast), or throw PeerIsSlowToReadException
             // (we'll be re-entered via resumeSend) or another exception (handled below).
             streamResults(context, state);
