@@ -2968,9 +2968,9 @@ public class SubsampleTest extends AbstractCairoTest {
             String result = sink.toString();
             Assert.assertTrue(result.contains("10.0\t2024-01-01T00:00:00.000000Z"));
             Assert.assertTrue(result.contains("50.0\t2024-01-01T04:00:00.000000Z"));
-            // Result should have 3-4 rows (first, 1-2 stride rows, last)
+            // 5 rows, stride 3: first + 0-1 stride rows + last = 2-3 rows
             long rowCount = result.chars().filter(c -> c == '\n').count() - 1;
-            Assert.assertTrue("expected 3-4 rows, got " + rowCount, rowCount >= 2 && rowCount <= 4);
+            Assert.assertTrue("expected 2-3 rows, got " + rowCount, rowCount >= 2 && rowCount <= 3);
         });
     }
 
@@ -3272,6 +3272,28 @@ public class SubsampleTest extends AbstractCairoTest {
                             "60.0\t6\t2024-01-01T05:00:00.000000Z\n",
                     "SELECT * FROM (SELECT price, qty, ts FROM t SUBSAMPLE cadence(3)) WHERE qty > 3"
             );
+        });
+    }
+
+    @Test
+    public void testCadenceWithExpressionSeed() throws Exception {
+        // Spec broadened to accept constant/runtime-constant integer expressions.
+        // cadence(3, 40 + 2) should produce the same result as cadence(3, 42).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            sink.clear();
+            printSql("SELECT price, ts FROM t SUBSAMPLE cadence(3, 42)", sink);
+            String expected = sink.toString();
+            assertSql(expected, "SELECT price, ts FROM t SUBSAMPLE cadence(3, 40 + 2)");
         });
     }
 }

@@ -43,7 +43,6 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -146,9 +145,22 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
         }
         final int targetPoints = cursor.method == METHOD_CADENCE ? getStride() : getTargetPoints();
 
+        // cadence(1) is a documented no-op: return the base cursor directly
+        // to avoid buffering, maxRows enforcement, and memory allocation.
+        if (cursor.method == METHOD_CADENCE && targetPoints == 1) {
+            return base.getCursor(executionContext);
+        }
+
+        // For cadence with seed, compute offset before opening the base cursor
+        // so invalid seeds fail before data access.
+        int cadenceOffset = 0;
+        if (cursor.method == METHOD_CADENCE) {
+            cadenceOffset = cursor.computeCadenceOffset(targetPoints, executionContext.getRandom());
+        }
+
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(baseCursor, executionContext, targetPoints);
+            cursor.of(baseCursor, executionContext, targetPoints, cadenceOffset);
             return cursor;
         } catch (Throwable th) {
             cursor.close();
@@ -258,6 +270,7 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
         private long buffer;
         private long bufferCapacity; // in entries
         private long bufferSize; // in entries
+        private int cadenceOffset;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isBuffered;
         private boolean isOpen;
@@ -429,7 +442,7 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             return subsamplePosition;
         }
 
-        void of(RecordCursor baseCursor, SqlExecutionContext executionContext, int targetPoints) {
+        void of(RecordCursor baseCursor, SqlExecutionContext executionContext, int targetPoints, int cadenceOffset) {
             if (!isOpen) {
                 isOpen = true;
             }
@@ -437,6 +450,7 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             this.record = baseCursor.getRecord();
             this.circuitBreaker = executionContext.getCircuitBreaker();
             this.targetPoints = targetPoints;
+            this.cadenceOffset = cadenceOffset;
             this.isBuffered = false;
             this.selectedIndex = 0;
             this.selectedCount = 0;
@@ -455,9 +469,7 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                 nativeSortBufferByTimestamp();
             }
             if (method == METHOD_CADENCE) {
-                int stride = targetPoints;
-                int offset = computeCadenceOffset(stride);
-                CadenceAlgorithm.select(buffer, (int) bufferSize, stride, offset, selectedIndices, circuitBreaker);
+                CadenceAlgorithm.select(buffer, (int) bufferSize, targetPoints, cadenceOffset, selectedIndices, circuitBreaker);
                 selectedCount = selectedIndices.size();
             } else if (bufferSize <= targetPoints) {
                 selectAll();
@@ -467,13 +479,12 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        private int computeCadenceOffset(int stride) {
+        private int computeCadenceOffset(int stride, Rnd contextRnd) {
             if (seedMode == SEED_MODE_NONE || stride <= 1) {
                 return 0;
             }
             if (seedMode == SEED_MODE_RANDOM) {
-                Rnd rnd = new Rnd(Os.currentTimeMicros(), Thread.currentThread().getId());
-                return rnd.nextInt(stride);
+                return contextRnd.nextInt(stride);
             }
             // SEED_MODE_DETERMINISTIC
             long seedVal = seedFunc.getLong(null);
@@ -481,8 +492,10 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                 throw CairoException.nonCritical().position(seedPosition)
                         .put("seed must be set");
             }
-            Rnd rnd = new Rnd(seedVal, seedVal);
-            return rnd.nextInt(stride);
+            // Reuse the context Rnd by resetting with the seed value.
+            // This avoids allocating a new Rnd per execution.
+            contextRnd.reset(seedVal, seedVal);
+            return contextRnd.nextInt(stride);
         }
 
         private void bufferInput() {
