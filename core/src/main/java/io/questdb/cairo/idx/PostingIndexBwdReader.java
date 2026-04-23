@@ -76,9 +76,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
-        if (key >= keyCount) {
-            updateKeyCount();
-        }
+        reloadConditionally();
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
             NullCursor nc;
@@ -136,7 +134,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long constantDeltaValue;
         private int currentBlock;
         private int currentGen;
-        private long cursorReloadGeneration;
         private long efHighOffset;
         private int efHighWordIdx;
         private int efL;
@@ -273,9 +270,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         private boolean advanceToPrevRelevantGen() {
-            if (cursorReloadGeneration != reloadGeneration) {
-                return true;
-            }
             if (isCacheReplayMode && cacheVersionAtOf != genLookup.getCacheVersion()) {
                 return true;
             }
@@ -317,8 +311,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
                 currentGen--;
             }
-            if (!isCacheReplayMode && requestedKey >= 0
-                    && cursorReloadGeneration == reloadGeneration) {
+            if (!isCacheReplayMode && requestedKey >= 0) {
                 builderEntries.reverse();
                 genLookup.putCacheEntries(requestedKey, builderEntries);
             }
@@ -450,16 +443,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         private void loadDenseGenerationCached(int gen) {
-            if (cursorReloadGeneration != reloadGeneration) {
-                this.encodedBlockCount = 0;
-                this.currentBlock = -1;
-                this.blockBufferPos = -1;
-                this.constantDeltaRemaining = 0;
-                this.isEFMode = false;
-                this.isFlatMode = false;
-                this.flatRemaining = 0;
-                return;
-            }
             this.isCurrentGenDense = true;
             this.bufferRangeChecked = false;
             long genFileOffset = genLookup.getGenFileOffset(gen);
@@ -598,16 +581,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         private void loadSparseGenByPrefixSum(int gen) {
-            if (cursorReloadGeneration != reloadGeneration) {
-                this.encodedBlockCount = 0;
-                this.currentBlock = -1;
-                this.blockBufferPos = -1;
-                this.constantDeltaRemaining = 0;
-                this.isEFMode = false;
-                this.isFlatMode = false;
-                this.flatRemaining = 0;
-                return;
-            }
             this.isCurrentGenDense = false;
             this.bufferRangeChecked = false;
             computePerColumnSidecarOffsets(gen);
@@ -674,16 +647,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         private void loadSparseGenDirect(int gen, int idx) {
-            if (cursorReloadGeneration != reloadGeneration) {
-                this.encodedBlockCount = 0;
-                this.currentBlock = -1;
-                this.blockBufferPos = -1;
-                this.constantDeltaRemaining = 0;
-                this.isEFMode = false;
-                this.isFlatMode = false;
-                this.flatRemaining = 0;
-                return;
-            }
             this.isCurrentGenDense = false;
             this.bufferRangeChecked = false;
             computePerColumnSidecarOffsets(gen);
@@ -840,7 +803,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         void of(int key, long minValue, long maxValue) {
-            this.cursorReloadGeneration = reloadGeneration;
+            this.cursorGenCount = genCount;
             clearBlockState();
             resetCoveringState();
             builderEntries.clear();
@@ -850,7 +813,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             this.minValue = minValue;
             this.maxValue = maxValue;
 
-            if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
+            if (keyCount == 0 || key < 0 || key >= keyCount || cursorGenCount == 0) {
                 this.requestedKey = -1;
                 currentGen = -1;
                 return;
@@ -861,13 +824,13 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // Fast path: sealed single-generation dense index. No advance machinery
             // needed; cache offers no win because there is no SBBF skip to amortize
             // and dense gens never read prefix sums.
-            if (genCount == 1 && genLookup.getGenKeyCount(0) >= 0) {
+            if (cursorGenCount == 1 && genLookup.getGenKeyCount(0) >= 0) {
                 this.currentGen = -1;
                 loadDenseGenerationCached(0);
                 return;
             }
 
-            this.currentGen = genCount;
+            this.currentGen = cursorGenCount;
 
             long packedSlot = genLookup.cacheLookup(key);
             if (packedSlot != PostingGenLookup.CACHE_NOT_PRESENT) {
@@ -935,6 +898,14 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public long size() {
+            long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
+            long nullLimit = Math.min(columnTop, hi);
+            long nulls = Math.max(0L, nullLimit - minValue);
+            return super.size() + nulls;
         }
     }
 }

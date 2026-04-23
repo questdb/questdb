@@ -71,4 +71,8 @@ public interface RowCursor extends QuietCloseable {
      * @return numeric index of the next row
      */
     long next();
+
+    default long size() {
+        return -1;
+    }
 }

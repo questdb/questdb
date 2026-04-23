@@ -542,16 +542,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 while ((frame = frameCursor.next()) != null) {
                     IndexReader reader = tableReader.getIndexReader(
                             frame.getPartitionIndex(), indexColumnIndex, IndexReader.DIR_FORWARD);
-                    try (RowCursor rc = reader.getCursor(TableUtils.toIndexKey(symbolKey),
-                            frame.getRowLo(), frame.getRowHi() - 1)) {
-                        if (rc instanceof CoveringRowCursor coveringCursor) {
-                            int count = coveringCursor.getCoveredValueCount();
+                    final long rowLo = frame.getRowLo();
+                    final long rowHi = frame.getRowHi();
+                    try (RowCursor rc = reader.getCursor(TableUtils.toIndexKey(symbolKey), rowLo, rowHi - 1)) {
+                        // rc.size() reports counts from gen prefix-sums, which span the whole
+                        // partition. Only trust it for frames that cover the whole partition;
+                        // otherwise iterate to honor the rowLo/rowHi bounds.
+                        if (rowLo == 0 && rowHi == tableReader.getPartitionRowCount(frame.getPartitionIndex())) {
+                            long count = rc.size();
                             if (count >= 0) {
                                 total += count;
                                 continue;
                             }
                         }
-                        // Fallback for bitmap index or unbounded frames: iterate
                         while (rc.hasNext()) {
                             rc.next();
                             total++;

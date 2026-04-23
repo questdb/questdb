@@ -65,8 +65,6 @@ public interface CoveringRowCursor extends RowCursor {
 
     CharSequence getCoveredStrB(int includeIdx);
 
-    int getCoveredValueCount();
-
     Utf8Sequence getCoveredVarcharA(int includeIdx);
 
     Utf8Sequence getCoveredVarcharB(int includeIdx);

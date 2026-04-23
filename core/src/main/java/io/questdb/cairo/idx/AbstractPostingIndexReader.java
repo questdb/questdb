@@ -38,8 +38,8 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.DirectBitSet;
 import io.questdb.std.DirectBinarySequence;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -77,7 +77,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
-    protected long reloadGeneration;
     private long activePageOffset;
     private MillisecondClock clock;
     private long columnTxn;
@@ -116,11 +115,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         for (int g = 0; g < genCount; g++) {
             int genKeyCount = genLookup.getGenKeyCount(g);
             long genFileOffset = genLookup.getGenFileOffset(g);
-            long genDataSize = genLookup.getGenDataSize(g);
             if (genKeyCount >= 0) {
-                newlyFound += collectDenseGenKeys(genFileOffset, genDataSize, genKeyCount, foundKeys);
+                newlyFound += collectDenseGenKeys(genFileOffset, genKeyCount, foundKeys);
             } else {
-                newlyFound += collectSparseGenKeys(genFileOffset, genDataSize, -genKeyCount, foundKeys);
+                newlyFound += collectSparseGenKeys(genFileOffset, -genKeyCount, foundKeys);
             }
         }
         return newlyFound;
@@ -242,17 +240,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         Unsafe.getUnsafe().loadFence();
         long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
         long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        if (Math.max(seqA, seqB) == keyFileSequence) {
+        if (Math.max(seqA, seqB) <= keyFileSequence) {
             return;
         }
         long prevSequence = keyFileSequence;
         readIndexMetadataFromBestPage(valueFileTxn);
         if (keyFileSequence != prevSequence && valueMemSize > 0) {
-            long oldAddr = valueMem.addressOf(0);
             ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
-            if (valueMem.addressOf(0) != oldAddr) {
-                reloadGeneration++;
-            }
         }
     }
 
@@ -278,8 +272,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         sidecarCovTs.clear();
     }
 
-    private int collectDenseGenKeys(long genFileOffset, long genDataSize, int genKeyCount, DirectBitSet foundKeys) {
-        valueMem.extend(genFileOffset + genDataSize);
+    private int collectDenseGenKeys(long genFileOffset, int genKeyCount, DirectBitSet foundKeys) {
         long genAddr = valueMem.addressOf(genFileOffset);
         int sc = PostingIndexUtils.strideCount(genKeyCount);
         int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
@@ -314,11 +307,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return newlyFound;
     }
 
-    private int collectSparseGenKeys(long genFileOffset, long genDataSize, int activeKeyCount, DirectBitSet foundKeys) {
-        long needed = genFileOffset + genDataSize;
-        if (needed > valueMem.size()) {
-            valueMem.extend(needed);
-        }
+    private int collectSparseGenKeys(long genFileOffset, int activeKeyCount, DirectBitSet foundKeys) {
         long genAddr = valueMem.addressOf(genFileOffset);
         int newlyFound = 0;
         for (int i = 0; i < activeKeyCount; i++) {
@@ -513,23 +502,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
     }
 
-    protected void updateKeyCount() {
-        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        if (Math.max(seqA, seqB) <= keyFileSequence) {
-            return;
-        }
-        int prevKeyCount = keyCount;
-        readIndexMetadataFromBestPage(valueFileTxn);
-        if (keyCount > prevKeyCount && valueMemSize > 0) {
-            long oldAddr = valueMem.addressOf(0);
-            ((MemoryCMR) valueMem).changeSize(valueMemSize);
-            if (valueMem.addressOf(0) != oldAddr) {
-                reloadGeneration++;
-            }
-        }
-    }
-
     protected abstract class AbstractCoveringCursor implements CoveringRowCursor {
         protected final BorrowedArray arrayView = new BorrowedArray();
         protected final DirectBinarySequence binView = new DirectBinarySequence();
@@ -540,6 +512,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected final DirectUtf8String varcharViewB = new DirectUtf8String();
         protected int cachedKeyBlockStride = -1;
         protected int cachedSidecarIdx;
+        protected int cursorGenCount;
         protected long decodeWorkspaceAddr;
         protected int decodeWorkspaceCapacity;
         protected int denseVarKeyStartCount;
@@ -749,27 +722,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         @Override
-        public int getCoveredValueCount() {
-            if (coverCount == 0) {
-                return -1;
-            }
-            int total = 0;
-            for (int g = 0; g < genCount; g++) {
-                int gkc = genLookup.getGenKeyCount(g);
-                if (gkc >= 0) {
-                    int denseCount = getDenseGenCount(gkc);
-                    if (denseCount < 0) {
-                        return -1;
-                    }
-                    total += denseCount;
-                } else {
-                    total += getSparseGenCount(g);
-                }
-            }
-            return total;
-        }
-
-        @Override
         public Utf8Sequence getCoveredVarcharA(int includeIdx) {
             return getVarSidecarUtf8(includeIdx, varcharViewA);
         }
@@ -794,6 +746,23 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         public long seekToLast() {
             throw new UnsupportedOperationException(
                     "seekToLast: use a backward index reader; forward iteration is O(n)");
+        }
+
+        @Override
+        public long size() {
+            if (requestedKey < 0) {
+                return 0;
+            }
+            long total = 0;
+            for (int g = 0; g < cursorGenCount; g++) {
+                int gkc = genLookup.getGenKeyCount(g);
+                if (gkc >= 0) {
+                    total += getDenseGenKeyCount(g, gkc);
+                } else if (!genLookup.notContainKey(valueMem, g, requestedKey)) {
+                    total += getSparseGenKeyCount(g);
+                }
+            }
+            return total;
         }
 
         private CharSequence decompressFsstStr(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectString view, boolean longOffsets) {
@@ -881,46 +850,27 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
         }
 
-        private int getDenseGenCount(int genKeyCount) {
-            int memIdx = -1;
-            for (int c = 0; c < coverCount; c++) {
-                MemoryMR mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.size() > 0
-                        && !ColumnType.isVarSize(sidecarColumnTypes.getQuick(c))) {
-                    memIdx = c;
-                    break;
-                }
+        private int getDenseGenKeyCount(int gen, int genKeyCount) {
+            if (requestedKey >= genKeyCount) {
+                return 0;
             }
-            if (memIdx < 0) {
-                return -1;
-            }
-
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
-            int sc = PostingIndexUtils.strideCount(genKeyCount);
-            if (stride >= sc) {
-                return 0;
+            long genAddr = valueMem.addressOf(genLookup.getGenFileOffset(gen));
+            long strideOff = Unsafe.getUnsafe().getLong(genAddr + (long) stride * Long.BYTES);
+            long strideAddr = genAddr + PostingIndexUtils.strideIndexSize(genKeyCount) + strideOff;
+            byte mode = Unsafe.getUnsafe().getByte(strideAddr);
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                int start = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
+                int end = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES);
+                return end - start;
             }
-            int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
-            if (localKey >= ks) {
-                return 0;
+            if (mode != PostingIndexUtils.STRIDE_MODE_DELTA) {
+                throw CairoException.critical(0).put(INDEX_CORRUPT).put(" [bad stride mode=").put(mode).put(']');
             }
-
-            MemoryMR mem = sidecarMems.getQuick(memIdx);
-            int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
-            long strideIdxOffset = PostingIndexUtils.PC_HEADER_SIZE + (long) stride * Long.BYTES;
-            if (strideIdxOffset + Long.BYTES > mem.size()) {
-                return 0;
-            }
-            long strideOff = mem.getLong(strideIdxOffset);
-            long strideDataStart = siSize + strideOff;
-            if (strideDataStart >= mem.size()) {
-                return 0;
-            }
-            long keyOffsetsAddr = mem.addressOf(strideDataStart);
-            long keyBlockOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) localKey * Long.BYTES);
-            long keyBlockAddr = mem.addressOf(strideDataStart + (long) ks * Long.BYTES + keyBlockOff);
-            return Unsafe.getUnsafe().getInt(keyBlockAddr) & ~CoveringCompressor.RAW_BLOCK_FLAG;
+            long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+            return Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
         }
 
         private byte getRawSidecarByte(int includeIdx) {
@@ -990,16 +940,23 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return Unsafe.getUnsafe().getShort(addr);
         }
 
-        private int getSparseGenCount(int gen) {
-            if (coverCount == 0) {
+        private int getSparseGenKeyCount(int gen) {
+            int minKey = genLookup.getGenMinKey(gen);
+            int maxKey = genLookup.getGenMaxKey(gen);
+            if (requestedKey < minKey || requestedKey > maxKey) {
                 return 0;
             }
-            MemoryMR mem = sidecarMems.getQuick(0);
-            if (mem.size() == 0) {
+            long genFileOffset = genLookup.getGenFileOffset(gen);
+            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
+            int k = requestedKey - minKey;
+            int start = Unsafe.getUnsafe().getInt(prefixSumAddr + (long) k * Integer.BYTES);
+            int end = Unsafe.getUnsafe().getInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES);
+            if (start >= end) {
                 return 0;
             }
-            long offset = mem.getLong((long) gen * Long.BYTES);
-            return Unsafe.getUnsafe().getInt(mem.addressOf(offset));
+            int activeKeyCount = -genLookup.getGenKeyCount(gen);
+            long countsBase = valueMem.addressOf(genFileOffset) + (long) activeKeyCount * Integer.BYTES;
+            return Unsafe.getUnsafe().getInt(countsBase + (long) start * Integer.BYTES);
         }
 
         private ArrayView getVarSidecarArray(int includeIdx, int columnType) {

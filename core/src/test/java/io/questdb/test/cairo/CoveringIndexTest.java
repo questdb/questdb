@@ -864,8 +864,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testCountPushdownVarcharOnly() throws Exception {
-        // Regression test for getCoveredValueCount returning 0 for var-only INCLUDE.
-        // Now returns -1, falling back to iteration count.
+        // Regression test for count returning 0 for var-only INCLUDE.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_count_vc (
@@ -8762,10 +8761,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 int rowCount = 600;
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    // Covered value == rowId so misalignment shows up as a different
-                    // numeric value rather than a crash.
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, (double) i);
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, i);
                     }
 
                     PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
@@ -8893,8 +8890,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharPageFrameCountMixed() throws Exception {
-        // COUNT(*) with mixed VARCHAR + DOUBLE INCLUDE. The DOUBLE column provides
-        // a fast-path count via getCoveredValueCount(). Verify correctness.
+        // COUNT(*) with mixed VARCHAR + DOUBLE INCLUDE.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_vw_count (
