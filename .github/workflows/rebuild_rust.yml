@@ -200,6 +200,24 @@ jobs:
             core/src/main/resources/io/questdb/bin/windows-x86-64/questdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
           enableCrossOsArchive: true
+      - name: Install cargo-deny
+        run: |
+          DENY_VERSION=$(gh release view --repo EmbarkStudios/cargo-deny --json tagName -q '.tagName')
+          curl -fsSL "https://github.com/EmbarkStudios/cargo-deny/releases/download/${DENY_VERSION}/cargo-deny-${DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz --strip-components=1 -C /usr/local/bin
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Generate THIRD_PARTY_LICENSES.txt
+        run: |
+          cd core/rust/qdbr
+          {
+            echo "Third-party licenses for Rust dependencies of QuestDB"
+            echo "======================================================"
+            echo ""
+            echo "Generated on $(date -u +%Y-%m-%d) by cargo-deny"
+            echo ""
+            cargo deny list --layout license
+          } > ../../../THIRD_PARTY_LICENSES.txt
       - name: Check git status before
         run: |
           git status
@@ -212,7 +230,8 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/questdbr.dll
-          
+          git add THIRD_PARTY_LICENSES.txt
+
           echo "Removing exec permissions in Git index..."
           git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
           git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so

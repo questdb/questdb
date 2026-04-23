@@ -38,6 +38,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -165,9 +166,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinForSelectWithTimestamps() throws Exception {
         assertMemoryLeak(() -> {
-            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-
-            final String expected = String.format("""
+            final String expected = getString("""
                     tag\thi\tlo\tts\tts1
                     AA\t315515118\t315515118\t1970-01-03T00:00:00.000000%1$s\t1970-01-03T00:00:00.000000%1$s
                     BB\t-727724771\t-727724771\t1970-01-03T00:06:00.000000%1$s\t1970-01-03T00:06:00.000000%1$s
@@ -179,7 +178,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     BB\t1545253512\t1545253512\t1970-01-03T00:42:00.000000%1$s\t1970-01-03T00:42:00.000000%1$s
                     AA\t1573662097\t1573662097\t1970-01-03T00:48:00.000000%1$s\t1970-01-03T00:48:00.000000%1$s
                     AA\t339631474\t339631474\t1970-01-03T00:54:00.000000%1$s\t1970-01-03T00:54:00.000000%1$s
-                    """, leftSuffix);
+                    """);
 
             assertQuery(
                     "tag\thi\tlo\tts\tts1\n",
@@ -1006,7 +1005,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
-
             String expected = String.format("""
                     timebid\ttimeask\tb\ta
                     1970-01-01T00:00:00.000001%2$s\t1970-01-01T00:00:00.000000%1$s\t101\t100
@@ -1268,6 +1266,118 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         """, leftSuffix, rightSuffix);
                 assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinSymbolAndIntKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym SYMBOL,
+                                id INT,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym SYMBOL,
+                                id INT,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 1, 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 2, 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 1, 3.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 1, 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 2, 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('B', 2, 30.0, '2024-01-01T09:45:00.000000Z')
+                    """);
+
+            // (B, 1) has no match in slave
+            String expected = """
+                    sym\tid\tval\tprice
+                    A\t1\t1.0\t10.0
+                    A\t2\t2.0\t20.0
+                    B\t1\t3.0\tnull
+                    """;
+
+            String queryBody = "m.sym, m.id, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym AND m.id = s.id)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinThreeSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                sym3 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                sym3 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 'P', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'X', 'Q', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('A', 'Y', 'P', 3.0, '2024-01-01T10:02:00.000000Z'),
+                        ('B', 'X', 'P', 4.0, '2024-01-01T10:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 'P', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'X', 'Q', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('A', 'Y', 'P', 30.0, '2024-01-01T09:45:00.000000Z')
+                    """);
+
+            // (B, X, P) has no match in slave
+            String expected = """
+                    sym1\tsym2\tsym3\tval\tprice
+                    A\tX\tP\t1.0\t10.0
+                    A\tX\tQ\t2.0\t20.0
+                    A\tY\tP\t3.0\t30.0
+                    B\tX\tP\t4.0\tnull
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.sym3, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2 AND m.sym3 = s.sym3)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -1557,6 +1667,766 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1w;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinToleranceTwoSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:59:50.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T10:01:55.000000Z')
+                    """);
+
+            // Tolerance of 15s:
+            // (A,X) at 10:00:00 — slave at 09:59:50 is 10s before, within tolerance -> match
+            // (A,Y) at 10:01:00 — slave at 09:00:00 is 61min before, outside tolerance -> null
+            // (B,X) at 10:02:00 — slave at 10:01:55 is 5s before, within tolerance -> match
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    A\tY\t2.0\tnull
+                    B\tX\t3.0\t30.0
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON(m.sym1 = s.sym1 AND m.sym2 = s.sym2) TOLERANCE 15s";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z'),
+                        ('B', 'Y', 4.0, '2024-01-01T10:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T09:45:00.000000Z'),
+                        ('A', 'X', 11.0, '2024-01-01T10:00:30.000000Z')
+                    """);
+
+            // B,Y has no match in slave
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    A\tY\t2.0\t20.0
+                    B\tX\t3.0\t30.0
+                    B\tY\t4.0\tnull
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysCrossColumnIndices() throws Exception {
+        assertMemoryLeak(() -> {
+            // Master: sym1 at col 0, sym2 at col 1
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym2 SYMBOL,
+                                sym1 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-02T10:00:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-03T10:00:00.000000Z'),
+                        ('B', 'Y', 4.0, '2024-01-04T10:00:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('Y', 'B', 40.0, '2024-01-01T09:00:00.000000Z'),
+                        ('X', 'B', 30.0, '2024-01-02T09:00:00.000000Z'),
+                        ('Y', 'A', 20.0, '2024-01-02T09:30:00.000000Z'),
+                        ('X', 'A', 10.0, '2024-01-03T09:00:00.000000Z')
+                    """);
+
+            String expected = """
+                    sym1	sym2	val	sym21	sym11
+                    A	X	1.0	\t	
+                    A	Y	2.0	Y	A
+                    B	X	3.0	X	B
+                    B	Y	4.0	Y	B
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.sym2, s.sym1 FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysEmptyMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 'Y', 20.0, '2024-01-01T09:30:00.000000Z')
+                    """);
+
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysEmptySlave() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('B', 'Y', 2.0, '2024-01-01T10:01:00.000000Z')
+                    """);
+
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\tnull
+                    B\tY\t2.0\tnull
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysMasterOnlySymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('C', 'X', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('A', 'Z', 3.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            // slave has no 'C' for sym1 and no 'Z' for sym2
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 'Y', 20.0, '2024-01-01T09:30:00.000000Z')
+                    """);
+
+            // Only (A, X) matches; (C, X) and (A, Z) have no match
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    C\tX\t2.0\tnull
+                    A\tZ\t3.0\tnull
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysMultiPartition() throws Exception {
+        // Data spans multiple days/partitions to verify SymbolTranslatingRecord
+        // works correctly when the time-frame cursor advances across partitions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-02T10:00:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-03T10:00:00.000000Z'),
+                        ('A', 'X', 4.0, '2024-01-04T10:00:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-02T09:00:00.000000Z'),
+                        ('A', 'X', 40.0, '2024-01-03T09:00:00.000000Z')
+                    """);
+
+            // (A,X) at day1 matches slave (A,X) at day1
+            // (A,Y) at day2 matches slave (A,Y) at day1
+            // (B,X) at day3 matches slave (B,X) at day2
+            // (A,X) at day4 matches slave (A,X) at day3 (most recent)
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    A\tY\t2.0\t20.0
+                    B\tX\t3.0\t30.0
+                    A\tX\t4.0\t40.0
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysNotUsedForNonStaticSymbol() throws Exception {
+        // Negative EXPLAIN test: symbolKeyJoin must NOT appear when one side
+        // has a non-static symbol table (e.g., produced by a subquery).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('B', 'Y', 2.0, '2024-01-01T10:01:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 'Y', 20.0, '2024-01-01T09:30:00.000000Z')
+                    """);
+
+            // Slave wrapped in a subquery that casts both symbols — produces non-static symbol tables
+            String query = "SELECT m.sym1, m.sym2, m.val, s.price FROM master m "
+                    + "ASOF JOIN (SELECT sym1::STRING::SYMBOL AS sym1, sym2::STRING::SYMBOL AS sym2, price, ts FROM slave) s "
+                    + "ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysNotUsedForSelfJoin() throws Exception {
+        // Negative EXPLAIN test: symbolKeyJoin must NOT appear for multi-symbol
+        // self-joins, since master and slave share the same symbol table.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts #TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('BTC-USD', 'sell', '2024-01-01T00:00:00.000000Z', 1),
+                        ('BTC-USD', 'buy', '2024-01-01T00:00:01.000000Z', 2),
+                        ('ETH-USD', 'sell', '2024-01-01T00:00:02.000000Z', 3)
+                    """);
+
+            // ASOF self-join on two symbol keys
+            String query = "SELECT * FROM trades t1 ASOF JOIN trades t2 ON(pair, side)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+
+            // LT self-join on two symbol keys
+            query = "SELECT * FROM trades t1 LT JOIN trades t2 ON(pair, side)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysSymbolKeyJoinNotUsedForSingleKey() throws Exception {
+        // Negative EXPLAIN test: symbolKeyJoin must NOT appear for single-symbol
+        // key joins (those use the specialized SymbolKeyMappingRecordCopier path).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("INSERT INTO master VALUES ('A', 1.0, '2024-01-01T10:00:00.000000Z')");
+
+            execute("INSERT INTO slave VALUES ('A', 10.0, '2024-01-01T09:00:00.000000Z')");
+
+            // Single symbol key — should NOT use symbolKeyJoin
+            String query = "SELECT m.sym, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+
+            // Dense
+            query = "SELECT /*+ asof_dense(m s) */ m.sym, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+
+            // Light
+            query = "SELECT /*+ asof_linear(m s) */ m.sym, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysToTop() throws Exception {
+        // Verifies that toTop() re-iteration produces identical results when
+        // SymbolTranslatingRecord is active. The CROSS JOIN forces the ASOF JOIN
+        // cursor to be reset via toTop() for each row in the multiplier table.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO master VALUES
+                                ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                                ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                                ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z')
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO slave VALUES
+                                ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                                ('A', 'Y', 20.0, '2024-01-01T09:30:00.000000Z'),
+                                ('B', 'X', 30.0, '2024-01-01T09:45:00.000000Z')
+                            """
+            );
+
+            execute("CREATE TABLE multiplier (id INT)");
+            execute("INSERT INTO multiplier VALUES (1), (2)");
+
+            // Results repeat twice (once for each multiplier row), testing
+            // that toTop() properly preserves SymbolTranslatingRecord state
+            String expected = """
+                    id\tsym1\tsym2\tval\tprice
+                    1\tA\tX\t1.0\t10.0
+                    1\tA\tY\t2.0\t20.0
+                    1\tB\tX\t3.0\t30.0
+                    2\tA\tX\t1.0\t10.0
+                    2\tA\tY\t2.0\t20.0
+                    2\tB\tX\t3.0\t30.0
+                    """;
+
+            String query = """
+                    SELECT m.id, asof_result.* FROM multiplier m
+                    CROSS JOIN (
+                      SELECT ma.sym1, ma.sym2, ma.val, s.price
+                      FROM master ma
+                      ASOF JOIN slave s ON (ma.sym1 = s.sym1 AND ma.sym2 = s.sym2)
+                    ) asof_result
+                    """;
+            assertQueryNoLeakCheck(
+                    expected,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 5.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'X', 15.0, '2024-01-01T09:30:00.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:45:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T09:50:00.000000Z')
+                    """);
+
+            // Filter on slave: price > 10 — exercises FilteredAsOfJoinFastRecordCursorFactory
+            // (A,X) should match slave (A,X) at 09:30 with price=15 (price=5 filtered out)
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t15.0
+                    A\tY\t2.0\t20.0
+                    B\tX\t3.0\t30.0
+                    """;
+
+            String query = "SELECT m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN (SELECT * FROM slave WHERE price > 10) s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
+            assertQueryNoLeakCheck(
+                    expected,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+
+            // asof_linear hint bypasses filter stealing, exercising the Light
+            // factory with multi-symbol key optimization on a pre-filtered subquery.
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN (SELECT * FROM slave WHERE price > 10) s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', NULL, 1.0, '2024-01-01T10:00:00.000000Z'),
+                        (NULL, 'X', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('A', 'X', 3.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', NULL, 10.0, '2024-01-01T09:00:00.000000Z'),
+                        (NULL, 'X', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('A', 'X', 30.0, '2024-01-01T09:45:00.000000Z')
+                    """);
+
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\t\t1.0\t10.0
+                    \tX\t2.0\t20.0
+                    A\tX\t3.0\t30.0
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysWithReversedSymbolOrder() throws Exception {
+        // Master and slave insert symbols in different order, so symbol IDs differ.
+        // SymbolTranslatingRecord must correctly map master IDs to slave IDs.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Master inserts B first (ID=0), then A (ID=1)
+            execute("""
+                    INSERT INTO master VALUES
+                        ('B', 'Y', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'X', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z'),
+                        ('A', 'Y', 4.0, '2024-01-01T10:03:00.000000Z')
+                    """);
+
+            // Slave inserts A first (ID=0), then B (ID=1) — reversed symbol table
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T09:45:00.000000Z'),
+                        ('B', 'Y', 40.0, '2024-01-01T09:50:00.000000Z')
+                    """);
+
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    B\tY\t1.0\t40.0
+                    A\tX\t2.0\t10.0
+                    B\tX\t3.0\t30.0
+                    A\tY\t4.0\t20.0
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -1905,6 +2775,128 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinWithTopDownFilteredDateaddTimestampProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE fx_trades (
+                                timestamp #TIMESTAMP,
+                                trade_id INT,
+                                symbol SYMBOL
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO fx_trades VALUES
+                        ('2026-04-14T00:00:10.000000Z', 1, 'EURUSD'),
+                        ('2026-04-14T00:01:10.000000Z', 2, 'EURUSD')
+                    """);
+
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE market_data (
+                                timestamp #TIMESTAMP,
+                                symbol SYMBOL,
+                                best_bid DOUBLE,
+                                best_ask DOUBLE
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO market_data VALUES
+                        ('2026-04-14T00:00:30.000000Z', 'EURUSD', 1.09, 1.11),
+                        ('2026-04-14T00:01:30.000000Z', 'EURUSD', 1.19, 1.21)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                                    trade_id\ttimestamp\tbest_bid\tbest_ask
+                                    1\t2026-04-14T00:00:10.000000Z\t1.09\t1.11
+                                    2\t2026-04-14T00:01:10.000000Z\t1.19\t1.21
+                                    """,
+                            leftTableTimestampType.getTypeName()),
+                    """
+                            WITH trades_yday AS (
+                                SELECT timestamp, trade_id, symbol
+                                FROM fx_trades
+                                WHERE symbol = 'EURUSD'
+                                    AND timestamp >= '2026-04-14T00:00:00Z'
+                                    AND timestamp < '2026-04-15T00:00:00Z'
+                                LIMIT 2
+                            ),
+                            market_data_p30 AS (
+                                SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
+                                FROM market_data
+                                WHERE symbol = 'EURUSD'
+                            )
+                            SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
+                            FROM trades_yday t
+                            ASOF JOIN market_data_p30 md ON (symbol)
+                            """,
+                    "timestamp",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWithTopDownFilteredDateaddTimestampProjectionOnMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE fx_trades (
+                                timestamp #TIMESTAMP,
+                                trade_id INT,
+                                symbol SYMBOL
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO fx_trades VALUES
+                        ('2026-04-14T00:00:40.000000Z', 1, 'EURUSD'),
+                        ('2026-04-14T00:01:40.000000Z', 2, 'EURUSD')
+                    """);
+
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE market_data (
+                                timestamp #TIMESTAMP,
+                                symbol SYMBOL,
+                                best_bid DOUBLE
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO market_data VALUES
+                        ('2026-04-14T00:00:20.000000Z', 'EURUSD', 1.09),
+                        ('2026-04-14T00:01:20.000000Z', 'EURUSD', 1.19)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            trade_id\tbest_bid
+                            1\tnull
+                            2\t1.09
+                            """,
+                    """
+                                    WITH trades_p30 AS (
+                                        SELECT dateadd('s', -30, timestamp) AS timestamp, trade_id, symbol
+                                        FROM fx_trades
+                                        WHERE symbol = 'EURUSD'
+                                    )
+                                    SELECT t.trade_id, md.best_bid
+                                    FROM trades_p30 t
+                                    ASOF JOIN market_data md ON (symbol)
+                            """,
+                    null,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testCursorToTop() throws Exception {
         assertMemoryLeak(() -> {
             // Verifies that toTop() properly clears the memoization state in AsOfJoinMemoizedRecordCursor.
@@ -2181,8 +3173,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                           ) ON (Ticker)
                         ) ON (Ticker)
                         """;
-                String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-                String expected = String.format("""
+                String expected = getString("""
                         Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111
                         AAPL\t2000-01-01T00:00:00.000000%1$s\t\t\t\t\t\t
                         AAPL\t2001-01-01T00:00:00.000000%1$s\tAAPL\t2000-01-01T00:00:00.000000%1$s\t\t\t\t
@@ -2190,7 +3181,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         AAPL\t2003-01-01T00:00:00.000000%1$s\tAAPL\t2002-01-01T00:00:00.000000%1$s\tAAPL\t2001-01-01T00:00:00.000000%1$s\tAAPL\t2000-01-01T00:00:00.000000%1$s
                         AAPL\t2004-01-01T00:00:00.000000%1$s\tAAPL\t2003-01-01T00:00:00.000000%1$s\tAAPL\t2002-01-01T00:00:00.000000%1$s\tAAPL\t2001-01-01T00:00:00.000000%1$s
                         AAPL\t2005-01-01T00:00:00.000000%1$s\tAAPL\t2004-01-01T00:00:00.000000%1$s\tAAPL\t2003-01-01T00:00:00.000000%1$s\tAAPL\t2002-01-01T00:00:00.000000%1$s
-                        """, leftSuffix);
+                        """);
                 assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
@@ -2506,9 +3497,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
             execute("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
 
-            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-
-            String expected = String.format("""
+            String expected = getString("""
                     ts\tSequenceNumber\tSequenceNumber1\tcolumn
                     2021-07-26T02:36:02.566000%1$s\t1\tnull\tnull
                     2021-07-26T02:36:03.094000%1$s\t2\t1\t1
@@ -2518,7 +3507,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2021-07-26T02:36:03.097000%1$s\t6\t2\t4
                     2021-07-26T02:36:03.098000%1$s\t7\t6\t1
                     2021-07-26T02:36:03.098000%1$s\t8\t6\t2
-                    """, leftSuffix);
+                    """);
             String query = "select w1.ts ts, w1.SequenceNumber, w2.SequenceNumber, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
             printSqlResult(expected, query, "ts", false, true);
         });
@@ -2710,8 +3699,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLtJoinKeyed() throws Exception {
-        String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-        final String expected = String.format("""
+        final String expected = getString("""
                 tag\thi\tlo\tts\tts1
                 AA\t315515118\tnull\t1970-01-03T00:00:00.000000%1$s\t
                 BB\t-727724771\tnull\t1970-01-03T00:06:00.000000%1$s\t
@@ -2723,7 +3711,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 BB\t1545253512\t-1575378703\t1970-01-03T00:42:00.000000%1$s\t1970-01-03T00:36:00.000000%1$s
                 AA\t1573662097\t-847531048\t1970-01-03T00:48:00.000000%1$s\t1970-01-03T00:24:00.000000%1$s
                 AA\t339631474\t1573662097\t1970-01-03T00:54:00.000000%1$s\t1970-01-03T00:48:00.000000%1$s
-                """, leftSuffix);
+                """);
         executeWithRewriteTimestamp(
                 """
                         create table tab (
@@ -2785,7 +3773,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
-
             String expected = String.format("""
                     timebid\ttimeask\tb\ta
                     1970-01-01T00:00:00.000000%2$s\t\t101\tnull
@@ -3235,8 +4222,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // insert
             execute("insert into tab values ('CC', 24, 210000::timestamp)");
             execute("insert into tab values ('CC', 25, 220000::timestamp)");
-            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-            String ex = String.format("""
+            String ex = getString("""
                     tag\tx\tts
                     AA\t1\t1970-01-01T00:00:00.000000%1$s
                     AA\t2\t1970-01-01T00:00:00.010000%1$s
@@ -3260,7 +4246,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     AA\t20\t1970-01-01T00:00:00.190000%1$s
                     CC\t24\t1970-01-01T00:00:00.210000%1$s
                     CC\t25\t1970-01-01T00:00:00.220000%1$s
-                    """, leftSuffix);
+                    """);
             String query = "tab";
             printSqlResult(ex, query, "ts", true, true);
             // test
@@ -3292,8 +4278,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // insert
             execute("insert into tab values ('CC', 24, 210000::timestamp)");
             execute("insert into tab values ('CC', 25, 220000::timestamp)");
-            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-            String ex = String.format("""
+            String ex = getString("""
                     tag\tx\tts
                     AA\t1\t1970-01-01T00:00:00.000000%1$s
                     AA\t2\t1970-01-01T00:00:00.010000%1$s
@@ -3317,7 +4302,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     AA\t20\t1970-01-01T00:00:00.190000%1$s
                     CC\t24\t1970-01-01T00:00:00.210000%1$s
                     CC\t25\t1970-01-01T00:00:00.220000%1$s
-                    """, leftSuffix);
+                    """);
             String query = "tab";
             printSqlResult(ex, query, "ts", true, true);
             // test
@@ -3416,6 +4401,135 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinToleranceTwoSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:59:50.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T10:01:50.000000Z')
+                    """);
+
+            // LT JOIN with tolerance of 15s:
+            // (A,X) at 10:00:00 — slave at 09:59:50 is 10s before and strictly less, within tolerance -> match
+            // (A,Y) at 10:01:00 — slave at 09:00:00 is 61min before and strictly less, outside tolerance -> null
+            // (B,X) at 10:02:00 — slave at 10:01:50 is 10s before and strictly less, within tolerance -> match
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    A\tY\t2.0\tnull
+                    B\tX\t3.0\t30.0
+                    """;
+
+            String query = "SELECT m.sym1, m.sym2, m.val, s.price FROM master m LT JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2) TOLERANCE 15s";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join Light");
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
+            assertQueryNoLeakCheck(
+                    expected,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLtJoinTwoSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('A', 'X', 11.0, '2024-01-01T10:00:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            // LT JOIN: strictly less than (not equal)
+            // (A,X) at 10:00 matches slave (A,X) at 09:00 (strictly before)
+            // (A,Y) at 10:01 matches slave (A,Y) at 09:30
+            // (B,X) at 10:02 has slave (B,X) at 10:02 but LT excludes equal timestamps
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    A\tY\t2.0\t20.0
+                    B\tX\t3.0\tnull
+                    """;
+
+            String query = "SELECT m.sym1, m.sym2, m.val, s.price FROM master m LT JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join Light");
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
+            assertQueryNoLeakCheck(
+                    expected,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testLtJoinWithAsofLinearSearchHint() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3452,6 +4566,64 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // Execute and verify results
             printSql(query);
             Assert.assertFalse(sink.isEmpty());
+        });
+    }
+
+    @Test
+    public void testLtJoinWithTopDownFilteredDateaddTimestampProjectionOnSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE fx_trades (
+                                timestamp #TIMESTAMP,
+                                trade_id INT,
+                                symbol SYMBOL
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO fx_trades VALUES
+                        ('2026-04-14T00:00:10.000000Z', 1, 'EURUSD'),
+                        ('2026-04-14T00:01:10.000000Z', 2, 'EURUSD')
+                    """);
+
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE market_data (
+                                timestamp #TIMESTAMP,
+                                symbol SYMBOL,
+                                best_bid DOUBLE,
+                                best_ask DOUBLE
+                            ) TIMESTAMP(timestamp) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO market_data VALUES
+                        ('2026-04-14T00:00:30.000000Z', 'EURUSD', 1.09, 1.11),
+                        ('2026-04-14T00:01:30.000000Z', 'EURUSD', 1.19, 1.21)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                                    trade_id\ttimestamp\tbest_bid\tbest_ask
+                                    1\t2026-04-14T00:00:10.000000Z\t1.09\t1.11
+                                    2\t2026-04-14T00:01:10.000000Z\t1.19\t1.21
+                                    """,
+                            leftTableTimestampType.getTypeName()),
+                    """
+                                    WITH market_data_p30 AS (
+                                        SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
+                                        FROM market_data
+                                        WHERE symbol = 'EURUSD'
+                                    )
+                                    SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
+                                    FROM fx_trades t
+                                    LT JOIN market_data_p30 md ON (symbol)
+                            """,
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 
@@ -4231,6 +5403,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult) throws SqlException {
+        assertAlgoAndResult(queryBody, hint, expectedAlgo, expectedResult, false);
+    }
+
+    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult, boolean expectSymbolKeyJoin) throws SqlException {
         String hintedQuery;
         if (!hint.isEmpty()) {
             hintedQuery = "SELECT /*+ " + hint + "*/ " + queryBody;
@@ -4241,6 +5417,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
         TestUtils.assertContains(sink, "AsOf Join " + expectedAlgo);
         if (hint.contains("asof_driveby_cache(t q)")) {
             TestUtils.assertContains(sink, "driveByCache: true");
+        }
+        if (expectSymbolKeyJoin) {
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
         }
         assertSql(expectedResult, hintedQuery);
     }
@@ -4254,6 +5433,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
         printSql("select * from " + leftTable + " asof join " + rightTable + " on s", actualSink);
 
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private @NotNull String getString(String format) {
+        String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
+        return String.format(format, leftSuffix);
     }
 
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {

@@ -169,11 +169,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     }
 
     private class AsOfJoinMemoizedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
-
         private static final long NOT_REMEMBERED = Long.MIN_VALUE;
         private static final int SLOT_REMEMBERED_ROWID = 0;
         private static final int SLOT_VALIDITY_PERIOD_END = 2;
         private static final int SLOT_VALIDITY_PERIOD_START = 1;
+
         private final Map rememberedSymbols;
         private long earliestRowId = Long.MIN_VALUE;
         // These track a contiguous range of slave timestamps that we've already scanned.

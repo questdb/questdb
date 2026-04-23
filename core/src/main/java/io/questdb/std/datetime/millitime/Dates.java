@@ -143,13 +143,17 @@ public final class Dates {
         }
 
         int y = getYear(millis);
-        int m;
         boolean leap1 = isLeapYear(y);
         boolean leap2 = isLeapYear(y + years);
-
+        int m = getMonthOfYear(millis, y, leap1);
+        int d = getDayOfMonth(millis, y, m, leap1);
+        int maxDay = getDaysPerMonth(m, leap2);
+        if (d > maxDay) {
+            d = maxDay;
+        }
         return yearMillis(y + years, leap2)
-                + monthOfYearMillis(m = getMonthOfYear(millis, y, leap1), leap2)
-                + (getDayOfMonth(millis, y, m, leap1) - 1) * DAY_MILLIS
+                + monthOfYearMillis(m, leap2)
+                + (d - 1) * DAY_MILLIS
                 + getTime(millis)
                 + (millis < 0 ? 1 : 0);
 

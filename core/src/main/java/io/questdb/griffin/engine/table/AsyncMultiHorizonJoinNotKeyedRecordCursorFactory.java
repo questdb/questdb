@@ -81,7 +81,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
     private final JoinRecordMetadata horizonJoinMetadata;
     private final RecordCursorFactory masterFactory;
     private final long[] offsets;
-    private final RecordCursorFactory[] slaveFactories;
+    private final ObjList<RecordCursorFactory> slaveFactories;
     private final int workerCount;
 
     public AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
@@ -119,9 +119,9 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             this.groupByFunctions = groupByFunctions;
             this.workerCount = workerCount;
 
-            this.slaveFactories = new RecordCursorFactory[slaveStates.size()];
+            this.slaveFactories = new ObjList<>(slaveStates.size());
             for (int i = 0; i < slaveStates.size(); i++) {
-                slaveFactories[i] = slaveStates.getQuick(i).getFactory();
+                slaveFactories.add(slaveStates.getQuick(i).getFactory());
             }
 
             final AsyncMultiHorizonJoinNotKeyedAtom atom = new AsyncMultiHorizonJoinNotKeyedAtom(
@@ -185,13 +185,13 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
         sink.type("Async Multi Horizon Join");
         sink.meta("workers").val(workerCount);
         sink.meta("offsets").val(offsets.length);
-        sink.meta("tables").val(slaveFactories.length);
+        sink.meta("tables").val(slaveFactories.size());
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
         sink.child(masterFactory);
-        for (int i = 0, n = slaveFactories.length; i < n; i++) {
-            sink.child(slaveFactories[i]);
+        for (int i = 0, n = slaveFactories.size(); i < n; i++) {
+            sink.child(slaveFactories.getQuick(i));
         }
     }
 
@@ -463,7 +463,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
         Misc.free(frameSequence);
         Misc.free(cursor);
         Misc.free(masterFactory);
-        Misc.free(slaveFactories);
+        Misc.freeObjList(slaveFactories);
         Misc.free(horizonJoinMetadata);
         Misc.freeObjList(groupByFunctions);
     }

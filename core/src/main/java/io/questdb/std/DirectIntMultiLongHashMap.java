@@ -189,7 +189,12 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
             putAllAt0(index, key, values);
             size++;
             if (--free == 0) {
-                rehash(capacity() << 1);
+                try {
+                    rehash(capacity() << 1);
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -209,7 +214,12 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
             Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * valueIndex, value);
             size++;
             if (--free == 0) {
-                rehash(capacity() << 1);
+                try {
+                    rehash(capacity() << 1);
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -224,13 +234,15 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
     public void restoreInitialCapacity() {
         if (ptr == 0 || capacity != initialCapacity) {
             final long oldCapacity = capacity;
+            long newPtr;
+            if (ptr == 0) {
+                newPtr = Unsafe.malloc(entrySize * initialCapacity, memoryTag);
+            } else {
+                newPtr = Unsafe.realloc(ptr, entrySize * oldCapacity, entrySize * initialCapacity, memoryTag);
+            }
+            ptr = newPtr;
             capacity = initialCapacity;
             mask = capacity - 1;
-            if (ptr == 0) {
-                ptr = Unsafe.malloc(entrySize * capacity, memoryTag);
-            } else {
-                ptr = Unsafe.realloc(ptr, entrySize * oldCapacity, entrySize * capacity, memoryTag);
-            }
         }
 
         clear();
@@ -277,12 +289,13 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         }
 
         final int oldCapacity = capacity;
+        long newPtr = Unsafe.malloc(entrySize * newCapacity, memoryTag);
 
+        long oldPtr = ptr;
+        ptr = newPtr;
         capacity = newCapacity;
         mask = newCapacity - 1;
         free += (int) ((newCapacity - oldCapacity) * loadFactor);
-        long oldPtr = ptr;
-        ptr = Unsafe.malloc(entrySize * newCapacity, memoryTag);
         zero();
 
         for (long p = oldPtr, lim = oldPtr + entrySize * oldCapacity; p < lim; p += entrySize) {

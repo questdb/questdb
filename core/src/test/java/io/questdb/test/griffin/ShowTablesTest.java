@@ -24,14 +24,21 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
 import org.junit.Test;
 
 public class ShowTablesTest extends AbstractCairoTest {
+
+    @Before
+    public void beforeAll() {
+        node1.setProperty(PropertyKey.CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED, true);
+    }
 
     @Test
     public void testDropAndRecreateTable() throws Exception {
@@ -206,6 +213,56 @@ public class ShowTablesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowTablesReturnsOrderedList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "SHOW TABLES");
+        });
+    }
+
+    @Test
+    public void testShowTablesWithFunctionReturnsOrderedList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "select * from all_tables()");
+        });
+    }
+
+    @Test
+    public void testTablesOrderedAfterDropAndCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            execute("drop table balances");
+            execute("create table businesses(name symbol)");
+            execute("create table balances2(account_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\n", "select * from all_tables()");
+        });
+    }
+
+    @Test
+    public void testTablesOrderedAfterRename() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            execute("rename table balances to statement_balances");
+            execute("create table businesses(name symbol)");
+            execute("create table balances2(account_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\nstatement_balances\n", "select * from all_tables()");
+        });
+    }
+
+    @Test
     public void testShowTimeZone() throws Exception {
         assertMemoryLeak(() -> assertQuery(
                 "TimeZone\nUTC\n",
@@ -275,7 +332,7 @@ public class ShowTablesTest extends AbstractCairoTest {
                             2	balances_1h	ts	WEEK	true	false	0	HOUR	true	balances_1h~2	1000	-1	false	M	null				null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                             3	balances_view	ts	N/A	true	false	0	HOUR	false	balances_view~3	0	0	false	V	null				null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                             """,
-                    "tables() order by table_name"
+                    "tables()"
             );
         });
     }

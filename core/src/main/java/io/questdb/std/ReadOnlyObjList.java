@@ -39,5 +39,5 @@ public interface ReadOnlyObjList<T> extends Sinkable {
 
     int size();
 
-    ObjList<T> copy();
+    ReadOnlyObjList<T> copy();
 }

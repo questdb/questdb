@@ -10,7 +10,7 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -60,7 +60,7 @@ public class SettingsStore implements Closeable {
 
     public synchronized void exportPreferences(Utf8StringSink settings) {
         settings.putAscii("\"preferences\":{");
-        final ObjList<CharSequence> keys = preferencesMap.keys();
+        final ReadOnlyObjList<CharSequence> keys = preferencesMap.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
             final CharSequence value = preferencesMap.get(key);

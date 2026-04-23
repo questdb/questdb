@@ -50,6 +50,8 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
@@ -147,6 +149,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final int SECRET_FILE_MAX_SIZE = 65536; // 64KB max for secret files
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
+    protected final Metrics metrics;
     private final String acceptingWrites;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
@@ -159,6 +162,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double cairoAutoScaleSymbolCapacityThreshold;
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
+    private final int cairoGroupByBatchSize;
     private final int cairoGroupByMergeShardQueueCapacity;
     private final boolean cairoGroupByPresizeEnabled;
     private final long cairoGroupByPresizeMaxCapacity;
@@ -167,6 +171,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoGroupByTopKQueueCapacity;
     private final long cairoGroupByTopKThreshold;
     private final int cairoMaxCrashFiles;
+    private final boolean cairoMetadataCacheSnapshotOrdered;
     private final int cairoPageFrameReduceColumnListCapacity;
     private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoPageFrameReduceRowIdListCapacity;
@@ -286,6 +291,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
     private final int jsonCacheSize;
+    private final int jsonUnnestMaxValueSize;
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
@@ -345,7 +351,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxUncommittedRows;
     private final MemoryConfiguration memoryConfiguration;
     private final int metadataStringPoolCapacity;
-    private final Metrics metrics;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
     private final MicrosecondClock microsecondClock;
@@ -356,6 +361,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3LagCalculationWindowsSize;
     private final int o3LastPartitionMaxSplits;
     private final long o3MaxLagUs;
+    private final int o3MidPartitionMaxSplits;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
     private final boolean o3PartitionOverwriteControlEnabled;
@@ -399,6 +405,20 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
     private final boolean queryWithinLatestByOptimisationEnabled;
+    private final int qwpMaxRowsPerTable;
+    private final int qwpMaxSchemasPerConnection;
+    private final int qwpMaxTablesPerConnection;
+    private final long qwpUdpCommitInterval;
+    private final boolean qwpUdpEnabled;
+    private final int qwpUdpGroupIPv4Address;
+    private final int qwpUdpMaxUncommittedDatagrams;
+    private final int qwpUdpMsgBufferSize;
+    private final int qwpUdpMsgCount;
+    private final boolean qwpUdpOwnThread;
+    private final int qwpUdpOwnThreadAffinity;
+    private final int qwpUdpReceiveBufferSize;
+    private final QwpUdpReceiverConfiguration qwpUdpReceiverConfiguration = new PropQwpUdpReceiverConfiguration();
+    private final boolean qwpUdpUnicast;
     private final int readerPoolMaxSegments;
     private final int recentWriteTrackerCapacity;
     private final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap;
@@ -712,6 +732,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
     private long queryTimeout;
+    private int qwpUdpBindIPV4Address;
+    private int qwpUdpPort;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
 
@@ -830,6 +852,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
+        this.cairoMetadataCacheSnapshotOrdered = getBoolean(properties, env, PropertyKey.CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED, true);
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
         this.cairoWriteBackOffTimeoutOnMemPressureMs = getMillis(properties, env, PropertyKey.CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE, 4000);
@@ -1472,6 +1495,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inactiveViewWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_VIEW_WAL_INACTIVE_WRITER_TTL, 60_000);
             this.ttlUseWallClock = getBoolean(properties, env, PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, true);
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
+            int jsonUnnestMaxValueSizeRaw = getInt(properties, env, PropertyKey.CAIRO_JSON_UNNEST_MAX_VALUE_SIZE, 4096);
+            if (jsonUnnestMaxValueSizeRaw < 1) {
+                log.info().$("invalid ").$(PropertyKey.CAIRO_JSON_UNNEST_MAX_VALUE_SIZE.getPropertyPath())
+                        .$(" value ").$(jsonUnnestMaxValueSizeRaw).$(", will use 1").$();
+                this.jsonUnnestMaxValueSize = 1;
+            } else {
+                this.jsonUnnestMaxValueSize = jsonUnnestMaxValueSizeRaw;
+            }
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 10);
@@ -1587,6 +1618,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
             this.sqlSmallPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
             this.sqlSmallPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+            // The batched GROUP BY probe packs the frame-relative row index into a
+            // 24-bit slot. Reject misconfigurations that would silently truncate.
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, this.sqlPageFrameMinRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, this.sqlPageFrameMaxRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, this.sqlSmallPageFrameMinRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, this.sqlSmallPageFrameMaxRows);
 
             this.sqlJitMode = getSqlJitMode(properties, env);
             this.sqlJitIRMemoryPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_IR_MEMORY_PAGE_SIZE, 8 * 1024);
@@ -1708,6 +1745,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
             this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
+            this.o3MidPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1));
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
             this.o3PartitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
 
@@ -1733,6 +1771,88 @@ public class PropServerConfiguration implements ServerConfiguration {
                 log.info().$("invalid partition by ").$(lineUdpDefaultPartitionBy).$("), will use DAY for UDP").$();
                 this.lineUdpDefaultPartitionBy = PartitionBy.DAY;
             }
+
+            parseBindTo(properties, env, PropertyKey.QWP_UDP_BIND_TO, "0.0.0.0:9007", (a, p) -> {
+                this.qwpUdpBindIPV4Address = a;
+                this.qwpUdpPort = p;
+            });
+            this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
+            this.qwpMaxSchemasPerConnection = getInt(
+                    properties,
+                    env,
+                    PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION,
+                    QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
+            );
+            if (qwpMaxSchemasPerConnection < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION.getPropertyPath()
+                                + " must be at least 1"
+                );
+            }
+            this.qwpMaxRowsPerTable = getInt(properties, env, PropertyKey.QWP_MAX_ROWS_PER_TABLE, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
+            if (qwpMaxRowsPerTable < 1 || qwpMaxRowsPerTable > QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_MAX_ROWS_PER_TABLE.getPropertyPath()
+                                + " must be between 1 and "
+                                + QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE
+                );
+            }
+            this.qwpMaxTablesPerConnection = getInt(properties, env, PropertyKey.QWP_MAX_TABLES_PER_CONNECTION, QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION);
+            if (qwpMaxTablesPerConnection < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath()
+                                + " must be at least 1"
+                );
+            }
+            long qwpUdpCommitInterval = getMillis(properties, env, PropertyKey.QWP_UDP_COMMIT_INTERVAL, COMMIT_INTERVAL_DEFAULT);
+            if (qwpUdpCommitInterval < 1L) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath()
+                                + " must be at least 1ms"
+                );
+            }
+            this.qwpUdpCommitInterval = qwpUdpCommitInterval;
+            int qwpUdpMaxUncommittedDatagrams = getInt(properties, env, PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS, 1_048_576);
+            if (qwpUdpMaxUncommittedDatagrams < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS.getPropertyPath()
+                                + " must be at least 1"
+                );
+            }
+            this.qwpUdpMaxUncommittedDatagrams = qwpUdpMaxUncommittedDatagrams;
+            this.qwpUdpMsgBufferSize = getIntSize(properties, env, PropertyKey.QWP_UDP_MSG_BUFFER_SIZE, 65_536);
+            if (qwpUdpMsgBufferSize < QwpConstants.HEADER_SIZE) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_MSG_BUFFER_SIZE.getPropertyPath()
+                                + " must be at least "
+                                + QwpConstants.HEADER_SIZE
+                                + " bytes"
+                );
+            }
+            this.qwpUdpMsgCount = getInt(properties, env, PropertyKey.QWP_UDP_MSG_COUNT, 10_000);
+            if (qwpUdpMsgCount < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_MSG_COUNT.getPropertyPath()
+                                + " must be at least 1"
+                );
+            }
+            this.qwpUdpReceiveBufferSize = getIntSize(properties, env, PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE, -1);
+            if (qwpUdpReceiveBufferSize == 0 || qwpUdpReceiveBufferSize < -1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE.getPropertyPath()
+                                + " must be -1 or at least 1"
+                );
+            }
+            this.qwpUdpEnabled = getBoolean(properties, env, PropertyKey.QWP_UDP_ENABLED, false);
+            this.qwpUdpOwnThreadAffinity = getInt(properties, env, PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY, -1);
+            if (qwpUdpOwnThreadAffinity < -1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY.getPropertyPath()
+                                + " must be -1 or non-negative"
+                );
+            }
+            this.qwpUdpOwnThread = getBoolean(properties, env, PropertyKey.QWP_UDP_OWN_THREAD, true);
+            this.qwpUdpUnicast = getBoolean(properties, env, PropertyKey.QWP_UDP_UNICAST, true);
 
             this.lineTcpEnabled = getBoolean(properties, env, PropertyKey.LINE_TCP_ENABLED, true);
             this.lineHttpEnabled = getBoolean(properties, env, PropertyKey.LINE_HTTP_ENABLED, true);
@@ -1925,6 +2045,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             final int defaultReduceQueueCapacity = Math.min(4 * queryWorkers, 256);
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoGroupByBatchSize = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 2048);
+            validateGroupByBatchSize(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, this.cairoGroupByBatchSize);
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByTopKQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY, defaultReduceQueueCapacity));
@@ -2118,6 +2240,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
+        return qwpUdpReceiverConfiguration;
+    }
+
+    @Override
     public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
         return sharedWorkerPoolNetworkConfiguration;
     }
@@ -2202,27 +2329,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         return poolConfiguration.sharedWorkerCount;
     }
 
-    private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
-        final int[] result = new int[workerCount];
-        String value = getString(properties, env, key, null);
-        if (value == null) {
-            Arrays.fill(result, -1);
-        } else {
-            String[] affinity = value.split(",");
-            if (affinity.length != workerCount) {
-                throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "wrong number of affinity values");
-            }
-            for (int i = 0; i < workerCount; i++) {
-                try {
-                    result[i] = Numbers.parseInt(affinity[i]);
-                } catch (NumericException e) {
-                    throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Invalid affinity value: " + affinity[i]);
-                }
-            }
-        }
-        return result;
-    }
-
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
         final String commitMode = getString(properties, env, key, "nosync");
 
@@ -2292,6 +2398,10 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         if (Chars.equalsLowerCaseAscii(mode, "random")) {
             return Files.POSIX_MADV_RANDOM;
+        }
+
+        if (Chars.equalsLowerCaseAscii(mode, "populate_write")) {
+            return Files.POSIX_MADV_POPULATE_WRITE;
         }
 
         throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), mode);
@@ -2376,6 +2486,27 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
+        // A non-positive batch size would turn the reducer loop
+        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
+        // into an infinite loop. Cap at the same 24-bit row index bound as
+        // page frames since the batch cannot exceed a single page frame.
+        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxBatchSize) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
+        }
+    }
+
+    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
+        // Frame-relative row indexes are packed into the 24-bit slot of every
+        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
+        // rows. Reject misconfigurations that would silently truncate.
+        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxRows) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
+        }
+    }
+
     private void validateProperties(Properties properties, boolean configValidationStrict) throws ServerConfigurationException {
         ValidationResult validation = validator.validate(properties);
         if (validation != null) {
@@ -2389,6 +2520,27 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     protected String getAcceptingWrites() {
         return acceptingWrites;
+    }
+
+    protected int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
+        final int[] result = new int[workerCount];
+        String value = getString(properties, env, key, null);
+        if (value == null) {
+            Arrays.fill(result, -1);
+        } else {
+            String[] affinity = value.split(",");
+            if (affinity.length != workerCount) {
+                throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "wrong number of affinity values");
+            }
+            for (int i = 0; i < workerCount; i++) {
+                try {
+                    result[i] = Numbers.parseInt(affinity[i]);
+                } catch (NumericException e) {
+                    throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Invalid affinity value: " + affinity[i]);
+                }
+            }
+        }
+        return result;
     }
 
     protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
@@ -3525,6 +3677,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getGroupByBatchSize() {
+            return cairoGroupByBatchSize;
+        }
+
+        @Override
         public int getGroupByMapCapacity() {
             return sqlGroupByMapCapacity;
         }
@@ -3617,6 +3774,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getInstallRoot() {
             return installRoot;
+        }
+
+        @Override
+        public int getJsonUnnestMaxValueSize() {
+            return jsonUnnestMaxValueSize;
         }
 
         @Override
@@ -3785,6 +3947,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getO3MidPartitionMaxSplits() {
+            return o3MidPartitionMaxSplits;
+        }
+
+        @Override
         public long getO3MinLag() {
             return o3MinLagUs;
         }
@@ -3880,11 +4047,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public double getPartitionEncoderParquetMinCompressionRatio() {
-            return partitionEncoderParquetMinCompressionRatio;
-        }
-
-        @Override
         public int getPartitionEncoderParquetCompressionCodec() {
             return partitionEncoderParquetCompressionCodec;
         }
@@ -3897,6 +4059,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPartitionEncoderParquetDataPageSize() {
             return partitionEncoderParquetDataPageSize;
+        }
+
+        @Override
+        public double getPartitionEncoderParquetMinCompressionRatio() {
+            return partitionEncoderParquetMinCompressionRatio;
         }
 
         @Override
@@ -4612,6 +4779,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
+        }
+
+        @Override
+        public boolean isCairoMetadataCacheSnapshotOrdered() {
+            return cairoMetadataCacheSnapshotOrdered;
         }
 
         @Override
@@ -5456,6 +5628,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MicrosecondClock getMicrosecondClock() {
             return microsecondClock;
+        }
+
+        @Override
+        public int getQwpMaxRowsPerTable() {
+            return qwpMaxRowsPerTable;
+        }
+
+        @Override
+        public int getQwpMaxSchemasPerConnection() {
+            return qwpMaxSchemasPerConnection;
+        }
+
+        @Override
+        public int getQwpMaxTablesPerConnection() {
+            return qwpMaxTablesPerConnection;
         }
 
         @Override
@@ -6350,6 +6537,98 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPosthogEnabled() {
             return posthogEnabled;
+        }
+    }
+
+    private class PropQwpUdpReceiverConfiguration implements QwpUdpReceiverConfiguration {
+        @Override
+        public int getBindIPv4Address() {
+            return qwpUdpBindIPV4Address;
+        }
+
+        @Override
+        public long getCommitInterval() {
+            return qwpUdpCommitInterval;
+        }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return PartitionBy.DAY;
+        }
+
+        @Override
+        public int getGroupIPv4Address() {
+            return qwpUdpGroupIPv4Address;
+        }
+
+        @Override
+        public int getMaxRowsPerTable() {
+            return qwpMaxRowsPerTable;
+        }
+
+        @Override
+        public int getMaxTablesPerConnection() {
+            return qwpMaxTablesPerConnection;
+        }
+
+        @Override
+        public int getMaxUncommittedDatagrams() {
+            return qwpUdpMaxUncommittedDatagrams;
+        }
+
+        @Override
+        public int getMsgBufferSize() {
+            return qwpUdpMsgBufferSize;
+        }
+
+        @Override
+        public int getMsgCount() {
+            return qwpUdpMsgCount;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getPort() {
+            return qwpUdpPort;
+        }
+
+        @Override
+        public int getReceiveBufferSize() {
+            return qwpUdpReceiveBufferSize;
+        }
+
+        @Override
+        public boolean isAutoCreateNewColumns() {
+            return ilpAutoCreateNewColumns;
+        }
+
+        @Override
+        public boolean isAutoCreateNewTables() {
+            return ilpAutoCreateNewTables;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return qwpUdpEnabled;
+        }
+
+        @Override
+        public boolean isOwnThread() {
+            return qwpUdpOwnThread;
+        }
+
+        @Override
+        public boolean isUnicast() {
+            return qwpUdpUnicast;
+        }
+
+        @Override
+        public int ownThreadAffinity() {
+            return qwpUdpOwnThreadAffinity;
         }
     }
 

@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -333,7 +332,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         // Force parallel execution regardless of randomized setUp() value.
-                        ((SqlExecutionContextImpl) sqlExecutionContext).setParallelHorizonJoinEnabled(true);
+                        sqlExecutionContext.setParallelHorizonJoinEnabled(true);
 
                         engine.execute(
                                 """

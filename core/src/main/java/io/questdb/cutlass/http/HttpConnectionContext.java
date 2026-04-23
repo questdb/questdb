@@ -112,9 +112,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final HttpSessionStore sessionStore;
     private long authenticationNanos = 0L;
     private boolean connectionCounted;
+    private int currentHandlerId = HttpRequestProcessorSelector.REJECT_PROCESSOR_ID;
     private boolean forceDisconnectOnComplete;
     private NetworkSqlExecutionCircuitBreaker httpCircuitBreaker;
     private SqlExecutionContextImpl httpSqlExecutionContext;
+    private boolean isProtocolSwitched = false;  // WebSocket protocol switch flag
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private String processorName;
@@ -123,7 +125,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private int recvBufferReadSize;
     private int recvBufferSize;
     private long recvPos;
-    private int currentHandlerId = HttpRequestProcessorSelector.REJECT_PROCESSOR_ID;
     private int resumeHandlerId = NO_RESUME_PROCESSOR;
     private SecurityContext securityContext;
     private long totalBytesSent;
@@ -182,6 +183,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.selectCache = selectCache;
     }
 
+    // called when returning the context back to a pool (=connection closed)
     @Override
     public void clear() {
         LOG.debug().$("clear [fd=").$(getFd()).I$();
@@ -200,6 +202,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.forceDisconnectOnComplete = false;
         this.localValueMap.disconnect();
+        // SECURITY: these unconditional resets are the safety net for the conditional
+        // skip in reset(), which preserves securityContext while isProtocolSwitched is true.
+        // Both fields MUST be reset here to prevent security context leaks between pooled
+        // connections. Do not make these conditional.
+        this.isProtocolSwitched = false;
+        this.securityContext = DenyAllSecurityContext.INSTANCE;
     }
 
     @Override
@@ -250,6 +258,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return responseSink.getChunkedResponse();
     }
 
+    public NetworkSqlExecutionCircuitBreaker getCircuitBreaker() {
+        return httpCircuitBreaker;
+    }
+
     public HttpCookieHandler getCookieHandler() {
         return cookieHandler;
     }
@@ -271,12 +283,44 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return nCompletedRequests;
     }
 
+    public NetworkSqlExecutionCircuitBreaker getOrCreateCircuitBreaker(CairoEngine engine) {
+        if (httpCircuitBreaker == null) {
+            httpCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                    engine,
+                    engine.getConfiguration().getCircuitBreakerConfiguration(),
+                    MemoryTag.NATIVE_CB3
+            );
+        }
+        return httpCircuitBreaker;
+    }
+
+    public SqlExecutionContextImpl getOrCreateSqlExecutionContext(CairoEngine engine, int workerCount) {
+        if (httpSqlExecutionContext == null) {
+            httpSqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
+        }
+        return httpSqlExecutionContext;
+    }
+
     public CharSequenceObjHashMap<CharSequence> getParsedCookiesMap() {
         return parsedCookies;
     }
 
     public HttpRawSocket getRawResponseSocket() {
         return responseSink.getRawSocket();
+    }
+
+    /**
+     * Returns the receive buffer address for protocol-switched connections.
+     */
+    public long getRecvBuffer() {
+        return recvBuffer;
+    }
+
+    /**
+     * Returns the receive buffer size for protocol-switched connections.
+     */
+    public int getRecvBufferSize() {
+        return recvBufferSize;
     }
 
     @SuppressWarnings("unused")
@@ -300,34 +344,19 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return selectCache;
     }
 
-    public NetworkSqlExecutionCircuitBreaker getCircuitBreaker() {
-        return httpCircuitBreaker;
+    public @NotNull StringSink getSessionIdSink() {
+        return sessionIdSink;
+    }
+
+    /**
+     * Returns the underlying socket for direct I/O after protocol switch (e.g., WebSocket).
+     */
+    public Socket getSocket() {
+        return socket;
     }
 
     public SqlExecutionContextImpl getSqlExecutionContext() {
         return httpSqlExecutionContext;
-    }
-
-    public NetworkSqlExecutionCircuitBreaker getOrCreateCircuitBreaker(CairoEngine engine) {
-        if (httpCircuitBreaker == null) {
-            httpCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(
-                    engine,
-                    engine.getConfiguration().getCircuitBreakerConfiguration(),
-                    MemoryTag.NATIVE_CB3
-            );
-        }
-        return httpCircuitBreaker;
-    }
-
-    public SqlExecutionContextImpl getOrCreateSqlExecutionContext(CairoEngine engine, int workerCount) {
-        if (httpSqlExecutionContext == null) {
-            httpSqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
-        }
-        return httpSqlExecutionContext;
-    }
-
-    public @NotNull StringSink getSessionIdSink() {
-        return sessionIdSink;
     }
 
     public long getTotalBytesSent() {
@@ -365,12 +394,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return pendingRetry || receivedBytes > 0 || this.socket == null;
     }
 
+    // called between requests on the same connections
     public void reset() {
         LOG.debug().$("reset [fd=").$(getFd()).$(']').$();
         this.totalBytesSent += responseSink.getTotalBytesSent();
         this.responseSink.clear();
         this.nCompletedRequests++;
-        this.resumeHandlerId = NO_RESUME_PROCESSOR;
+        // Preserve resumeHandlerId for protocol-switched connections (e.g., WebSocket)
+        if (!isProtocolSwitched) {
+            this.resumeHandlerId = NO_RESUME_PROCESSOR;
+        }
         this.headerParser.clear();
         this.multipartContentParser.clear();
         this.multipartContentHeaderParser.clear();
@@ -385,7 +418,17 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.retryAttemptAttributes.attempt = 0;
         this.receivedBytes = 0;
         this.authenticationNanos = 0L;
-        this.securityContext = DenyAllSecurityContext.INSTANCE;
+        // Preserve securityContext for protocol-switched connections (e.g., WebSocket).
+        // The security context was configured during the initial HTTP request and should
+        // persist for the lifetime of the WebSocket connection.
+        //
+        // SECURITY: this conditional skip is safe ONLY because clear() unconditionally
+        // resets both isProtocolSwitched and securityContext when the context returns to
+        // the pool. The pool (WeakObjectPoolBase.push) always calls clear() before reuse.
+        // Do not add code paths that return a context to the pool without calling clear().
+        if (!isProtocolSwitched) {
+            this.securityContext = DenyAllSecurityContext.INSTANCE;
+        }
         this.sessionIdSink.clear();
         this.authenticator.clear();
         this.totalReceived = 0;
@@ -409,6 +452,17 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public HttpResponseSink.SimpleResponseImpl simpleResponse() {
         return responseSink.simpleResponse();
+    }
+
+    /**
+     * Switches the connection to a different protocol (e.g., WebSocket).
+     * After calling this, normal HTTP parsing is bypassed and the processor
+     * handles raw socket I/O directly. The processor is resolved via
+     * {@code currentHandlerId} which was set during request routing.
+     */
+    public void switchProtocol() {
+        this.isProtocolSwitched = true;
+        this.resumeHandlerId = currentHandlerId;
     }
 
     @Override
@@ -906,6 +960,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
+        // Handle protocol-switched connections (e.g., WebSocket)
+        if (isProtocolSwitched && resumeHandlerId != NO_RESUME_PROCESSOR) {
+            return handleProtocolSwitchedRecv(selector);
+        }
+
         boolean busyRecv = true;
         try {
             // this is address of where header ended in our receiving buffer
@@ -1011,7 +1070,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         processor.onHeadersReady(this);
                         LOG.debug().$("good [fd=").$(getFd()).I$();
                         processor.onRequestComplete(this);
-                        resumeHandlerId = NO_RESUME_PROCESSOR;
+                        // Don't clear resumeHandlerId for protocol-switched connections (e.g., WebSocket)
+                        if (!isProtocolSwitched) {
+                            resumeHandlerId = NO_RESUME_PROCESSOR;
+                        }
                         reset();
                     }
                 }
@@ -1042,14 +1104,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return busyRecv;
     }
 
-    private HttpRequestProcessor resolveResumeProcessor(HttpRequestProcessorSelector selector) {
-        if (resumeHandlerId == HttpRequestProcessorSelector.REJECT_PROCESSOR_ID) {
-            return rejectProcessor;
-        }
-        HttpRequestProcessor processor = selector.resolveProcessorById(resumeHandlerId, headerParser);
-        return processor != null ? processor : rejectProcessor;
-    }
-
     private boolean handleClientSend(HttpRequestProcessorSelector selector) throws PeerIsSlowToReadException, ServerDisconnectException {
         if (resumeHandlerId != NO_RESUME_PROCESSOR) {
             final HttpRequestProcessor proc = resolveResumeProcessor(selector);
@@ -1072,6 +1126,32 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             LOG.error().$("spurious write request [fd=").$(getFd()).I$();
         }
         return false;
+    }
+
+    /**
+     * Handles receive for protocol-switched connections (e.g., WebSocket).
+     * Instead of parsing HTTP, delegates to the processor's resumeRecv.
+     */
+    private boolean handleProtocolSwitchedRecv(HttpRequestProcessorSelector selector) throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
+        final HttpRequestProcessor processor = resolveResumeProcessor(selector);
+        try {
+            processor.resumeRecv(this);
+            // resumeRecv is not designed to complete normally (has a while-true loop). This line is unreachable.
+            return true;
+        } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
+            // Need more data from/to peer
+            throw e;
+        } catch (ServerDisconnectException e) {
+            // Connection should be closed
+            LOG.info().$("protocol-switched connection closing [fd=").$(getFd()).I$();
+            processor.onConnectionClosed(this);
+            throw e;
+        } catch (Throwable e) {
+            // Any other error, close connection
+            LOG.error().$("error in protocol-switched recv [fd=").$(getFd()).$(", e=").$(e).I$();
+            processor.onConnectionClosed(this);
+            throw registerDispatcherDisconnect(DISCONNECT_REASON_SERVER_ERROR);
+        }
     }
 
     private boolean keepConnectionAlive() {
@@ -1102,6 +1182,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             return true;
         }
         return false;
+    }
+
+    private HttpRequestProcessor resolveResumeProcessor(HttpRequestProcessorSelector selector) {
+        if (resumeHandlerId == HttpRequestProcessorSelector.REJECT_PROCESSOR_ID) {
+            return rejectProcessor;
+        }
+        HttpRequestProcessor processor = selector.resolveProcessorById(resumeHandlerId, headerParser);
+        return processor != null ? processor : rejectProcessor;
     }
 
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {

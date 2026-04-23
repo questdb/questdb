@@ -414,6 +414,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                               functions: [day,key,vwap(price, quantity)]
                                 Async Group By workers: 4
                                   keys: [day,key]
+                                  keyFunctions: [day_of_week(ts)]
                                   values: [vwap(price,quantity)]
                                   filter: null
                                     PageFrame

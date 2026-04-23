@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-// @formatter:off
 import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.Nullable;
 
@@ -45,7 +44,6 @@ public final class Unsafe {
     public static final long BYTE_SCALE;
     public static final long INT_OFFSET;
     public static final long INT_SCALE;
-    public static final Module JAVA_BASE_MODULE = System.class.getModule();
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
@@ -60,17 +58,8 @@ public final class Unsafe {
     private static final long RSS_MEM_USED_ADDR;
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
-    private static final Method implAddExports;
 
     private Unsafe() {
-    }
-
-    public static void addExports(Module from, Module to, String packageName) {
-        try {
-            implAddExports.invoke(from, packageName, to);
-        } catch (ReflectiveOperationException e) {
-            e.printStackTrace(System.out);
-        }
     }
 
     public static long arrayGetVolatile(long[] array, int index) {
@@ -199,7 +188,9 @@ public final class Unsafe {
         return COUNTERS[memoryTag].sum() + UNSAFE.getLongVolatile(null, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
     }
 
-    /** Returns a `*const QdbAllocator` for use in Rust. */
+    /**
+     * Returns a `*const QdbAllocator` for use in Rust.
+     */
     public static long getNativeAllocator(int memoryTag) {
         return NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
     }
@@ -332,7 +323,9 @@ public final class Unsafe {
         }
     }
 
-    /** Allocate a new native allocator object and return its pointer */
+    /**
+     * Allocate a new native allocator object and return its pointer
+     */
     private static long constructNativeAllocator(long nativeMemCountersArray, int memoryTag) {
         // See `allocator.rs` for the definition of `QdbAllocator`.
         // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
@@ -485,7 +478,6 @@ public final class Unsafe {
             LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
 
             OVERRIDE = AccessibleObject_override_fieldOffset();
-            implAddExports = Module.class.getDeclaredMethod("implAddExports", String.class, Module.class);
 
             AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();
             if (classDefiner == null) {
@@ -498,7 +490,6 @@ public final class Unsafe {
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
-        makeAccessible(implAddExports);
 
         // A single allocation for all the off-heap native memory counters.
         // Might help with locality, given they're often incremented together.

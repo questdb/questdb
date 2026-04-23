@@ -78,6 +78,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private boolean isDataMapBuilt;
     private boolean isOpen;
     private MapRecordCursor mapCursor;
+    private Map ownerMap;
+    private ObjList<Map> shards;
 
     public AsyncGroupByRecordCursor(
             @NotNull CairoEngine engine,
@@ -197,11 +199,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         final GroupByShardingContext shardingCtx = atom.getShardingContext();
         if (!atom.isSharded()) {
             // No sharding was necessary, so the maps are small, and we merge them ourselves.
-            final Map dataMap = shardingCtx.mergeOwnerMap();
-            mapCursor = dataMap.getCursor();
+            ownerMap = shardingCtx.mergeOwnerMap();
+            mapCursor = ownerMap.getCursor();
+            shards = null;
         } else {
             // We had to shard the maps, so they must be big.
-            final ObjList<Map> shards = shardingCtx.mergeShards(
+            shards = shardingCtx.mergeShards(
                     messageBus,
                     frameSequence.getWorkStealingStrategy(),
                     circuitBreaker,
@@ -215,17 +218,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
+            ownerMap = null;
         }
 
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());
         isDataMapBuilt = true;
-    }
-
-    private void buildMapConditionally() {
-        if (!isDataMapBuilt) {
-            buildMap();
-        }
     }
 
     private void parallelLongTopK(DirectLongLongSortedList destList, Function longFunc) {
@@ -343,6 +341,34 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             throw CairoException.queryCancelled();
         } else {
             throw CairoException.queryTimedOut();
+        }
+    }
+
+    void buildMapConditionally() {
+        if (!isDataMapBuilt) {
+            buildMap();
+        }
+    }
+
+    MapRecordCursor initSharedMapCursor(ShardedMapCursor reusableSharded, MapRecordCursor cachedNonSharded) {
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
+        if (atom.isSharded()) {
+            reusableSharded.ofShared(shards);
+            return reusableSharded;
+        } else if (cachedNonSharded != null) {
+            ownerMap.initCursor(cachedNonSharded);
+            return cachedNonSharded;
+        } else {
+            return ownerMap.newCursor();
+        }
+    }
+
+    void longTopK(DirectLongLongSortedList list, Function recordFunction, MapRecordCursor sharedMapCursor) {
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
+        if (recordFunction.isThreadSafe() && atom.isSharded() && sharedMapCursor.size() > configuration.getGroupByParallelTopKThreshold()) {
+            parallelLongTopK(list, recordFunction);
+        } else {
+            sharedMapCursor.longTopK(list, recordFunction);
         }
     }
 

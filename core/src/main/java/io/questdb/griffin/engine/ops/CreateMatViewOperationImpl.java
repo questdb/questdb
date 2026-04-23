@@ -44,13 +44,12 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
@@ -344,7 +343,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void validateAndUpdateMetadataFromModel(
             @NotNull SqlExecutionContext sqlExecutionContext,
             @NotNull FunctionFactoryCache functionFactoryCache,
-            @NotNull QueryModel queryModel
+            @NotNull IQueryModel queryModel
     ) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
@@ -412,15 +411,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             final QueryColumn queryColumn = findTimestampFloorColumn(queryModel);
             if (queryColumn != null) {
                 final ExpressionNode ast = queryColumn.getAst();
-                // there are three timestamp_floor() overloads, so check all of them
-                if (ast.paramCount == 3 || ast.paramCount == 5) {
-                    final int idx = ast.paramCount - 1;
-                    intervalExpr = ast.args.getQuick(idx).token;
-                    intervalPos = ast.args.getQuick(idx).position;
-                } else {
-                    intervalExpr = ast.lhs.token;
-                    intervalPos = ast.lhs.position;
-                }
+                final ExpressionNode intervalNode = SqlUtil.getTimestampFloorInterval(ast);
+                intervalExpr = intervalNode.token;
+                intervalPos = intervalNode.position;
                 if (timestamp == null) {
                     createTableOperation.setTimestampColumnName(Chars.toString(queryColumn.getName()));
                     createTableOperation.setTimestampColumnNamePosition(ast.position);
@@ -521,7 +514,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     private static void copyBaseTableSymbolColumnCapacity(
             @Nullable ExpressionNode columnNode,
-            @Nullable QueryModel queryModel,
+            @Nullable IQueryModel queryModel,
             @NotNull CreateTableColumnModel columnModel,
             @NotNull CharSequence baseTableName,
             @NotNull TableMetadata baseTableMetadata
@@ -562,7 +555,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
-    private static ExpressionNode findSampleByNode(QueryModel model) {
+    private static ExpressionNode findSampleByNode(IQueryModel model) {
         while (model != null) {
             if (SqlUtil.isNotPlainSelectModel(model)) {
                 break;
@@ -578,7 +571,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
-    private static QueryColumn findTimestampFloorColumn(QueryModel model) {
+    private static QueryColumn findTimestampFloorColumn(IQueryModel model) {
         while (model != null) {
             if (SqlUtil.isNotPlainSelectModel(model)) {
                 break;
@@ -588,7 +581,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 final QueryColumn queryColumn = queryColumns.getQuick(i);
                 final ExpressionNode ast = queryColumn.getAst();
-                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)) {
+                if (SqlUtil.isTimestampFloorFunction(ast)) {
                     return queryColumn;
                 }
             }
@@ -597,7 +590,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
-    private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, QueryModel queryModel) {
+    private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, IQueryModel queryModel) {
         final int dotIndex = Chars.indexOfLastUnquoted(columnNode.token, '.');
         if (dotIndex > -1) {
             if (Chars.equalsIgnoreCase(queryModel.getName(), columnNode.token, 0, dotIndex)) {
@@ -609,7 +602,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
-    private boolean hasNoAggregates(FunctionFactoryCache functionFactoryCache, QueryModel queryModel, int columnIndex) {
+    private boolean hasNoAggregates(FunctionFactoryCache functionFactoryCache, IQueryModel queryModel, int columnIndex) {
         tmpColumnIndexes.clear();
         tmpColumnIndexes.add(columnIndex);
 

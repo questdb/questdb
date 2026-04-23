@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -191,7 +192,12 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
                 Unsafe.getUnsafe().putLong(addr, key);
                 size++;
                 if (--free == 0) {
-                    rehash();
+                    try {
+                        rehash();
+                    } catch (CairoException e) {
+                        free = 1;
+                        throw e;
+                    }
                 }
                 return true;
             } else if (k == key) {

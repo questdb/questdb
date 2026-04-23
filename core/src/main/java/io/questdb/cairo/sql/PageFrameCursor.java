@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
@@ -64,11 +63,10 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     void calculateSize(RecordCursor.Counter counter);
 
     /**
-     * Returns local (query) to table reader index mapping.
-     * Used to map local column indexes to indexes from the Parquet file.
-     * Such mapping requires knowing the corresponding table reader indexes.
+     * Returns column mapping that bundles local (query) column indexes
+     * and writer indexes (field_ids) for parquet column mapping.
      */
-    IntList getColumnIndexes();
+    ColumnMapping getColumnMapping();
 
     /**
      * Returns the number of rows remaining in the current interval that have not yet been

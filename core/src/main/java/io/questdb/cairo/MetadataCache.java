@@ -31,8 +31,8 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -421,16 +421,18 @@ public class MetadataCache implements QuietCloseable {
         }
 
         @Override
-        public boolean isVisibleTable(@NotNull CharSequence tableName) {
-            CairoConfiguration configuration = engine.getConfiguration();
-
-            // sys table
-            if (Chars.startsWith(tableName, configuration.getSystemTableNamePrefix())
-                    && !Chars.startsWith(tableName, configuration.getParquetExportTableNamePrefix())) {
+        public boolean isVisibleTable(@NotNull String tableName) {
+            final CairoConfiguration configuration = engine.getConfiguration();
+            if (
+                    engine.getTableFlagResolver().isSystem(tableName)
+                            && !Chars.startsWith(tableName, configuration.getParquetExportTableNamePrefix())
+                            && !Chars.equalsIgnoreCase(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            && !Chars.equalsIgnoreCase(tableName, TelemetryTask.TABLE_NAME)
+            ) {
                 return false;
             }
 
-            // telemetry table
+            // special handling for telemetry tables
             if (configuration.getTelemetryConfiguration().hideTables()
                     && (Chars.equals(tableName, TelemetryTask.TABLE_NAME)
                     || Chars.equals(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))
@@ -438,12 +440,7 @@ public class MetadataCache implements QuietCloseable {
                 return false;
             }
 
-            // query tracing table
-            if (Chars.equals(tableName, QueryTracingJob.TABLE_NAME)) {
-                return false;
-            }
-
-            return TableUtils.isFinalTableName((String) tableName, configuration.getTempRenamePendingTablePrefix());
+            return TableUtils.isFinalTableName(tableName, configuration.getTempRenamePendingTablePrefix());
         }
 
         /**
@@ -455,7 +452,7 @@ public class MetadataCache implements QuietCloseable {
          * @return the current version of the snapshot
          */
         @Override
-        public long snapshot(CharSequenceObjHashMap<CairoTable> localCache, long priorVersion) {
+        public long snapshot(CharSequenceObjMap<CairoTable> localCache, long priorVersion) {
             if (priorVersion >= getVersion()) {
                 return priorVersion;
             }

@@ -90,7 +90,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         assert initRecvBufSize > 0;
         // Response is measured in bytes some error messages can have non-ascii characters
         // approximate 1.5 bytes per character
-        this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
+        this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
         this.parser = new LineTcpParser();
         recvBuffer = new AdaptiveRecvBuffer(parser, MemoryTag.NATIVE_HTTP_CONN)
                 .of(initRecvBufSize, configuration.getMaxRecvBufferSize());
@@ -99,7 +99,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 configuration.isStringToCharCastAllowed(),
                 configuration.getTimestampUnit(),
                 utf8Sink,
-                engine.getConfiguration().getMaxFileNameLength()
+                engine.getConfiguration().getMaxFileNameLength(),
+                engine.getConfiguration().getMaxSqlRecompileAttempts()
         );
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.ilpTudCache = new LineHttpTudCache(

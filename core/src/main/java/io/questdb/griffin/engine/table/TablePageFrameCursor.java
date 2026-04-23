@@ -25,15 +25,30 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 
 /**
  * Defines a page frame cursor backed with an in-house database table.
  */
 public interface TablePageFrameCursor extends PageFrameCursor {
+
+    static void buildColumnMapping(ColumnMapping columnMapping, IntList columnIndexes, RecordMetadata readerMetadata) {
+        columnMapping.clear();
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            int colIdx = columnIndexes.getQuick(i);
+            columnMapping.addColumn(colIdx, readerMetadata.getWriterIndex(colIdx));
+        }
+    }
+
+    default boolean hasIntervalFilter() {
+        return false;
+    }
 
     TableReader getTableReader();
 
@@ -42,7 +57,18 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         return false;
     }
 
-    TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) throws SqlException;
+    TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException;
+
+    /**
+     * Positions the cursor at the given partition. The next call to
+     * {@link #next()} will return the first page frame for this partition.
+     * Iteration is limited to this single partition.
+     *
+     * @param partitionIndex the target partition index
+     */
+    default void toPartition(int partitionIndex) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Enables or disables streaming mode for the underlying TableReader.

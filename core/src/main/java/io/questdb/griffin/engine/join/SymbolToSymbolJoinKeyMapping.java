@@ -35,7 +35,7 @@ import io.questdb.std.IntIntHashMap;
 
 public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping, SymbolShortCircuit {
     private final CairoConfiguration config;
-    private final IntIntHashMap masterKeyToSlaveKey = new IntIntHashMap(16, 0.4);
+    private final IntIntHashMap masterKeyToSlaveKey = new IntIntHashMap(16, 0.5);
     private final int masterSymbolIndex;
     private final int slaveSymbolIndex;
     private int maxCacheSize = 0;

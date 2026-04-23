@@ -106,6 +106,24 @@ public class NanosTest {
     }
 
     @Test
+    public void testAddYearsLeapFeb29Backward() {
+        // Feb 29 in leap year - 1y clamps to Feb 28 in non-leap year
+        assertNanos(
+                "2023-02-28T12:30:00.123456789Z",
+                Nanos.addYears(parseNSecUTC("2024-02-29T12:30:00.123456789Z"), -1)
+        );
+    }
+
+    @Test
+    public void testAddYearsLeapFeb29Forward() {
+        // Feb 29 in leap year + 1y clamps to Feb 28 in non-leap year
+        assertNanos(
+                "2025-02-28T12:30:00.123456789Z",
+                Nanos.addYears(parseNSecUTC("2024-02-29T12:30:00.123456789Z"), 1)
+        );
+    }
+
+    @Test
     public void testAddYearsNonLeapToLeap() {
         assertNanos(
                 "2016-01-01T00:00:00.878901304Z",

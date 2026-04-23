@@ -383,6 +383,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByBatchSize() {
+        return 2048;
+    }
+
+    @Override
     public int getGroupByMapCapacity() {
         return 1024;
     }
@@ -478,6 +483,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
             throw new UnsupportedOperationException("installRoot was required in this test, but not set");
         }
         return installRoot;
+    }
+
+    @Override
+    public int getJsonUnnestMaxValueSize() {
+        return 4096;
     }
 
     @Override
@@ -642,6 +652,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3MidPartitionMaxSplits() {
+        return 1;
+    }
+
+    @Override
     public long getO3MinLag() {
         return 1_000_000;
     }
@@ -750,13 +765,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public double getPartitionEncoderParquetMinCompressionRatio() {
-        return 0.0;
+    public int getPartitionEncoderParquetDataPageSize() {
+        return 0; // use default (1024*1024) bytes
     }
 
     @Override
-    public int getPartitionEncoderParquetDataPageSize() {
-        return 0; // use default (1024*1024) bytes
+    public double getPartitionEncoderParquetMinCompressionRatio() {
+        return 0.0;
     }
 
     @Override
@@ -1473,6 +1488,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
+    }
+
+    @Override
+    public boolean isCairoMetadataCacheSnapshotOrdered() {
+        return false;
     }
 
     @Override

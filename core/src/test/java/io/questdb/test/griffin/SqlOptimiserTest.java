@@ -30,7 +30,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Misc;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
 import io.questdb.test.tools.TestUtils;
@@ -89,7 +89,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select x1, sum(x1) from (select x x1 from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -112,7 +112,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select concat(lpad(x1::string, 5)), x1, sum(x1) from (select x x1 from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals(
                     "select-group-by concat(lpad(x1::string, 5)) concat, x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))",
                     model.toString0()
@@ -122,6 +122,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             Async Group By workers: 1
                               keys: [concat,x1]
+                              keyFunctions: [concat([lpad(x1::string,5)])]
                               values: [sum(x1)]
                               filter: null
                                 SelectedRecord
@@ -137,7 +138,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select concat(lpad(x1::string, 5)), x1 from (select x x1 from y) group by x1";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-virtual concat(lpad(x1::string, 5)) concat, x1 from (select-group-by [x1] x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -163,7 +164,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select x1, sum(x1), max(X1) from (select x X1 from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum, max(x1) max from (select-choose [x X1] x X1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -187,7 +188,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select sum(x1) from (select x x1 from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -210,7 +211,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select x1 from (select x x1 from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose x1 from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert !aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -230,7 +231,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) as ts1 from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -250,7 +251,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) as ts1 from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -270,7 +271,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) as ts1 from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -290,7 +291,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) as ts1 from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -442,7 +443,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -462,7 +463,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(x) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -498,13 +499,37 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
             for (int i = 0; i < functions.length; i++) {
                 String query = String.format(queryTemplate, functions[i]);
-                QueryModel model = compileModel(query);
+                final IQueryModel model = compileModel(query);
                 TestUtils.assertEquals(String.format(modelTemplate, functions[i], functions[i], functions[i], i % 2 == 1 ? String.format(" order by %s desc", functions[i]) : ""), model.toString0());
                 assertPlanNoLeakCheck(
                         query,
                         String.format(planTemplate, functions[i], scanDirection[i], scanDirection[i])
                 );
             }
+        });
+    }
+
+    @Test
+    public void testFunctionColumnWithSameNameAsJoinModelColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (a INT, c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t1 VALUES (1, 10, '2024-01-01T00:00:00.000000Z'), (2, 20, '2024-01-01T01:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES (1, 100, '2024-01-01T00:00:00.000000Z'), (2, 200, '2024-01-01T01:00:00.000000Z')");
+
+            assertSql(
+                    """
+                            a\tc
+                            1\t100
+                            2\t200
+                            """,
+                    """
+                            SELECT t1.a, coalesce(c, 0) c
+                            FROM t1
+                            JOIN t2 ON t1.a = t2.a
+                            ORDER BY t1.a
+                            """
+            );
         });
     }
 
@@ -696,7 +721,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         INNER join (select LAST(ts) from y2) as y2\s
                         on y2.LAST = y1.ts""").replaceAll("#JOIN_TYPE", joinType);
                 String queryNew = query + " union \n" + query;
-                final QueryModel model = compileModel(queryNew);
+                final IQueryModel model = compileModel(queryNew);
                 assertEquals(
                         ("select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
                                 "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) #JOIN_TYPE join " +
@@ -796,7 +821,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -816,7 +841,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(x) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -838,7 +863,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select max(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -858,7 +883,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(x) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -878,7 +903,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select min(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -898,7 +923,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(x) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -986,7 +1011,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -1006,7 +1031,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select LAST(ts) from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-choose LAST from " +
                             "(select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1)",
@@ -1030,7 +1055,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MAX(ts) from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-choose MAX from " +
                             "(select-choose [ts MAX] ts MAX from (select [ts] from y timestamp (ts)) order by MAX desc limit 1)",
@@ -1054,7 +1079,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MIN(ts) from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -1075,7 +1100,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  " +
                     "union select max(ts) from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select" +
                             " [ts] from y timestamp (ts)) limit 1 union select-choose [ts LAST] ts LAST from (select " +
@@ -2356,6 +2381,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     SelectedRecord
                                         Lt Join Light
                                           condition: t2.s=t1.s
+                                          symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -2403,6 +2429,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     SelectedRecord
                                         Hash Join Light
                                           condition: t2.s=t1.s
+                                          symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -2677,7 +2704,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2696,7 +2723,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(x) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2727,7 +2754,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     INNER join (select LAST(ts) from y2) as y2\s
                     on y2.LAST = y1.ts""";
             String queryNew = query + " union \n" + query;
-            final QueryModel model = compileModel(queryNew);
+            final IQueryModel model = compileModel(queryNew);
             TestUtils.assertEquals(
                     "select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
                             "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
@@ -2773,7 +2800,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2792,7 +2819,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(x) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2814,7 +2841,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select max(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2833,7 +2860,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(x) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2853,7 +2880,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select min(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2872,7 +2899,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(x) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2892,7 +2919,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2911,7 +2938,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select LAST(ts) from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose LAST from (select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2930,7 +2957,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MAX(ts) from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose MAX from (select-choose [ts MAX] ts MAX from (select [ts] from y timestamp (ts)) order by MAX desc limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2949,7 +2976,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MIN(ts) from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -2969,7 +2996,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  " +
                     "union select max(ts) from y)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select" +
                     " [ts] from y timestamp (ts)) limit 1 union select-choose [ts LAST] ts LAST from (select " +
                     "[ts] from y timestamp (ts)) order by LAST desc limit 1 union select-choose [ts min] ts min " +
@@ -3010,7 +3037,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, FIRST(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -3032,7 +3059,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, LAST(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -3054,7 +3081,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MAX(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -3075,7 +3102,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MIN(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -3096,7 +3123,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  union select max(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts))" +
                     " limit 1 union select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by " +
                     "LAST desc limit 1 union select-choose [ts min] ts min from (select [ts] from y timestamp (ts)) " +
@@ -3138,7 +3165,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from (select * from y where x = 3)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by FIRST(ts) FIRST from (select-choose [ts] x, ts from " +
                     "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
             assertPlanNoLeakCheck(
@@ -3161,7 +3188,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from (select * from y where x = 3)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by LAST(ts) LAST from (select-choose [ts] x, ts from " +
                     "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
             assertPlanNoLeakCheck(
@@ -3184,7 +3211,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from (select * from y where x = 3)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by MAX(ts) MAX from (select-choose [ts] x, ts from " +
                     "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
             assertPlanNoLeakCheck(
@@ -3207,7 +3234,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from (select * from y where x = 3)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by MIN(ts) MIN from (select-choose [ts] x, ts from " +
                     "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
             assertPlanNoLeakCheck(
@@ -3230,7 +3257,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y where x = 3";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts FIRST from " +
                     "(select [ts, x] from y timestamp (ts) where x = 3) limit 1", model.toString0());
             assertPlanNoLeakCheck(
@@ -3252,7 +3279,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y where x = 3";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts LAST from " +
                     "(select [ts, x] from y timestamp (ts) where x = 3) order " +
                     "by LAST desc limit 1", model.toString0());
@@ -3275,7 +3302,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from y where x = 3";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts MAX from " +
                     "(select [ts, x] from y timestamp (ts) where x = 3) order " +
                     "by MAX desc limit 1", model.toString0());
@@ -3298,7 +3325,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from y where x = 3";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts MIN from " +
                     "(select [ts, x] from y timestamp (ts) where x = 3) limit 1", model.toString0());
             assertPlanNoLeakCheck(
@@ -3320,7 +3347,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) as ts1 from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -3339,7 +3366,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) as ts1 from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -3358,7 +3385,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) as ts1 from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -3377,7 +3404,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) as ts1 from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -3815,6 +3842,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   functions: [id0,id1,2-id0+1,2/id1*2,c]
                                     Async Group By workers: 1
                                       keys: [id0,id1,column,column1]
+                                      keyFunctions: [id0/42,1/id1*42]
                                       values: [count(*)]
                                       filter: null
                                         PageFrame
@@ -4075,7 +4103,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
-            final String model = "select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
+            final String model = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
             assertModel(model, query, ExecutionModel.QUERY);
 
             final String target = """
@@ -4083,7 +4111,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     where ts >= '2017-12-20' and ts < '2018-01-31'
                     sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'""";
 
-            final String tmodel = "select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
+            final String tmodel = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
             assertModel(tmodel, target, ExecutionModel.QUERY);
         });
     }
@@ -4095,14 +4123,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' align to calendar with offset '10:00'";
 
-            assertModel("select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", query, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", query, ExecutionModel.QUERY);
 
             final String target = """
                     select ts, avg(x) from fromto
                     where ts >= '2017-12-20'
                     sample by 5d from '2017-12-20' align to calendar with offset '10:00'""";
 
-            assertModel("select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", target, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", target, ExecutionModel.QUERY);
         });
     }
 
@@ -4113,7 +4141,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
 
-            final String model = "select-group-by timestamp_floor('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
+            final String model = "select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
             assertModel(model, query, ExecutionModel.QUERY);
 
             final String target = """
@@ -4121,7 +4149,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     where ts < '2018-01-31'
                     sample by 5d to '2018-01-31' align to calendar with offset '10:00'""";
 
-            final String targetModel = "select-group-by timestamp_floor('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' and ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
+            final String targetModel = "select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' and ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
             assertModel(targetModel, target, ExecutionModel.QUERY);
         });
     }
@@ -4135,14 +4163,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     where ts >= '2017-12-20'
                     sample by 5d from '2017-12-22' align to calendar with offset '10:00'""";
 
-            assertModel("select-group-by timestamp_floor('5d', ts, '2017-12-22', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-22' and ts >= '2017-12-20' from '2017-12-22' stride 5d) order by ts", fromNarrow, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-22', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-22' and ts >= '2017-12-20' from '2017-12-22' stride 5d) order by ts", fromNarrow, ExecutionModel.QUERY);
 
             final String toNarrow = """
                     select ts, avg(x) from fromto
                     where ts >= '2017-12-20'
                     sample by 5d TO '2017-12-22' align to calendar with offset '10:00'""";
 
-            assertModel("select-group-by timestamp_floor('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2017-12-22' and ts >= '2017-12-20' to '2017-12-22' stride 5d) order by ts", toNarrow, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2017-12-22' and ts >= '2017-12-20' to '2017-12-22' stride 5d) order by ts", toNarrow, ExecutionModel.QUERY);
         });
     }
 
@@ -4156,7 +4184,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'
                     """;
 
-            final String model = "select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and s != '5' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
+            final String model = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and s != '5' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
 
             assertModel(model, query, ExecutionModel.QUERY);
         });
@@ -4172,7 +4200,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     sample by 5d from '2017-12-20' align to calendar with offset '10:00'
                     """;
 
-            final String model = "select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and s != '5' from '2017-12-20' stride 5d) order by ts";
+            final String model = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and s != '5' from '2017-12-20' stride 5d) order by ts";
 
             assertModel(model, query, ExecutionModel.QUERY);
         });
@@ -4188,7 +4216,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     sample by 5d to '2018-01-31' align to calendar with offset '10:00'
                     """;
 
-            final String model = "select-group-by timestamp_floor('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts < '2018-01-31' and s != '5' to '2018-01-31' stride 5d) order by ts";
+            final String model = "select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts < '2018-01-31' and s != '5' to '2018-01-31' stride 5d) order by ts";
 
             assertModel(model, query, ExecutionModel.QUERY);
         });
@@ -4254,6 +4282,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           values: [null,null]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                               values: [avg(x),sum(x)]
                               filter: null
                                 PageFrame
@@ -4393,6 +4422,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           values: [null]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                               values: [avg(x)]
                               filter: null
                                 PageFrame
@@ -4463,6 +4493,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           values: [null]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts)]
                               values: [avg(x)]
                               filter: null
                                 PageFrame
@@ -4499,6 +4530,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           values: [null]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                               values: [avg(x)]
                               filter: null
                                 PageFrame
@@ -4541,6 +4573,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4554,6 +4587,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4574,6 +4608,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4587,6 +4622,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4623,6 +4659,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4636,6 +4673,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4667,6 +4705,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4680,6 +4719,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4777,6 +4817,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                           values: [null]
                                             Async Group By workers: 1
                                               keys: [five_days]
+                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                               values: [avg(x)]
                                               filter: null
                                                 PageFrame
@@ -4791,6 +4832,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                           values: [null]
                                             Async Group By workers: 1
                                               keys: [ten_days]
+                                              keyFunctions: [timestamp_floor_utc('10d',ts,'2017-12-20T00:00:00.000Z')]
                                               values: [avg(x)]
                                               filter: null
                                                 PageFrame
@@ -4843,7 +4885,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String shouldSucceedParallel = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
 
-            final String shouldSucceedSequential = "select ts, avg(x), sum(x) from fromto\n" +
+            final String shouldSucceedWithOffset = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
 
             final String shouldSucceedResult = """
@@ -4864,6 +4906,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           values: [null,null]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                               values: [avg(x),sum(x)]
                               filter: null
                                 PageFrame
@@ -4873,17 +4916,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """);
             assertSql(shouldSucceedResult, shouldSucceedParallel);
 
-            assertPlanNoLeakCheck(shouldSucceedSequential, """
-                    Sample By
-                      fill: null
-                      range: ('2017-12-20',)
-                      values: [avg(x),sum(x)]
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: fromto
-                              intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
+            assertPlanNoLeakCheck(shouldSucceedWithOffset, """
+                    Encode sort
+                      keys: [ts]
+                        Fill Range
+                          range: ('2017-12-20',)
+                          stride: '5d'
+                          values: [null,null]
+                            Async Group By workers: 1
+                              keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T10:00:00.000Z')]
+                              values: [avg(x),sum(x)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: fromto
+                                      intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
                     """);
-            assertSql(shouldSucceedResult, shouldSucceedSequential);
         });
     }
 
@@ -4915,6 +4964,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       values: [null,null]
                                         Async Group By workers: 1
                                           keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                           values: [avg(x),sum(x)]
                                           filter: null
                                             PageFrame
@@ -4927,6 +4977,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       values: [null,null]
                                         Async Group By workers: 1
                                           keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                           values: [avg(x),sum(x)]
                                           filter: null
                                             PageFrame
@@ -4976,6 +5027,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       values: [null,null]
                                         Async Group By workers: 1
                                           keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                           values: [avg(x),sum(x)]
                                           filter: null
                                             PageFrame
@@ -4988,6 +5040,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       values: [null,null]
                                         Async Group By workers: 1
                                           keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                           values: [avg(x),sum(x)]
                                           filter: null
                                             PageFrame
@@ -5019,32 +5072,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromToParallelSequentialEquivalence() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.FROM_TO_DDL);
-
-            final String parallel = "select ts, avg(x) from fromto\n" +
-                    "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
-
-            // offset is ignored
-            final String sequential = parallel + " align to calendar with offset '10:00'";
-
-            final String result = """
-                    ts\tavg
-                    2017-12-20T00:00:00.000000Z\tnull
-                    2017-12-27T00:00:00.000000Z\t48.5
-                    2018-01-03T00:00:00.000000Z\t264.5
-                    2018-01-10T00:00:00.000000Z\t456.5
-                    2018-01-17T00:00:00.000000Z\tnull
-                    2018-01-24T00:00:00.000000Z\tnull
-                    """;
-
-            assertSql(result, parallel);
-            assertSql(result, sequential);
-        });
-    }
-
-    @Test
     public void testSampleByFromToPlansWithRewrite() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -5060,6 +5087,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -5075,6 +5103,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -5090,6 +5119,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts)]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -5105,6 +5135,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts)]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -5134,6 +5165,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   values: [null]
                                     Async Group By workers: 1
                                       keys: [five_days]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                       values: [avg(x)]
                                       filter: null
                                         PageFrame
@@ -5156,6 +5188,46 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             2018-01-29T00:00:00.000000Z\tnull
                             """,
                     query
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToWithAndWithoutOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.FROM_TO_DDL);
+
+            final String parallel = "select ts, avg(x) from fromto\n" +
+                    "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
+
+            final String withOffset = parallel + " align to calendar with offset '10:00'";
+
+            assertSql(
+                    """
+                            ts\tavg
+                            2017-12-20T00:00:00.000000Z\tnull
+                            2017-12-27T00:00:00.000000Z\t48.5
+                            2018-01-03T00:00:00.000000Z\t264.5
+                            2018-01-10T00:00:00.000000Z\t456.5
+                            2018-01-17T00:00:00.000000Z\tnull
+                            2018-01-24T00:00:00.000000Z\tnull
+                            """,
+                    parallel
+            );
+            assertSql(
+                    """
+                            ts\tavg
+                            2017-12-20T00:00:00.000000Z\tnull
+                            2017-12-27T00:00:00.000000Z\tnull
+                            2017-12-27T10:00:00.000000Z\t58.5
+                            2018-01-03T00:00:00.000000Z\tnull
+                            2018-01-03T10:00:00.000000Z\t284.5
+                            2018-01-10T00:00:00.000000Z\tnull
+                            2018-01-10T10:00:00.000000Z\t466.5
+                            2018-01-17T00:00:00.000000Z\tnull
+                            2018-01-24T00:00:00.000000Z\tnull
+                            """,
+                    withOffset
             );
         });
     }
@@ -5184,6 +5256,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [timestamp]
                                 Async Group By workers: 1
                                   keys: [symbol,timestamp]
+                                  keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                   values: [last(price)]
                                   filter: symbol ~ BTC-USD [state-shared]
                                     PageFrame
@@ -5201,7 +5274,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from y\n" +
                     "sample by 5d from '2017-12-20' align to calendar time zone 'Europe/London' with offset '10:00'";
 
-            assertModel("select-virtual to_utc(ts, 'Europe/London') ts, avg from (select-group-by [timestamp_floor('5d', ts, '2017-12-20', '10:00', 'Europe/London') ts, avg(x) avg] timestamp_floor('5d', ts, '2017-12-20', '10:00', 'Europe/London') ts, avg(x) avg from (select [ts, x] from y timestamp (ts) where ts >= '2017-12-20' from '2017-12-20' stride 5d)) timestamp (ts) order by ts", query, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', 'Europe/London') ts, avg(x) avg from (select [ts, x] from y timestamp (ts) where ts >= to_utc('2017-12-20', 'Europe/London') from '2017-12-20' stride 5d) order by ts", query, ExecutionModel.QUERY);
         });
     }
 
@@ -5240,7 +5313,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, LAST(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -5262,7 +5335,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MAX(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -5283,7 +5356,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MIN(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -5304,7 +5377,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, FIRST(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString0());
             assertPlanNoLeakCheck(
                     query,
@@ -5393,7 +5466,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts in '2022'
                     """;
 
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             String modelStr = model.toString0();
 
             // Verify that and_offset is present in the nested model's WHERE clause
@@ -5418,7 +5491,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts >= '2022-01-01' AND ts < '2022-12-31'
                     """;
 
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             String modelStr = model.toString0();
 
             // Verify and_offset with day unit
@@ -5444,7 +5517,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts in '2022'
                     """;
 
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             String modelStr = model.toString0();
 
             // Should NOT have and_offset since there's no dateadd transformation
@@ -5467,7 +5540,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts in '2022'
                     """;
 
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             String modelStr = model.toString0();
 
             // Should NOT have and_offset since offset is not constant
@@ -5489,7 +5562,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts >= '2022-01-01'
                     """;
 
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             String modelStr = model.toString0();
 
             // Verify and_offset with offset value -1 (inverse of +1)
@@ -5723,7 +5796,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  union select max(ts) from y";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts))" +
                             " limit 1 union select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by " +
@@ -5815,7 +5888,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from (select * from y where x = 3)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-group-by FIRST(ts) FIRST from (select-choose [ts] x, ts from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3))",
@@ -5842,7 +5915,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from (select * from y where x = 3)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-group-by LAST(ts) LAST from (select-choose [ts] x, ts from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3))",
@@ -5869,7 +5942,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from (select * from y where x = 3)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-group-by MAX(ts) MAX from (select-choose [ts] x, ts from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3))",
@@ -5896,7 +5969,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from (select * from y where x = 3)";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-group-by MIN(ts) MIN from (select-choose [ts] x, ts from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3))",
@@ -5923,7 +5996,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y where x = 3";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-choose ts FIRST from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3) limit 1",
@@ -5949,7 +6022,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y where x = 3";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-choose ts LAST from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3) order " +
@@ -5976,7 +6049,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from y where x = 3";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-choose ts MAX from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3) order " +
@@ -6007,7 +6080,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from y where x = 3";
-            final QueryModel model = compileModel(query);
+            final IQueryModel model = compileModel(query);
             assertEquals(
                     "select-choose ts MIN from " +
                             "(select [ts, x] from y timestamp (ts) where x = 3) limit 1",
@@ -6385,11 +6458,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-    protected QueryModel compileModel(String query) throws SqlException {
+    protected IQueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.generateExecutionModel(query, sqlExecutionContext);
             assertEquals(ExecutionModel.QUERY, model.getModelType());
-            return (QueryModel) model;
+            return (IQueryModel) model;
         }
     }
 }

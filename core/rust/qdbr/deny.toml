@@ -1,0 +1,63 @@
+# cargo-deny configuration for license compliance
+# https://embarkstudios.github.io/cargo-deny/
+#
+# Run locally:
+#   cargo deny check licenses    # check license compatibility
+#   cargo deny check advisories  # check for known vulnerabilities
+#   cargo deny list --layout license  # list all dependency licenses
+
+[graph]
+all-features = false
+no-default-features = false
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2024-0375", reason = "atty is a transitive dev-dependency of criterion, not shipped" },
+    { id = "RUSTSEC-2024-0436", reason = "paste is a transitive dev-dependency of parquet, not shipped" },
+]
+
+[licenses]
+# Licenses compatible with Apache-2.0 redistribution.
+# This allow-list includes only licenses that permit redistribution
+# under the Apache License 2.0 without additional obligations
+# that conflict with Apache-2.0 terms.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unlicense",
+    "0BSD",
+    "OpenSSL",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+ignore = false
+registries = []
+
+# Ring uses a non-standard license file. This clarification tells cargo-deny
+# how to interpret it. The hash must match the actual LICENSE file contents;
+# if ring updates its LICENSE, this hash will need updating.
+#[[licenses.clarify]]
+#crate = "ring"
+#expression = "MIT AND ISC AND OpenSSL"
+#license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

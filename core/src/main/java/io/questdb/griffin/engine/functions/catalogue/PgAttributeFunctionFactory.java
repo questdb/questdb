@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
@@ -44,7 +45,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -84,7 +85,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new AttributeCatalogueCursorFactory()) {
+        return new CursorFunction(new AttributeCatalogueCursorFactory(configuration)) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -94,11 +95,12 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
         private final AttributeClassCatalogueCursor cursor;
-        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private final CharSequenceObjMap<CairoTable> tableCache;
         private long tableCacheVersion = -1;
 
-        public AttributeCatalogueCursorFactory() {
+        public AttributeCatalogueCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
+            tableCache = DefaultLocalCacheSnapshotFactory.INSTANCE.newInstance(configuration);
             this.cursor = new AttributeClassCatalogueCursor(tableCache);
         }
 
@@ -126,13 +128,13 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
         private final PgAttributeRecord record = new PgAttributeRecord();
-        private final CharSequenceObjHashMap<CairoTable> tableCache;
+        private final CharSequenceObjMap<CairoTable> tableCache;
         private int columnIdx = -1;
         private int iteratorIdx = -1;
         private CairoTable table;
         private int tableId;
 
-        public AttributeClassCatalogueCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+        public AttributeClassCatalogueCursor(CharSequenceObjMap<CairoTable> tableCache) {
             super();
             this.tableCache = tableCache;
         }

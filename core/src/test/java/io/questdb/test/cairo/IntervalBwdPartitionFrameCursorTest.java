@@ -434,6 +434,10 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
+            IntList columnIndexes = new IntList();
+            columnIndexes.add(0); // a
+            columnIndexes.add(1); // b
+            columnIndexes.add(2); // timestamp
             try (
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
@@ -450,7 +454,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                             0,
                             false
                     );
-                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, new IntList(), ORDER_DESC)
+                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, columnIndexes, ORDER_DESC)
             ) {
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
@@ -779,6 +783,10 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
+            IntList columnIndexes = new IntList();
+            columnIndexes.add(0); // a
+            columnIndexes.add(1); // b
+            columnIndexes.add(2); // timestamp
             try (
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
@@ -795,7 +803,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                             0,
                             false
                     );
-                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, new IntList(), ORDER_DESC)
+                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, columnIndexes, ORDER_DESC)
             ) {
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());

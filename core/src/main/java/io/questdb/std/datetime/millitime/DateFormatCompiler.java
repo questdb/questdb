@@ -35,6 +35,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.AbstractDateFormat;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -524,19 +525,7 @@ public class DateFormatCompiler {
                     break;
                 // SEPARATORS
                 default:
-                    if (op < 0) {
-                        String delimiter = delimiters.getQuick(-op - 1);
-                        if (delimiter.length() > 1) {
-                            asm.aload(FA_LOCAL_SINK);
-                            asm.ldc(delimiterIndexes.getQuick(-op - 1));
-                            asm.invokeInterface(sinkPutStrIndex, 1);
-                        } else {
-                            asm.aload(FA_LOCAL_SINK);
-                            asm.iconst(delimiter.charAt(0));
-                            asm.invokeInterface(sinkPutChrIndex, 1);
-                        }
-                        asm.pop();
-                    }
+                    CommonUtils.assembleTimeZone(delimiters, sinkPutStrIndex, sinkPutChrIndex, op, asm, FA_LOCAL_SINK, delimiterIndexes);
                     break;
             }
         }
@@ -959,53 +948,7 @@ public class DateFormatCompiler {
                     asm.istore(LOCAL_YEAR);
                     break;
                 case OP_YEAR_FOUR_DIGITS: {
-                    asm.iload(LOCAL_POS);
-                    asm.iload(P_HI);
-                    int b1 = asm.if_icmpge();
-                    asm.aload(P_INPUT_STR);
-                    asm.iload(LOCAL_POS);
-                    asm.invokeInterface(charAtIndex, 1); //charAt
-                    asm.iconst('-');
-                    int b2 = asm.if_icmpne();
-                    asm.iload(LOCAL_POS);
-                    asm.iconst(4);
-                    asm.iadd();
-                    asm.iload(P_HI);
-                    asm.invokeStatic(assertRemainingIndex);
-                    asm.aload(P_INPUT_STR);
-                    asm.iload(LOCAL_POS);
-                    asm.iconst(1);
-                    asm.iadd();
-                    asm.iinc(LOCAL_POS, 5);
-                    asm.iload(LOCAL_POS);
-                    asm.invokeStatic(parseIntIndex);
-                    asm.ineg();
-                    asm.istore(LOCAL_YEAR);
-                    int b3 = asm.goto_();
-
-                    int p = asm.position();
-                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
-                    asm.setJmp(b1, p);
-                    asm.setJmp(b2, p);
-
-                    asm.iload(LOCAL_POS);
-                    asm.iconst(3);
-                    asm.iadd();
-                    asm.iload(P_HI);
-                    asm.invokeStatic(assertRemainingIndex);
-
-                    asm.aload(P_INPUT_STR);
-                    asm.iload(LOCAL_POS);
-                    asm.iinc(LOCAL_POS, 4);
-                    asm.iload(LOCAL_POS);
-                    asm.invokeStatic(parseIntIndex);
-                    asm.istore(LOCAL_YEAR);
-
-                    stackState &= ~(1 << LOCAL_YEAR);
-
-                    p = asm.position();
-                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
-                    asm.setJmp(b3, p);
+                    stackState = CommonUtils.assembleYear(assertRemainingIndex, parseIntIndex, charAtIndex, stackState, asm, LOCAL_POS, P_HI, P_INPUT_STR, LOCAL_YEAR, frameOffsets);
                 }
                 break;
                 case OP_YEAR_GREEDY:
@@ -1071,44 +1014,13 @@ public class DateFormatCompiler {
                     addTempToPos(decodeLenIndex);
                     break;
                 default:
-                    String delimiter = delimiters.getQuick(-op - 1);
-                    int len = delimiter.length();
-                    if (len == 1) {
-                        // MicrosFormatUtils.assertChar(' ', in, pos++, hi);
-                        asm.iconst(delimiter.charAt(0));
-                        asm.aload(P_INPUT_STR);
-                        asm.iload(LOCAL_POS);
-                        asm.iinc(LOCAL_POS, 1);
-                        asm.iload(P_HI);
-                        asm.invokeStatic(assertCharIndex);
-                    } else {
-                        // pos = MicrosFormatUtils.assertString(", ", 2, in, pos, hi);
-                        asm.ldc(delimIndices.getQuick(-op - 1));
-                        asm.iconst(len);
-                        asm.aload(P_INPUT_STR);
-                        asm.iload(LOCAL_POS);
-                        asm.iload(P_HI);
-                        asm.invokeStatic(assertStringIndex);
-                        asm.istore(LOCAL_POS);
-                    }
+                    CommonUtils.assembleDefault(assertStringIndex, assertCharIndex, delimIndices, op, delimiters, asm, P_INPUT_STR, LOCAL_POS, P_HI);
                     break;
             }
         }
 
         // check that there is no tail
-        asm.iload(LOCAL_POS);
-        asm.iload(P_HI);
-        asm.invokeStatic(assertNoTailIndex);
-        asm.aload(P_LOCALE);
-        asm.iload(LOCAL_ERA);
-        asm.iload(LOCAL_YEAR);
-        asm.iload(LOCAL_MONTH);
-        asm.iload(LOCAL_DAY);
-        asm.iload(LOCAL_HOUR);
-        asm.iload(LOCAL_MINUTE);
-        asm.iload(LOCAL_SECOND);
-        asm.iload(LOCAL_MILLIS);
-        asm.iload(LOCAL_TIMEZONE);
+        CommonUtils.assembleCheckTail(assertNoTailIndex, asm, LOCAL_POS, P_HI, P_LOCALE, LOCAL_ERA, LOCAL_YEAR, LOCAL_MONTH, LOCAL_DAY, LOCAL_HOUR, LOCAL_MINUTE, LOCAL_SECOND, LOCAL_MILLIS, LOCAL_TIMEZONE);
         asm.lload(LOCAL_OFFSET);
         asm.iload(LOCAL_HOUR_TYPE);
         asm.invokeStatic(computeMillisIndex);
@@ -1636,30 +1548,19 @@ public class DateFormatCompiler {
     }
 
     private int makeGreedy(int oldOp) {
-        switch (oldOp) {
-            case OP_YEAR_ONE_DIGIT:
-                return OP_YEAR_GREEDY;
-            case OP_MONTH_ONE_DIGIT:
-                return OP_MONTH_GREEDY;
-            case OP_DAY_ONE_DIGIT:
-                return OP_DAY_GREEDY;
-            case OP_HOUR_24_ONE_DIGIT:
-                return OP_HOUR_24_GREEDY;
-            case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                return OP_HOUR_24_GREEDY_ONE_BASED;
-            case OP_HOUR_12_ONE_DIGIT:
-                return OP_HOUR_12_GREEDY;
-            case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                return OP_HOUR_12_GREEDY_ONE_BASED;
-            case OP_MINUTE_ONE_DIGIT:
-                return OP_MINUTE_GREEDY;
-            case OP_SECOND_ONE_DIGIT:
-                return OP_SECOND_GREEDY;
-            case OP_MILLIS_ONE_DIGIT:
-                return OP_MILLIS_GREEDY;
-            default:
-                return oldOp;
-        }
+        return switch (oldOp) {
+            case OP_YEAR_ONE_DIGIT -> OP_YEAR_GREEDY;
+            case OP_MONTH_ONE_DIGIT -> OP_MONTH_GREEDY;
+            case OP_DAY_ONE_DIGIT -> OP_DAY_GREEDY;
+            case OP_HOUR_24_ONE_DIGIT -> OP_HOUR_24_GREEDY;
+            case OP_HOUR_24_ONE_DIGIT_ONE_BASED -> OP_HOUR_24_GREEDY_ONE_BASED;
+            case OP_HOUR_12_ONE_DIGIT -> OP_HOUR_12_GREEDY;
+            case OP_HOUR_12_ONE_DIGIT_ONE_BASED -> OP_HOUR_12_GREEDY_ONE_BASED;
+            case OP_MINUTE_ONE_DIGIT -> OP_MINUTE_GREEDY;
+            case OP_SECOND_ONE_DIGIT -> OP_SECOND_GREEDY;
+            case OP_MILLIS_ONE_DIGIT -> OP_MILLIS_GREEDY;
+            default -> oldOp;
+        };
     }
 
     private void makeLastOpGreedy(IntList compiled) {
@@ -1676,19 +1577,7 @@ public class DateFormatCompiler {
     }
 
     private void parseDigits(int assertRemainingIndex, int parseIntIndex, int digitCount, int target) {
-        asm.iload(LOCAL_POS);
-        if (digitCount > 1) {
-            asm.iconst(digitCount - 1);
-            asm.iadd();
-        }
-        asm.iload(P_HI);
-        asm.invokeStatic(assertRemainingIndex);
-
-        asm.aload(P_INPUT_STR);
-        asm.iload(LOCAL_POS);
-        asm.iinc(LOCAL_POS, digitCount);
-        asm.iload(LOCAL_POS);
-        asm.invokeStatic(parseIntIndex);
+        CommonUtils.parseDigits(assertRemainingIndex, parseIntIndex, digitCount, asm, LOCAL_POS, P_HI, P_INPUT_STR);
         asm.istore(target);
     }
 

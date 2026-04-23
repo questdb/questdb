@@ -36,6 +36,10 @@ import io.questdb.std.str.Utf8s;
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * Pseudo-random number generator. This class is not thread-safe;
+ * each thread must use its own instance.
+ */
 public class Rnd {
     private static final double DOUBLE_UNIT = 0x1.0p-53; // 1.0 / (1L << 53)
     private static final float FLOAT_UNIT = 1 / ((float) (1 << 24));

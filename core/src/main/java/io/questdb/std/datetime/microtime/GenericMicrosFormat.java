@@ -87,6 +87,15 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     MicrosFormatUtils.append00000(sink, micros0);
                     break;
 
+                case MicrosFormatCompiler.OP_OPTIONAL_MICROS_GREEDY6:
+                case MicrosFormatCompiler.OP_OPTIONAL_NANOS_GREEDY9:
+                    sink.putAscii('.');
+                    if (micros0 == -1) {
+                        micros0 = Micros.getMicrosOfSecond(micros);
+                    }
+                    MicrosFormatUtils.append00000(sink, micros0);
+                    break;
+
                 case MicrosFormatCompiler.OP_MICROS_THREE_DIGITS:
                     if (micros0 == -1) {
                         micros0 = Micros.getMicrosOfMilli(micros);
@@ -451,8 +460,20 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     pos += Numbers.decodeHighInt(l);
                     break;
 
+                case MicrosFormatCompiler.OP_OPTIONAL_MICROS_GREEDY6:
+                    l = MicrosFormatUtils.parseOptionalMicrosGreedy(in, pos, hi);
+                    micros = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
+                    break;
+
                 case MicrosFormatCompiler.OP_NANOS_GREEDY9:
                     l = Micros.parseNanosAsMicrosGreedy(in, pos, hi);
+                    micros = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
+                    break;
+
+                case MicrosFormatCompiler.OP_OPTIONAL_NANOS_GREEDY9:
+                    l = MicrosFormatUtils.parseOptionalNanosAsMicrosGreedy(in, pos, hi);
                     micros = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;

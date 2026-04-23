@@ -59,6 +59,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Path;
@@ -458,6 +459,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     timestampSampler,
                     viewDefinition.getTzRules(),
                     viewDefinition.getFixedOffset(),
+                    viewDefinition.getSamplingIntervalUnit(),
                     refreshIntervals,
                     minTs,
                     maxTs,
@@ -880,6 +882,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull TimestampSampler sampler,
             @Nullable TimeZoneRules tzRules,
             long fixedOffset,
+            char samplingIntervalUnit,
             @Nullable LongList refreshIntervals,
             long minTs,
             long maxTs,
@@ -890,6 +893,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return fixedOffsetIterator.of(
                     sampler,
                     fixedOffset - fixedTzOffset,
+                    refreshIntervals,
+                    minTs,
+                    maxTs,
+                    step
+            );
+        }
+
+        // For sub-day intervals, timestamp_floor_utc uses the standard (non-DST)
+        // offset for UTC↔local conversion and bakes the user offset into the floor
+        // anchor. Bucket key K covers raw data in [K, K + stride). The iterator
+        // boundaries must include the user offset so they align with bucket keys.
+        if (CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
+            long stdOff = CommonUtils.getFloorUtcTzOffset(tzRules, 0, samplingIntervalUnit);
+            return fixedOffsetIterator.of(
+                    sampler,
+                    fixedOffset - stdOff,
                     refreshIntervals,
                     minTs,
                     maxTs,

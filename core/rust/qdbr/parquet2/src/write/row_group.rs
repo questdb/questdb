@@ -145,7 +145,13 @@ where
             sorting_columns: sorting_columns.clone(),
             file_offset,
             total_compressed_size: Some(total_compressed_size),
-            ordinal: ordinal.try_into().ok(),
+            ordinal: Some(ordinal.try_into().map_err(|_| {
+                Error::InvalidParameter(format!(
+                    "Row group ordinal {} exceeds i16::MAX ({})",
+                    ordinal,
+                    i16::MAX
+                ))
+            })?),
         },
         specs,
         bytes_written,
@@ -222,7 +228,13 @@ where
             sorting_columns: sorting_columns.clone(),
             file_offset,
             total_compressed_size: Some(total_compressed_size),
-            ordinal: ordinal.try_into().ok(),
+            ordinal: Some(ordinal.try_into().map_err(|_| {
+                Error::InvalidParameter(format!(
+                    "Row group ordinal {} exceeds i16::MAX ({})",
+                    ordinal,
+                    i16::MAX
+                ))
+            })?),
         },
         specs,
         bytes_written,

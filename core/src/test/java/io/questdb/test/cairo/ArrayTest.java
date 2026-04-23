@@ -729,6 +729,7 @@ public class ArrayTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,x]
+                                  keyFunctions: [timestamp_floor_utc('1s',ts)]
                                   values: [first(v)]
                                   filter: null
                                     PageFrame
@@ -759,6 +760,7 @@ public class ArrayTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
                                   values: [max(array_position(arr, a))]
                                   filter: null
                                     PageFrame
@@ -782,6 +784,7 @@ public class ArrayTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
                                   values: [min(insertion_point(arr,a))]
                                   filter: null
                                     PageFrame
@@ -805,6 +808,7 @@ public class ArrayTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
                                   values: [sum(array_count(arr))]
                                   filter: null
                                     PageFrame
@@ -828,6 +832,7 @@ public class ArrayTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
                                   values: [sum(array_avg(arr))]
                                   filter: null
                                     PageFrame
@@ -853,6 +858,7 @@ public class ArrayTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,array_sum]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts),array_sum(array_cum_sum(arr))]
                                   values: [sum(a)]
                                   filter: null
                                     PageFrame
@@ -878,6 +884,7 @@ public class ArrayTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,dot_product]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts),dot_product(arr,2)]
                                   values: [first(a)]
                                   filter: null
                                     PageFrame
@@ -901,6 +908,7 @@ public class ArrayTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
                                   values: [sum(array_sum(arr*5+3-1/2))]
                                   filter: null
                                     PageFrame

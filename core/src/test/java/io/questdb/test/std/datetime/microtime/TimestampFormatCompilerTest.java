@@ -366,6 +366,11 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFormatOptionalMicros6Zero() throws NumericException {
+        assertFormat("2026-03-31T09:02:28.000000", "yyyy-MM-ddTHH:mm:ss.U+", "2026-03-31T09:02:28.000000Z");
+    }
+
+    @Test
     public void testFormatMicros6Three() throws NumericException {
         assertFormat("2022-02-02 02:02:02.000812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000812Z");
     }
@@ -450,6 +455,11 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testFormatNano9Six() throws NumericException {
         assertFormat("2022-02-02 02:02:02.374812", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.374812Z");
+    }
+
+    @Test
+    public void testFormatOptionalNano9Zero() throws NumericException {
+        assertFormat("2026-03-31T09:02:28.000000", "yyyy-MM-ddTHH:mm:ss.N+", "2026-03-31T09:02:28.000000Z");
     }
 
     @Test
@@ -894,6 +904,41 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testParseOptionalMicros6Absent() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.U+'Z'", "2026-03-31T09:02:28.000000Z", "2026-03-31T09:02:28Z");
+    }
+
+    @Test
+    public void testParseOptionalMicros6Present() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.U+'Z'", "2026-03-31T09:02:28.123456Z", "2026-03-31T09:02:28.123456Z");
+    }
+
+    @Test
+    public void testParseOptionalMicros6RejectsBareDot() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.U+'Z'", "2026-03-31T09:02:28.Z");
+    }
+
+    @Test
+    public void testParseOptionalMicros6RejectsBareDotAtEnd() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.U+", "2026-03-31T09:02:28.");
+    }
+
+    @Test
+    public void testParseOptionalMicros6AbsentAtEnd() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.U+", "2026-03-31T09:02:28.000000Z", "2026-03-31T09:02:28");
+    }
+
+    @Test
+    public void testParseOptionalMicros6LeavesDotForLiteral() throws NumericException {
+        assertMicros(".U+.", "1970-01-01T00:00:00.000000Z", ".");
+    }
+
+    @Test
+    public void testParseOptionalMicros6LeavesDotForLiteralWhenFollowedByNonDigit() throws NumericException {
+        assertMicros(".U+..", "1970-01-01T00:00:00.000000Z", "..");
+    }
+
+    @Test
     public void testParseNanos9Eight() {
         assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.123456Z", "2022-02-02 02:02:02.12345678");
     }
@@ -941,6 +986,41 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testParseNanos9Two() {
         assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.120000Z", "2022-02-02 02:02:02.12");
+    }
+
+    @Test
+    public void testParseOptionalNanos9Absent() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.000000Z", "2026-03-31T09:02:28Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9Present() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.123456Z", "2026-03-31T09:02:28.123456789Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9RejectsBareDot() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9AbsentAtEnd() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.N+", "2026-03-31T09:02:28.000000Z", "2026-03-31T09:02:28");
+    }
+
+    @Test
+    public void testParseOptionalNanos9RejectsBareDotAtEnd() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.N+", "2026-03-31T09:02:28.");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteral() throws NumericException {
+        assertMicros(".N+.", "1970-01-01T00:00:00.000000Z", ".");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteralWhenFollowedByNonDigit() throws NumericException {
+        assertMicros(".N+..", "1970-01-01T00:00:00.000000Z", "..");
     }
 
     @Test
@@ -1106,6 +1186,7 @@ public class TimestampFormatCompilerTest {
 
         sink.clear();
         REFERENCE.format(compiler.compile(pattern).parse(input, defaultLocale), defaultLocale, "Z", sink);
+        TestUtils.assertEquals(expected, sink);
     }
 
     private void assertThat(String pattern, String expected, String input) throws NumericException {

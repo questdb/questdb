@@ -37,6 +37,7 @@ import io.questdb.std.LongGroupSort;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -972,6 +973,58 @@ public final class IntervalUtils {
             return;
         }
 
+        // Check for bare imprecise date with time or duration suffix
+        // (e.g. "2024-01T09:30" or "2024-01;6h30m").
+        // Wrap in brackets and route through expandDateList, which handles the
+        // imprecise-to-day expansion.
+        if (effectiveSeqLo < effectiveSeqLim && Chars.isAsciiDigit(effectiveSeq.charAt(effectiveSeqLo))) {
+            int suffixSplitPos = -1;
+            for (int i = effectiveSeqLo; i < effectiveSeqLim - 1; i++) {
+                char c = effectiveSeq.charAt(i);
+                if (c == '[') {
+                    break; // Has brackets — use bracket expansion path below
+                }
+                if (c == 'T' && (Chars.isAsciiDigit(effectiveSeq.charAt(i + 1)) || effectiveSeq.charAt(i + 1) == '[')) {
+                    suffixSplitPos = i;
+                    break;
+                }
+                if (c == ';') {
+                    suffixSplitPos = i;
+                    break;
+                }
+            }
+            if (suffixSplitPos >= 0 && !hasDatePrecision(effectiveSeq, effectiveSeqLo, suffixSplitPos)) {
+                int outSize = out.size();
+                StringSink dateSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
+                dateSink.clear();
+                StringSink wrappedSink = tlSink2.get();
+                wrappedSink.clear();
+                wrappedSink.putAscii('[');
+                wrappedSink.put(effectiveSeq, effectiveSeqLo, suffixSplitPos);
+                wrappedSink.putAscii(']');
+                wrappedSink.put(effectiveSeq, suffixSplitPos, effectiveSeqLim);
+                try {
+                    expandDateList(
+                            timestampDriver, configuration, wrappedSink, 0, wrappedSink.length(),
+                            position, out, operation, dateSink, applyEncoded, outSize,
+                            dayFilterMask, nowTimestamp
+                    );
+                    if (exchangeSchedule != null) {
+                        int semicolon = findDurationSemicolon(wrappedSink, 0, wrappedSink.length());
+                        applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, wrappedSink,
+                                semicolon >= 0 ? semicolon + 1 : -1, wrappedSink.length(), position);
+                    }
+                    if (applyEncoded) {
+                        mergeAndValidateIntervals(configuration, out, outSize, position);
+                    }
+                } catch (SqlException e) {
+                    out.setPos(outSize);
+                    throw e;
+                }
+                return;
+            }
+        }
+
         // Single scan: detect brackets, find semicolon and timezone marker positions
         int dateLim = effectiveSeqLim;
         int semicolonPos = -1;
@@ -1336,6 +1389,9 @@ public final class IntervalUtils {
         int numStart = lo;
         for (int i = lo; i < lim; i++) {
             char c = seq.charAt(i);
+            if ((c == '-' || c == '+') && i == numStart) {
+                continue;
+            }
             if ((c >= '0' && c <= '9') || c == '_') {
                 continue;
             }
@@ -1361,6 +1417,17 @@ public final class IntervalUtils {
         return timestamp;
     }
 
+    static long resolveDurationLo(long anchor, long endExclusive) {
+        return endExclusive >= anchor ? anchor : endExclusive;
+    }
+
+    static long resolveDurationHi(long anchor, long endExclusive) {
+        if (endExclusive >= anchor) {
+            return endExclusive - 1;
+        }
+        return anchor - 1;
+    }
+
     private static void addLinearInterval(long period, int count, LongList out) {
         int k = out.size();
         long lo = out.getQuick(k - 2);
@@ -1384,43 +1451,53 @@ public final class IntervalUtils {
 
     private static void addMonthInterval(TimestampDriver timestampDriver, int period, int count, LongList out) {
         int k = out.size();
-        long lo = out.getQuick(k - 2);
-        long hi = out.getQuick(k - 1);
+        long baseLo = out.getQuick(k - 2);
+        long baseHi = out.getQuick(k - 1);
         int writePoint = k / 2;
         int n = count - 1;
+        int startOffset;
+        int step;
         if (period < 0) {
-            lo = timestampDriver.addMonths(lo, period * n);
-            hi = timestampDriver.addMonths(hi, period * n);
-            out.setQuick(k - 2, lo);
-            out.setQuick(k - 1, hi);
-            period = -period;
+            startOffset = period * n;
+            step = -period;
+            out.setQuick(k - 2, timestampDriver.addMonths(baseLo, startOffset));
+            out.setQuick(k - 1, timestampDriver.addMonths(baseHi, startOffset));
+        } else {
+            startOffset = 0;
+            step = period;
         }
 
-        for (int i = 0; i < n; i++) {
-            lo = timestampDriver.addMonths(lo, period);
-            hi = timestampDriver.addMonths(hi, period);
-            writePoint = append(out, writePoint, lo, hi);
+        for (int i = 1; i <= n; i++) {
+            int months = startOffset + step * i;
+            writePoint = append(out, writePoint,
+                    timestampDriver.addMonths(baseLo, months),
+                    timestampDriver.addMonths(baseHi, months));
         }
     }
 
     private static void addYearIntervals(TimestampDriver timestampDriver, int period, int count, LongList out) {
         int k = out.size();
-        long lo = out.getQuick(k - 2);
-        long hi = out.getQuick(k - 1);
+        long baseLo = out.getQuick(k - 2);
+        long baseHi = out.getQuick(k - 1);
         int writePoint = k / 2;
         int n = count - 1;
+        int startOffset;
+        int step;
         if (period < 0) {
-            lo = timestampDriver.addYears(lo, period * n);
-            hi = timestampDriver.addYears(hi, period * n);
-            out.setQuick(k - 2, lo);
-            out.setQuick(k - 1, hi);
-            period = -period;
+            startOffset = period * n;
+            step = -period;
+            out.setQuick(k - 2, timestampDriver.addYears(baseLo, startOffset));
+            out.setQuick(k - 1, timestampDriver.addYears(baseHi, startOffset));
+        } else {
+            startOffset = 0;
+            step = period;
         }
 
-        for (int i = 0; i < n; i++) {
-            lo = timestampDriver.addYears(lo, period);
-            hi = timestampDriver.addYears(hi, period);
-            writePoint = append(out, writePoint, lo, hi);
+        for (int i = 1; i <= n; i++) {
+            int years = startOffset + step * i;
+            writePoint = append(out, writePoint,
+                    timestampDriver.addYears(baseLo, years),
+                    timestampDriver.addYears(baseHi, years));
         }
     }
 
@@ -1817,6 +1894,9 @@ public final class IntervalUtils {
         int numStart = durationLo;
         for (int i = durationLo; i < durationHi; i++) {
             char c = seq.charAt(i);
+            if ((c == '-' || c == '+') && i == numStart) {
+                continue;
+            }
             if (Chars.isAsciiDigit(c) || c == '_') {
                 continue;
             }
@@ -1936,6 +2016,126 @@ public final class IntervalUtils {
     }
 
     /**
+     * Handles imprecise (month or year level) date elements that have a time
+     * override suffix. Expands the imprecise date to individual days, then
+     * builds a precise YYYY-MM-DD + time string for each day and parses it.
+     * This allows expressions like {@code [2024-01, 2024-02]T09:30#workday;6h29m}
+     * and {@code 2024-[01..02]T09:30} to work without requiring explicit day ranges.
+     */
+    private static int compileImpreciseDateWithTime(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence effectiveSeq,
+            int es,
+            int ee,
+            int timeLo,
+            int timeHi,
+            int tzMarkerPos,
+            int durationSemicolon,
+            int durationHi,
+            int tzContentHi,
+            int dayFilterMask,
+            LongList exchangeSchedule,
+            int position,
+            LongList irList,
+            StringSink parseSink,
+            LongList tmp
+    ) throws SqlException {
+        // Step 1: Parse date-only portion (with bracket expansion if needed)
+        parseSink.clear();
+        parseSink.put(effectiveSeq, es, ee);
+        tmp.clear();
+
+        boolean elemHasBrackets = false;
+        for (int j = es; j < ee; j++) {
+            if (effectiveSeq.charAt(j) == '[') {
+                elemHasBrackets = true;
+                break;
+            }
+        }
+
+        if (elemHasBrackets) {
+            StringSink expansionSink = tlCompileSink3.get();
+            expansionSink.clear();
+            expandBracketsRecursive(
+                    timestampDriver, configuration, parseSink,
+                    0, parseSink.length(), parseSink.length(),
+                    position, tmp, IntervalOperation.INTERSECT,
+                    expansionSink, 0, true, 0,
+                    null, -1, -1
+            );
+        } else {
+            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
+            applyLastEncodedInterval(timestampDriver, tmp);
+        }
+
+        // Step 2: Expand multi-day intervals to individual days with optional day filter.
+        // Day filter is only applied at compile time when there is no exchange schedule.
+        int effectiveDayMask = exchangeSchedule == null ? dayFilterMask : 0;
+        int origSize = tmp.size();
+        for (int r = 0; r < origSize; r += 2) {
+            long lo = tmp.getQuick(r);
+            long hi = tmp.getQuick(r + 1);
+            long loDay = timestampDriver.startOfDay(lo, 0);
+            long hiDay = timestampDriver.startOfDay(hi, 0);
+            long currentDay = loDay;
+            while (currentDay <= hiDay) {
+                if (effectiveDayMask == 0 || (effectiveDayMask & (1 << (timestampDriver.getDayOfWeek(currentDay) - 1))) != 0) {
+                    tmp.add(currentDay);
+                }
+                currentDay = timestampDriver.addDays(currentDay, 1);
+            }
+        }
+        int dayCount = tmp.size() - origSize;
+        // Compact day starts to front of tmp so per-day parsing can append
+        // after them without a separate array allocation.
+        for (int i = 0; i < dayCount; i++) {
+            tmp.setQuick(i, tmp.getQuick(origSize + i));
+        }
+        tmp.setPos(dayCount);
+
+        // Step 3: For each day, build "YYYY-MM-DD" + time suffix + duration and parse
+        int addedElems = 0;
+        for (int d = 0; d < dayCount; d++) {
+            long dayStart = tmp.getQuick(d);
+            int year = timestampDriver.getYear(dayStart);
+            int month = timestampDriver.getMonthOfYear(dayStart);
+            int dayOfMonth = timestampDriver.getDayOfMonth(dayStart);
+
+            parseSink.clear();
+            appendPaddedInt(parseSink, year, 4);
+            parseSink.put('-');
+            appendPaddedInt(parseSink, month, 2);
+            parseSink.put('-');
+            appendPaddedInt(parseSink, dayOfMonth, 2);
+
+            // Append time override (same suffix logic as compileStaticElement)
+            if (tzMarkerPos >= 0) {
+                parseSink.put(effectiveSeq, timeLo, tzMarkerPos);
+            } else if (durationSemicolon >= 0) {
+                parseSink.put(effectiveSeq, timeLo, durationHi);
+            } else {
+                parseSink.put(effectiveSeq, timeLo, timeHi);
+            }
+            if (durationSemicolon >= 0 && tzMarkerPos >= 0) {
+                parseSink.put(effectiveSeq, tzContentHi, durationHi);
+            }
+
+            tmp.setPos(dayCount);
+            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
+            applyLastEncodedInterval(timestampDriver, tmp);
+
+            for (int k = dayCount; k < tmp.size(); k += 2) {
+                irList.add(CompiledTickExpression.TAG_STATIC);
+                irList.add(tmp.getQuick(k));
+                irList.add(tmp.getQuick(k + 1));
+                addedElems++;
+            }
+        }
+        return addedElems;
+    }
+
+    /**
      * Parses a single time element (e.g. "09:00" or "09:00@+05:00") and appends
      * one (offset, width, zoneMatch) triple to irList.
      */
@@ -2028,6 +2228,18 @@ public final class IntervalUtils {
             StringSink parseSink,
             LongList tmp
     ) throws SqlException {
+        // When the date has month or year precision and a time override follows,
+        // expand to individual days first so each day receives the correct time.
+        // Without this, "2024-01T09:30" would reach parseInterval which only
+        // accepts YYYY-MM-DD'T'HH:mm format.
+        if (timeLo < timeHi && !hasDatePrecision(effectiveSeq, es, ee)) {
+            return compileImpreciseDateWithTime(
+                    timestampDriver, configuration, effectiveSeq, es, ee,
+                    timeLo, timeHi, tzMarkerPos, durationSemicolon, durationHi, tzContentHi,
+                    dayFilterMask, exchangeSchedule, position, irList, parseSink, tmp
+            );
+        }
+
         // Build the full element string: date + time override + duration suffix
         parseSink.clear();
         parseSink.put(effectiveSeq, es, ee);
@@ -2392,7 +2604,25 @@ public final class IntervalUtils {
         int startLen = sink.length();
 
         if (bracketStart < 0) {
-            // No more brackets - parse the accumulated expansion
+            // No more brackets - parse the accumulated expansion.
+            // Check if the accumulated date text is an imprecise date (month level)
+            // and the remaining suffix starts with a time override or duration.
+            // If so, expand to individual days so each gets the suffix applied.
+            if (pos < fullLim && !hasDatePrecision(sink, 0, sink.length())) {
+                boolean hasSuffixTime = seq.charAt(pos) == 'T'
+                        && pos + 1 < fullLim && Chars.isAsciiDigit(seq.charAt(pos + 1));
+                boolean hasSuffixDuration = seq.charAt(pos) == ';';
+                if (hasSuffixTime || hasSuffixDuration) {
+                    boolean isExpanded = expandImpreciseDateInBracket(
+                            timestampDriver, seq, pos, fullLim, errorPos, out, operation,
+                            sink, applyEncoded, outSizeBeforeExpansion
+                    );
+                    if (isExpanded) {
+                        sink.clear(startLen);
+                        return false;
+                    }
+                }
+            }
             // Note: sink always has content here (at minimum the expanded bracket value)
             sink.put(seq, pos, fullLim);
             parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
@@ -2410,6 +2640,21 @@ public final class IntervalUtils {
         // Check if bracket contains time list (has ':' inside, e.g., [09:00,14:30])
         // vs numeric expansion (no ':', e.g., [09,14])
         if (isTimeListBracket(seq, bracketStart, bracketEnd)) {
+            // When the prefix (before 'T') is an imprecise date, expand to
+            // individual days so each day gets the time list applied correctly.
+            if (afterPrefixLen > startLen + 1
+                    && sink.charAt(afterPrefixLen - 1) == 'T'
+                    && !hasDatePrecision(sink, 0, afterPrefixLen - 1)) {
+                expandImpreciseDateWithTimeListBracket(
+                        timestampDriver, configuration, seq,
+                        bracketStart, bracketEnd, fullLim, errorPos, out, operation,
+                        sink, startLen, afterPrefixLen,
+                        applyEncoded, outSizeBeforeExpansion,
+                        globalTzSeq, globalTzLo, globalTzHi
+                );
+                sink.clear(startLen);
+                return true;
+            }
             expandTimeListBracket(
                     timestampDriver,
                     configuration,
@@ -2833,6 +3078,69 @@ public final class IntervalUtils {
                             break;
                         }
                         suffixTimeEnd++;
+                    }
+                }
+
+                // When the element is an imprecise date (month or year level) and
+                // the suffix adds a time component or there is a day filter with
+                // duration, rewrite the element to include day-level bracket
+                // expansion so the existing bracket machinery produces valid
+                // YYYY-MM-DD dates. Without expansion, parseRange collapses
+                // a month+duration to a single interval from the month start.
+                boolean hasSuffixTime = !elementHasTime
+                        && suffixStart < lim
+                        && seq.charAt(suffixStart) == 'T'
+                        && suffixStart + 1 < lim
+                        && (Chars.isAsciiDigit(seq.charAt(suffixStart + 1)) || seq.charAt(suffixStart + 1) == '[');
+                boolean hasDuration = !elementHasTime
+                        && globalDurationSemicolon >= 0;
+                if ((hasSuffixTime || hasDuration)
+                        && !hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd)) {
+                    int hyphenCount = 0;
+                    int firstHyphenPos = -1;
+                    boolean elemHasBrackets = false;
+                    for (int j = resolvedElementStart; j < effectiveElementEnd; j++) {
+                        char ch = elementSeq.charAt(j);
+                        if (ch == '-' && firstHyphenPos < 0) {
+                            firstHyphenPos = j;
+                            hyphenCount++;
+                        } else if (ch == '-') {
+                            hyphenCount++;
+                        } else if (ch == '[') {
+                            elemHasBrackets = true;
+                        }
+                    }
+                    if (!elemHasBrackets) {
+                        // Rewrite imprecise date to include day-level brackets.
+                        // tlDateVarSink is safe to reuse here: the $variable branch
+                        // (which also uses tlDateVarSink) always produces day-precision
+                        // dates via appendDate(), so hasDatePrecision() returns true
+                        // and this block is never reached for $variable elements.
+                        StringSink rewriteSink = tlDateVarSink.get();
+                        rewriteSink.clear();
+                        if (hyphenCount == 1 && firstHyphenPos > resolvedElementStart) {
+                            // Month-level YYYY-MM: append -[01..DD]
+                            long packed = parseMonthLevelDate(elementSeq, resolvedElementStart, effectiveElementEnd);
+                            if (packed < 0) {
+                                throw SqlException.$(errorPos, "Invalid date: ").put(elementSeq, resolvedElementStart, effectiveElementEnd);
+                            }
+                            int lastDay = (int) (packed & 0xFF);
+                            rewriteSink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
+                            rewriteSink.put("-[01..");
+                            appendPaddedInt(rewriteSink, lastDay, 2);
+                            rewriteSink.put(']');
+                        } else if (hyphenCount == 0) {
+                            // Year-level YYYY: append -[01..12] so bracket expansion
+                            // produces month-level dates, which then trigger per-month
+                            // day expansion via expandImpreciseDateInBracket.
+                            rewriteSink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
+                            rewriteSink.put("-[01..12]");
+                        }
+                        if (!rewriteSink.isEmpty()) {
+                            elementSeq = rewriteSink;
+                            resolvedElementStart = 0;
+                            effectiveElementEnd = rewriteSink.length();
+                        }
                     }
                 }
 
@@ -3291,6 +3599,108 @@ public final class IntervalUtils {
 
             // Move to next day
             currentTimestamp = timestampDriver.addDays(currentTimestamp, 1);
+        }
+    }
+
+    /**
+     * Expands an imprecise date (month level) accumulated in the sink during
+     * bracket expansion into individual days, appending the time+duration suffix
+     * from {@code seq[suffixPos..fullLim]} to each.
+     * {@link #expandBracketsRecursive} calls this method when the expanded text
+     * has month-level precision and the remaining suffix starts with a time
+     * override.
+     *
+     * @return true if expansion succeeded, false if the date format is not
+     * recognized (caller falls back to normal parsing)
+     */
+    private static boolean expandImpreciseDateInBracket(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int suffixPos,
+            int fullLim,
+            int errorPos,
+            LongList out,
+            short operation,
+            StringSink sink,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion
+    ) throws SqlException {
+        long packed = parseMonthLevelDate(sink, 0, sink.length());
+        if (packed < 0) {
+            return false; // Not a recognized month-level date
+        }
+        int year = (int) (packed >> 16);
+        int month = (int) ((packed >> 8) & 0xFF);
+        int lastDay = (int) (packed & 0xFF);
+
+        // Iterate each day in the month, building YYYY-MM-DD + suffix and parsing
+        for (int d = 1; d <= lastDay; d++) {
+            sink.clear(0);
+            appendPaddedInt(sink, year, 4);
+            sink.put('-');
+            appendPaddedInt(sink, month, 2);
+            sink.put('-');
+            appendPaddedInt(sink, d, 2);
+            sink.put(seq, suffixPos, fullLim);
+            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+        }
+        return true;
+    }
+
+    /**
+     * Expands an imprecise date prefix (month level) to individual days,
+     * calling {@link #expandTimeListBracket} for each day. The sink contains
+     * a prefix like {@code "2024-01T"} where the part before {@code T} is
+     * imprecise. This method replaces it with {@code "2024-01-01T"},
+     * {@code "2024-01-02T"}, etc., invoking the time list expansion for each.
+     */
+    private static void expandImpreciseDateWithTimeListBracket(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int bracketStart,
+            int bracketEnd,
+            int fullLim,
+            int errorPos,
+            LongList out,
+            short operation,
+            StringSink sink,
+            int startLen,
+            int afterPrefixLen,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion,
+            CharSequence globalTzSeq,
+            int globalTzLo,
+            int globalTzHi
+    ) throws SqlException {
+        // Parse the imprecise date from sink[0..afterPrefixLen-1] (before 'T')
+        int dateEnd = afterPrefixLen - 1; // Position of 'T'
+        long packed = parseMonthLevelDate(sink, 0, dateEnd);
+        if (packed < 0) {
+            // Not a recognized month-level date — fall back to normal expansion
+            expandTimeListBracket(timestampDriver, configuration, seq,
+                    bracketStart, bracketEnd, fullLim, errorPos, out, operation,
+                    sink, afterPrefixLen, applyEncoded, outSizeBeforeExpansion,
+                    globalTzSeq, globalTzLo, globalTzHi);
+            return;
+        }
+        int year = (int) (packed >> 16);
+        int month = (int) ((packed >> 8) & 0xFF);
+        int lastDay = (int) (packed & 0xFF);
+
+        for (int d = 1; d <= lastDay; d++) {
+            sink.clear(startLen);
+            appendPaddedInt(sink, year, 4);
+            sink.put('-');
+            appendPaddedInt(sink, month, 2);
+            sink.put('-');
+            appendPaddedInt(sink, d, 2);
+            sink.put('T');
+            int newPrefixLen = sink.length();
+            expandTimeListBracket(timestampDriver, configuration, seq,
+                    bracketStart, bracketEnd, fullLim, errorPos, out, operation,
+                    sink, newPrefixLen, applyEncoded, outSizeBeforeExpansion,
+                    globalTzSeq, globalTzLo, globalTzHi);
         }
     }
 
@@ -3914,6 +4324,9 @@ public final class IntervalUtils {
                 } catch (NumericException e) {
                     throw SqlException.$(position, "Count not a number");
                 }
+                if (count < 1) {
+                    throw SqlException.$(position, "Count must be positive");
+                }
 
                 parseRange(timestampDriver, seq, lo, pos0, pos1, position, operation, out);
                 char type = seq.charAt(pos2 - 1);
@@ -3938,6 +4351,43 @@ public final class IntervalUtils {
         }
     }
 
+    /**
+     * Parses a month-level date (YYYY-MM) and returns the year, month, and
+     * last day of that month packed into a single long, or -1 if the text
+     * does not match the expected format.
+     * <p>
+     * Encoding: {@code (year << 16) | (month << 8) | lastDay}.
+     * Callers extract values via bit shifts.
+     */
+    private static long parseMonthLevelDate(CharSequence seq, int lo, int hi) {
+        int firstHyphenPos = -1;
+        int hyphenCount = 0;
+        for (int j = lo; j < hi; j++) {
+            if (seq.charAt(j) == '-') {
+                if (firstHyphenPos < 0) {
+                    firstHyphenPos = j;
+                }
+                hyphenCount++;
+            }
+        }
+        if (hyphenCount != 1 || firstHyphenPos <= lo) {
+            return -1;
+        }
+        int year;
+        int month;
+        try {
+            year = Numbers.parseInt(seq, lo, firstHyphenPos);
+            month = Numbers.parseInt(seq, firstHyphenPos + 1, hi);
+        } catch (NumericException e) {
+            return -1;
+        }
+        if (month < 1 || month > 12) {
+            return -1;
+        }
+        int lastDay = CommonUtils.getDaysPerMonth(month, CommonUtils.isLeapYear(year));
+        return ((long) year << 16) | ((long) month << 8) | lastDay;
+    }
+
     private static void parseRange(
             TimestampDriver timestampDriver,
             CharSequence seq,
@@ -3952,16 +4402,20 @@ public final class IntervalUtils {
             int index = out.size();
             timestampDriver.parseInterval(seq, lo, p, operation, out);
             long low = decodeIntervalLo(out, index);
-            long hi = addDuration(timestampDriver, low, seq, p + 1, lim, position) - 1;
-            replaceHiLoInterval(low, hi, operation, out);
+            long endExclusive = addDuration(timestampDriver, low, seq, p + 1, lim, position);
+            long intervalLo = resolveDurationLo(low, endExclusive);
+            long intervalHi = resolveDurationHi(low, endExclusive);
+            replaceHiLoInterval(intervalLo, intervalHi, operation, out);
             return;
         } catch (NumericException ignore) {
             // try date instead
         }
         try {
             long loMicros = timestampDriver.parseAnyFormat(seq, lo, p);
-            long hiMicros = addDuration(timestampDriver, loMicros, seq, p + 1, lim, position) - 1;
-            encodeInterval(loMicros, hiMicros, operation, out);
+            long endExclusive = addDuration(timestampDriver, loMicros, seq, p + 1, lim, position);
+            long intervalLo = resolveDurationLo(loMicros, endExclusive);
+            long intervalHi = resolveDurationHi(loMicros, endExclusive);
+            encodeInterval(intervalLo, intervalHi, operation, out);
         } catch (NumericException e) {
             throw SqlException.$(position, "Invalid date: ").put(seq, lo, p);
         }

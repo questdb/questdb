@@ -301,6 +301,84 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetBloomFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a VARCHAR PARQUET(BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta VARCHAR PARQUET(bloom_filter)
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetBloomFilterWithEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(PLAIN, BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET(plain, bloom_filter)
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetBloomFilterWithEncodingAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET(delta_binary_packed, zstd(3), bloom_filter)
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetBloomFilterRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER), b VARCHAR PARQUET(BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            printSql("SHOW CREATE TABLE foo;");
+            String printedSql = sink.toString().replace("ddl\n", "");
+
+            execute("DROP TABLE foo;");
+            execute(printedSql);
+
+            printSql("SHOW CREATE TABLE foo;");
+            TestUtils.assertEquals(sink.toString().replace("ddl\n", ""), printedSql);
+        });
+    }
+
+    @Test
+    public void testParquetBloomFilterMixedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(BLOOM_FILTER), b VARCHAR PARQUET(DELTA_LENGTH_BYTE_ARRAY, BLOOM_FILTER), c DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET(bloom_filter),
+                            \tb VARCHAR PARQUET(delta_length_byte_array, bloom_filter),
+                            \tc DOUBLE
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
     public void testPartitioning() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year wal;");

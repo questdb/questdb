@@ -168,13 +168,11 @@ pub fn symbol_to_data_page_only(
     primitive_type: PrimitiveType,
     offsets: &[u64],
     chars: &[u8],
-    required: bool,
+    not_null_hint: bool,
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows = column_top + column_values.len();
     let mut data_buffer = vec![];
-    let data_null_count = column_values.iter().filter(|&&k| k < 0).count();
-    let total_null_count = column_top + data_null_count;
 
     debug_assert!(
         column_values
@@ -185,26 +183,15 @@ pub fn symbol_to_data_page_only(
     );
 
     // Always encode def levels so the file-level schema stays OPTIONAL
-    // across O3 merges.  When there are no nulls (required=true), a
-    // single RLE run of 1s is ~3 bytes regardless of row count.
-    let definition_levels_byte_length = if required {
-        if column_top != 0 {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "symbol_to_data_page_only: required column has column_top {}",
-                column_top
-            ));
-        }
-        if data_null_count != 0 {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "symbol_to_data_page_only: required column has {} nulls",
-                data_null_count
-            ));
-        }
+    // across O3 merges.  When there are no nulls (not_null_hint from Java),
+    // a single RLE run of 1s is ~3 bytes regardless of row count.
+    // The hint can be stale, so fall back to per-row def levels when
+    // nulls are actually present (column_top > 0).
+    let (definition_levels_byte_length, data_null_count) = if not_null_hint && column_top == 0 {
         encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
-        data_buffer.len()
+        (data_buffer.len(), 0)
     } else {
+        let data_null_count = column_values.iter().filter(|&&k| k < 0).count();
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {
                 false
@@ -214,8 +201,9 @@ pub fn symbol_to_data_page_only(
         });
 
         encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-        data_buffer.len()
+        (data_buffer.len(), data_null_count)
     };
+    let total_null_count = column_top + data_null_count;
 
     let page_stats = if options.write_statistics || bloom_hashes.is_some() {
         let mut stats = if options.write_statistics {
@@ -384,38 +372,22 @@ pub fn symbol_to_pages(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    required: bool,
+    not_null_hint: bool,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + column_values.len();
     let mut data_buffer = vec![];
 
-    // Count nulls in column_values (negative keys)
-    let data_null_count = column_values.iter().filter(|&&k| k < 0).count();
-    // Total nulls includes column_top (all null) + nulls in data
-    let total_null_count = column_top + data_null_count;
-
     // Always encode def levels so the file-level schema stays OPTIONAL
-    // across O3 merges.  When there are no nulls (required=true), a
-    // single RLE run of 1s is ~3 bytes regardless of row count.
-    let definition_levels_byte_length = if required {
-        if column_top != 0 {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "symbol_to_pages: required column has column_top {}",
-                column_top
-            ));
-        }
-        if data_null_count != 0 {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "symbol_to_pages: required column has {} nulls",
-                data_null_count
-            ));
-        }
+    // across O3 merges.  When there are no nulls (not_null_hint from Java),
+    // a single RLE run of 1s is ~3 bytes regardless of row count.
+    // The hint can be stale, so fall back to per-row def levels when
+    // nulls are actually present (column_top > 0).
+    let (definition_levels_byte_length, data_null_count) = if not_null_hint && column_top == 0 {
         encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
-        data_buffer.len()
+        (data_buffer.len(), 0)
     } else {
+        let data_null_count = column_values.iter().filter(|&&k| k < 0).count();
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {
                 false
@@ -425,8 +397,10 @@ pub fn symbol_to_pages(
         });
 
         encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-        data_buffer.len()
+        (data_buffer.len(), data_null_count)
     };
+    let total_null_count = column_top + data_null_count;
+
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     let (dict_buffer, keys, max_key) = {
         let mut bloom_guard = bloom_set

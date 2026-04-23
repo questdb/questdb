@@ -113,8 +113,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " and adate = :adate" +
                     " and ageolong = :ageolong" +
                     " and atimestamp = :atimestamp";
-            final String expected = "aboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tageoint\tasymbol\tafloat\talong\tadouble\tadate\tageolong\tatimestamp\n" +
-                    "false\t28\t0000\t243\t011011000010\tO\t2085282008\t0101011010111101\tHYRX\t0.48820508\t-4986232506486815364\t0.42281342727402726\t2015-09-28T22:29:45.706Z\t11010000001110101000110100011010\t1970-01-05T15:15:00.000000Z\n";
+            final String expected = """
+                    aboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tageoint\tasymbol\tafloat\talong\tadouble\tadate\tageolong\tatimestamp
+                    false\t28\t0000\t243\t011011000010\tO\t2085282008\t0101011010111101\tHYRX\t0.48820508\t-4986232506486815364\t0.42281342727402726\t2015-09-28T22:29:45.706Z\t11010000001110101000110100011010\t1970-01-05T15:15:00.000000Z
+                    """;
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
@@ -138,9 +140,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
             bindVariableService.setLong(0, 3);
 
             final String query = "select * from t1 where x = $1";
-            final String expected = "x\tts\tj\n" +
-                    "3\t1970-01-01T00:00:02.000000Z\tnull\n" +
-                    "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
+            final String expected = """
+                    x\tts\tj
+                    3\t1970-01-01T00:00:02.000000Z\tnull
+                    3\t1970-01-01T00:01:42.000000Z\t7746536061816329025
+                    """;
 
             testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
         });
@@ -158,8 +162,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // The column order is important here, since we want
             // query and table column indexes to be different.
             final String query = "select sym, l, ts from x where sym = 'B' or sym = 'D' or sym = 'F'";
-            final String expected = "sym\tl\tts\n" +
-                    "B\t3\t1970-01-05T15:23:20.000000Z\n";
+            final String expected = """
+                    sym\tl\tts
+                    B\t3\t1970-01-05T15:23:20.000000Z
+                    """;
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
@@ -170,11 +176,13 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " rnd_symbol('D','E','F') sym " +
                     "from long_sequence(5)");
 
-            final String expected2 = "sym\tl\tts\n" +
-                    "B\t3\t1970-01-05T15:23:20.000000Z\n" +
-                    "F\t6\t1970-01-06T18:53:20.000000Z\n" +
-                    "F\t7\t1970-01-06T19:01:40.000000Z\n" +
-                    "D\t9\t1970-01-06T19:18:20.000000Z\n";
+            final String expected2 = """
+                    sym\tl\tts
+                    B\t3\t1970-01-05T15:23:20.000000Z
+                    F\t6\t1970-01-06T18:53:20.000000Z
+                    F\t7\t1970-01-06T19:01:40.000000Z
+                    D\t9\t1970-01-06T19:18:20.000000Z
+                    """;
 
             assertSql(expected2, query);
             assertSqlRunWithJit(query);
@@ -184,41 +192,48 @@ public class CompiledFilterTest extends AbstractCairoTest {
     @Test
     public void testFilteringOnSingleQuote() throws Exception {
         assertQueryAndPlan("Time\tSpread\tBid_Volume\task_volume\n",
-                "SELECT timestamp as Time,\n" +
-                        "avg(asks[1,1]-bids[1,1]) as Spread,\n" +
-                        "sum(bids[1,1]*bids[2,1]) as Bid_Volume,\n" +
-                        "sum(asks[1,1]*asks[2,1]) as ask_volume\n" +
-                        "FROM market_data\n" +
-                        "WHERE symbol = ''''\n" +
-                        "SAMPLE BY 1s\n" +
-                        "ORDER BY timestamp DESC\n" +
-                        "LIMIT 6;",
-                "\n" +
-                        "CREATE TABLE 'market_data' ( \n" +
-                        "\ttimestamp TIMESTAMP,\n" +
-                        "\tsymbol SYMBOL CAPACITY 16384 CACHE,\n" +
-                        "\tbids DOUBLE[][],\n" +
-                        "\tasks DOUBLE[][]\n" +
-                        ") timestamp(timestamp);",
+                """
+                        SELECT timestamp as Time,
+                        avg(asks[1,1]-bids[1,1]) as Spread,
+                        sum(bids[1,1]*bids[2,1]) as Bid_Volume,
+                        sum(asks[1,1]*asks[2,1]) as ask_volume
+                        FROM market_data
+                        WHERE symbol = ''''
+                        SAMPLE BY 1s
+                        ORDER BY timestamp DESC
+                        LIMIT 6;""",
+                """
+                        
+                        CREATE TABLE 'market_data' (\s
+                        \ttimestamp TIMESTAMP,
+                        \tsymbol SYMBOL CAPACITY 16384 CACHE,
+                        \tbids DOUBLE[][],
+                        \tasks DOUBLE[][]
+                        ) timestamp(timestamp);""",
                 "Time###DESC",
                 "INSERT INTO market_data (timestamp, symbol, bids, asks) " +
                         "VALUES " +
                         "(0, 'abc', array[[1d,2d],[3d,4d]], array[[2d,3d],[4d,5d]]), " +
                         "(10_000_000, '''', array[[10d,20d],[30d,40d]], array[[20d,30d],[40d,50d]]);",
-                "Time\tSpread\tBid_Volume\task_volume\n" +
-                        "1970-01-01T00:00:10.000000Z\t10.0\t300.0\t800.0\n",
+                """
+                        Time\tSpread\tBid_Volume\task_volume
+                        1970-01-01T00:00:10.000000Z\t10.0\t300.0\t800.0
+                        """,
                 true,
                 true,
                 false,
-                "Long Top K lo: 6\n" +
-                        "  keys: [Time desc]\n" +
-                        "    Async JIT Group By workers: 1\n" +
-                        "      keys: [Time]\n" +
-                        "      values: [avg(asks[1,1]-bids[1,1]),sum(bids[1,1]*bids[2,1]),sum(asks[1,1]*asks[2,1])]\n" +
-                        "      filter: symbol='''\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: market_data\n");
+                """
+                        Long Top K lo: 6
+                          keys: [Time desc]
+                            Async JIT Group By workers: 1
+                              keys: [Time]
+                              keyFunctions: [timestamp_floor_utc('1s',timestamp)]
+                              values: [avg(asks[1,1]-bids[1,1]),sum(bids[1,1]*bids[2,1]),sum(asks[1,1]*asks[2,1])]
+                              filter: symbol='''
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: market_data
+                        """);
     }
 
     @Test
@@ -248,16 +263,18 @@ public class CompiledFilterTest extends AbstractCairoTest {
             );
 
             final String query = "select /*+ ENABLE_PRE_TOUCH(t1) */ 1 as one, (4 + 2) as the_answer, ts as col_ts, x as col_x, sqrt(x) as root_x from t1 where x > 1";
-            final String expected = "one\tthe_answer\tcol_ts\tcol_x\troot_x\n" +
-                    "1\t6\t1970-01-01T00:00:00.100000Z\t2\t1.4142135623730951\n" +
-                    "1\t6\t1970-01-01T00:00:00.200000Z\t3\t1.7320508075688772\n" +
-                    "1\t6\t1970-01-01T00:00:00.300000Z\t4\t2.0\n" +
-                    "1\t6\t1970-01-01T00:00:00.400000Z\t5\t2.23606797749979\n" +
-                    "1\t6\t1970-01-01T00:00:00.500000Z\t6\t2.449489742783178\n" +
-                    "1\t6\t1970-01-01T00:00:00.600000Z\t7\t2.6457513110645907\n" +
-                    "1\t6\t1970-01-01T00:00:00.700000Z\t8\t2.8284271247461903\n" +
-                    "1\t6\t1970-01-01T00:00:00.800000Z\t9\t3.0\n" +
-                    "1\t6\t1970-01-01T00:00:00.900000Z\t10\t3.1622776601683795\n";
+            final String expected = """
+                    one\tthe_answer\tcol_ts\tcol_x\troot_x
+                    1\t6\t1970-01-01T00:00:00.100000Z\t2\t1.4142135623730951
+                    1\t6\t1970-01-01T00:00:00.200000Z\t3\t1.7320508075688772
+                    1\t6\t1970-01-01T00:00:00.300000Z\t4\t2.0
+                    1\t6\t1970-01-01T00:00:00.400000Z\t5\t2.23606797749979
+                    1\t6\t1970-01-01T00:00:00.500000Z\t6\t2.449489742783178
+                    1\t6\t1970-01-01T00:00:00.600000Z\t7\t2.6457513110645907
+                    1\t6\t1970-01-01T00:00:00.700000Z\t8\t2.8284271247461903
+                    1\t6\t1970-01-01T00:00:00.800000Z\t9\t3.0
+                    1\t6\t1970-01-01T00:00:00.900000Z\t10\t3.1622776601683795
+                    """;
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
@@ -278,11 +295,13 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     "from long_sequence(1000)");
 
             final String query = "select * from t1 where x < 3 order by ts desc";
-            final String expected = "x\tts\n" +
-                    "2\t1970-01-02T00:00:00.100000Z\n" +
-                    "1\t1970-01-02T00:00:00.000000Z\n" +
-                    "2\t1970-01-01T00:00:00.100000Z\n" +
-                    "1\t1970-01-01T00:00:00.000000Z\n";
+            final String expected = """
+                    x\tts
+                    2\t1970-01-02T00:00:00.100000Z
+                    1\t1970-01-02T00:00:00.000000Z
+                    2\t1970-01-01T00:00:00.100000Z
+                    1\t1970-01-01T00:00:00.000000Z
+                    """;
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
@@ -317,9 +336,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     "from long_sequence(" + N + ")) timestamp(ts) partition by day");
 
             final String query = "select * from t1 where x < 3";
-            final String expected = "x\tts\n" +
-                    "1\t1970-01-01T00:00:00.000000Z\n" +
-                    "2\t1970-01-01T00:00:00.100000Z\n";
+            final String expected = """
+                    x\tts
+                    1\t1970-01-01T00:00:00.000000Z
+                    2\t1970-01-01T00:00:00.100000Z
+                    """;
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
@@ -335,9 +356,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " from long_sequence(5)) timestamp(ts)");
 
             final String query = "select * from x where l > 3";
-            final String expected = "l\tts\n" +
-                    "4\t1970-01-05T15:31:40.000000Z\n" +
-                    "5\t1970-01-05T15:40:00.000000Z\n";
+            final String expected = """
+                    l\tts
+                    4\t1970-01-05T15:31:40.000000Z
+                    5\t1970-01-05T15:40:00.000000Z
+                    """;
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
@@ -387,9 +410,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     "from long_sequence(5)");
 
             final String query = "select * from x where l > 3 and j = null";
-            final String expected = "l\tts\tj\n" +
-                    "4\t1970-01-05T15:31:40.000000Z\tnull\n" +
-                    "5\t1970-01-05T15:40:00.000000Z\tnull\n";
+            final String expected = """
+                    l\tts\tj
+                    4\t1970-01-05T15:31:40.000000Z\tnull
+                    5\t1970-01-05T15:40:00.000000Z\tnull
+                    """;
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
@@ -502,8 +527,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
                 }
-                TestUtils.assertEquals("ts\tsym\n" +
-                        "1970-01-05T15:23:20.000000Z\tB\n", sink);
+                TestUtils.assertEquals("""
+                        ts\tsym
+                        1970-01-05T15:23:20.000000Z\tB
+                        """, sink);
 
                 BindVariableServiceImpl bindService2 = new BindVariableServiceImpl(configuration);
                 bindService2.setStr("sym", "C");
@@ -513,9 +540,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 ) {
                     println(factory, cursor);
                 }
-                TestUtils.assertEquals("ts\tsym\n" +
-                        "1970-01-05T15:31:40.000000Z\tC\n" +
-                        "1970-01-05T15:40:00.000000Z\tC\n", sink);
+                TestUtils.assertEquals("""
+                        ts\tsym
+                        1970-01-05T15:31:40.000000Z\tC
+                        1970-01-05T15:40:00.000000Z\tC
+                        """, sink);
             }
         });
     }
@@ -624,8 +653,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 println(factory, cursor);
             }
-            TestUtils.assertEquals("a\tl\n" +
-                    "1000\t1\n", sink);
+            TestUtils.assertEquals("""
+                    a\tl
+                    1000\t1
+                    """, sink);
 
             BindVariableServiceImpl bindService2 = new BindVariableServiceImpl(configuration);
             bindService2.setInt(0, 2);
@@ -636,8 +667,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             ) {
                 println(factory, cursor);
             }
-            TestUtils.assertEquals("a\tl\n" +
-                    "1002\t2\n", sink);
+            TestUtils.assertEquals("""
+                    a\tl
+                    1002\t2
+                    """, sink);
         }
     }
 
@@ -657,8 +690,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 println(factory, cursor);
             }
-            TestUtils.assertEquals("a\tl\n" +
-                    "1000\t1\n", sink);
+            TestUtils.assertEquals("""
+                    a\tl
+                    1000\t1
+                    """, sink);
 
             BindVariableServiceImpl bindService2 = new BindVariableServiceImpl(configuration);
             bindService2.setInt("v1", 2);
@@ -670,8 +705,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             ) {
                 println(factory, cursor);
             }
-            TestUtils.assertEquals("a\tl\n" +
-                    "1002\t2\n", sink);
+            TestUtils.assertEquals("""
+                    a\tl
+                    1002\t2
+                    """, sink);
         }
     }
 
@@ -725,27 +762,31 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     private void testSelectAllBothPageFramesFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
         final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(t1) */" : "") + " * from t1 where x >= 3 and x <= 4";
-        final String expected = "x\tts\tj\n" +
-                "3\t1970-01-01T00:00:02.000000Z\tnull\n" +
-                "4\t1970-01-01T00:00:03.000000Z\tnull\n" +
-                "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n" +
-                "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n";
+        final String expected = """
+                x\tts\tj
+                3\t1970-01-01T00:00:02.000000Z\tnull
+                4\t1970-01-01T00:00:03.000000Z\tnull
+                3\t1970-01-01T00:01:42.000000Z\t7746536061816329025
+                4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475
+                """;
 
         testFilterWithColTops(query, expected, jitMode);
     }
 
     private void testSelectAllFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
         final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(t1) */" : "") + " * from t1 where j < 0";
-        final String expected = "x\tts\tj\n" +
-                "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n" +
-                "7\t1970-01-01T00:01:46.000000Z\t-7611843578141082998\n" +
-                "8\t1970-01-01T00:01:47.000000Z\t-5354193255228091881\n" +
-                "9\t1970-01-01T00:01:48.000000Z\t-2653407051020864006\n" +
-                "10\t1970-01-01T00:01:49.000000Z\t-1675638984090602536\n" +
-                "14\t1970-01-01T00:01:53.000000Z\t-7489826605295361807\n" +
-                "15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839\n" +
-                "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
-                "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
+        final String expected = """
+                x\tts\tj
+                4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475
+                7\t1970-01-01T00:01:46.000000Z\t-7611843578141082998
+                8\t1970-01-01T00:01:47.000000Z\t-5354193255228091881
+                9\t1970-01-01T00:01:48.000000Z\t-2653407051020864006
+                10\t1970-01-01T00:01:49.000000Z\t-1675638984090602536
+                14\t1970-01-01T00:01:53.000000Z\t-7489826605295361807
+                15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839
+                16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712
+                17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060
+                """;
 
         testFilterWithColTops(query, expected, jitMode);
     }
@@ -753,12 +794,14 @@ public class CompiledFilterTest extends AbstractCairoTest {
     private void testSelectAllTypesFromRecord(boolean preTouch) throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(x) */" : "") + " * from x where b = true and kk < 10";
-            final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c\n" +
-                    "2\t1637847416\ttrue\tV\t0.4900510449885239\t0.8258367\t553\t2015-12-28T22:25:40.934Z\t\t-7611030538224290496\t1970-01-05T15:15:00.000000Z\t37\t00000000 3e e3 f1 f1 1e ca 9c 1d 06 ac\tKGHVUVSDOTSED\tY\t0x772c8b7f9505620ebbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea61\t0\t10\t110\te\tsj\tfhcq\t35jvygt2\n" +
-                    "3\t844704299\ttrue\t\t0.3456897991538844\t0.24008358\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-05T15:23:20.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
-                    "00000010 e7 0c 89\tLJUMLGLHMLLEO\tY\t0xabbcbeeddca3d4fe4f25a88863fc0f467f24de22c77acf93e983e65f5551d073\t0\t01\t000\tf\t33\teusj\tb5z6npxr\n" +
-                    "6\t-1501720177\ttrue\tP\t0.18158967304439033\t0.8196554\t501\t2015-06-08T17:20:46.703Z\tPEHN\t-4229502740666959541\t1970-01-05T15:48:20.000000Z\t19\t\tTNLEGP\tU\t0x79423d4d320d2649767a4feda060d4fb6923c0c7d965969da1b1140a2be25241\t1\t01\t010\tr\tc0\twhjh\trcqfw2hw\n" +
-                    "8\t526232578\ttrue\tE\t0.6379992093447574\t0.85148495\t850\t2015-08-19T05:52:05.329Z\tPEHN\t-5157086556591926155\t1970-01-05T16:05:00.000000Z\t42\t00000000 6d 8c d8 ac c8 46 3b 47 3c e1 72 3b 9d\tJSMKIXEYVTUPD\tH\t0x2337f7e6b82ebc2405c5c1b231cffa455a6e970fb8b80abcc4129ae493cc6076\t0\t11\t000\t5\ttp\tx578\ttdnxkw6d\n";
+            final String expected = """
+                    kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c
+                    2\t1637847416\ttrue\tV\t0.4900510449885239\t0.8258367\t553\t2015-12-28T22:25:40.934Z\t\t-7611030538224290496\t1970-01-05T15:15:00.000000Z\t37\t00000000 3e e3 f1 f1 1e ca 9c 1d 06 ac\tKGHVUVSDOTSED\tY\t0x772c8b7f9505620ebbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea61\t0\t10\t110\te\tsj\tfhcq\t35jvygt2
+                    3\t844704299\ttrue\t\t0.3456897991538844\t0.24008358\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-05T15:23:20.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a
+                    00000010 e7 0c 89\tLJUMLGLHMLLEO\tY\t0xabbcbeeddca3d4fe4f25a88863fc0f467f24de22c77acf93e983e65f5551d073\t0\t01\t000\tf\t33\teusj\tb5z6npxr
+                    6\t-1501720177\ttrue\tP\t0.18158967304439033\t0.8196554\t501\t2015-06-08T17:20:46.703Z\tPEHN\t-4229502740666959541\t1970-01-05T15:48:20.000000Z\t19\t\tTNLEGP\tU\t0x79423d4d320d2649767a4feda060d4fb6923c0c7d965969da1b1140a2be25241\t1\t01\t010\tr\tc0\twhjh\trcqfw2hw
+                    8\t526232578\ttrue\tE\t0.6379992093447574\t0.85148495\t850\t2015-08-19T05:52:05.329Z\tPEHN\t-5157086556591926155\t1970-01-05T16:05:00.000000Z\t42\t00000000 6d 8c d8 ac c8 46 3b 47 3c e1 72 3b 9d\tJSMKIXEYVTUPD\tH\t0x2337f7e6b82ebc2405c5c1b231cffa455a6e970fb8b80abcc4129ae493cc6076\t0\t11\t000\t5\ttp\tx578\ttdnxkw6d
+                    """;
             final String ddl = "create table x as (select" +
                     " cast(x as int) kk," +
                     " rnd_int() a," +
@@ -800,9 +843,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
         // The column order is important here, since we want
         // query and table column indexes to be different.
         final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(t1) */" : "") + " j from t1 where j <> null and x < 3";
-        final String expected = "j\n" +
-                "4689592037643856\n" +
-                "4729996258992366\n";
+        final String expected = """
+                j
+                4689592037643856
+                4729996258992366
+                """;
 
         testFilterWithColTops(query, expected, jitMode);
     }
@@ -820,8 +865,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             bindVariableService.setLong("l", 3614738589890112276L);
 
             final String query = "select * from x where l = :l";
-            final String expected = "l\tts\n" +
-                    "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
+            final String expected = """
+                    l\tts
+                    3614738589890112276\t1970-01-05T16:38:20.000000Z
+                    """;
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);

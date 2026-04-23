@@ -4,6 +4,7 @@ use crate::parquet_write::file::{
 };
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
+use qdb_core::col_type::ColumnType;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
@@ -39,6 +40,109 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         Err(mut err) => {
             err.add_context(format!("could not copy row group {rg_index}"));
             err.add_context("error in PartitionUpdater.copyRowGroup");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_setTargetSchema(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    table_name_ptr: *const u8,
+    table_name_len: jint,
+    col_count: jint,
+    col_names_ptr: *const u8,
+    col_names_len: jint,
+    col_data_ptr: *const i64,
+    col_data_len: jlong,
+    timestamp_index: jint,
+) {
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.setTargetSchema");
+        return err.into_cairo_exception().throw(&mut env);
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+
+    let mut set_schema = || -> ParquetResult<()> {
+        // Reuse the standard partition descriptor format (9 entries per column)
+        // but only the name length (offset 0) and packed id/type (offset 1) are
+        // read. Data pointers at offsets 3-8 are ignored for schema building
+        // because from_raw_data accepts null pointers with zero sizes.
+        let partition = create_partition_descriptor(
+            table_name_ptr,
+            table_name_len,
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_data_ptr,
+            col_data_len,
+            0, // row_count = 0 for schema-only
+            timestamp_index,
+        )?;
+        parquet_updater.set_target_schema(&partition)
+    };
+
+    match set_schema() {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context("could not set target schema");
+            err.add_context("error in PartitionUpdater.setTargetSchema");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroupWithNullColumns(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    rg_index: jint,
+    null_col_desc_ptr: *const i64,
+    null_col_count: jint,
+) {
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.copyRowGroupWithNullColumns");
+        return err.into_cairo_exception().throw(&mut env);
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+
+    let mut copy = || -> ParquetResult<()> {
+        let null_columns: Vec<(usize, ColumnType)> = if null_col_count > 0
+            && !null_col_desc_ptr.is_null()
+        {
+            let desc =
+                unsafe { slice::from_raw_parts(null_col_desc_ptr, (null_col_count as usize) * 2) };
+            (0..null_col_count as usize)
+                .map(|i| {
+                    let target_pos = desc[i * 2] as usize;
+                    let col_type_raw = desc[i * 2 + 1] as i32;
+                    let col_type: ColumnType =
+                        (col_type_raw & 0x7FFFFFFF).try_into().map_err(|_| {
+                            fmt_err!(InvalidType, "invalid column type {}", col_type_raw)
+                        })?;
+                    Ok((target_pos, col_type))
+                })
+                .collect::<ParquetResult<Vec<_>>>()?
+        } else {
+            vec![]
+        };
+        parquet_updater.copy_row_group_with_null_columns(rg_index, &null_columns)
+    };
+
+    match copy() {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not copy row group {rg_index} with null columns"
+            ));
+            err.add_context("error in PartitionUpdater.copyRowGroupWithNullColumns");
             err.into_cairo_exception().throw(&mut env)
         }
     }
@@ -335,6 +439,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    squash_tracker: jlong,
 ) {
     let encode = || -> ParquetResult<()> {
         let partition = create_partition_descriptor(
@@ -406,6 +511,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_bloom_filter_columns(bloom_filter_cols)
             .with_bloom_filter_fpp(bloom_filter_fpp)
             .with_min_compression_ratio(min_compression_ratio)
+            .with_squash_tracker(squash_tracker)
             .finish(partition)
             .map(|_| ())
             .context("ParquetWriter::finish failed")
@@ -718,6 +824,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let (parquet_schema, additional_data) = crate::parquet_write::schema::to_parquet_schema(
             &partition_template,
             raw_array_encoding != 0,
+            -1,
         )?;
         // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
         let allocator = unsafe { &*allocator_ptr };
@@ -1030,11 +1137,20 @@ fn create_partition_template(
     // The memory is backed by Java and remains valid for the JNI call duration.
     let col_meta_datas = unsafe { slice::from_raw_parts(col_meta_data_ptr, col_count * 2) };
     let mut columns = vec![];
+    let mut max_id: i32 = 0;
 
     for col_idx in 0..col_count {
         let raw_idx = col_idx * 2;
-        let col_name_size = col_meta_datas[raw_idx];
-        let (col_name, tail) = col_names.split_at(col_name_size as usize);
+        let col_name_size = col_meta_datas[raw_idx] as usize;
+        if col_name_size > col_names.len() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column name size {} exceeds remaining name buffer length {}",
+                col_name_size,
+                col_names.len()
+            ));
+        }
+        let (col_name, tail) = col_names.split_at(col_name_size);
         col_names = tail;
 
         let packed = col_meta_datas[raw_idx + 1];
@@ -1058,7 +1174,37 @@ fn create_partition_template(
             0,
         )?;
 
+        if col_id < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column '{}' (index {}) has invalid field_id {}",
+                col_name,
+                col_idx,
+                col_id
+            ));
+        }
+
+        if col_id > max_id {
+            max_id = col_id;
+        }
+
         columns.push(column);
+    }
+
+    // Check for duplicate field_ids (ids are dense non-negative).
+    let mut seen = vec![false; (max_id + 1) as usize];
+    for (i, c) in columns.iter().enumerate() {
+        let id = c.id as usize;
+        if seen[id] {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "duplicate field_id {} at column '{}' (index {})",
+                c.id,
+                c.name,
+                i
+            ));
+        }
+        seen[id] = true;
     }
 
     Ok(Partition { table: String::new(), columns })

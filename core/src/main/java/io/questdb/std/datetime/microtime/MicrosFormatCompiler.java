@@ -84,6 +84,8 @@ public class MicrosFormatCompiler {
     static final int OP_NANOS_GREEDY9 = 52;
     static final int OP_NANOS_ONE_DIGIT = 40;
     static final int OP_NANOS_THREE_DIGITS = 50;
+    static final int OP_OPTIONAL_MICROS_GREEDY6 = 150;
+    static final int OP_OPTIONAL_NANOS_GREEDY9 = 151;
     static final int OP_SECOND_GREEDY = 145;
     static final int OP_SECOND_ONE_DIGIT = 20;
     static final int OP_SECOND_TWO_DIGITS = 30;
@@ -213,14 +215,41 @@ public class MicrosFormatCompiler {
             }
         }
 
-        // make last operation "greedy"
+        // Normalize ".fraction" into synthetic ops so the parser can treat the
+        // fractional part as optional without carrying a standalone '.' token.
         makeLastOpGreedy(ops);
+        collapseOptionalFractions(ops, delimiters);
         return generic ? new GenericMicrosFormat(ops, delimiters) : compile(ops, delimiters);
     }
 
     private static void addOp(String op, int opDayTwoDigits) {
         opMap.put(op, opDayTwoDigits);
         opList.add(op);
+    }
+
+    private static void collapseOptionalFractions(IntList ops, ObjList<String> delimiters) {
+        for (int i = 0, n = ops.size() - 1; i < n; i++) {
+            final int op = ops.getQuick(i);
+            if (op >= 0) {
+                continue;
+            }
+
+            final String delimiter = delimiters.getQuick(-op - 1);
+            if (!".".equals(delimiter)) {
+                continue;
+            }
+
+            final int fractionOp = ops.getQuick(i + 1);
+            if (fractionOp == OP_MICROS_GREEDY6) {
+                ops.setQuick(i, OP_OPTIONAL_MICROS_GREEDY6);
+                ops.removeIndex(i + 1);
+                n--;
+            } else if (fractionOp == OP_NANOS_GREEDY9) {
+                ops.setQuick(i, OP_OPTIONAL_NANOS_GREEDY9);
+                ops.removeIndex(i + 1);
+                n--;
+            }
+        }
     }
 
     private static String toString(CharSequence cs) {
@@ -323,6 +352,16 @@ public class MicrosFormatCompiler {
                 // MICROS6 & NANOS9 are formatted the same
                 case MicrosFormatCompiler.OP_MICROS_GREEDY6:
                 case MicrosFormatCompiler.OP_NANOS_GREEDY9:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_SECOND_MICROS]);
+                    asm.invokeStatic(append00000Index);
+                    break;
+                case MicrosFormatCompiler.OP_OPTIONAL_MICROS_GREEDY6:
+                case MicrosFormatCompiler.OP_OPTIONAL_NANOS_GREEDY9:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iconst('.');
+                    asm.invokeInterface(sinkPutChrIndex, 1);
+                    asm.pop();
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND_MICROS]);
                     asm.invokeStatic(append00000Index);
@@ -576,19 +615,7 @@ public class MicrosFormatCompiler {
                     break;
                 // SEPARATORS
                 default:
-                    if (op < 0) {
-                        String delimiter = delimiters.getQuick(-op - 1);
-                        if (delimiter.length() > 1) {
-                            asm.aload(FA_LOCAL_SINK);
-                            asm.ldc(delimiterIndexes.getQuick(-op - 1));
-                            asm.invokeInterface(sinkPutStrIndex, 1);
-                        } else {
-                            asm.aload(FA_LOCAL_SINK);
-                            asm.iconst(delimiter.charAt(0));
-                            asm.invokeInterface(sinkPutChrIndex, 1);
-                        }
-                        asm.pop();
-                    }
+                    CommonUtils.assembleTimeZone(delimiters, sinkPutStrIndex, sinkPutChrIndex, op, asm, FA_LOCAL_SINK, delimiterIndexes);
                     break;
             }
         }
@@ -859,6 +886,34 @@ public class MicrosFormatCompiler {
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseNanosAsMicrosGreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
                     break;
+                case OP_OPTIONAL_MICROS_GREEDY6: {
+                    final int preStackState = stackState;
+                    stackState &= ~(1 << LOCAL_MICROS);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    parseOptionalGreedyAndStore(
+                            charAtIndex,
+                            parseLong000000GreedyIndex,
+                            decodeLenIndex,
+                            decodeIntIndex,
+                            preStackState,
+                            stackState
+                    );
+                    break;
+                }
+                case OP_OPTIONAL_NANOS_GREEDY9: {
+                    final int preStackState = stackState;
+                    stackState &= ~(1 << LOCAL_MICROS);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    parseOptionalGreedyAndStore(
+                            charAtIndex,
+                            parseNanosAsMicrosGreedyIndex,
+                            decodeLenIndex,
+                            decodeIntIndex,
+                            preStackState,
+                            stackState
+                    );
+                    break;
+                }
                 case OP_NANOS_ONE_DIGIT:
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, -1);
                     break;
@@ -1075,53 +1130,7 @@ public class MicrosFormatCompiler {
                     break;
                 case OP_YEAR_ISO_FOUR_DIGITS:
                 case OP_YEAR_FOUR_DIGITS: {
-                    asm.iload(LOCAL_POS);
-                    asm.iload(P_HI);
-                    int b1 = asm.if_icmpge();
-                    asm.aload(P_INPUT_STR);
-                    asm.iload(LOCAL_POS);
-                    asm.invokeInterface(charAtIndex, 1); //charAt
-                    asm.iconst('-');
-                    int b2 = asm.if_icmpne();
-                    asm.iload(LOCAL_POS);
-                    asm.iconst(4);
-                    asm.iadd();
-                    asm.iload(P_HI);
-                    asm.invokeStatic(assertRemainingIndex);
-                    asm.aload(P_INPUT_STR);
-                    asm.iload(LOCAL_POS);
-                    asm.iconst(1);
-                    asm.iadd();
-                    asm.iinc(LOCAL_POS, 5);
-                    asm.iload(LOCAL_POS);
-                    asm.invokeStatic(parseIntIndex);
-                    asm.ineg();
-                    asm.istore(LOCAL_YEAR);
-                    int b3 = asm.goto_();
-
-                    int p = asm.position();
-                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
-                    asm.setJmp(b1, p);
-                    asm.setJmp(b2, p);
-
-                    asm.iload(LOCAL_POS);
-                    asm.iconst(3);
-                    asm.iadd();
-                    asm.iload(P_HI);
-                    asm.invokeStatic(assertRemainingIndex);
-
-                    asm.aload(P_INPUT_STR);
-                    asm.iload(LOCAL_POS);
-                    asm.iinc(LOCAL_POS, 4);
-                    asm.iload(LOCAL_POS);
-                    asm.invokeStatic(parseIntIndex);
-                    asm.istore(LOCAL_YEAR);
-
-                    stackState &= ~(1 << LOCAL_YEAR);
-
-                    p = asm.position();
-                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
-                    asm.setJmp(b3, p);
+                    stackState = CommonUtils.assembleYear(assertRemainingIndex, parseIntIndex, charAtIndex, stackState, asm, LOCAL_POS, P_HI, P_INPUT_STR, LOCAL_YEAR, frameOffsets);
                 }
                 break;
                 case OP_YEAR_GREEDY:
@@ -1187,42 +1196,13 @@ public class MicrosFormatCompiler {
 
                     break;
                 default:
-                    String delimiter = delimiters.getQuick(-op - 1);
-                    int len = delimiter.length();
-                    if (len == 1) {
-                        asm.iconst(delimiter.charAt(0));
-                        asm.aload(P_INPUT_STR);
-                        asm.iload(LOCAL_POS);
-                        asm.iinc(LOCAL_POS, 1);
-                        asm.iload(P_HI);
-                        asm.invokeStatic(assertCharIndex);
-                    } else {
-                        asm.ldc(delimIndices.getQuick(-op - 1));
-                        asm.iconst(len);
-                        asm.aload(P_INPUT_STR);
-                        asm.iload(LOCAL_POS);
-                        asm.iload(P_HI);
-                        asm.invokeStatic(assertStringIndex);
-                        asm.istore(LOCAL_POS);
-                    }
+                    CommonUtils.assembleDefault(assertStringIndex, assertCharIndex, delimIndices, op, delimiters, asm, P_INPUT_STR, LOCAL_POS, P_HI);
                     break;
             }
         }
 
         // check that there is no tail
-        asm.iload(LOCAL_POS);
-        asm.iload(P_HI);
-        asm.invokeStatic(assertNoTailIndex);
-        asm.aload(P_LOCALE);
-        asm.iload(LOCAL_ERA);
-        asm.iload(LOCAL_YEAR);
-        asm.iload(LOCAL_MONTH);
-        asm.iload(LOCAL_WEEK);
-        asm.iload(LOCAL_DAY);
-        asm.iload(LOCAL_HOUR);
-        asm.iload(LOCAL_MINUTE);
-        asm.iload(LOCAL_SECOND);
-        asm.iload(LOCAL_MILLIS);
+        CommonUtils.assembleCheckTail(assertNoTailIndex, asm, LOCAL_POS, P_HI, P_LOCALE, LOCAL_ERA, LOCAL_YEAR, LOCAL_MONTH, LOCAL_WEEK, LOCAL_DAY, LOCAL_HOUR, LOCAL_MINUTE, LOCAL_SECOND, LOCAL_MILLIS);
         asm.iload(LOCAL_MICROS);
         asm.iload(LOCAL_TIMEZONE);
         asm.lload(LOCAL_OFFSET);
@@ -1573,6 +1553,8 @@ public class MicrosFormatCompiler {
                 // formatting method for MICROS6 and NANOS9 is the same
                 case MicrosFormatCompiler.OP_MICROS_GREEDY6:
                 case MicrosFormatCompiler.OP_NANOS_GREEDY9:
+                case MicrosFormatCompiler.OP_OPTIONAL_MICROS_GREEDY6:
+                case MicrosFormatCompiler.OP_OPTIONAL_NANOS_GREEDY9:
                     attributes |= (1 << FA_SECOND_MICROS);
                     break;
 
@@ -1681,12 +1663,18 @@ public class MicrosFormatCompiler {
                     result |= (1 << LOCAL_TEMP_LONG);
                     break;
                 case OP_MICROS_GREEDY3:
+                case OP_MICROS_GREEDY6:
+                case OP_OPTIONAL_MICROS_GREEDY6:
+                case OP_NANOS_GREEDY9:
+                case OP_OPTIONAL_NANOS_GREEDY9:
                     result |= (1 << LOCAL_TEMP_LONG);
                     // fall through
                 case OP_MICROS_ONE_DIGIT:
                 case OP_MICROS_THREE_DIGITS:
-                case OP_MICROS_GREEDY6:
                     result |= (1 << LOCAL_MICROS);
+                    break;
+                case OP_NANOS_GREEDY:
+                    result |= (1 << LOCAL_TEMP_LONG);
                     break;
                 case OP_MILLIS_GREEDY:
                     result |= (1 << LOCAL_TEMP_LONG);
@@ -1812,34 +1800,21 @@ public class MicrosFormatCompiler {
     }
 
     private int makeGreedy(int oldOp) {
-        switch (oldOp) {
-            case OP_YEAR_ONE_DIGIT:
-                return OP_YEAR_GREEDY;
-            case OP_MONTH_ONE_DIGIT:
-                return OP_MONTH_GREEDY;
-            case OP_DAY_ONE_DIGIT:
-                return OP_DAY_GREEDY;
-            case OP_HOUR_24_ONE_DIGIT:
-                return OP_HOUR_24_GREEDY;
-            case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                return OP_HOUR_24_GREEDY_ONE_BASED;
-            case OP_HOUR_12_ONE_DIGIT:
-                return OP_HOUR_12_GREEDY;
-            case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                return OP_HOUR_12_GREEDY_ONE_BASED;
-            case OP_MINUTE_ONE_DIGIT:
-                return OP_MINUTE_GREEDY;
-            case OP_SECOND_ONE_DIGIT:
-                return OP_SECOND_GREEDY;
-            case OP_MILLIS_ONE_DIGIT:
-                return OP_MILLIS_GREEDY;
-            case OP_MICROS_ONE_DIGIT:
-                return OP_MICROS_GREEDY3;
-            case OP_NANOS_ONE_DIGIT:
-                return OP_NANOS_GREEDY;
-            default:
-                return oldOp;
-        }
+        return switch (oldOp) {
+            case OP_YEAR_ONE_DIGIT -> OP_YEAR_GREEDY;
+            case OP_MONTH_ONE_DIGIT -> OP_MONTH_GREEDY;
+            case OP_DAY_ONE_DIGIT -> OP_DAY_GREEDY;
+            case OP_HOUR_24_ONE_DIGIT -> OP_HOUR_24_GREEDY;
+            case OP_HOUR_24_ONE_DIGIT_ONE_BASED -> OP_HOUR_24_GREEDY_ONE_BASED;
+            case OP_HOUR_12_ONE_DIGIT -> OP_HOUR_12_GREEDY;
+            case OP_HOUR_12_ONE_DIGIT_ONE_BASED -> OP_HOUR_12_GREEDY_ONE_BASED;
+            case OP_MINUTE_ONE_DIGIT -> OP_MINUTE_GREEDY;
+            case OP_SECOND_ONE_DIGIT -> OP_SECOND_GREEDY;
+            case OP_MILLIS_ONE_DIGIT -> OP_MILLIS_GREEDY;
+            case OP_MICROS_ONE_DIGIT -> OP_MICROS_GREEDY3;
+            case OP_NANOS_ONE_DIGIT -> OP_NANOS_GREEDY;
+            default -> oldOp;
+        };
     }
 
     private void makeLastOpGreedy(IntList compiled) {
@@ -1856,24 +1831,82 @@ public class MicrosFormatCompiler {
     }
 
     private void parseDigits(int assertRemainingIndex, int parseIntIndex, int digitCount, int target) {
-        asm.iload(LOCAL_POS);
-        if (digitCount > 1) {
-            asm.iconst(digitCount - 1);
-            asm.iadd();
-        }
-        asm.iload(P_HI);
-        asm.invokeStatic(assertRemainingIndex);
-
-        asm.aload(P_INPUT_STR);
-        asm.iload(LOCAL_POS);
-        asm.iinc(LOCAL_POS, digitCount);
-        asm.iload(LOCAL_POS);
-        asm.invokeStatic(parseIntIndex);
+        CommonUtils.parseDigits(assertRemainingIndex, parseIntIndex, digitCount, asm, LOCAL_POS, P_HI, P_INPUT_STR);
         if (target > -1) {
             asm.istore(target);
         } else {
             asm.pop();
         }
+    }
+
+    private void parseOptionalGreedyAndStore(
+            int charAtIndex,
+            int parseGreedyIndex,
+            int decodeLenIndex,
+            int decodeIntIndex,
+            int preStackState,
+            int postStackState
+    ) {
+        asm.iload(LOCAL_POS);
+        asm.iload(P_HI);
+        int noFractionBranch = asm.if_icmpge();
+
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.invokeInterface(charAtIndex, 1);
+        asm.iconst('.');
+        int notDotBranch = asm.if_icmpne();
+
+        asm.iload(LOCAL_POS);
+        asm.iconst(1);
+        asm.iadd();
+        asm.iload(P_HI);
+        int noDigitBranch = asm.if_icmpge();
+
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.iconst(1);
+        asm.iadd();
+        asm.invokeInterface(charAtIndex, 1);
+        asm.iconst('0');
+        asm.isub();
+        int beforeDigitBranch = asm.iflt();
+
+        asm.iconst('9');
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.iconst(1);
+        asm.iadd();
+        asm.invokeInterface(charAtIndex, 1);
+        asm.isub();
+        int afterDigitBranch = asm.iflt();
+
+        asm.iinc(LOCAL_POS, 1);
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.iload(P_HI);
+        asm.invokeStatic(parseGreedyIndex);
+        asm.lstore(LOCAL_TEMP_LONG);
+        decodeInt(decodeIntIndex);
+        asm.istore(MicrosFormatCompiler.LOCAL_MICROS);
+        addTempToPos(decodeLenIndex);
+        int doneBranch = asm.goto_();
+
+        int p = asm.position();
+        frameOffsets.add(Numbers.encodeLowHighInts(preStackState, p));
+        asm.setJmp(noFractionBranch, p);
+        asm.setJmp(notDotBranch, p);
+        asm.setJmp(noDigitBranch, p);
+        asm.setJmp(beforeDigitBranch, p);
+        asm.setJmp(afterDigitBranch, p);
+        asm.iconst(0);
+        asm.istore(MicrosFormatCompiler.LOCAL_MICROS);
+        asm.lconst_0();
+        asm.lstore(LOCAL_TEMP_LONG);
+
+        p = asm.position();
+        frameOffsets.add(Numbers.encodeLowHighInts(postStackState, p));
+        asm.setJmp(doneBranch, p);
     }
 
     private void parseTwoDigits(int assertRemainingIndex, int parseIntIndex, int target) {

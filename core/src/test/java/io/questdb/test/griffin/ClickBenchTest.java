@@ -412,6 +412,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                       functions: [UserID,m,SearchPhrase,c]
                                         Async Group By workers: 1
                                           keys: [UserID,m,SearchPhrase]
+                                          keyFunctions: [minute(EventTime)]
                                           values: [count(*)]
                                           filter: null
                                             PageFrame
@@ -549,6 +550,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                 "        Filter filter: 100000<c\n" +
                                 "            Async JIT Group By workers: 1\n" +
                                 "              keys: [k]\n" +
+                                "              keyFunctions: [regexp_replace(Referer,^https?://(?:www\\.)?([^/]+)/.*$,$1)]\n" +
                                 "              values: [avg(length_bytes(Referer)),count(*),min(Referer)]\n" +
                                 "              filter: Referer is not null\n" +
                                 "                PageFrame\n" +
@@ -722,6 +724,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                       functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
                                         Async JIT Group By workers: 1
                                           keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]
+                                          keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
                                           values: [count(*)]
                                           filter: (CounterID=62 and IsRefresh=0)
                                             PageFrame
@@ -770,6 +773,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                   keys: [M]
                                     Async JIT Group By workers: 1
                                       keys: [M]
+                                      keyFunctions: [timestamp_floor_utc('1m',EventTime)]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0 and DontCountHits=0)
                                         PageFrame

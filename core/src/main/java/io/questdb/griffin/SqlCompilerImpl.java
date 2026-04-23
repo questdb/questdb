@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
@@ -40,7 +39,6 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
@@ -95,17 +93,18 @@ import io.questdb.griffin.engine.ops.InsertAsSelectOperationImpl;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.griffin.engine.table.parquet.ParquetCompression;
-import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -128,6 +127,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -195,12 +195,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final QueryBuilder queryBuilder;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    private final ObjectPool<QueryModelWrapper> queryModelWrapperPool;
     private final Path renamePath;
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
     private final ObjList<CharSequence> views = new ObjList<>();
+    private final ObjectPool<WindowExpression> windowExpressionPool;
     protected CharSequence sqlText;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
@@ -223,6 +225,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
             this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
+            this.queryModelWrapperPool = new ObjectPool<>(QueryModelWrapper.FACTORY, 2);
+            this.windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
             this.compiledQuery = new CompiledQueryImpl(engine);
             this.characterStore = new CharacterStore(
                     configuration.getSqlCharacterStoreCapacity(),
@@ -247,8 +251,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     configuration,
                     characterStore,
                     sqlNodePool,
+                    windowExpressionPool,
                     queryColumnPool,
                     queryModelPool,
+                    queryModelWrapperPool,
                     postOrderTreeTraversalAlgo,
                     functionParser,
                     path
@@ -259,12 +265,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     configuration,
                     characterStore,
                     sqlNodePool,
+                    windowExpressionPool,
                     queryColumnPool,
                     queryModelPool,
                     postOrderTreeTraversalAlgo
             );
 
-            alterOperationBuilder = new AlterOperationBuilder();
+            alterOperationBuilder = createAlterOperationBuilder();
             dropOperationBuilder = new GenericDropOperationBuilder();
             queryRegistry = engine.getQueryRegistry();
             blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
@@ -523,12 +530,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @Override
     public RecordCursorFactory generateSelectWithRetries(
-            @Transient QueryModel initialQueryModel,
+            @Transient IQueryModel initialQueryModel,
             @Nullable @Transient InsertModel insertModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
-        QueryModel queryModel = initialQueryModel;
+        IQueryModel queryModel = initialQueryModel;
         int remainingRetries = maxRecompileAttempts;
         for (; ; ) {
             try {
@@ -544,7 +551,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     queryModel = compileExecutionModel(executionContext).getQueryModel();
                     insertModel.setQueryModel(queryModel);
                 } else {
-                    queryModel = (QueryModel) compileExecutionModel(executionContext);
+                    queryModel = (IQueryModel) compileExecutionModel(executionContext);
                 }
             }
         }
@@ -584,7 +591,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @TestOnly
     @Override
-    public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
+    public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
         return parser.expr(lexer, model, this);
@@ -1349,7 +1356,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 };
 
                 final int functionPosition = lexer.getPosition();
-                ExpressionNode expr = parser.expr(lexer, (QueryModel) null, this);
+                ExpressionNode expr = parser.expr(lexer, (IQueryModel) null, this);
                 String designatedTimestampColumnName = null;
                 int tsIndex = tableMetadata.getTimestampIndex();
                 if (tsIndex >= 0) {
@@ -1601,78 +1608,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        // Syntax: ALTER TABLE t ALTER COLUMN c SET PARQUET(encoding [, compression[(level)]])
-        int encoding;
-        int compression = -1;
-        int level = -1;
-
-        CharSequence tok = expectToken(lexer, "'('");
-        if (!Chars.equals(tok, '(')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
-        }
-
         int columnType = tableMetadata.getColumnType(columnIndex);
+        int parquetEncodingConfig = SqlUtil.parseParquetConfig(lexer, columnType);
 
-        tok = expectToken(lexer, "encoding name");
-        int encodingPos = lexer.lastTokenPosition();
-        encoding = ParquetEncoding.getEncoding(tok);
-        if (encoding < 0) {
-            SqlException e = SqlException.$(encodingPos, "invalid parquet encoding '").put(tok).put("', supported values: ");
-            ParquetEncoding.addValidEncodingNamesForType(e, columnType);
-            throw e;
-        }
-        if (encoding != ParquetEncoding.ENCODING_DEFAULT && !ParquetEncoding.isValidForColumnType(encoding, columnType)) {
-            SqlException e = SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(columnType))
-                    .put(", supported encodings for this type: ");
-            ParquetEncoding.addValidEncodingNamesForType(e, columnType);
-            throw e;
-        }
-
-        tok = expectToken(lexer, "',' or ')'");
-        if (Chars.equals(tok, ',')) {
-            tok = expectToken(lexer, "compression codec name");
-            int codecPos = lexer.lastTokenPosition();
-            compression = ParquetCompression.getCompressionCodec(tok);
-            if (compression < 0) {
-                SqlException e = SqlException.$(codecPos, "invalid parquet compression codec '").put(tok).put("', supported values: ");
-                ParquetCompression.addCodecNamesToException(e);
-                throw e;
-            }
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && Chars.equals(tok, '(')) {
-                tok = expectToken(lexer, "compression level");
-                int levelPos = lexer.lastTokenPosition();
-                try {
-                    level = Numbers.parseInt(tok);
-                    ParquetCompression.validateCompressionLevel(compression, level, levelPos);
-                } catch (NumericException e) {
-                    throw SqlException.$(levelPos, "compression level must be a number");
-                }
-                tok = expectToken(lexer, "')'");
-                if (!Chars.equals(tok, ')')) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
-                }
-                tok = SqlUtil.fetchNext(lexer);
-            }
-        }
-
-        if (tok == null || !Chars.equals(tok, ')')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
-        }
-
-        tok = SqlUtil.fetchNext(lexer);
+        CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
         }
 
-        // In packed form, compression is shifted +1 (0=default, 1=uncompressed, 2=snappy, etc.)
-        // to distinguish "not set" from "explicitly uncompressed".
-        int packedCompression = compression >= 0 ? compression + 1 : 0;
-        // Level is also shifted +1 (0=not set, 1=level 0, 2=level 1, etc.)
-        int packedLevel = level >= 0 ? level + 1 : 0;
-        int parquetEncodingConfig = encoding == ParquetEncoding.ENCODING_DEFAULT && packedCompression == 0
-                ? 0
-                : TableUtils.packParquetConfig(encoding, packedCompression, packedLevel);
         alterOperationBuilder.ofSetParquetEncoding(
                 tableNamePosition,
                 tableToken,
@@ -1724,10 +1667,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterViewExecution(SqlExecutionContext executionContext, TableToken viewToken, String viewSql, int viewSqlPosition) throws SqlException {
+        if (viewToken.isSystem()) {
+            throw SqlException.position(viewSqlPosition)
+                    .put("cannot modify system view [name=")
+                    .put(viewToken.getTableName())
+                    .put(']');
+        }
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
-            final QueryModel queryModel = executionModel.getQueryModel();
+            final IQueryModel queryModel = executionModel.getQueryModel();
             SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
             engine.getViewGraph().validateNoCycle(viewToken, queryModel);
 
@@ -1829,6 +1778,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         characterStore.clear();
         queryColumnPool.clear();
         queryModelPool.clear();
+        queryModelWrapperPool.clear();
         optimiser.clear();
         parser.clear();
         alterOperationBuilder.clear();
@@ -1867,13 +1817,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileAlterMatView(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok = expectToken(lexer, "'view'");
-        if (!isViewKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'view' expected'");
-        }
-
+        expectKeyword(lexer, "view");
         final int matViewNamePosition = lexer.getPosition();
-        tok = expectToken(lexer, "materialized view name");
+        CharSequence tok = expectToken(lexer, "materialized view name");
         assertNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final CharSequence matViewName = unquote(tok);
         final TableToken matViewToken = viewExistsOrFail(matViewName, executionContext, SqlException.matViewDoesNotExist(matViewNamePosition, matViewName));
@@ -1887,7 +1833,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
-            tok = expectToken(lexer, "'alter' or 'resume' or 'suspend'");
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok))) {
+                compileAlterMatViewExt(securityContext, tok, matViewToken, matViewNamePosition);
+                return;
+            }
             if (isAlterKeyword(tok)) {
                 expectKeyword(lexer, "column");
                 final int columnNamePosition = lexer.getPosition();
@@ -1978,20 +1928,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'symbol capacity', 'add index' or 'drop index' expected");
                 }
             } else if (isSetKeyword(tok)) {
-                tok = expectToken(lexer, "'ttl' or 'refresh'");
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isTtlKeyword(tok) && !isRefreshKeyword(tok))) {
+                    compileAlterMatViewSetExt(securityContext, tok, matViewToken, matViewNamePosition);
+                    return;
+                }
                 if (isTtlKeyword(tok)) {
-                    final int ttlValuePos = lexer.getPosition();
-                    final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-                    try (TableMetadata matViewMeta = engine.getTableMetadata(matViewToken)) {
-                        PartitionBy.validateTtlGranularity(matViewMeta.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
-                    }
-                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
-                            matViewNamePosition,
-                            matViewToken,
-                            tableMetadata.getTableId(),
-                            ttlHoursOrMonths
-                    );
-                    compiledQuery.ofAlter(setTtl.build());
+                    alterTableOrMatViewSetTtl(matViewToken, matViewNamePosition, tableMetadata);
                 } else if (isRefreshKeyword(tok)) {
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
@@ -2173,8 +2116,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
                 parseSuspendWal(matViewToken, matViewNamePosition, executionContext);
-            } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' expected");
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter materialized view [view=").$(matViewToken.getTableName())
@@ -2225,14 +2166,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, action, executionContext);
             } else if (isDropKeyword(tok)) {
-                tok = expectToken(lexer, "'column' or 'partition'");
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isColumnKeyword(tok) && !isPartitionKeyword(tok))) {
+                    compileAlterTableDropExt(securityContext, tok, tableToken, tableNamePosition);
+                    return;
+                }
                 if (isColumnKeyword(tok)) {
                     alterTableDropColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
                 } else if (isPartitionKeyword(tok)) {
                     securityContext.authorizeAlterTableDropPartition(tableToken);
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
             } else if (isRenameKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
@@ -2397,7 +2340,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
             } else if (isSetKeyword(tok)) {
-                tok = expectToken(lexer, "'param', 'ttl' or 'type'");
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok))) {
+                    compileAlterTableSetExt(securityContext, tok, tableToken, tableNamePosition);
+                    return;
+                }
                 if (isParamKeyword(tok)) {
                     securityContext.authorizeAlterTableSetParam(tableToken);
                     final int paramNamePosition = lexer.getPosition();
@@ -2411,20 +2358,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                     }
                 } else if (isTtlKeyword(tok)) {
-                    final int ttlValuePos = lexer.getPosition();
-                    final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-                    try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                        CairoTable table = metadataRO.getTable(tableToken);
-                        assert table != null : "CairoTable == null after we already checked it exists";
-                        PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
-                    }
-                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
-                            tableNamePosition,
-                            tableToken,
-                            tableMetadata.getTableId(),
-                            ttlHoursOrMonths
-                    );
-                    compiledQuery.ofAlter(setTtl.build());
+                    alterTableOrMatViewSetTtl(tableToken, tableNamePosition, tableMetadata);
                 } else if (isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (isBypassKeyword(tok)) {
@@ -2439,8 +2373,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'bypass' or 'wal' expected");
                     }
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'param' or 'type' expected");
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(tableToken, tableNamePosition, executionContext);
@@ -2469,6 +2401,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     executionContext.getSecurityContext().authorizeAlterTableDedupEnable(tableToken);
                     alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
                 }
+            } else if (isEnableKeyword(tok)) {
+                compileAlterTableEnableExt(securityContext, tok, tableToken, tableNamePosition);
+            } else if (isDisableKeyword(tok)) {
+                compileAlterTableDisableExt(securityContext, tok, tableToken, tableNamePosition);
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
             }
@@ -2863,7 +2799,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private ExecutionModel compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
-                return optimiser.optimise((QueryModel) model, executionContext, this);
+                return optimiser.optimise((IQueryModel) model, executionContext, this);
             case ExecutionModel.INSERT: {
                 final InsertModel insertModel = (InsertModel) model;
                 if (insertModel.getQueryModel() != null) {
@@ -2876,7 +2812,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return insertModel;
             }
             case ExecutionModel.UPDATE:
-                final QueryModel queryModel = (QueryModel) model;
+                final IQueryModel queryModel = (IQueryModel) model;
                 TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
                 try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
@@ -2896,7 +2832,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeTableCreate();
                 final CreateTableOperationBuilder createTableBuilder = (CreateTableOperationBuilder) model;
                 if (createTableBuilder.getQueryModel() != null) {
-                    final QueryModel selectModel = optimiser.optimise(createTableBuilder.getQueryModel(), executionContext, this);
+                    final IQueryModel selectModel = optimiser.optimise(createTableBuilder.getQueryModel(), executionContext, this);
                     createTableBuilder.setSelectModel(selectModel);
                 }
                 return model;
@@ -2904,7 +2840,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeMatViewCreate();
                 final CreateMatViewOperationBuilder createMatViewBuilder = (CreateMatViewOperationBuilder) model;
                 if (createMatViewBuilder.getQueryModel() != null) {
-                    final QueryModel selectModel = optimiser.optimise(createMatViewBuilder.getQueryModel(), executionContext, this);
+                    final IQueryModel selectModel = optimiser.optimise(createMatViewBuilder.getQueryModel(), executionContext, this);
                     createMatViewBuilder.setSelectModel(selectModel);
                 }
                 return model;
@@ -3256,13 +3192,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
-            final QueryModel queryModel;
+            final IQueryModel queryModel;
             try {
                 final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
                 if (executionModel.getModelType() != ExecutionModel.QUERY) {
                     throw SqlException.$(startPos, "SELECT query expected");
                 }
-                queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
+                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -3634,12 +3570,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 case ExecutionModel.QUERY:
                     compiledQuery.ofSelect(
                             generateSelectWithRetries(
-                                    (QueryModel) executionModel,
+                                    (IQueryModel) executionModel,
                                     null,
                                     executionContext,
                                     generateProgressLogger
                             ),
-                            ((QueryModel) executionModel).isCacheable()
+                            ((IQueryModel) executionModel).isCacheable()
                     );
                     break;
                 case ExecutionModel.CREATE_TABLE:
@@ -3689,7 +3625,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     checkViewModification(executionModel);
                     checkMatViewModification(executionModel);
-                    final QueryModel updateQueryModel = (QueryModel) executionModel;
+                    final IQueryModel updateQueryModel = (IQueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                         compiledQuery.ofUpdate(generateUpdate(updateQueryModel, executionContext, metadata));
@@ -3837,13 +3773,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
-            final QueryModel queryModel;
+            final IQueryModel queryModel;
             try {
                 final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
                 if (executionModel.getModelType() != ExecutionModel.QUERY) {
                     throw SqlException.$(startPos, "SELECT query expected");
                 }
-                queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
+                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -3976,7 +3912,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void enqueueCompileViews(ExecutionModel model) {
-        final QueryModel queryModel = model.getQueryModel();
+        final IQueryModel queryModel = model.getQueryModel();
         if (queryModel == null) {
             return;
         }
@@ -4403,7 +4339,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                     engine.dropTableOrViewOrMatView(path, tableToken);
                     hasDroppedAny = true;
-                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableName);
+                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableToken);
                 } catch (Exception e) {
                     LOG.error().$("Error while dropping table, view or materialized view [").$(tableName).$(", error=").$(e).I$();
                     dropAllTablesFailures.put(tableName, e.getMessage());
@@ -4414,7 +4350,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final CairoException ex = CairoException.nonCritical().put("Failures while dropping tables, views and materialized views [");
             CharSequence tableName;
             String message;
-            final ObjList<CharSequence> keys = dropAllTablesFailures.keys();
+            final ReadOnlyObjList<CharSequence> keys = dropAllTablesFailures.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 tableName = keys.get(i);
                 message = dropAllTablesFailures.get(tableName);
@@ -4512,6 +4448,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!tableToken.isView()) {
             throw SqlException.$(op.getEntityNamePosition(), "view name expected, got table name");
         }
+        if (tableToken.isSystem()) {
+            throw SqlException.$(op.getEntityNamePosition(), "cannot drop a system view");
+        }
         sqlExecutionContext.getSecurityContext().authorizeViewDrop(tableToken);
 
         final String sqlText = op.getSqlText();
@@ -4584,13 +4523,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return affectedPartitions;
     }
 
-    private void freeTableNameFunctions(QueryModel queryModel) {
+    private void freeTableNameFunctions(IQueryModel queryModel) {
         if (queryModel == null) {
             return;
         }
 
         do {
-            final ObjList<QueryModel> joinModels = queryModel.getJoinModels();
+            final ObjList<IQueryModel> joinModels = queryModel.getJoinModels();
             if (joinModels.size() > 1) {
                 for (int i = 1, n = joinModels.size(); i < n; i++) {
                     freeTableNameFunctions(joinModels.getQuick(i));
@@ -4599,13 +4538,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             Misc.free(queryModel.getTableNameFunction());
             queryModel.setTableNameFunction(null);
-        } while ((queryModel = queryModel.getNestedModel()) != null);
+        } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.isOptimisable());
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
-            QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
-            final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+            IQueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
+            final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
             final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
                     updateQueryModel.getUpdateTableToken(),
                     selectQueryModel,
@@ -4618,13 +4557,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
+    private UpdateOperation generateUpdate(IQueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
         TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
-        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+        final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
 
-        // Update QueryModel structure is
-        // QueryModel with SET column expressions
-        // |-- QueryModel of select-virtual or select-choose of data selected for update
+        // Update IQueryModel structure is
+        // IQueryModel with SET column expressions
+        // |-- IQueryModel of select-virtual or select-choose of data selected for update
         final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
                 updateTableToken,
                 selectQueryModel,
@@ -4666,8 +4605,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private RecordCursorFactory generateUpdateFactory(
             TableToken tableToken,
-            @Transient QueryModel selectQueryModel,
-            @Transient QueryModel updateQueryModel,
+            @Transient IQueryModel selectQueryModel,
+            @Transient IQueryModel updateQueryModel,
             @Transient SqlExecutionContext executionContext
     ) throws SqlException {
         final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
@@ -4969,7 +4908,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void validateAndOptimiseInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
-        final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext, this);
+        final IQueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext, this);
         int columnNameListSize = model.getColumnNameList().size();
         if (columnNameListSize > 0 && queryModel.getBottomUpColumns().size() != columnNameListSize) {
             throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
@@ -5040,11 +4979,86 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    protected void alterTableOrMatViewSetTtl(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
+        final int ttlValuePos = lexer.getPosition();
+        final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+            PartitionBy.validateTtlGranularity(metadata.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
+        }
+        final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                ttlHoursOrMonths
+        );
+        compiledQuery.ofAlter(setTtl.build());
+    }
+
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'view' expected");
         }
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
+    }
+
+    protected void compileAlterMatViewExt(SecurityContext securityContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'alter' or 'resume' or 'suspend' expected [matViewToken=").$(matViewToken)
+                .$(", matViewNamePosition=").$(matViewNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'alter' or 'resume' or 'suspend' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' expected");
+    }
+
+    protected void compileAlterMatViewSetExt(SecurityContext securityContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'ttl' or 'refresh' expected [matViewToken=").$(matViewToken)
+                .$(", matViewNamePosition=").$(matViewNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'ttl' or 'refresh' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
+    }
+
+    protected void compileAlterTableDisableExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$(ALTER_TABLE_EXPECTED_TOKEN_DESCR).$(" expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+    }
+
+    protected void compileAlterTableDropExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$("'column' or 'partition' expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'column' or 'partition' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+    }
+
+    protected void compileAlterTableEnableExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$(ALTER_TABLE_EXPECTED_TOKEN_DESCR).$(" expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+    }
+
+    protected void compileAlterTableSetExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$("'param', 'ttl' or 'type' expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'param', 'ttl' or 'type' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl' or 'type' expected");
     }
 
     protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -5114,8 +5128,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(position).put("'table' or 'view' or 'materialized view' or 'all' expected");
     }
 
+    protected AlterOperationBuilder createAlterOperationBuilder() {
+        return new AlterOperationBuilder();
+    }
+
     protected RecordCursorFactory generateSelectOneShot(
-            QueryModel selectQueryModel,
+            IQueryModel selectQueryModel,
             SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
@@ -5141,8 +5159,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CairoConfiguration configuration,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> sqlNodePool,
+            ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
+            ObjectPool<QueryModelWrapper> queryModelWrapperPool,
             PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo,
             FunctionParser functionParser,
             Path path
@@ -5151,8 +5171,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 configuration,
                 characterStore,
                 sqlNodePool,
+                windowExpressionPool,
                 queryColumnPool,
                 queryModelPool,
+                queryModelWrapperPool,
                 postOrderTreeTraversalAlgo,
                 functionParser,
                 path
@@ -5247,6 +5269,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             addSupportedConversion(ColumnType.SHORT, i);
             addSupportedConversion(ColumnType.INT, i);
             addSupportedConversion(ColumnType.LONG, i);
+            addSupportedConversion(i, ColumnType.STRING, ColumnType.VARCHAR);
+            addSupportedConversion(ColumnType.STRING, i);
+            addSupportedConversion(ColumnType.VARCHAR, i);
         }
         //endregion
 

@@ -48,6 +48,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -126,7 +127,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
         // named variables — keys are stored without colon prefix,
         // but getFunction() expects the colon prefix for lookup
-        ObjList<CharSequence> names = source.getNamedVariables();
+        ReadOnlyObjList<CharSequence> names = source.getNamedVariables();
         StringSink nameBuf = new StringSink();
         for (int i = 0, n = names.size(); i < n; i++) {
             CharSequence name = names.getQuick(i);
@@ -395,7 +396,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public ObjList<CharSequence> getNamedVariables() {
+    public ReadOnlyObjList<CharSequence> getNamedVariables() {
         return namedVariables.keys();
     }
 

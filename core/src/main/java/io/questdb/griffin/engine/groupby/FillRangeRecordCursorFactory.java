@@ -42,8 +42,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -66,7 +64,6 @@ import org.jetbrains.annotations.Nullable;
  * via the above optimisation).
  */
 public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
-    public static final Log LOG = LogFactory.getLog(FillRangeRecordCursorFactory.class);
     private final RecordCursorFactory base;
     private final FillRangeRecordCursor cursor;
     private final ObjList<Function> fillValues;
@@ -100,7 +97,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.timestampIndex = timestampIndex;
         this.fillValues = fillValues;
         this.timestampType = timestampType;
-        this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex, timestampType);
+        this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex, timestampType, metadata.getColumnCount());
     }
 
     @Override
@@ -175,6 +172,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         base.close();
+        Misc.free(cursor);
         Misc.free(fromFunc);
         Misc.free(toFunc);
         Misc.freeObjList(fillValues);
@@ -202,13 +200,17 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private long presentTimestampsIndex;
         private long presentTimestampsSize;
 
+        private final int columnCount;
+        private boolean isValueFuncsInitialized;
+
         private FillRangeRecordCursor(
                 TimestampSampler timestampSampler,
                 @NotNull Function fromFunc,
                 @NotNull Function toFunc,
                 ObjList<Function> fillValues,
                 int timestampIndex,
-                int timestampType
+                int timestampType,
+                int columnCount
         ) {
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
@@ -217,6 +219,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             this.timestampIndex = timestampIndex;
             this.fillingTimestampFunc = new FillRangeTimestampConstant(timestampType);
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+            this.columnCount = columnCount;
         }
 
         @Override
@@ -348,7 +351,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 presentTimestamps = new DirectLongList(capacity, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
             }
-            initValueFuncs(fillValues);
+            if (!isValueFuncsInitialized) {
+                initValueFuncs(fillValues);
+                isValueFuncsInitialized = true;
+            }
+            assert fillValues.size() <= columnCount : "fillValues.size()=" + fillValues.size() + " exceeds columnCount=" + columnCount;
             baseRecord = baseCursor.getRecord();
             toTop();
         }

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.std.Rnd;
@@ -892,6 +893,49 @@ public class ParquetTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testIndexReloadAfterConvertToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    "INSERT INTO x VALUES" +
+                            "('k1', '2024-06-10T00:00:00.000000Z')," +
+                            "('k2', '2024-06-10T01:00:00.000000Z')," +
+                            "('k1', '2024-06-11T00:00:00.000000Z')," +
+                            "('k3', '2024-06-12T00:00:00.000000Z')," +
+                            "('k1', '2024-06-12T00:00:01.000000Z')"
+            );
+
+            final int idColumnIndex = 0;
+
+            // Open the reader and force bitmap index reader creation on native
+            // partitions by explicitly calling getBitmapIndexReader().
+            try (var reader = engine.getReader("x")) {
+                for (int i = 0; i < reader.getPartitionCount(); i++) {
+                    reader.openPartition(i);
+                    reader.getBitmapIndexReader(i, idColumnIndex, BitmapIndexReader.DIR_BACKWARD);
+                }
+            }
+
+            // Convert non-last partitions to parquet while the pool holds
+            // a reader with pre-existing bitmap index readers.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10', '2024-06-11'");
+
+            // Re-acquire the pooled reader. goActive() -> reload() detects the
+            // parquet conversion, closes partitions (but closeIndexReader() does
+            // not null bitmapIndexes entries), and later openPartition0() for
+            // parquet calls pathGenNativePartition() on a path already holding
+            // the parquet filename — producing a bogus native path.
+            final String expected = """
+                    id\tts
+                    k1\t2024-06-10T00:00:00.000000Z
+                    k1\t2024-06-11T00:00:00.000000Z
+                    k1\t2024-06-12T00:00:01.000000Z
+                    """;
+            assertSql(expected, "x WHERE id = 'k1'");
+        });
+    }
+
     // TODO(puzpuzpuz): enable when we support DDLs for parquet partitions
     @Ignore
     @Test
@@ -1302,6 +1346,63 @@ public class ParquetTest extends AbstractCairoTest {
                             3\t2020-01-03T00:00:00.000000Z
                             """,
                     "x"
+            );
+        });
+    }
+
+    @Test
+    public void testWalAlterColumnTypeWithParquetPartition() throws Exception {
+        // Regression test: ALTER TABLE ALTER COLUMN TYPE on a WAL table with
+        // parquet partitions.
+        //
+        // The WAL sequencer accepts the schema change, but when ApplyWal2TableJob
+        // applies it to the table writer, ConvertOperatorImpl tries to open
+        // native column files (.d) for the parquet partition — which don't exist.
+        // This makes the table writer DISTRESSED and the table SUSPENDED.
+        // Subsequent WAL transactions (inserts, O3) are silently lost.
+        //
+        // The table must either:
+        //   (a) convert parquet partitions back to native before the type change, or
+        //   (b) reject the ALTER with a clear error if parquet partitions exist.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        val DOUBLE,
+                        sym SYMBOL,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'C', '2024-01-02T00:00:00.000000Z')
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // ALTER COLUMN TYPE through WAL — the column conversion must NOT
+            // leave the table suspended.
+            execute("ALTER TABLE x ALTER COLUMN val TYPE SYMBOL");
+            drainWalQueue();
+
+            // O3 insert into the parquet partition after the type change.
+            execute("INSERT INTO x VALUES ('new_val', 'D', '2024-01-01T06:00:00.000000Z')");
+            drainWalQueue();
+
+            // The O3 insert must not be silently lost. The old DOUBLE values
+            // are converted to SYMBOL strings during the type change (the fix
+            // converts parquet back to native first, so the data is preserved).
+            assertSql("""
+                            val\tsym\tts
+                            1.0\tA\t2024-01-01T00:00:00.000000Z
+                            new_val\tD\t2024-01-01T06:00:00.000000Z
+                            2.0\tB\t2024-01-01T12:00:00.000000Z
+                            3.0\tC\t2024-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
             );
         });
     }

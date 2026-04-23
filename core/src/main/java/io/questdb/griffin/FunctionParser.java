@@ -542,6 +542,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
+        if (isUnnestKeyword(node.token)) {
+            Misc.freeObjList(args);
+            return SqlException.position(node.position)
+                    .put("UNNEST cannot be used as an expression; use it in the FROM clause");
+        }
         SqlException ex = SqlException.position(node.position);
         ex.put("unknown function name");
         ex.put(": ");
@@ -1073,6 +1078,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                 if (isWindowContext != factory.isWindow()) {
                     match = MATCH_FUZZY_MATCH;
+                    sigArgTypeScore += 20;
                 } else if (factory.isWindow()) { // make windowFunction high priority when isWindowContext
                     sigArgTypeScore -= 20;
                 }
@@ -1113,11 +1119,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (candidate == null) {
-            // no signature match
+            // no signature match — find the best descriptor for a helpful error message
             if (overload.size() == 1) {
-                // there is only one possible signature, lets help the user out
-                // with a useful error message
                 candidateDescriptor = overload.getQuick(0);
+            } else {
+                // multiple overloads: filter by context (window vs group-by) to find the relevant one
+                FunctionFactoryDescriptor contextMatch = null;
+                int contextMatchCount = 0;
+                for (int i = 0, n = overload.size(); i < n; i++) {
+                    FunctionFactoryDescriptor d = overload.getQuick(i);
+                    if (isWindowContext == d.getFactory().isWindow()) {
+                        contextMatch = d;
+                        contextMatchCount++;
+                    }
+                }
+                if (contextMatchCount == 1) {
+                    candidateDescriptor = contextMatch;
+                }
             }
             throw invalidArgument(node, args, argPositions, candidateDescriptor);
         }

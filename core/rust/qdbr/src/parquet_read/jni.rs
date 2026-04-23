@@ -771,3 +771,98 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStat
 ) -> usize {
     offset_of!(ColumnChunkStats, max_value_size)
 }
+
+/// Reads partition metadata (row_count and squash_tracker) from a parquet file's footer.
+/// Writes row_count (i64) at dest_addr and squash_tracker (i64) at dest_addr+8.
+/// Throws CairoException on invalid arguments or I/O errors.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readPartitionMeta(
+    mut env: JNIEnv,
+    _class: JClass,
+    file_path_ptr: *const u8,
+    file_path_len: i32,
+    dest_addr: i64,
+) -> jni::sys::jboolean {
+    // Validate arguments — invalid inputs throw Java exceptions.
+    let res = (|| -> ParquetResult<()> {
+        if file_path_ptr.is_null() {
+            return Err(fmt_err!(InvalidLayout, "file_path_ptr is null"));
+        }
+        if file_path_len < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "file_path_len is negative: {}",
+                file_path_len
+            ));
+        }
+        if dest_addr == 0 {
+            return Err(fmt_err!(InvalidLayout, "dest_addr is null"));
+        }
+        Ok(())
+    })();
+
+    if let Err(mut err) = res {
+        err.add_context("error in PartitionDecoder.readPartitionMeta");
+        return err.into_cairo_exception().throw(&mut env);
+    }
+
+    // Read file metadata — propagate I/O errors as CairoException to Java.
+    let res = (|| -> ParquetResult<()> {
+        let path_bytes = unsafe { slice::from_raw_parts(file_path_ptr, file_path_len as usize) };
+        let path_str = std::str::from_utf8(path_bytes)
+            .map_err(|e| fmt_err!(InvalidLayout, "invalid UTF-8 in file path: {}", e))?;
+        let mut file = std::fs::File::open(path_str).map_err(|e| {
+            fmt_err!(
+                InvalidLayout,
+                "cannot open parquet file \"{}\": {}",
+                path_str,
+                e
+            )
+        })?;
+        let file_size = file
+            .metadata()
+            .map_err(|e| {
+                fmt_err!(
+                    InvalidLayout,
+                    "cannot read file metadata \"{}\": {}",
+                    path_str,
+                    e
+                )
+            })?
+            .len();
+        let file_metadata =
+            parquet2::read::read_metadata_with_size(&mut file, file_size).map_err(|e| {
+                fmt_err!(
+                    InvalidLayout,
+                    "cannot read parquet footer \"{}\": {}",
+                    path_str,
+                    e
+                )
+            })?;
+
+        let row_count = i64::try_from(file_metadata.num_rows).map_err(|_| {
+            fmt_err!(
+                InvalidLayout,
+                "num_rows exceeds i64::MAX in \"{}\"",
+                path_str
+            )
+        })?;
+        let squash_tracker = match crate::parquet_read::meta::extract_qdb_meta(&file_metadata) {
+            Ok(Some(meta)) => meta.squash_tracker,
+            _ => -1i64,
+        };
+
+        let dest = dest_addr as *mut i64;
+        unsafe {
+            dest.write_unaligned(row_count);
+            dest.add(1).write_unaligned(squash_tracker);
+        }
+        Ok(())
+    })();
+
+    if let Err(mut err) = res {
+        err.add_context("error in PartitionDecoder.readPartitionMeta");
+        return err.into_cairo_exception().throw(&mut env);
+    }
+    1 // JNI_TRUE
+}

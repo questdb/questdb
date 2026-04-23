@@ -92,6 +92,8 @@ pub struct ParquetWriter<W: Write> {
     bloom_filter_fpp: f64,
     /// Minimum compression ratio to keep compressed output
     min_compression_ratio: f64,
+    /// Partition squash tracker value to embed in QdbMeta footer (-1 = not set)
+    squash_tracker: i64,
 }
 
 impl<W: Write> ParquetWriter<W> {
@@ -113,6 +115,7 @@ impl<W: Write> ParquetWriter<W> {
             bloom_filter_columns: HashSet::new(),
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
             min_compression_ratio: 0.0,
+            squash_tracker: -1,
         }
     }
 
@@ -189,6 +192,11 @@ impl<W: Write> ParquetWriter<W> {
         self
     }
 
+    pub fn with_squash_tracker(mut self, squash_tracker: i64) -> Self {
+        self.squash_tracker = squash_tracker;
+        self
+    }
+
     fn write_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.statistics,
@@ -246,7 +254,8 @@ impl<W: Write> ParquetWriter<W> {
 
     /// Write the given `Partition` with the writer `W`. Returns the total size of the file.
     pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
-        let (schema, additional_meta) = to_parquet_schema(&partition, self.raw_array_encoding)?;
+        let (schema, additional_meta) =
+            to_parquet_schema(&partition, self.raw_array_encoding, self.squash_tracker)?;
         let encodings = to_encodings(&partition);
         let compressions = to_compressions(&partition);
         let mut chunked = self.chunked_with_compressions(schema, encodings, compressions)?;
@@ -656,7 +665,7 @@ fn symbol_column_to_pages_multi_partition(
     let offsets = first_column.symbol_offsets;
     let chars = first_column.secondary_data;
 
-    // Collect partition slice info (keys_slice, adjusted_column_top, required)
+    // Collect partition slice info (keys_slice, adjusted_column_top, not_null_hint)
     let partition_slices: Vec<(&[i32], usize, bool)> = partition_ranges
         .iter()
         .map(|(col, offset, length)| {
@@ -665,7 +674,7 @@ fn symbol_column_to_pages_multi_partition(
             let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
             let (keys_slice, adjusted_column_top) =
                 compute_symbol_slice(keys, col.column_top, *offset, *length);
-            (keys_slice, adjusted_column_top, col.required)
+            (keys_slice, adjusted_column_top, col.not_null_hint)
         })
         .collect();
 
@@ -689,7 +698,7 @@ fn symbol_column_to_pages_multi_partition(
     let mut pages = Vec::with_capacity(partition_ranges.len() + 1);
     pages.push(Page::Dict(dict_page));
 
-    for &(keys_slice, adjusted_column_top, required) in partition_slices.iter() {
+    for &(keys_slice, adjusted_column_top, not_null_hint) in partition_slices.iter() {
         let data_page = symbol::symbol_to_data_page_only(
             keys_slice,
             adjusted_column_top,
@@ -698,7 +707,7 @@ fn symbol_column_to_pages_multi_partition(
             primitive_type.clone(),
             offsets,
             chars,
-            required,
+            not_null_hint,
             None,
         )?;
 
@@ -1253,7 +1262,7 @@ fn column_chunk_to_primitive_pages(
             adjusted_column_top,
             options,
             primitive_type,
-            column.required,
+            column.not_null_hint,
             bloom_set,
         );
     }

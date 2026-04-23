@@ -50,7 +50,7 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -3952,6 +3952,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         inner join q on ls.x = q.n;""",
                 21,
                 "cursor function cannot be used as a column [column=a]"
+        );
+    }
+
+    @Test
+    public void testCursorFunctionCannotBeUsedAsColumnFreesParsedFunction() throws Exception {
+        assertException(
+                "SELECT pg_attrdef() AS c FROM long_sequence(1)",
+                7,
+                "cursor function cannot be used as a column [column=c]",
+                sqlExecutionContext
         );
     }
 
@@ -7923,7 +7933,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
+        public int parseShowSql(GenericLexer lexer, IQueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
             parseShowSqlCalled = true;
             return super.parseShowSql(lexer, model, tok, expressionNodePool);
         }

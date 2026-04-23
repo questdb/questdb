@@ -266,7 +266,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     public void putVarchar(Utf8Sequence value) {
         int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
         checkCapacity(byteCount);
-        VarcharTypeDriver.appendPlainValue(appendAddress, value, false);
+        VarcharTypeDriver.appendPlainValue(appendAddress, value, true);
         appendAddress += byteCount;
     }
 

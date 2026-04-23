@@ -56,14 +56,14 @@ where
     }
     let mut bytes_written = offset - initial;
 
-    let bloom_filter_offset = {
+    let (bloom_filter_offset, bloom_filter_length) = {
         let bloom_ref = bloom_hashes;
         if let Some(bloom_arc) = bloom_ref {
             let hashes = bloom_arc
                 .lock()
                 .map_err(|_| Error::oos("bloom filter mutex poisoned"))?;
             if hashes.is_empty() {
-                None
+                (None, None)
             } else {
                 let bitset_size = bloom_filter_bitset_size(hashes.len(), bloom_filter_fpp);
                 let mut bitset = vec![0u8; bitset_size];
@@ -73,14 +73,14 @@ where
                 let bf_offset = initial + bytes_written;
                 let bf_bytes = write_bloom_filter(writer, &bitset)?;
                 bytes_written += bf_bytes as u64;
-                Some(bf_offset as i64)
+                (Some(bf_offset as i64), Some(bf_bytes as i32))
             }
         } else {
-            None
+            (None, None)
         }
     };
 
-    let column_chunk = build_column_chunk(&specs, descriptor, bloom_filter_offset)?;
+    let column_chunk = build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
 
     // write metadata
     let mut protocol = TCompactOutputProtocol::new(writer);
@@ -166,8 +166,9 @@ where
 
     // Note: bloom filter writing for async not implemented yet
     let bloom_filter_offset = None;
+    let bloom_filter_length = None;
 
-    let column_chunk = build_column_chunk(&specs, descriptor, bloom_filter_offset)?;
+    let column_chunk = build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
 
     // write metadata
     let mut protocol = TCompactOutputStreamProtocol::new(writer);
@@ -185,6 +186,7 @@ fn build_column_chunk(
     specs: &[PageWriteSpec],
     descriptor: &ColumnDescriptor,
     bloom_filter_offset: Option<i64>,
+    bloom_filter_length: Option<i32>,
 ) -> Result<ColumnChunk> {
     // compute stats to build header at the end of the chunk
 
@@ -280,6 +282,7 @@ fn build_column_chunk(
         statistics,
         encoding_stats: None,
         bloom_filter_offset,
+        bloom_filter_length,
     };
 
     Ok(ColumnChunk {

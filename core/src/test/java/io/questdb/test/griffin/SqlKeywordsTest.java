@@ -261,6 +261,7 @@ public class SqlKeywordsTest {
         specialCases.put("isComma", ",");
         specialCases.put("isRightParen", ")");
         specialCases.put("isCurrentTimestampKeyword", "current_timestamp");
+        specialCases.put("isBloomFilterKeyword", "bloom_filter");
         specialCases.put("isBloomFilterColumnsKeyword", "bloom_filter_columns");
 
         excludedCases.add("isPublicKeyword");

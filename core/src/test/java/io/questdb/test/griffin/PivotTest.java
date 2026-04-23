@@ -1659,14 +1659,14 @@ public class PivotTest extends AbstractSqlParserTest {
                     sensors
                     PIVOT (
                         avg(int_value)
-                        FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%')
+                        FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%' ORDER BY sensor_name)
                         GROUP BY timestamp, vehicle_id
                     ) order by timestamp,vehicle_id
                     ), B AS (
                     sensors
                     PIVOT (
                         last(str_value)
-                        FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 's%')
+                        FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 's%' ORDER BY sensor_name)
                         GROUP BY timestamp, vehicle_id
                     )
                     order by timestamp,vehicle_id
@@ -1674,17 +1674,17 @@ public class PivotTest extends AbstractSqlParserTest {
                     ;""";
 
             assertQueryNoLeakCheck("""
-                            timestamp	vehicle_id	i009	i000	i002	i004	i008	i003	i007	i005	i006	i001	timestamp1	vehicle_id1	s001	s005	s006	s009	s003	s008	s002	s004	s007	s000
-                            2025-01-01T00:00:00.000000Z	AAA000	-6.0	null	366.0	-475.0	-881.0	25.0	-998.0	29.0	373.0	856.0	2025-01-01T00:00:00.000000Z	AAA000	val_-516	val_481	val_512	val_-405	val_-714	val_97	val_-972	val_-703	val_116	val_-48
-                            2025-01-01T00:00:00.000000Z	AAA001	-727.0	698.0	-893.0	51.0	-904.0	716.0	886.0	-57.0	-16.0	859.0	2025-01-01T00:00:00.000000Z	AAA001	val_-305	val_198	val_-769	val_-723	val_-104	val_228	val_-171	val_-279	val_-127	val_-964
-                            2025-01-01T00:00:00.000000Z	AAA002	-951.0	388.0	339.0	-508.0	504.0	697.0	3.0	57.0	518.0	86.0	2025-01-01T00:00:00.000000Z	AAA002	val_-752	val_-300	val_928	val_638	val_-973	val_-319	val_-747	val_-842	val_-463	val_-914
-                            2025-01-01T00:00:00.000000Z	AAA003	-364.0	64.0	-360.0	694.0	-476.0	-248.0	-602.0	10.0	778.0	717.0	2025-01-01T00:00:00.000000Z	AAA003	val_-835	val_705	val_-703	val_841	val_-54	val_-933	val_263	val_-908	val_-393	val_394
-                            2025-01-01T00:00:00.000000Z	AAA004	203.0	3.0	-123.0	374.0	841.0	290.0	-711.0	-840.0	-155.0	-517.0	2025-01-01T00:00:00.000000Z	AAA004	val_-781	val_524	val_624	val_-574	val_763	val_-352	val_380	val_138	val_-195	val_-136
-                            2025-01-01T00:00:00.000000Z	AAA005	93.0	-909.0	422.0	-687.0	932.0	747.0	514.0	-663.0	150.0	-943.0	2025-01-01T00:00:00.000000Z	AAA005	val_-76	val_930	val_681	val_695	val_-128	val_-819	val_-121	val_-59	val_-445	val_-682
-                            2025-01-01T00:00:00.000000Z	AAA006	575.0	598.0	-728.0	3.0	25.0	59.0	469.0	-311.0	-842.0	-866.0	2025-01-01T00:00:00.000000Z	AAA006	val_-330	val_-473	val_272	val_-184	val_-113	val_926	val_-740	val_535	val_-671	val_468
-                            2025-01-01T00:00:00.000000Z	AAA007	627.0	191.0	87.0	-934.0	-168.0	-820.0	-147.0	485.0	31.0	868.0	2025-01-01T00:00:00.000000Z	AAA007	val_-531	val_-995	val_43	val_75	val_60	val_640	val_-138	val_37	val_782	val_242
-                            2025-01-01T00:00:00.000000Z	AAA008	-942.0	-693.0	-472.0	-42.0	-412.0	-964.0	-509.0	-64.0	483.0	-721.0	2025-01-01T00:00:00.000000Z	AAA008	val_17	val_941	val_385	val_795	val_-190	val_-384	val_444	val_692	val_468	val_-67
-                            2025-01-01T00:00:00.000000Z	AAA009	-336.0	910.0	451.0	-333.0	-199.0	293.0	-242.0	827.0	834.0	276.0	2025-01-01T00:00:00.000000Z	AAA009	val_407	val_-743	val_988	val_583	val_895	val_435	val_-806	val_460	val_-320	val_889
+                            timestamp	vehicle_id	i000	i001	i002	i003	i004	i005	i006	i007	i008	i009	timestamp1	vehicle_id1	s000	s001	s002	s003	s004	s005	s006	s007	s008	s009
+                            2025-01-01T00:00:00.000000Z	AAA000	null	856.0	366.0	25.0	-475.0	29.0	373.0	-998.0	-881.0	-6.0	2025-01-01T00:00:00.000000Z	AAA000	val_-48	val_-516	val_-972	val_-714	val_-703	val_481	val_512	val_116	val_97	val_-405
+                            2025-01-01T00:00:00.000000Z	AAA001	698.0	859.0	-893.0	716.0	51.0	-57.0	-16.0	886.0	-904.0	-727.0	2025-01-01T00:00:00.000000Z	AAA001	val_-964	val_-305	val_-171	val_-104	val_-279	val_198	val_-769	val_-127	val_228	val_-723
+                            2025-01-01T00:00:00.000000Z	AAA002	388.0	86.0	339.0	697.0	-508.0	57.0	518.0	3.0	504.0	-951.0	2025-01-01T00:00:00.000000Z	AAA002	val_-914	val_-752	val_-747	val_-973	val_-842	val_-300	val_928	val_-463	val_-319	val_638
+                            2025-01-01T00:00:00.000000Z	AAA003	64.0	717.0	-360.0	-248.0	694.0	10.0	778.0	-602.0	-476.0	-364.0	2025-01-01T00:00:00.000000Z	AAA003	val_394	val_-835	val_263	val_-54	val_-908	val_705	val_-703	val_-393	val_-933	val_841
+                            2025-01-01T00:00:00.000000Z	AAA004	3.0	-517.0	-123.0	290.0	374.0	-840.0	-155.0	-711.0	841.0	203.0	2025-01-01T00:00:00.000000Z	AAA004	val_-136	val_-781	val_380	val_763	val_138	val_524	val_624	val_-195	val_-352	val_-574
+                            2025-01-01T00:00:00.000000Z	AAA005	-909.0	-943.0	422.0	747.0	-687.0	-663.0	150.0	514.0	932.0	93.0	2025-01-01T00:00:00.000000Z	AAA005	val_-682	val_-76	val_-121	val_-128	val_-59	val_930	val_681	val_-445	val_-819	val_695
+                            2025-01-01T00:00:00.000000Z	AAA006	598.0	-866.0	-728.0	59.0	3.0	-311.0	-842.0	469.0	25.0	575.0	2025-01-01T00:00:00.000000Z	AAA006	val_468	val_-330	val_-740	val_-113	val_535	val_-473	val_272	val_-671	val_926	val_-184
+                            2025-01-01T00:00:00.000000Z	AAA007	191.0	868.0	87.0	-820.0	-934.0	485.0	31.0	-147.0	-168.0	627.0	2025-01-01T00:00:00.000000Z	AAA007	val_242	val_-531	val_-138	val_60	val_37	val_-995	val_43	val_782	val_640	val_75
+                            2025-01-01T00:00:00.000000Z	AAA008	-693.0	-721.0	-472.0	-964.0	-42.0	-64.0	483.0	-509.0	-412.0	-942.0	2025-01-01T00:00:00.000000Z	AAA008	val_-67	val_17	val_444	val_-190	val_692	val_941	val_385	val_468	val_-384	val_795
+                            2025-01-01T00:00:00.000000Z	AAA009	910.0	276.0	451.0	293.0	-333.0	827.0	834.0	-242.0	-199.0	-336.0	2025-01-01T00:00:00.000000Z	AAA009	val_889	val_407	val_-806	val_895	val_460	val_-743	val_988	val_-320	val_435	val_583
                             """,
                     query,
                     "timestamp",
@@ -1702,11 +1702,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                           keys: [timestamp, vehicle_id]
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
-                                              values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i002',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i004',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i008',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i003',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i007',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i005',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i006',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i001',avg(int_value),NaN)]))]
+                                              values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i001',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i002',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i003',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i004',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i005',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i006',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i007',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i008',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)]))]
                                                 Async Group By workers: 1
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [avg(int_value)]
-                                                  filter: sensor_name in [i009,i000,i002,i004,i008,i003,i007,i005,i006,i001]
+                                                  filter: sensor_name in [i000,i001,i002,i003,i004,i005,i006,i007,i008,i009]
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: sensors
@@ -1714,11 +1714,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                           keys: [timestamp, vehicle_id]
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
-                                              values: [first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s001',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s005',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s006',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s009',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s003',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s008',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s002',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s004',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s007',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s000',last(str_value),null)]))]
+                                              values: [first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s000',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s001',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s002',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s003',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s004',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s005',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s006',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s007',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s008',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s009',last(str_value),null)]))]
                                                 Async Group By workers: 1
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [last(str_value)]
-                                                  filter: sensor_name in [s001,s005,s006,s009,s003,s008,s002,s004,s007,s000]
+                                                  filter: sensor_name in [s000,s001,s002,s003,s004,s005,s006,s007,s008,s009]
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: sensors
@@ -2926,6 +2926,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                           keys: [timestamp]
                                             Async JIT Group By workers: 1
                                               keys: [timestamp,symbol,side]
+                                              keyFunctions: [timestamp_floor_utc('100T',timestamp)]
                                               values: [avg(price)]
                                               filter: (symbol in [ADA-USD,ADA-USDT,BTC-USD] and side in [buy,sell])
                                                 PageFrame
@@ -3097,6 +3098,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                       keys: [timestamp]
                                         Async JIT Group By workers: 1
                                           keys: [symbol,side,timestamp]
+                                          keyFunctions: [timestamp_floor_utc('1d',timestamp)]
                                           values: [last(price)]
                                           filter: side in [buy,sell]
                                             PageFrame
@@ -3546,6 +3548,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                       keys: [timestamp]
                                         Async Group By workers: 1
                                           keys: [timestamp,symbol,side]
+                                          keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                           values: [avg(price)]
                                           filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
                                             PageFrame
@@ -3595,6 +3598,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                   keys: [timestamp]
                                     Async Group By workers: 1
                                       keys: [timestamp,symbol,side]
+                                      keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                       values: [avg(price)]
                                       filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
                                         PageFrame
@@ -3652,7 +3656,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         sensors
                         PIVOT (
                             avg(int_value)
-                            FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%' LIMIT 1)
+                            FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%' ORDER BY sensor_name LIMIT 1)
                             GROUP BY timestamp, vehicle_id
                         )
                         ORDER BY timestamp
@@ -3663,7 +3667,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         sensors
                         PIVOT (
                             avg(int_value)
-                            FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%' LIMIT 1)
+                            FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%' ORDER BY sensor_name LIMIT 1)
                             GROUP BY timestamp, vehicle_id
                         )
                         ORDER BY timestamp
@@ -3671,27 +3675,27 @@ public class PivotTest extends AbstractSqlParserTest {
                     );""";
 
             assertQueryNoLeakCheck("""
-                            timestamp	vehicle_id	i009
-                            2025-01-01T00:00:00.000000Z	AAA000	-6.0
-                            2025-01-01T00:00:00.000000Z	AAA001	-727.0
-                            2025-01-01T00:00:00.000000Z	AAA002	-951.0
-                            2025-01-01T00:00:00.000000Z	AAA003	-364.0
-                            2025-01-01T00:00:00.000000Z	AAA004	203.0
-                            2025-01-01T00:00:00.000000Z	AAA005	93.0
-                            2025-01-01T00:00:00.000000Z	AAA006	575.0
-                            2025-01-01T00:00:00.000000Z	AAA007	627.0
-                            2025-01-01T00:00:00.000000Z	AAA008	-942.0
-                            2025-01-01T00:00:00.000000Z	AAA009	-336.0
-                            2025-01-01T00:00:00.009000Z	AAA059	550.0
-                            2025-01-01T00:00:00.009000Z	AAA058	-147.0
-                            2025-01-01T00:00:00.009000Z	AAA057	958.0
-                            2025-01-01T00:00:00.009000Z	AAA056	-584.0
-                            2025-01-01T00:00:00.009000Z	AAA055	723.0
-                            2025-01-01T00:00:00.009000Z	AAA054	-658.0
-                            2025-01-01T00:00:00.009000Z	AAA053	417.0
-                            2025-01-01T00:00:00.009000Z	AAA052	118.0
-                            2025-01-01T00:00:00.009000Z	AAA051	214.0
-                            2025-01-01T00:00:00.009000Z	AAA050	123.0
+                            timestamp	vehicle_id	i000
+                            2025-01-01T00:00:00.000000Z	AAA001	698.0
+                            2025-01-01T00:00:00.000000Z	AAA002	388.0
+                            2025-01-01T00:00:00.000000Z	AAA003	64.0
+                            2025-01-01T00:00:00.000000Z	AAA004	3.0
+                            2025-01-01T00:00:00.000000Z	AAA005	-909.0
+                            2025-01-01T00:00:00.000000Z	AAA006	598.0
+                            2025-01-01T00:00:00.000000Z	AAA007	191.0
+                            2025-01-01T00:00:00.000000Z	AAA008	-693.0
+                            2025-01-01T00:00:00.000000Z	AAA009	910.0
+                            2025-01-01T00:00:00.000000Z	AAA010	-270.0
+                            2025-01-01T00:00:00.009000Z	AAA058	-746.0
+                            2025-01-01T00:00:00.009000Z	AAA057	-791.0
+                            2025-01-01T00:00:00.009000Z	AAA056	282.0
+                            2025-01-01T00:00:00.009000Z	AAA055	332.0
+                            2025-01-01T00:00:00.009000Z	AAA054	-547.0
+                            2025-01-01T00:00:00.009000Z	AAA053	-965.0
+                            2025-01-01T00:00:00.009000Z	AAA052	-800.0
+                            2025-01-01T00:00:00.009000Z	AAA051	-461.0
+                            2025-01-01T00:00:00.009000Z	AAA050	-753.0
+                            2025-01-01T00:00:00.010000Z	AAA000	-636.0
                             """,
                     query,
                     null,
@@ -3706,11 +3710,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                   keys: [timestamp asc]
                                     GroupBy vectorized: false
                                       keys: [timestamp,vehicle_id]
-                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)]))]
+                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
                                         Async JIT Group By workers: 1
                                           keys: [timestamp,vehicle_id,sensor_name]
                                           values: [avg(int_value)]
-                                          filter: sensor_name in [i009]
+                                          filter: sensor_name in [i000]
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: sensors
@@ -3718,11 +3722,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                   keys: [timestamp]
                                     GroupBy vectorized: false
                                       keys: [timestamp,vehicle_id]
-                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)]))]
+                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
                                         Async JIT Group By workers: 1
                                           keys: [timestamp,vehicle_id,sensor_name]
                                           values: [avg(int_value)]
-                                          filter: sensor_name in [i009]
+                                          filter: sensor_name in [i000]
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: sensors

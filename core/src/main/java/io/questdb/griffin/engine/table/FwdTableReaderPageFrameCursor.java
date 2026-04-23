@@ -25,14 +25,18 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCARWImpl;
@@ -52,6 +56,7 @@ import org.jetbrains.annotations.Nullable;
 public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int columnCount;
     private final IntList columnIndexes;
+    private final ColumnMapping columnMapping = new ColumnMapping();
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
     private final DirectLongList filterList;
@@ -119,8 +124,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public IntList getColumnIndexes() {
-        return columnIndexes;
+    public ColumnMapping getColumnMapping() {
+        return columnMapping;
     }
 
     @Override
@@ -136,6 +141,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public TableReader getTableReader() {
         return reader;
+    }
+
+    @Override
+    public boolean hasIntervalFilter() {
+        return partitionFrameCursor != null && partitionFrameCursor.hasIntervalFilter();
     }
 
     @Override
@@ -189,11 +199,12 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) throws SqlException {
-        reader = partitionFrameCursor.getTableReader();
+    public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException {
         this.partitionFrameCursor = partitionFrameCursor;
-        this.pageFrameMinRows = pageFrameMinRows;
-        this.pageFrameMaxRows = pageFrameMaxRows;
+        this.reader = partitionFrameCursor.getTableReader();
+        TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
+        this.pageFrameMinRows = executionContext.getPageFrameMinRows();
+        this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -224,6 +235,14 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public boolean supportsSizeCalculation() {
         return partitionFrameCursor.supportsSizeCalculation();
+    }
+
+    @Override
+    public void toPartition(int targetPartitionIndex) {
+        partitionFrameCursor.toPartition(targetPartitionIndex);
+        reenterPartitionFrame = false;
+        reenterParquetDecoder = null;
+        clearAddresses();
     }
 
     @Override
@@ -332,6 +351,14 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
 
+        if (partitionHi > metadata.getRowCount()) {
+            throw CairoException.critical(0)
+                    .put("parquet partition row count mismatch [partitionHi=").put(partitionHi)
+                    .put(", parquetRowCount=").put(metadata.getRowCount())
+                    .put(", partitionIndex=").put(reenterPartitionIndex)
+                    .put(']');
+        }
+
         long rowGroupStartRow = cachedRowGroupStartRow;
         for (int i = cachedRowGroupIndex; i < rowGroupCount; i++) {
             final long rowGroupSize = metadata.getRowGroupSize(i);
@@ -339,7 +366,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
             if (partitionLo < rowGroupEndRow) {
                 if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
-                        i, reenterParquetDecoder, filterList, filterBufEnd)) {
+                        i,
+                        reenterParquetDecoder,
+                        filterList,
+                        filterBufEnd
+                )) {
                     partitionLo = rowGroupEndRow;
                     if (partitionLo >= partitionHi) {
                         reenterPartitionFrame = false;
@@ -393,7 +424,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             assert reenterParquetDecoder != null;
             filterBufEnd = -1;
             if (filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues)) {
+                    reenterParquetDecoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList,
+                    filterValues
+            )) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }
             return computeParquetFrame(lo, hi);
@@ -421,6 +456,48 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             rowsPerFrame += (lastFrameSize + frameCount - 1) / frameCount;
         }
         return rowsPerFrame;
+    }
+
+    /**
+     * Populates column tops for a partition from column version metadata.
+     * A column top value indicates the first row where the column has data;
+     * rows before the top are NULL. Columns that don't exist in this
+     * partition get top = partitionRowCount (all-null).
+     *
+     * @param columnTops          output list, cleared and populated with one entry per column
+     * @param tableReader         table reader (used for reader metadata)
+     * @param columnVersionReader column version reader
+     * @param columnIndexes       query-to-reader column index mapping
+     * @param columnCount         number of columns
+     * @param partitionTimestamp  partition timestamp
+     * @param partitionRowCount   partition row count
+     */
+    static void populateColumnTops(
+            LongList columnTops,
+            TableReader tableReader,
+            ColumnVersionReader columnVersionReader,
+            IntList columnIndexes,
+            int columnCount,
+            long partitionTimestamp,
+            long partitionRowCount
+    ) {
+        // Use reader metadata (not factory metadata) for writer index lookup,
+        // because factory metadata (e.g. SelectedRecordCursorFactory) may not
+        // implement getWriterIndex().
+        final RecordMetadata readerMetadata = tableReader.getMetadata();
+        columnTops.clear();
+        for (int i = 0; i < columnCount; i++) {
+            final int readerColumnIndex = columnIndexes.getQuick(i);
+            final int writerIndex = readerMetadata.getWriterIndex(readerColumnIndex);
+            final int recordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
+            if (recordIndex > -1) {
+                columnTops.add(columnVersionReader.getColumnTopByIndex(recordIndex));
+            } else if (columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp) {
+                columnTops.add(0); // column exists from start, no top
+            } else {
+                columnTops.add(partitionRowCount); // column doesn't exist — all-null
+            }
+        }
     }
 
     private class TableReaderPageFrame implements PageFrame {

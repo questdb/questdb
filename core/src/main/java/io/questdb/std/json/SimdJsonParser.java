@@ -51,12 +51,86 @@ public class SimdJsonParser implements QuietCloseable {
         }
     }
 
+    /**
+     * Parse the JSON document once and extract all array elements in a single
+     * forward pass. Results are written into a pre-sized
+     * {@code results[elementCount * columnCount]} matrix. String data
+     * (VARCHAR/TIMESTAMP) is appended to the shared string sink, with packed
+     * {@code (offset << 32) | length} stored in each result's value field.
+     *
+     * @param json          padded JSON document
+     * @param isObjectArray true if elements are objects, false for scalar arrays
+     * @param descsPtr      pointer to native column_desc_t array
+     * @param resultsPtr    pointer to native column_result_t matrix (elementCount * columnCount entries)
+     * @param columnCount   number of columns
+     * @param elementCount  number of array elements to extract
+     * @param stringSinkPtr pointer to native questdb_byte_sink_t for all string data
+     */
+    public void extractAllArrayElements(
+            DirectUtf8Sequence json,
+            boolean isObjectArray,
+            long descsPtr,
+            long resultsPtr,
+            int columnCount,
+            int elementCount,
+            long stringSinkPtr
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        extractAllArrayElements(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                json.isAscii(),
+                isObjectArray,
+                descsPtr,
+                resultsPtr,
+                columnCount,
+                elementCount,
+                stringSinkPtr
+        );
+    }
+
     @Override
     public void close() {
         if (impl != 0) {
             destroy(impl);
             impl = 0;
         }
+    }
+
+    /**
+     * Combined array info query and extraction in a single parse. Counts
+     * elements, determines object vs scalar type, and if the results buffer
+     * is large enough, extracts all elements in one JNI call.
+     *
+     * @return positive element count if extraction succeeded,
+     * negative element count if the buffer was too small (caller
+     * should grow the buffer and retry), or 0 for empty/invalid arrays
+     */
+    public int queryAndExtractArray(
+            DirectUtf8Sequence json,
+            SimdJsonResult result,
+            long descsPtr,
+            long resultsPtr,
+            int columnCount,
+            int resultsCapacity,
+            long stringSinkPtr
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryAndExtractArray(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                json.isAscii(),
+                result.ptr(),
+                descsPtr,
+                resultsPtr,
+                columnCount,
+                resultsCapacity,
+                stringSinkPtr
+        );
     }
 
     public boolean queryPointerBoolean(
@@ -216,7 +290,35 @@ public class SimdJsonParser implements QuietCloseable {
 
     private static native void destroy(long impl);
 
+    private static native void extractAllArrayElements(
+            long impl,
+            long jsonPtr,
+            long jsonLen,
+            long jsonTailPadding,
+            boolean jsonIsAscii,
+            boolean isObjectArray,
+            long descsPtr,
+            long resultsPtr,
+            int columnCount,
+            int elementCount,
+            long stringSinkPtr
+    );
+
     private native static int getSimdJsonPadding();
+
+    private static native int queryAndExtractArray(
+            long impl,
+            long jsonPtr,
+            long jsonLen,
+            long jsonTailPadding,
+            boolean jsonIsAscii,
+            long resultPtr,
+            long descsPtr,
+            long resultsPtr,
+            int columnCount,
+            int resultsCapacity,
+            long stringSinkPtr
+    );
 
     private static native boolean queryPointerBoolean(
             long impl,

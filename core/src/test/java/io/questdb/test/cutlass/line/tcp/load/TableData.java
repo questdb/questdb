@@ -64,6 +64,10 @@ public class TableData {
     }
 
     public synchronized CharSequence generateRows(TableReaderMetadata metadata) {
+        return generateRows(metadata, false);
+    }
+
+    public synchronized CharSequence generateRows(TableReaderMetadata metadata, boolean includeAllRows) {
         final StringBuilder sb = new StringBuilder();
         final ObjList<CharSequence> columns = new ObjList<>();
         final ObjList<CharSequence> defaults = new ObjList<>();
@@ -76,7 +80,7 @@ public class TableData {
         }
         for (int i = 0, n = rows.size(); i < n; i++) {
             final LineData line = rows.get(index.peekIndex());
-            if (line.isValid()) {
+            if (includeAllRows || line.isValid()) {
                 sb.append(line.getRow(columns, defaults));
             }
             index.pollValue();
@@ -111,6 +115,13 @@ public class TableData {
     }
 
     public synchronized int size() {
+        return size(false);
+    }
+
+    public synchronized int size(boolean includeAllRows) {
+        if (includeAllRows) {
+            return rows.size();
+        }
         int count = 0;
         for (int i = 0, n = rows.size(); i < n; i++) {
             if (rows.get(i).isValid()) {

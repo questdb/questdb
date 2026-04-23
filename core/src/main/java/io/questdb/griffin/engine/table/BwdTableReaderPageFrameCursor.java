@@ -25,9 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
@@ -54,6 +56,7 @@ import static io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor.calc
 public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int columnCount;
     private final IntList columnIndexes;
+    private final ColumnMapping columnMapping = new ColumnMapping();
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
     private final DirectLongList filterList;
@@ -120,8 +123,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public IntList getColumnIndexes() {
-        return columnIndexes;
+    public ColumnMapping getColumnMapping() {
+        return columnMapping;
     }
 
     @Override
@@ -197,11 +200,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) throws SqlException {
+    public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException {
         this.partitionFrameCursor = partitionFrameCursor;
-        reader = partitionFrameCursor.getTableReader();
-        this.pageFrameMinRows = pageFrameMinRows;
-        this.pageFrameMaxRows = pageFrameMaxRows;
+        this.reader = partitionFrameCursor.getTableReader();
+        TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
+        this.pageFrameMinRows = executionContext.getPageFrameMinRows();
+        this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -342,6 +346,14 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
 
+        if (partitionHi > metadata.getRowCount()) {
+            throw CairoException.critical(0)
+                    .put("parquet partition row count mismatch [partitionHi=").put(partitionHi)
+                    .put(", parquetRowCount=").put(metadata.getRowCount())
+                    .put(", partitionIndex=").put(reenterPartitionIndex)
+                    .put(']');
+        }
+
         int targetGroup = -1;
         long targetGroupStart = 0;
 
@@ -395,7 +407,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         while (targetGroup >= 0) {
             if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
-                    targetGroup, reenterParquetDecoder, filterList, filterBufEnd)) {
+                    targetGroup,
+                    reenterParquetDecoder,
+                    filterList,
+                    filterBufEnd
+            )) {
                 partitionHi = targetGroupStart;
                 if (partitionHi <= partitionLo) {
                     this.reenterPartitionFrame = false;
@@ -448,7 +464,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             assert reenterParquetDecoder != null;
             filterBufEnd = -1;
             if (filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues)) {
+                    reenterParquetDecoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList,
+                    filterValues
+            )) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }
             return computeParquetFrame(lo, hi);

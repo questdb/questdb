@@ -304,6 +304,7 @@ mod tests {
             None::<Statistics>, // statistics
             None::<Vec<parquet_format_safe::PageEncodingStats>>,
             None::<i64>,        // bloom_filter_offset
+            None::<i32>,        // bloom_filter_length
         );
         ColumnChunk::new(
             None::<String>,  // file_path
@@ -453,6 +454,7 @@ mod tests {
             stats,
             None::<Vec<parquet_format_safe::PageEncodingStats>>,
             None::<i64>,
+            None::<i32>,
         );
         let cc = ColumnChunk::new(
             None::<String>, 0, meta,
@@ -675,6 +677,7 @@ mod tests {
             None::<Statistics>,
             None::<Vec<parquet_format_safe::PageEncodingStats>>,
             None::<i64>,
+            None::<i32>,
         );
         let cc = ColumnChunk::new(
             None::<String>, 0, meta,

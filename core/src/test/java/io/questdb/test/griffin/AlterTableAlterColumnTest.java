@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
+import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.str.Path;
@@ -248,6 +249,101 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
                 Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableParquetBloomFilterOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a VARCHAR PARQUET(BLOOM_FILTER)," +
+                            " b INT," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DEFAULT, TableUtils.getParquetConfigEncoding(config));
+
+                int bIndex = writer.getMetadata().getColumnIndex("b");
+                int bConfig = writer.getMetadata().getColumnMetadata(bIndex).getParquetEncodingConfig();
+                Assert.assertFalse(TableUtils.isParquetConfigBloomFilter(bConfig));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableParquetBloomFilterWithEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a INT PARQUET(DELTA_BINARY_PACKED, BLOOM_FILTER)," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableParquetBloomFilterWithEncodingAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER)," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(ParquetCompression.COMPRESSION_ZSTD, TableUtils.getParquetConfigCompression(config) - 1);
+                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config) - 1);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableParquetBloomFilterSurvivesReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a INT PARQUET(DELTA_BINARY_PACKED, BLOOM_FILTER)," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+            }
+
+            engine.releaseAllWriters();
+
+            try (TableReader reader = getReader("y")) {
+                int colIndex = reader.getMetadata().getColumnIndex("a");
+                int config = reader.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, TableUtils.getParquetConfigEncoding(config));
             }
         });
     }
@@ -631,6 +727,15 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetParquetCompressionLevelTruncated() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(PLAIN, ZSTD(",
+                53,
+                "compression level expected"
+        );
+    }
+
+    @Test
     public void testSetParquetCompressionUncompressed() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -661,6 +766,93 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, TableUtils.getParquetConfigEncoding(config));
             }
         });
+    }
+
+    @Test
+    public void testSetParquetBloomFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN c SET PARQUET(BLOOM_FILTER)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("c");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetBloomFilterWithEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(DELTA_BINARY_PACKED, BLOOM_FILTER)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetBloomFilterWithEncodingAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(ParquetCompression.COMPRESSION_ZSTD, TableUtils.getParquetConfigCompression(config) - 1);
+                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config) - 1);
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetClearsBloomFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(DELTA_BINARY_PACKED, BLOOM_FILTER)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+            }
+
+            // SET without BLOOM_FILTER clears the flag
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(PLAIN)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertFalse(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_PLAIN, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetEmptyParens() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET()",
+                41,
+                "invalid parquet encoding ')'"
+        );
     }
 
     @Test
@@ -698,6 +890,173 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetParquetBloomFilterBeforeEncoding() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN i SET PARQUET(BLOOM_FILTER, PLAIN)",
+                53,
+                "')' expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetBloomFilterDuplicate() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN i SET PARQUET(PLAIN, BLOOM_FILTER, BLOOM_FILTER)",
+                60,
+                "')' expected"
+        );
+    }
+
+    @Test
+    public void testCreateTableParquetBloomFilterBeforeEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute(
+                        "CREATE TABLE y (" +
+                                "a INT PARQUET(BLOOM_FILTER, PLAIN)," +
+                                " t TIMESTAMP" +
+                                ") TIMESTAMP(t) PARTITION BY DAY"
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "')' expected");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableParquetBloomFilterBeforeCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute(
+                        "CREATE TABLE y (" +
+                                "a INT PARQUET(BLOOM_FILTER, ZSTD)," +
+                                " t TIMESTAMP" +
+                                ") TIMESTAMP(t) PARTITION BY DAY"
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "')' expected");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableParquetBloomFilterDuplicate() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute(
+                        "CREATE TABLE y (" +
+                                "a INT PARQUET(PLAIN, BLOOM_FILTER, BLOOM_FILTER)," +
+                                " t TIMESTAMP" +
+                                ") TIMESTAMP(t) PARTITION BY DAY"
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "')' expected");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetEncodingConfigRoundTrip() throws Exception {
+        int packed = TableUtils.packParquetConfig(
+                ParquetEncoding.ENCODING_DELTA_BINARY_PACKED,
+                ParquetCompression.COMPRESSION_ZSTD + 1,
+                4,
+                true
+        );
+
+        CreateTableColumnModel model = CreateTableColumnModel.FACTORY.newInstance();
+        model.setParquetEncodingConfig(packed);
+
+        Assert.assertTrue(model.isParquetBloomFilter());
+        Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, model.getParquetEncoding());
+        Assert.assertEquals(ParquetCompression.COMPRESSION_ZSTD, model.getParquetCompression());
+        Assert.assertEquals(3, model.getParquetCompressionLevel());
+
+        int repacked = model.getParquetEncodingConfig();
+        Assert.assertEquals(packed, repacked);
+    }
+
+    @Test
+    public void testSetParquetBloomFilterBeforeCompression() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN i SET PARQUET(BLOOM_FILTER, ZSTD)",
+                53,
+                "')' expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetBloomFilterBeforeCompressionAfterDefault() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN i SET PARQUET(default, BLOOM_FILTER, ZSTD)",
+                62,
+                "')' expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetBloomFilterCaseInsensitive() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN c SET PARQUET(bloom_filter)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("c");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetBloomFilterWithDefaultEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(default, BLOOM_FILTER)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DEFAULT, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetBloomFilterWithDefaultEncodingAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(default, UNCOMPRESSED, BLOOM_FILTER)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DEFAULT, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(ParquetCompression.COMPRESSION_UNCOMPRESSED, TableUtils.getParquetConfigCompression(config) - 1);
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetBloomFilterJunkAfter() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN i SET PARQUET(PLAIN, BLOOM_FILTER, junk)",
+                60,
+                "')' expected"
+        );
+    }
+
+    @Test
     public void testSetParquetEncodingInvalidForType() throws Exception {
         assertFailure(
                 "ALTER TABLE x ALTER COLUMN d SET PARQUET(DELTA_LENGTH_BYTE_ARRAY)",
@@ -712,6 +1071,24 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 "ALTER TABLE x ALTER COLUMN d SET PARQUET(INVALID_ENCODING)",
                 41,
                 "invalid parquet encoding 'INVALID_ENCODING', supported values: plain, rle_dictionary"
+        );
+    }
+
+    @Test
+    public void testSetParquetEncodingCommaTruncated() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(PLAIN,",
+                47,
+                "compression codec name or BLOOM_FILTER expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetEncodingTruncated() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(PLAIN",
+                46,
+                "',' or ')' expected"
         );
     }
 
@@ -769,11 +1146,29 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetParquetNotOpenParen() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET PLAIN",
+                41,
+                "'(' expected"
+        );
+    }
+
+    @Test
     public void testSetParquetPlainRejectedForSymbol() throws Exception {
         assertFailure(
                 "ALTER TABLE x ALTER COLUMN sym SET PARQUET(PLAIN)",
                 43,
                 "encoding 'PLAIN' is not valid for column type"
+        );
+    }
+
+    @Test
+    public void testSetParquetTrailingJunk() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(PLAIN junk)",
+                47,
+                "')' expected"
         );
     }
 

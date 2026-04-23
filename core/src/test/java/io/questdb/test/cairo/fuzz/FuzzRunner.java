@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -107,6 +108,8 @@ public class FuzzRunner {
     private double nullSetProb;
     private int parallelWalCount;
     private double partitionDropProb;
+    private double partitionToNativeProb;
+    private double partitionToParquetProb;
     private double queryProb;
     private double replaceInsertProb;
     private double rollbackProb;
@@ -489,6 +492,8 @@ public class FuzzRunner {
                 dataAddProb,
                 equalTsRowsProb,
                 partitionDropProb,
+                partitionToParquetProb,
+                partitionToNativeProb,
                 truncateProb,
                 tableDropProb,
                 setTtlProb,
@@ -621,6 +626,8 @@ public class FuzzRunner {
                 dataAddProb,
                 equalTsRowsProb,
                 partitionDropProb,
+                0.0,
+                0.0,
                 truncateProb,
                 tableDropProb,
                 setTtlProb,
@@ -642,6 +649,8 @@ public class FuzzRunner {
             double dataAddProb,
             double equalTsRowsProb,
             double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
@@ -661,6 +670,8 @@ public class FuzzRunner {
                 dataAddProb,
                 equalTsRowsProb,
                 partitionDropProb,
+                partitionToParquetProb,
+                partitionToNativeProb,
                 truncateProb,
                 tableDropProb,
                 setTtlProb,
@@ -683,6 +694,8 @@ public class FuzzRunner {
             double dataAddProb,
             double equalTsRowsProb,
             double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
@@ -702,6 +715,8 @@ public class FuzzRunner {
         this.dataAddProb = dataAddProb;
         this.equalTsRowsProb = equalTsRowsProb;
         this.partitionDropProb = partitionDropProb;
+        this.partitionToParquetProb = partitionToParquetProb;
+        this.partitionToNativeProb = partitionToNativeProb;
         this.truncateProb = truncateProb;
         this.tableDropProb = tableDropProb;
         this.setTtlProb = setTtlProb;
@@ -814,7 +829,7 @@ public class FuzzRunner {
             String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
             String indexedWhereClause = " where \"" + symbolColumnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
             LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
-            String limit = ""; // For debugging
+            String limit = ""; // for debugging, e.g. " limit 100"
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
             // Now let's do backward order assertion
             String orderBy = " order by " + tsColumnName + " desc";
@@ -1148,6 +1163,7 @@ public class FuzzRunner {
             errors.add(e);
         } finally {
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }
 
@@ -1351,6 +1367,8 @@ public class FuzzRunner {
                             rnd.nextDouble(),
                             rnd.nextDouble(),
                             0.01,
+                            0.0,
+                            0.0,
                             0.0,
                             0.1 * rnd.nextDouble(),
                             rnd.nextDouble(),

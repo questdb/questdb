@@ -16,6 +16,7 @@ qdb-core = { path = "../qdb-core" }
 jni = "0.21.1"
 num-traits = "0.2.18"
 parquet2 = { path = "parquet2" }
+parquet-format-safe = { path = "parquet-format-safe" }
 libc = "0.2.155"
 rayon = "1.10.0"
 log = "0.4.22"
@@ -31,7 +32,7 @@ parquet = "56.2.0"
 arrow = "56.2.0"
 bytes = "1.11.1"
 tempfile = "3.23.0"
-rand = "0.9.2"
+rand = "=0.9.3"
 criterion = "0.4"
 
 [profile.release]

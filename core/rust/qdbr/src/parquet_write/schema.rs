@@ -24,9 +24,14 @@ pub fn column_type_to_parquet_type(
 ) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
     // Types that don't have null values in QuestDB always use Required repetition.
-    // All other types use Optional so the file-level schema is stable across O3
-    // merges — this avoids a REQUIRED→OPTIONAL transition that would break
-    // copy_row_group (raw-copied pages already have def levels encoded).
+    // All other types — including Symbol — use Optional so the file-level schema
+    // is stable across O3 merges. This avoids a REQUIRED→OPTIONAL transition that
+    // would break copy_row_group (raw-copied pages already have def levels encoded).
+    //
+    // Symbol columns are always Optional even when Column::not_null_hint is true (no
+    // nulls). The `not_null_hint` flag is only a write-time hint that lets the encoder
+    // emit a fast all-ones RLE run for definition levels instead of computing
+    // per-row values. See symbol_to_pages() in symbol.rs.
     let is_notnull_type = matches!(
         column_type.tag(),
         ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
@@ -328,9 +333,12 @@ pub struct Column {
     pub secondary_data: &'static [u8],
     pub symbol_offsets: &'static [u64],
     pub designated_timestamp: bool,
-    /// Passed by QuestDB during writes to indicate that the column contains no null values.
-    /// Currently only Symbol dataType columns support this flag.
-    pub required: bool,
+    /// Hint from QuestDB indicating that the column currently contains no null values.
+    /// Only Symbol columns use this flag. It does NOT affect the parquet schema
+    /// Repetition (symbols are always Optional) — it only lets the encoder take a
+    /// fast path that writes an all-ones RLE run for definition levels instead of
+    /// computing per-row values.
+    pub not_null_hint: bool,
     pub designated_timestamp_ascending: bool,
     pub parquet_encoding_config: ParquetEncodingConfig,
 }
@@ -375,7 +383,7 @@ impl Column {
             ));
         }
 
-        let required = column_type < 0;
+        let not_null_hint = column_type < 0;
         let column_type: ColumnType = (column_type & 0x7FFFFFFF).try_into()?;
 
         let primary_data = if primary_data_ptr.is_null() {
@@ -407,7 +415,7 @@ impl Column {
             secondary_data,
             symbol_offsets,
             designated_timestamp,
-            required,
+            not_null_hint,
             designated_timestamp_ascending,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(parquet_encoding_config),
         })
@@ -422,6 +430,7 @@ pub struct Partition {
 pub fn to_parquet_schema(
     partition: &Partition,
     raw_array_encoding: bool,
+    squash_tracker: i64,
 ) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let parquet_types = partition
         .columns
@@ -470,6 +479,8 @@ pub fn to_parquet_schema(
             ascii,
         });
     }
+
+    qdb_meta.squash_tracker = squash_tracker;
 
     let encoded_qdb_meta = qdb_meta.serialize()?;
     let questdb_keyval = KeyValue::new(QDB_META_KEY.to_string(), encoded_qdb_meta);
@@ -574,6 +585,7 @@ pub fn to_compressions(partition: &Partition) -> Vec<Option<CompressionOptions>>
 /// - Bits 8-15: compression codec id (matches ParquetCompression constants, offset +1)
 /// - Bits 16-23: compression level
 /// - Bit 24: explicit flag (1 = user-specified override, 0 = use defaults)
+/// - Bit 25: bloom filter flag (1 = column should have a bloom filter)
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ParquetEncodingConfig(i32);
 
@@ -583,6 +595,7 @@ const COMPRESSION_MASK: u32 = 0xFF;
 const LEVEL_SHIFT: u32 = 16;
 const LEVEL_MASK: u32 = 0xFF;
 const EXPLICIT_FLAG: u32 = 1 << 24;
+const BLOOM_FILTER_FLAG: u32 = 1 << 25;
 
 impl ParquetEncodingConfig {
     /// Create a config from the raw packed i32 received from JNI.
@@ -612,6 +625,12 @@ impl ParquetEncodingConfig {
     /// Whether the config was explicitly set by the user.
     pub fn is_explicit(self) -> bool {
         (self.0 as u32 & EXPLICIT_FLAG) != 0
+    }
+
+    /// Whether a bloom filter should be written for this column.
+    #[allow(dead_code)]
+    pub fn has_bloom_filter(self) -> bool {
+        (self.0 as u32 & BLOOM_FILTER_FLAG) != 0
     }
 
     /// Extract per-column encoding override.

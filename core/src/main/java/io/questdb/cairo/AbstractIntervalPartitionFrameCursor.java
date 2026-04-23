@@ -91,6 +91,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     @Override
+    public boolean hasIntervalFilter() {
+        return true;
+    }
+
+    @Override
     public StaticSymbolTable newSymbolTable(int columnIndex) {
         return reader.newSymbolTable(columnIndex);
     }

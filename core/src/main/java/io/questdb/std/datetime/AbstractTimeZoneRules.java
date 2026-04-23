@@ -43,6 +43,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     private static final long SAVING_LOCAL_TRANSITIONS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "savingsLocalTransitions");
     private static final long STANDARD_OFFSETS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "standardOffsets");
     private static final long WALL_OFFSETS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "wallOffsets");
+    private final long baseStandardOffset;
     private final IntFunction<Transition[]> computeTransitionsRef;
     private final long cutoffTransition;
     private final long firstWall;
@@ -65,9 +66,10 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         this.computeTransitionsRef = this::computeTransitions;
 
         final long[] savingsInstantTransitions = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITIONS_OFFSET);
+        final ZoneOffset[] stdOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, STANDARD_OFFSETS_OFFSET);
+        baseStandardOffset = stdOffsets[stdOffsets.length - 1].getTotalSeconds() * multiplier;
         if (savingsInstantTransitions.length == 0) {
-            ZoneOffset[] standardOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, STANDARD_OFFSETS_OFFSET);
-            standardOffset = standardOffsets[0].getTotalSeconds() * multiplier;
+            standardOffset = stdOffsets[0].getTotalSeconds() * multiplier;
         } else {
             standardOffset = Long.MIN_VALUE;
             for (int i = 0, n = savingsInstantTransitions.length; i < n; i++) {
@@ -80,18 +82,11 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         this.rules = new TransitionRule[lastRules.length];
         for (int i = 0, n = lastRules.length; i < n; i++) {
             final ZoneOffsetTransitionRule zr = lastRules[i];
-            final int timeDef;
-            switch (zr.getTimeDefinition()) {
-                case UTC:
-                    timeDef = TransitionRule.UTC;
-                    break;
-                case STANDARD:
-                    timeDef = TransitionRule.STANDARD;
-                    break;
-                default:
-                    timeDef = TransitionRule.WALL;
-                    break;
-            }
+            final int timeDef = switch (zr.getTimeDefinition()) {
+                case UTC -> TransitionRule.UTC;
+                case STANDARD -> TransitionRule.STANDARD;
+                default -> TransitionRule.WALL;
+            };
             final TransitionRule tr = new TransitionRule(
                     zr.getOffsetBefore().getTotalSeconds(),
                     zr.getOffsetAfter().getTotalSeconds(),
@@ -221,6 +216,11 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     public long getOffset(long utcEpoch) {
         final int y = getYear(utcEpoch);
         return getOffset(utcEpoch, y);
+    }
+
+    @Override
+    public long getStandardOffset() {
+        return baseStandardOffset;
     }
 
     @Override

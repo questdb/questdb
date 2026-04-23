@@ -6,7 +6,7 @@ use crate::parquet_read::decode::{
     decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
     page_row_count, sliced_page_row_count,
 };
-use crate::parquet_read::page::DataPage;
+use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
     RowGroupStatBuffers, FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT,
@@ -15,7 +15,7 @@ use crate::parquet_read::{
 use nonmax::NonMaxU32;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::FileMetaData;
-use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedPage};
+use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::{cmp, mem::size_of, ptr, slice};
@@ -98,6 +98,47 @@ fn decompress_varchar_slice_data<'a>(
             decompress_sliced_data(page, persistent_bufs.last_mut().unwrap())
         }
     }
+}
+
+/// Decompress a varchar_slice dictionary page into a fresh buffer drawn from `buf_pool`, then
+/// move that buffer into `persistent_bufs` so it lives for the full column-chunk decode.
+///
+/// `RleDictVarcharSliceDecoder` writes raw pointers from the dict buffer into the persistent
+/// `aux_vec`. If multiple dict pages in the same column chunk shared a single backing buffer,
+/// each new dict would overwrite the previous one and invalidate aux entries written by the
+/// data pages decoded against the earlier dict. Allocating a fresh buffer per dict page keeps
+/// every previously-decoded aux pointer valid for the lifetime of the column-chunk decode.
+///
+/// For uncompressed dict pages the bytes already live in the caller-owned mmap region for the
+/// duration of the decode call, so we reuse the existing slice instead of allocating.
+///
+/// # Safety
+/// Pushing a `Vec<u8>` into the outer `persistent_bufs` only moves the `(ptr, len, cap)`
+/// triple; the heap allocation that the inner pointer references stays at the same address.
+/// `persistent_bufs` is moved into `column_chunk_bufs.page_buffers` at the end of the
+/// column-chunk loop, so the returned slice is valid for the full column-chunk decode.
+fn decompress_varchar_slice_dict<'bufs>(
+    dict_page: SlicedDictPage<'_>,
+    persistent_bufs: &'bufs mut Vec<Vec<u8>>,
+    buf_pool: &mut Vec<Vec<u8>>,
+) -> ParquetResult<DictPage<'bufs>> {
+    let num_values = dict_page.num_values;
+    let is_sorted = dict_page.is_sorted;
+    let (ptr, len) = if dict_page.compression == parquet2::compression::Compression::Uncompressed {
+        (dict_page.buffer.as_ptr(), dict_page.buffer.len())
+    } else {
+        let mut buf = buf_pool.pop().unwrap_or_default();
+        buf.clear();
+        buf.resize(dict_page.uncompressed_size, 0);
+        parquet2::compression::decompress(dict_page.compression, dict_page.buffer, &mut buf)?;
+        let ptr = buf.as_ptr();
+        let len = buf.len();
+        persistent_bufs.push(buf);
+        (ptr, len)
+    };
+    // SAFETY: see function-level doc comment.
+    let buffer: &'bufs [u8] = unsafe { std::slice::from_raw_parts(ptr, len) };
+    Ok(DictPage { buffer, num_values, is_sorted })
 }
 
 impl ParquetDecoder {
@@ -372,14 +413,19 @@ impl ParquetDecoder {
             decompress_buffer,
             dict_decompress_buffer,
             varchar_slice_buf_pool,
-            varchar_slice_dict_buf,
+            varchar_slice_page_bufs_scratch: varchar_slice_page_bufs,
+            varchar_slice_dict_bufs_scratch: varchar_slice_dict_bufs,
             ..
         } = ctx;
 
         varchar_slice_buf_pool.append(&mut column_chunk_bufs.page_buffers);
         column_chunk_bufs.reset();
 
-        let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
+        // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
+        // allocation per column chunk. Clear at the top in case a prior call returned
+        // early (the normal end-of-chunk path drains both via append).
+        varchar_slice_page_bufs.clear();
+        varchar_slice_dict_bufs.clear();
 
         for maybe_page in page_reader {
             let sliced_page = maybe_page?;
@@ -387,7 +433,11 @@ impl ParquetDecoder {
             match sliced_page {
                 SlicedPage::Dict(dict_page) => {
                     let page = if is_varchar_slice {
-                        decompress_sliced_dict(dict_page, varchar_slice_dict_buf)?
+                        decompress_varchar_slice_dict(
+                            dict_page,
+                            varchar_slice_dict_bufs,
+                            varchar_slice_buf_pool,
+                        )?
                     } else {
                         decompress_sliced_dict(dict_page, dict_decompress_buffer)?
                     };
@@ -425,7 +475,7 @@ impl ParquetDecoder {
                                 decompress_varchar_slice_data(
                                     &page,
                                     decompress_buffer,
-                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_page_bufs,
                                     varchar_slice_buf_pool,
                                 )?
                             } else {
@@ -459,7 +509,7 @@ impl ParquetDecoder {
                                 decompress_varchar_slice_data(
                                     &page,
                                     decompress_buffer,
-                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_page_bufs,
                                     varchar_slice_buf_pool,
                                 )?
                             } else {
@@ -499,7 +549,7 @@ impl ParquetDecoder {
                             decompress_varchar_slice_data(
                                 &page,
                                 decompress_buffer,
-                                &mut varchar_slice_page_bufs,
+                                varchar_slice_page_bufs,
                                 varchar_slice_buf_pool,
                             )?
                         } else {
@@ -587,13 +637,14 @@ impl ParquetDecoder {
             if !column_chunk_bufs.data_vec.is_empty() {
                 fixup_varchar_slice_spill_pointers(column_chunk_bufs);
             }
-            column_chunk_bufs.page_buffers = varchar_slice_page_bufs;
-            if !varchar_slice_dict_buf.is_empty() {
-                let replacement = varchar_slice_buf_pool.pop().unwrap_or_default();
-                column_chunk_bufs
-                    .page_buffers
-                    .push(std::mem::replace(varchar_slice_dict_buf, replacement));
-            }
+            // Move dict buffers in too — aux entries from RleDictVarcharSliceDecoder hold raw
+            // pointers into them and require them to outlive the column chunk decode.
+            varchar_slice_page_bufs.append(varchar_slice_dict_bufs);
+            // Drain into the destination instead of replacing it: this preserves the hoisted
+            // outer-vec capacity in the scratch field for the next column chunk.
+            column_chunk_bufs
+                .page_buffers
+                .append(varchar_slice_page_bufs);
         }
 
         column_chunk_bufs.refresh_ptrs();
@@ -642,14 +693,19 @@ impl ParquetDecoder {
             decompress_buffer,
             dict_decompress_buffer,
             varchar_slice_buf_pool,
-            varchar_slice_dict_buf,
+            varchar_slice_page_bufs_scratch: varchar_slice_page_bufs,
+            varchar_slice_dict_bufs_scratch: varchar_slice_dict_bufs,
             ..
         } = ctx;
 
         varchar_slice_buf_pool.append(&mut column_chunk_bufs.page_buffers);
         column_chunk_bufs.reset();
 
-        let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
+        // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
+        // allocation per column chunk. Clear at the top in case a prior call returned
+        // early (the normal end-of-chunk path drains both via append).
+        varchar_slice_page_bufs.clear();
+        varchar_slice_dict_bufs.clear();
 
         for maybe_page in page_reader {
             let sliced_page = maybe_page?;
@@ -657,7 +713,11 @@ impl ParquetDecoder {
             match sliced_page {
                 SlicedPage::Dict(dict_page) => {
                     let page = if is_varchar_slice {
-                        decompress_sliced_dict(dict_page, varchar_slice_dict_buf)?
+                        decompress_varchar_slice_dict(
+                            dict_page,
+                            varchar_slice_dict_bufs,
+                            varchar_slice_buf_pool,
+                        )?
                     } else {
                         decompress_sliced_dict(dict_page, dict_decompress_buffer)?
                     };
@@ -672,7 +732,7 @@ impl ParquetDecoder {
                                 decompress_varchar_slice_data(
                                     &page,
                                     decompress_buffer,
-                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_page_bufs,
                                     varchar_slice_buf_pool,
                                 )?
                             } else {
@@ -704,7 +764,7 @@ impl ParquetDecoder {
                             decompress_varchar_slice_data(
                                 &page,
                                 decompress_buffer,
-                                &mut varchar_slice_page_bufs,
+                                varchar_slice_page_bufs,
                                 varchar_slice_buf_pool,
                             )?
                         } else {
@@ -743,13 +803,14 @@ impl ParquetDecoder {
             if !column_chunk_bufs.data_vec.is_empty() {
                 fixup_varchar_slice_spill_pointers(column_chunk_bufs);
             }
-            column_chunk_bufs.page_buffers = varchar_slice_page_bufs;
-            if !varchar_slice_dict_buf.is_empty() {
-                let replacement = varchar_slice_buf_pool.pop().unwrap_or_default();
-                column_chunk_bufs
-                    .page_buffers
-                    .push(std::mem::replace(varchar_slice_dict_buf, replacement));
-            }
+            // Move dict buffers in too — aux entries from RleDictVarcharSliceDecoder hold raw
+            // pointers into them and require them to outlive the column chunk decode.
+            varchar_slice_page_bufs.append(varchar_slice_dict_bufs);
+            // Drain into the destination instead of replacing it: this preserves the hoisted
+            // outer-vec capacity in the scratch field for the next column chunk.
+            column_chunk_bufs
+                .page_buffers
+                .append(varchar_slice_page_bufs);
         }
 
         column_chunk_bufs.refresh_ptrs();
@@ -2245,4 +2306,120 @@ fn compare_signed_be_varlen(a: &[u8], b: &[u8]) -> cmp::Ordering {
         }
     }
     cmp::Ordering::Equal
+}
+
+#[cfg(test)]
+mod multi_dict_tests {
+    use super::*;
+    use parquet2::compression::Compression;
+
+    fn make_uncompressed_dict(buf: &[u8], num_values: usize) -> SlicedDictPage<'_> {
+        SlicedDictPage {
+            buffer: buf,
+            compression: Compression::Uncompressed,
+            uncompressed_size: buf.len(),
+            num_values,
+            is_sorted: false,
+        }
+    }
+
+    fn make_snappy_dict(
+        compressed: &[u8],
+        uncompressed_size: usize,
+        num_values: usize,
+    ) -> SlicedDictPage<'_> {
+        SlicedDictPage {
+            buffer: compressed,
+            compression: Compression::Snappy,
+            uncompressed_size,
+            num_values,
+            is_sorted: false,
+        }
+    }
+
+    fn snappy_compress(input: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        parquet2::compression::compress(
+            parquet2::compression::CompressionOptions::Snappy,
+            input,
+            &mut out,
+        )
+        .unwrap();
+        out
+    }
+
+    /// Verifies that consecutive dict-page decompressions through `decompress_varchar_slice_dict`
+    /// produce buffers that do not alias each other. Aux entries decoded against the first dict
+    /// must remain valid (point at the original bytes) after the second dict is decompressed.
+    ///
+    /// This is the core invariant the multi-dict-page-per-column-chunk reader path depends on.
+    #[test]
+    fn multiple_compressed_dict_pages_use_disjoint_buffers() {
+        // Use distinct payloads so we can detect any cross-buffer corruption.
+        let dict1_raw: Vec<u8> = (b'a'..=b'p').collect();
+        let dict2_raw: Vec<u8> = (b'A'..=b'P').collect();
+
+        let dict1_compressed = snappy_compress(&dict1_raw);
+        let dict2_compressed = snappy_compress(&dict2_raw);
+
+        let mut persistent: Vec<Vec<u8>> = Vec::new();
+        let mut pool: Vec<Vec<u8>> = Vec::new();
+
+        let dict1_page = make_snappy_dict(&dict1_compressed, dict1_raw.len(), 4);
+        let page1 = decompress_varchar_slice_dict(dict1_page, &mut persistent, &mut pool).unwrap();
+        let page1_ptr = page1.buffer.as_ptr();
+        let page1_len = page1.buffer.len();
+        // Capture the bytes via raw pointer so the borrow is released for the next call.
+        // SAFETY: persistent owns the buffer; we only read from it.
+        let page1_view: &[u8] = unsafe { std::slice::from_raw_parts(page1_ptr, page1_len) };
+        assert_eq!(page1_view, dict1_raw.as_slice());
+        let _ = page1;
+
+        let dict2_page = make_snappy_dict(&dict2_compressed, dict2_raw.len(), 4);
+        let page2 = decompress_varchar_slice_dict(dict2_page, &mut persistent, &mut pool).unwrap();
+        assert_eq!(page2.buffer, dict2_raw.as_slice());
+        // dict1 must still be intact after dict2 was decompressed.
+        assert_eq!(page1_view, dict1_raw.as_slice());
+        // The two buffers must live at different addresses.
+        assert_ne!(page1_view.as_ptr(), page2.buffer.as_ptr());
+        // Both buffers must end up persisted.
+        assert_eq!(persistent.len(), 2);
+    }
+
+    /// Uncompressed dict pages reuse the input mmap slice directly, but the buffer pointer
+    /// returned by the helper must still be stable across subsequent helper calls so that the
+    /// reader's `dict` slot remains valid.
+    #[test]
+    fn uncompressed_dict_pages_do_not_alias() {
+        let dict1_bytes: Vec<u8> = b"first dict bytes".to_vec();
+        let dict2_bytes: Vec<u8> = b"second dict bytes!".to_vec();
+
+        let mut persistent: Vec<Vec<u8>> = Vec::new();
+        let mut pool: Vec<Vec<u8>> = Vec::new();
+
+        let page1 = decompress_varchar_slice_dict(
+            make_uncompressed_dict(&dict1_bytes, 1),
+            &mut persistent,
+            &mut pool,
+        )
+        .unwrap();
+        let page1_ptr = page1.buffer.as_ptr();
+        let page1_len = page1.buffer.len();
+        let page1_view: &[u8] = unsafe { std::slice::from_raw_parts(page1_ptr, page1_len) };
+        assert_eq!(page1_view, dict1_bytes.as_slice());
+        let _ = page1;
+
+        let page2 = decompress_varchar_slice_dict(
+            make_uncompressed_dict(&dict2_bytes, 1),
+            &mut persistent,
+            &mut pool,
+        )
+        .unwrap();
+        assert_eq!(page2.buffer, dict2_bytes.as_slice());
+        // dict1's slice still points at the original input.
+        assert_eq!(page1_view, dict1_bytes.as_slice());
+        assert_ne!(page1_view.as_ptr(), page2.buffer.as_ptr());
+        // Uncompressed pages do not allocate, so persistent stays empty.
+        assert!(persistent.is_empty());
+    }
 }
