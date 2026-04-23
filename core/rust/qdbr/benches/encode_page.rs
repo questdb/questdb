@@ -1785,8 +1785,143 @@ fn add_multi_partition_dict_cases(cases: &mut Vec<EncodeBenchCase>, options: Wri
     }
 }
 
+fn add_splice_probe_cases(cases: &mut Vec<EncodeBenchCase>, options: WriteOptions) {
+    const BIG_ROWS: usize = 2_000_000;
+
+    // Nullable int Plain path — int_nullable_segments_to_page.
+    {
+        let data: Vec<BenchIPv4> = make_ipv4_data(BIG_ROWS, 5)
+            .into_iter()
+            .map(BenchIPv4)
+            .collect();
+        let column_type = ColumnType::new(ColumnTypeTag::IPv4, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+        let opts = options;
+        cases.push(EncodeBenchCase {
+            name: "splice_probe_ipv4_plain_2M".to_string(),
+            row_count: BIG_ROWS,
+            encode_fn: Box::new(move || {
+                let column = make_test_column("col", ColumnTypeTag::IPv4, &data);
+                let columns = vec![column];
+                let pages = encode_column_chunk(
+                    Encoding::Plain,
+                    &parquet_type,
+                    &columns,
+                    0,
+                    BIG_ROWS,
+                    opts,
+                    None,
+                )
+                .expect("encode");
+                for page in pages {
+                    black_box(page);
+                }
+            }),
+        });
+    }
+
+    // SIMD multi-view Plain path — simd_multi_view_page.
+    // Four partitions of 500k i64 each forces the multi-view branch.
+    {
+        const PARTS: usize = 4;
+        const PART_ROWS: usize = BIG_ROWS / PARTS;
+        let parts: Vec<Vec<i64>> = (0..PARTS)
+            .map(|_| make_i64_data(PART_ROWS, 5, i64::MIN))
+            .collect();
+        let column_type = ColumnType::new(ColumnTypeTag::Long, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+        let opts = options;
+        cases.push(EncodeBenchCase {
+            name: "splice_probe_long_plain_2M_p4".to_string(),
+            row_count: BIG_ROWS,
+            encode_fn: Box::new(move || {
+                let columns: Vec<Column> = parts
+                    .iter()
+                    .map(|d| make_test_column("col", ColumnTypeTag::Long, d))
+                    .collect();
+                let pages = encode_column_chunk(
+                    Encoding::Plain,
+                    &parquet_type,
+                    &columns,
+                    0,
+                    PART_ROWS,
+                    opts,
+                    None,
+                )
+                .expect("encode");
+                for page in pages {
+                    black_box(page);
+                }
+            }),
+        });
+    }
+
+    // Decimal Plain path — decimal_segments_to_page.
+    {
+        let data: Vec<i32> = make_decimal_i32_data(BIG_ROWS, 5);
+        let column_type = decimal_col_type(9, 2);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+        let opts = options;
+        cases.push(EncodeBenchCase {
+            name: "splice_probe_decimal_i32_plain_2M".to_string(),
+            row_count: BIG_ROWS,
+            encode_fn: Box::new(move || {
+                let column = make_test_column_ct("col", column_type, &data);
+                let columns = vec![column];
+                let pages = encode_column_chunk(
+                    Encoding::Plain,
+                    &parquet_type,
+                    &columns,
+                    0,
+                    BIG_ROWS,
+                    opts,
+                    None,
+                )
+                .expect("encode");
+                for page in pages {
+                    black_box(page);
+                }
+            }),
+        });
+    }
+
+    // FixedLenByteArray Plain path — fixed.rs bytes_to_page_segments.
+    {
+        let data: Vec<[u8; 16]> = make_long128_data(BIG_ROWS, 5);
+        let column_type = ColumnType::new(ColumnTypeTag::Long128, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+        let opts = options;
+        cases.push(EncodeBenchCase {
+            name: "splice_probe_long128_plain_2M".to_string(),
+            row_count: BIG_ROWS,
+            encode_fn: Box::new(move || {
+                let column = make_test_column("col", ColumnTypeTag::Long128, &data);
+                let columns = vec![column];
+                let pages = encode_column_chunk(
+                    Encoding::Plain,
+                    &parquet_type,
+                    &columns,
+                    0,
+                    BIG_ROWS,
+                    opts,
+                    None,
+                )
+                .expect("encode");
+                for page in pages {
+                    black_box(page);
+                }
+            }),
+        });
+    }
+}
+
 fn bench_encode_page(c: &mut Criterion) {
-    let cases = build_cases();
+    let mut cases = build_cases();
+    add_splice_probe_cases(&mut cases, write_options());
     let mut group = c.benchmark_group("encode_page");
 
     for case in cases {

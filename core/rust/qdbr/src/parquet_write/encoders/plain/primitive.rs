@@ -304,10 +304,15 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
     let num_rows = window.row_count;
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);
-    let mut buffer = Vec::with_capacity(size_of::<T>() * num_rows);
     let mut statistics = SimdMaxMin::new();
 
-    for view in std::iter::once(first).chain(remaining) {
+    // Materialize views up front so we can walk them twice without re-running
+    // the unsafe page_chunk_views iterator.
+    let views: Vec<PartitionChunkView<'a, T>> =
+        std::iter::once(first).chain(remaining).collect();
+
+    // Pass 1: build validity bitmap only (no data writes).
+    for view in &views {
         for _ in 0..view.adjusted_column_top {
             validity.push_null();
         }
@@ -316,6 +321,21 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
                 validity.push_null();
             } else {
                 validity.push_present();
+            }
+        }
+    }
+
+    // Encode def levels directly into `buffer` first, then append values.
+    // Avoids an O(page-size) Vec::splice(0..0, ..) memmove after data writes.
+    let mut buffer = Vec::with_capacity(size_of::<T>() * num_rows + 64);
+    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+    let null_count = def_levels.null_count;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+
+    // Pass 2: append present values, updating stats/bloom.
+    for view in &views {
+        for &value in view.slice {
+            if !value.is_null() {
                 if options.write_statistics {
                     statistics.update(value);
                 }
@@ -326,11 +346,6 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
             }
         }
     }
-    let mut def_buf = Vec::new();
-    let def_levels = validity.encode_def_levels(&mut def_buf, options.version)?;
-    let null_count = def_levels.null_count;
-    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
-    buffer.splice(0..0, def_buf);
 
     let stats = if options.write_statistics {
         Some(build_statistics(
@@ -444,14 +459,14 @@ where
     let num_rows = window.row_count;
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);
-    let mut buffer = Vec::with_capacity(size_of::<P>() * num_rows);
     let mut statistics = MaxMin::new();
 
+    // Pass 1: build validity bitmap only (no data writes).
     // SAFETY: Column data originates from JNI/Java memory-mapped buffers.
-    let views = unsafe {
+    let views_pass1 = unsafe {
         page_chunk_views::<T>(columns, first_partition_start, last_partition_end, window)
     };
-    for view in views {
+    for view in views_pass1 {
         for _ in 0..view.adjusted_column_top {
             validity.push_null();
         }
@@ -460,6 +475,25 @@ where
                 validity.push_null();
             } else {
                 validity.push_present();
+            }
+        }
+    }
+
+    // Encode def levels directly into `buffer` first, then append values.
+    // Avoids an O(page-size) Vec::splice(0..0, ..) memmove after data writes.
+    let mut buffer = Vec::with_capacity(size_of::<P>() * num_rows + 64);
+    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+    let null_count = def_levels.null_count;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+
+    // Pass 2: append present values, updating stats/bloom.
+    // SAFETY: Column data originates from JNI/Java memory-mapped buffers.
+    let views_pass2 = unsafe {
+        page_chunk_views::<T>(columns, first_partition_start, last_partition_end, window)
+    };
+    for view in views_pass2 {
+        for &value in view.slice {
+            if !value.is_null() {
                 let pv: P = value.as_();
                 if options.write_statistics {
                     statistics.update_stats(pv);
@@ -471,11 +505,6 @@ where
             }
         }
     }
-    let mut def_buf = Vec::new();
-    let def_levels = validity.encode_def_levels(&mut def_buf, options.version)?;
-    let null_count = def_levels.null_count;
-    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
-    buffer.splice(0..0, def_buf);
 
     let stats = if options.write_statistics {
         Some(build_statistics(
@@ -518,14 +547,14 @@ where
     let num_rows = window.row_count;
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);
-    let mut buffer = Vec::with_capacity(size_of::<T>() * num_rows);
     let mut statistics = MaxMin::new();
 
+    // Pass 1: build validity bitmap only (no data writes).
     // SAFETY: Column data originates from JNI/Java memory-mapped buffers.
-    let views = unsafe {
+    let views_pass1 = unsafe {
         page_chunk_views::<T>(columns, first_partition_start, last_partition_end, window)
     };
-    for view in views {
+    for view in views_pass1 {
         for _ in 0..view.adjusted_column_top {
             validity.push_null();
         }
@@ -534,6 +563,25 @@ where
                 validity.push_null();
             } else {
                 validity.push_present();
+            }
+        }
+    }
+
+    // Encode def levels directly into `buffer` first, then append values.
+    // Avoids an O(page-size) Vec::splice(0..0, ..) memmove after data writes.
+    let mut buffer = Vec::with_capacity(size_of::<T>() * num_rows + 64);
+    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+    let null_count = def_levels.null_count;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+
+    // Pass 2: append present values, updating stats/bloom.
+    // SAFETY: Column data originates from JNI/Java memory-mapped buffers.
+    let views_pass2 = unsafe {
+        page_chunk_views::<T>(columns, first_partition_start, last_partition_end, window)
+    };
+    for view in views_pass2 {
+        for &value in view.slice {
+            if !value.is_null() {
                 if options.write_statistics {
                     statistics.update(value);
                 }
@@ -544,11 +592,6 @@ where
             }
         }
     }
-    let mut def_buf = Vec::new();
-    let def_levels = validity.encode_def_levels(&mut def_buf, options.version)?;
-    let null_count = def_levels.null_count;
-    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
-    buffer.splice(0..0, def_buf);
 
     let statistics = if options.write_statistics {
         let s = &FixedLenStatistics {
