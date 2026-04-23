@@ -4785,16 +4785,15 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN v TYPE BOOLEAN");
             drainWalQueue();
 
-            // INT→BOOLEAN truncates to i8 via static_cast. QuestDB's getBoolean()
-            // only considers byte value 1 as "true"; every other byte is "false".
-            // INT 42 → byte 42 → false. INT NULL (MIN_VALUE) → byte 0 → false.
+            // INT→BOOLEAN: non-zero → true, zero → false, NULL → false.
+            // The Rust decoder normalizes via contract_to_bool (not truncation).
             assertSql(
                     """
                             v\tts
                             true\t2020-01-01T00:00:00.000000Z
                             false\t2020-01-01T06:00:00.000000Z
                             false\t2020-01-01T12:00:00.000000Z
-                            false\t2020-01-01T18:00:00.000000Z
+                            true\t2020-01-01T18:00:00.000000Z
                             false\t2020-01-02T00:00:00.000000Z
                             """,
                     "SELECT * FROM x"

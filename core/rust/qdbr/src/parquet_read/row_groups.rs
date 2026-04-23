@@ -176,6 +176,87 @@ fn post_convert(
          dst) if is_decimal_tag(dst) => {
             convert_fixed_to_decimal(&mut bufs.data_vec, src_tag, dst, to_type.decimal_scale())?;
         }
+        // Int32 → Int64 widening (Byte/Short/Int → Long/Date/Timestamp).
+        // Byte and Short have no null sentinel; Int uses i32::MIN → i64::MIN.
+        (ColumnTypeTag::Byte, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
+            convert_numeric_in_place::<i8, i64>(&mut bufs.data_vec, |_| false, 0i64, |v| v as i64)?;
+        }
+        (ColumnTypeTag::Short, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
+            convert_numeric_in_place::<i16, i64>(&mut bufs.data_vec, |_| false, 0i64, |v| v as i64)?;
+        }
+        (ColumnTypeTag::Int, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
+            convert_numeric_in_place::<i32, i64>(&mut bufs.data_vec, |v| v == nulls::INT, nulls::LONG, |v| v as i64)?;
+        }
+        // Int64 → Int32 narrowing (Long/Date/Timestamp → Byte/Short/Int).
+        // Long null (i64::MIN) maps to dst null sentinel (0 for Byte/Short, i32::MIN for Int).
+        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Byte) => {
+            convert_numeric_in_place::<i64, i8>(&mut bufs.data_vec, |v| v == nulls::LONG, 0i8, |v| v as i8)?;
+        }
+        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Short) => {
+            convert_numeric_in_place::<i64, i16>(&mut bufs.data_vec, |v| v == nulls::LONG, 0i16, |v| v as i16)?;
+        }
+        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Int) => {
+            convert_numeric_in_place::<i64, i32>(&mut bufs.data_vec, |v| v == nulls::LONG, nulls::INT, |v| v as i32)?;
+        }
+        // Int → Float
+        (ColumnTypeTag::Byte, ColumnTypeTag::Float) => {
+            convert_numeric_in_place::<i8, f32>(&mut bufs.data_vec, |_| false, 0.0f32, |v| v as f32)?;
+        }
+        (ColumnTypeTag::Short, ColumnTypeTag::Float) => {
+            convert_numeric_in_place::<i16, f32>(&mut bufs.data_vec, |_| false, 0.0f32, |v| v as f32)?;
+        }
+        (ColumnTypeTag::Int, ColumnTypeTag::Float) => {
+            convert_numeric_in_place::<i32, f32>(&mut bufs.data_vec, |v| v == nulls::INT, f32::NAN, |v| v as f32)?;
+        }
+        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Float) => {
+            convert_numeric_in_place::<i64, f32>(&mut bufs.data_vec, |v| v == nulls::LONG, f32::NAN, |v| v as f32)?;
+        }
+        // Int → Double
+        (ColumnTypeTag::Byte, ColumnTypeTag::Double) => {
+            convert_numeric_in_place::<i8, f64>(&mut bufs.data_vec, |_| false, 0.0f64, |v| v as f64)?;
+        }
+        (ColumnTypeTag::Short, ColumnTypeTag::Double) => {
+            convert_numeric_in_place::<i16, f64>(&mut bufs.data_vec, |_| false, 0.0f64, |v| v as f64)?;
+        }
+        (ColumnTypeTag::Int, ColumnTypeTag::Double) => {
+            convert_numeric_in_place::<i32, f64>(&mut bufs.data_vec, |v| v == nulls::INT, f64::NAN, |v| v as f64)?;
+        }
+        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Double) => {
+            convert_numeric_in_place::<i64, f64>(&mut bufs.data_vec, |v| v == nulls::LONG, f64::NAN, |v| v as f64)?;
+        }
+        // Float → Int (NaN, infinity, and out-of-range map to dst null sentinel)
+        (ColumnTypeTag::Float, ColumnTypeTag::Byte) => {
+            convert_numeric_in_place::<f32, i8>(&mut bufs.data_vec, |v| v.is_nan() || v > i8::MAX as f32 || v < i8::MIN as f32, 0i8, |v| v as i8)?;
+        }
+        (ColumnTypeTag::Float, ColumnTypeTag::Short) => {
+            convert_numeric_in_place::<f32, i16>(&mut bufs.data_vec, |v| v.is_nan() || v > i16::MAX as f32 || v < i16::MIN as f32, 0i16, |v| v as i16)?;
+        }
+        (ColumnTypeTag::Float, ColumnTypeTag::Int) => {
+            convert_numeric_in_place::<f32, i32>(&mut bufs.data_vec, |v| v.is_nan() || v > i32::MAX as f32 || v < i32::MIN as f32, nulls::INT, |v| v as i32)?;
+        }
+        (ColumnTypeTag::Float, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
+            convert_numeric_in_place::<f32, i64>(&mut bufs.data_vec, |v| v.is_nan() || v > i64::MAX as f32 || v < i64::MIN as f32, nulls::LONG, |v| v as i64)?;
+        }
+        // Double → Int (NaN, infinity, and out-of-range map to dst null sentinel)
+        (ColumnTypeTag::Double, ColumnTypeTag::Byte) => {
+            convert_numeric_in_place::<f64, i8>(&mut bufs.data_vec, |v| v.is_nan() || v > i8::MAX as f64 || v < i8::MIN as f64, 0i8, |v| v as i8)?;
+        }
+        (ColumnTypeTag::Double, ColumnTypeTag::Short) => {
+            convert_numeric_in_place::<f64, i16>(&mut bufs.data_vec, |v| v.is_nan() || v > i16::MAX as f64 || v < i16::MIN as f64, 0i16, |v| v as i16)?;
+        }
+        (ColumnTypeTag::Double, ColumnTypeTag::Int) => {
+            convert_numeric_in_place::<f64, i32>(&mut bufs.data_vec, |v| v.is_nan() || v > i32::MAX as f64 || v < i32::MIN as f64, nulls::INT, |v| v as i32)?;
+        }
+        (ColumnTypeTag::Double, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
+            convert_numeric_in_place::<f64, i64>(&mut bufs.data_vec, |v| v.is_nan() || v > i64::MAX as f64 || v < i64::MIN as f64, nulls::LONG, |v| v as i64)?;
+        }
+        // Float ↔ Double (infinity and out-of-range map to dst null sentinel)
+        (ColumnTypeTag::Float, ColumnTypeTag::Double) => {
+            convert_numeric_in_place::<f32, f64>(&mut bufs.data_vec, |v| v.is_nan() || v.is_infinite(), f64::NAN, |v| v as f64)?;
+        }
+        (ColumnTypeTag::Double, ColumnTypeTag::Float) => {
+            convert_numeric_in_place::<f64, f32>(&mut bufs.data_vec, |v| v.is_nan() || v > f32::MAX as f64 || v < f32::MIN as f64, f32::NAN, |v| v as f32)?;
+        }
         _ => return Ok(()),
     }
     bufs.data_ptr = bufs.data_vec.as_mut_ptr();
@@ -239,6 +320,47 @@ fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool) {
         };
         unsafe { ptr.add(i).write_unaligned(converted) };
     }
+}
+
+/// Convert numeric values in place between types of different sizes.
+/// Handles null sentinel mapping (e.g. i64::MIN → f32::NAN, f64::NAN → i32::MIN).
+/// For widening (smaller→larger), iterates backward to avoid overwriting unread data.
+fn convert_numeric_in_place<S, D>(
+    data: &mut AcVec<u8>,
+    is_null: fn(S) -> bool,
+    null_dst: D,
+    convert: fn(S) -> D,
+) -> ParquetResult<()>
+where
+    S: Copy,
+    D: Copy,
+{
+    let src_size = size_of::<S>();
+    let dst_size = size_of::<D>();
+    let n = data.len() / src_size;
+    if n == 0 {
+        return Ok(());
+    }
+    let needed = n * dst_size;
+    if needed > data.len() {
+        data.reserve(needed - data.len())?;
+    }
+    unsafe { data.set_len(needed) };
+    let ptr = data.as_mut_ptr();
+    if dst_size <= src_size {
+        for i in 0..n {
+            let val: S = unsafe { (ptr.add(i * src_size) as *const S).read_unaligned() };
+            let out = if is_null(val) { null_dst } else { convert(val) };
+            unsafe { (ptr.add(i * dst_size) as *mut D).write_unaligned(out) };
+        }
+    } else {
+        for i in (0..n).rev() {
+            let val: S = unsafe { (ptr.add(i * src_size) as *const S).read_unaligned() };
+            let out = if is_null(val) { null_dst } else { convert(val) };
+            unsafe { (ptr.add(i * dst_size) as *mut D).write_unaligned(out) };
+        }
+    }
+    Ok(())
 }
 
 /// Returns true for decimal type tags.
@@ -736,27 +858,41 @@ impl ParquetDecoder {
                 // The output buffer is sized for the target type. The decode dispatch
                 // reads the source physical type from parquet and converts on the fly.
                 match (src_tag, to_column_type.tag()) {
-                    // Integer widening (Timestamp/Date share i64 representation with Long)
-                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Int, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
-                    // Integer/float widening
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int, ColumnTypeTag::Float | ColumnTypeTag::Double) |
-                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Float | ColumnTypeTag::Double) |
-                    (ColumnTypeTag::Float, ColumnTypeTag::Double) |
-                    // Integer narrowing
-                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    // Fixed → fixed widening, narrowing, and reinterpretation
+                    // within the same numeric family (integer↔integer).
+                    // The decode dispatch handles cross-size integer conversions
+                    // (e.g. INT32→i8 for LONG→BYTE).
+                    //
+                    // Int32-family widening/narrowing (Byte/Short/Int share Int32 physical).
+                    // Safe for all encodings: decoder produces target width directly.
+                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int) |
+                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Byte) |
                     (ColumnTypeTag::Int, ColumnTypeTag::Short | ColumnTypeTag::Byte) |
-                    (ColumnTypeTag::Short, ColumnTypeTag::Byte) |
-                    // Float/double narrowing to integer
-                    (ColumnTypeTag::Double, ColumnTypeTag::Float | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp | ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
-                    (ColumnTypeTag::Float, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
-                    // Timestamp/Date ↔ Long (same i64 representation)
-                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Long) |
-                    (ColumnTypeTag::Long, ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Date, ColumnTypeTag::Long) |
-                    (ColumnTypeTag::Long, ColumnTypeTag::Date) |
-                    // Date ↔ Timestamp (needs post-decode scaling)
+                    // Int64-family reinterpretation (Long/Date/Timestamp share Int64 physical).
+                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+                     ColumnTypeTag::Long) |
+                    (ColumnTypeTag::Long, ColumnTypeTag::Timestamp | ColumnTypeTag::Date) => {
+                        column_type = to_column_type;
+                    }
+                    // Cross-physical int (Int32↔Int64), cross-family (int↔float/double, float↔double).
+                    // Keep source type for decode because encoding-specific decoders
+                    // (e.g. DeltaBinaryPacked) cannot cross physical type boundaries.
+                    // post_convert handles the numeric conversion afterward.
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int,
+                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int) |
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
+                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+                     ColumnTypeTag::Float | ColumnTypeTag::Double) |
+                    (ColumnTypeTag::Float | ColumnTypeTag::Double,
+                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
+                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Float, ColumnTypeTag::Double) |
+                    (ColumnTypeTag::Double, ColumnTypeTag::Float) => {
+                        // Keep column_type as source; post_convert converts.
+                    }
+                    // Date ↔ Timestamp (needs post-decode scaling in post_convert)
                     (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) |
                     (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) |
                     // Timestamp nano ↔ micro (needs post-decode scaling)
@@ -983,27 +1119,41 @@ impl ParquetDecoder {
             let src_tag = column_type.tag();
             if column_type != to_column_type {
                 match (src_tag, to_column_type.tag()) {
-                    // Integer widening (Timestamp/Date share i64 representation with Long)
-                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Int, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
-                    // Integer/float widening
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int, ColumnTypeTag::Float | ColumnTypeTag::Double) |
-                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Float | ColumnTypeTag::Double) |
-                    (ColumnTypeTag::Float, ColumnTypeTag::Double) |
-                    // Integer narrowing
-                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    // Fixed → fixed widening, narrowing, and reinterpretation
+                    // within the same numeric family (integer↔integer).
+                    // The decode dispatch handles cross-size integer conversions
+                    // (e.g. INT32→i8 for LONG→BYTE).
+                    //
+                    // Int32-family widening/narrowing (Byte/Short/Int share Int32 physical).
+                    // Safe for all encodings: decoder produces target width directly.
+                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int) |
+                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Byte) |
                     (ColumnTypeTag::Int, ColumnTypeTag::Short | ColumnTypeTag::Byte) |
-                    (ColumnTypeTag::Short, ColumnTypeTag::Byte) |
-                    // Float/double narrowing to integer
-                    (ColumnTypeTag::Double, ColumnTypeTag::Float | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp | ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
-                    (ColumnTypeTag::Float, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
-                    // Timestamp/Date ↔ Long (same i64 representation)
-                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Long) |
-                    (ColumnTypeTag::Long, ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Date, ColumnTypeTag::Long) |
-                    (ColumnTypeTag::Long, ColumnTypeTag::Date) |
-                    // Date ↔ Timestamp (needs post-decode scaling)
+                    // Int64-family reinterpretation (Long/Date/Timestamp share Int64 physical).
+                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+                     ColumnTypeTag::Long) |
+                    (ColumnTypeTag::Long, ColumnTypeTag::Timestamp | ColumnTypeTag::Date) => {
+                        column_type = to_column_type;
+                    }
+                    // Cross-physical int (Int32↔Int64), cross-family (int↔float/double, float↔double).
+                    // Keep source type for decode because encoding-specific decoders
+                    // (e.g. DeltaBinaryPacked) cannot cross physical type boundaries.
+                    // post_convert handles the numeric conversion afterward.
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int,
+                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int) |
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
+                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+                     ColumnTypeTag::Float | ColumnTypeTag::Double) |
+                    (ColumnTypeTag::Float | ColumnTypeTag::Double,
+                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
+                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Float, ColumnTypeTag::Double) |
+                    (ColumnTypeTag::Double, ColumnTypeTag::Float) => {
+                        // Keep column_type as source; post_convert converts.
+                    }
+                    // Date ↔ Timestamp (needs post-decode scaling in post_convert)
                     (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) |
                     (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) |
                     // Timestamp nano ↔ micro (needs post-decode scaling)

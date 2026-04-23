@@ -245,6 +245,65 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFixedWithAllEncodings() throws Exception {
+        assertMemoryLeak(() -> {
+            // Encoding-specific decoders (e.g. delta_binary_packed) cannot produce
+            // cross-family output. The dispatch must keep the source type during decode
+            // and convert afterward via post_convert.
+            String intValues = """
+                    (1, '2024-01-01T00:00:01.000000Z'),
+                    (42, '2024-01-01T00:00:02.000000Z'),
+                    (-1, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            String floatValues = """
+                    (1.5, '2024-01-01T00:00:01.000000Z'),
+                    (0.0, '2024-01-01T00:00:02.000000Z'),
+                    (-1.5, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            String dateValues = """
+                    ('2020-06-15T12:00:00.000Z', '2024-01-01T00:00:01.000000Z'),
+                    ('1970-01-01T00:00:00.000Z', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""";
+            String tsValues = """
+                    ('2020-06-15T12:30:00.123456Z', '2024-01-01T00:00:01.000000Z'),
+                    ('1970-01-01T00:00:00.000000Z', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""";
+
+            // Integer sources support default, plain, rle_dictionary, delta_binary_packed.
+            String[] intEncodings = {"default", "plain", "rle_dictionary", "delta_binary_packed"};
+            String[] intTargets = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "DATE", "TIMESTAMP"};
+            for (String encoding : intEncodings) {
+                for (String source : new String[]{"BYTE", "SHORT", "INT", "LONG"}) {
+                    for (String target : intTargets) {
+                        if (source.equals(target)) continue;
+                        assertConversionWithEncoding(source, target, intValues, encoding);
+                    }
+                }
+                for (String target : intTargets) {
+                    if (!"DATE".equals(target)) {
+                        assertConversionWithEncoding("DATE", target, dateValues, encoding);
+                    }
+                    if (!"TIMESTAMP".equals(target)) {
+                        assertConversionWithEncoding("TIMESTAMP", target, tsValues, encoding);
+                    }
+                }
+            }
+
+            // Float sources support default, plain, rle_dictionary (delta_binary_packed is integer-only).
+            String[] floatEncodings = {"default", "plain", "rle_dictionary"};
+            String[] floatTargets = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "DATE", "TIMESTAMP"};
+            for (String encoding : floatEncodings) {
+                for (String source : new String[]{"FLOAT", "DOUBLE"}) {
+                    for (String target : floatTargets) {
+                        if (source.equals(target)) continue;
+                        assertConversionWithEncoding(source, target, floatValues, encoding);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFloatToOtherFixedTypes() throws Exception {
         assertMemoryLeak(() -> {
             // Float-to-integer conversions truncate the fractional part.
@@ -522,17 +581,47 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
             // SYMBOL→Fixed: the pre-pass converts parquet→native,
             // then normal Symbol→X conversion runs (parses symbol string to target).
-            String numericValues = """
+            String smallIntValues = """
                     ('42', '2024-01-01T00:00:01.000000Z'),
                     ('0', '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""";
-            assertConversion("SYMBOL", "INT", numericValues);
-            assertConversion("SYMBOL", "LONG", numericValues);
-            assertConversion("SYMBOL", "DOUBLE", numericValues);
+                    ('-1', '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("SYMBOL", "BYTE", smallIntValues);
+            assertConversion("SYMBOL", "SHORT", smallIntValues);
+            assertConversion("SYMBOL", "INT", smallIntValues);
+            assertConversion("SYMBOL", "LONG", smallIntValues);
+
+            String floatValues = """
+                    ('3.14', '2024-01-01T00:00:01.000000Z'),
+                    ('0.0', '2024-01-01T00:00:02.000000Z'),
+                    ('-1.5', '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("SYMBOL", "FLOAT", floatValues);
+            assertConversion("SYMBOL", "DOUBLE", floatValues);
 
             assertConversion("SYMBOL", "BOOLEAN", """
                     ('true', '2024-01-01T00:00:01.000000Z'),
                     ('false', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            assertConversion("SYMBOL", "CHAR", """
+                    ('a', '2024-01-01T00:00:01.000000Z'),
+                    ('Z', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            assertConversion("SYMBOL", "IPV4", """
+                    ('192.168.1.1', '2024-01-01T00:00:01.000000Z'),
+                    ('10.0.0.1', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            assertConversion("SYMBOL", "UUID", """
+                    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                    ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            assertConversion("SYMBOL", "DATE", """
+                    ('2020-06-15T12:00:00.000Z', '2024-01-01T00:00:01.000000Z'),
+                    ('1970-01-01T00:00:00.000Z', '2024-01-01T00:00:02.000000Z'),
                     (NULL, '2024-01-01T00:00:03.000000Z')""");
 
             assertConversion("SYMBOL", "TIMESTAMP", """
@@ -574,6 +663,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * </ol>
      */
     private void assertConversion(String sourceType, String targetType, String values) throws Exception {
+        assertConversionWithEncoding(sourceType, targetType, values, null);
+    }
+
+    private void assertConversionWithEncoding(String sourceType, String targetType, String values, String encoding) throws Exception {
         try {
             execute("CREATE TABLE nt (val " + sourceType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE pt (val " + sourceType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -581,6 +674,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             execute("INSERT INTO nt VALUES " + values);
             execute("INSERT INTO pt VALUES " + values);
             drainWalQueue();
+
+            if (encoding != null) {
+                execute("ALTER TABLE pt ALTER COLUMN val SET PARQUET(" + encoding + ")");
+                drainWalQueue();
+            }
 
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();

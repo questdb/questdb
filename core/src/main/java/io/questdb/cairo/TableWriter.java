@@ -63,7 +63,6 @@ import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.ConvertersNative;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.PurgingOperator;
@@ -1830,14 +1829,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     decodeType = (srcTag == ColumnType.VARCHAR)
                             ? ColumnType.VARCHAR_SLICE : parquetColumnType;
                 } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
-                    decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR_SLICE;
-                } else if (!ColumnType.isVarSize(srcTag) && !ColumnType.isVarSize(dstTag)
-                        && !ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)
-                        && srcTag != dstTag) {
-                    // Fixed→fixed with different types (e.g., FLOAT in parquet, TIMESTAMP in table).
-                    // Decode as source type; Java converts via fixedToFixed afterward.
-                    decodeType = parquetColumnType;
+                    if (ColumnType.isVarSize(dstTag)) {
+                        // Symbol→var: use native format (VARCHAR or STRING), not VARCHAR_SLICE.
+                        // VARCHAR_SLICE aux entries contain in-memory pointers that are invalid on disk.
+                        decodeType = tableColumnType;
+                    } else {
+                        // Symbol→fixed: decode as VARCHAR_SLICE, batch-convert to target below.
+                        decodeType = ColumnType.VARCHAR_SLICE;
+                    }
                 } else {
+                    // Fixed→fixed with different types (e.g., FLOAT in parquet, TIMESTAMP in table):
+                    // Rust decodes in source type and post_convert handles the conversion.
                     decodeType = tableColumnType;
                 }
 
@@ -1974,19 +1976,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             } finally {
                                 Unsafe.free(fixBuf, fixSize, MemoryTag.NATIVE_DEFAULT);
                             }
-                        } else if (srcTag2 != dstTag2 && !ColumnType.isVarSize(srcTag2) && !ColumnType.isVarSize(dstTag2)
-                                && !ColumnType.isSymbol(srcTag2) && !ColumnType.isSymbol(dstTag2)) {
-                            // Fixed→fixed with different types: convert decoded source to target.
-                            long fixSize = rowGroupRowCount * ColumnType.sizeOf(tableColumnType);
-                            long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_DEFAULT);
-                            try {
-                                ConvertersNative.fixedToFixed(srcDataPtr, parquetColumnType, fixBuf, tableColumnType, rowGroupRowCount);
-                                appendBuffer(dstFixFd, fixBuf, fixSize);
-                            } finally {
-                                Unsafe.free(fixBuf, fixSize, MemoryTag.NATIVE_DEFAULT);
-                            }
                         } else {
-                            // Same type or fixed→var (Rust post_convert already handled it).
+                            // Same type or fixed→fixed conversion (Rust post_convert already handled it).
                             appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
                         }
                     }
