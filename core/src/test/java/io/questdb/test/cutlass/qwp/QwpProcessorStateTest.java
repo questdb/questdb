@@ -954,6 +954,55 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitConsumerNegativeSeqTxnIsIgnored() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // The consumer receives a negative seqTxn (e.g., non-WAL writer).
+                // recordCommittedTable must ignore it — no entry in pendingAckSeqTxns.
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{-1L});
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitConsumerThrowRejectsState() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Install a fake that invokes the consumer successfully, then throws.
+                // This simulates a commitAll where some tables commit before one fails.
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{10L});
+                fake.queueCommitThrow(CairoException.nonCritical().put("consumer kaboom"));
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                Assert.assertFalse("state must be rejected after consumer throw", state.isOk());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testDoubleCloseIsSafe() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -1966,11 +2015,6 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
 
         @Override
         public void commitAll(CommittedTxnConsumer consumer) throws Throwable {
-            if (commitThrow != null) {
-                Throwable t = commitThrow;
-                commitThrow = null;
-                throw t;
-            }
             if (consumer != null && commitTableNames != null) {
                 for (int i = 0; i < commitTableNames.length; i++) {
                     consumer.accept(commitTableNames[i], commitDirNames[i], commitSeqTxns[i]);
@@ -1979,6 +2023,11 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             commitTableNames = null;
             commitDirNames = null;
             commitSeqTxns = null;
+            if (commitThrow != null) {
+                Throwable t = commitThrow;
+                commitThrow = null;
+                throw t;
+            }
         }
 
         void queueCommit(String[] tableNames, String[] dirNames, long[] seqTxns) {

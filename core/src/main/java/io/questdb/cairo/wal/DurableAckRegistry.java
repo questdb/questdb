@@ -44,7 +44,7 @@ public interface DurableAckRegistry {
      * registry, or durable-ack tracking is not enabled on this server.
      *
      * @param tableDirName the directory name of the table (matches
-     *                     {@code TableToken.getDirNameUtf8()})
+     *                     {@code TableToken.getDirName()})
      * @return the highest durably-uploaded seqTxn, or -1
      */
     long getDurablyUploadedSeqTxn(CharSequence tableDirName);
