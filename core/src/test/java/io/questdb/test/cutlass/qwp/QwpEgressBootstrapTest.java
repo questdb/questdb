@@ -571,6 +571,72 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     /**
+     * Regression: a per-connection schema-cache poisoning bug in
+     * {@link QwpEgressUpgradeProcessor}'s retry-once loop. Pre-fix,
+     * {@code findOrAllocateSchemaId()} was called inside the retry loop
+     * BEFORE {@code getCursor()}. When cursor acquisition threw
+     * {@code TableReferenceOutOfDateException} (e.g. because the cached
+     * factory was compiled against a now-dropped table), the catch block
+     * freed the factory but did NOT remove the fingerprint from the
+     * per-connection schema cache. The retry attempt then saw the
+     * fingerprint as "reuse" and shipped the first batch in reference
+     * mode against an id the client had never registered; the client
+     * decoder rejected with "schema id N not registered on this connection".
+     * Post-fix: schema-id allocation moved AFTER the retry loop, so a
+     * failed cursor acquisition can never poison the per-connection cache.
+     * <p>
+     * Trigger: seed connection runs a SELECT (server caches the factory
+     * in {@code selectCache} by SQL text); DROP+CREATE the table under
+     * the same name with the same shape (factory becomes stale); a fresh
+     * connection runs the same SELECT -- {@code selectCache.poll} returns
+     * the stale factory, {@code getCursor} throws, and pre-fix the retry
+     * would ship reference mode against an id the client never registered.
+     * The query cache must be enabled; the test default is off and would
+     * hide the bug because the no-op cache never returns a stale factory.
+     */
+    @Test
+    public void testDropRecreateDoesNotPoisonSchemaCache() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_QUERY_CACHE_ENABLED.getEnvVarName(), "true"
+            )) {
+                final String table = "schema_cache_retry_t";
+                final String createSql = "CREATE TABLE " + table
+                        + "(v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                final String insertSql = "INSERT INTO " + table + " VALUES (1, 1::TIMESTAMP)";
+                final String selectSql = "SELECT v FROM " + table;
+
+                // Seed: create the table and run the SELECT once so the
+                // server compiles a RecordCursorFactory and parks it in
+                // selectCache on stream end.
+                serverMain.execute(createSql);
+                serverMain.execute(insertSql);
+                serverMain.awaitTable(table);
+                try (QwpQueryClient seed = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                    seed.connect();
+                    assertSelectReturnsOneRow(seed, selectSql, "seed");
+                }
+
+                // Trigger: DROP+CREATE (same name + shape -> new internal table
+                // id; cached factory is now stale) then run the same SELECT on
+                // a fresh connection. Iterate so a regression reproduces even
+                // on the rare "lucky" first cycle after a drop.
+                final int cycles = 5;
+                for (int i = 0; i < cycles; i++) {
+                    serverMain.execute("DROP TABLE " + table);
+                    serverMain.execute(createSql);
+                    serverMain.execute(insertSql);
+                    serverMain.awaitTable(table);
+                    try (QwpQueryClient trigger = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                        trigger.connect();
+                        assertSelectReturnsOneRow(trigger, selectSql, "trigger-" + i);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
      * C5: empty result set must still produce one RESULT_BATCH (with 0 rows + the schema)
      * followed by RESULT_END. Otherwise the client never sees the schema and onEnd would
      * never fire. Verifies the empty-cursor branch in {@code streamResults}.
@@ -1420,11 +1486,6 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
         });
     }
 
-    // testTextFrameRejectsConnection deleted: it never sent a TEXT frame. The real
-    // close-on-malformed-frame coverage lives in testFragmentedBinaryFrameRejectsConnection.
-    // CANCEL / CREDIT decoder coverage lives in QwpEgressRequestDecoderTest#testCancelBody
-    // and #testCreditBody. End-to-end CANCEL / CREDIT client emission is a Phase 2 item.
-
     /**
      * Back-pressure / resume state machine. Streams ~100 000 8-byte rows (~800 KB) while
      * the client handler deliberately sleeps between batches. The server's TCP send
@@ -1493,6 +1554,11 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
             }
         });
     }
+
+    // testTextFrameRejectsConnection deleted: it never sent a TEXT frame. The real
+    // close-on-malformed-frame coverage lives in testFragmentedBinaryFrameRejectsConnection.
+    // CANCEL / CREDIT decoder coverage lives in QwpEgressRequestDecoderTest#testCancelBody
+    // and #testCreditBody. End-to-end CANCEL / CREDIT client emission is a Phase 2 item.
 
     @Test
     public void testSqlSyntaxError() throws Exception {
@@ -1824,6 +1890,32 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                 Assert.assertNull(rows[1][1]);
             }
         });
+    }
+
+    private static void assertSelectReturnsOneRow(QwpQueryClient client, String sql, String label) {
+        final long[] sum = {0};
+        final long[] rows = {0};
+        client.execute(sql, new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                int n = batch.getRowCount();
+                for (int r = 0; r < n; r++) {
+                    sum[0] += batch.getLongValue(0, r);
+                }
+                rows[0] += n;
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail(label + ": SELECT failed (status=" + status + "): " + message);
+            }
+        });
+        Assert.assertEquals(label + ": row count", 1L, rows[0]);
+        Assert.assertEquals(label + ": sum of v", 1L, sum[0]);
     }
 
     private void runBatchBoundary(int totalRows) throws Exception {
