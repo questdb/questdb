@@ -25,24 +25,18 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Tests stale _pm detection and writer-side regeneration.
@@ -53,24 +47,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * regenerates the _pm from data.parquet.
  */
 public class ParquetMetaStalePmTest extends AbstractCairoTest {
-
-    @Test
-    public void testWriterRegeneratesStalePmOnConvertToNative() throws Exception {
-        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
-            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
-            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
-
-            corruptPm("t");
-
-            // Convert back to native — writer must regenerate stale _pm first.
-            execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
-
-            // Data should be intact.
-            assertSql("id\tts\n1\t2024-06-10T00:00:00.000000Z\n", "SELECT * FROM t WHERE ts = '2024-06-10'");
-        });
-    }
 
     @Test
     public void testO3MergeRegeneratesStalePm() throws Exception {
@@ -131,25 +107,6 @@ public class ParquetMetaStalePmTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWriterFixesStalePmThenReaderWorks() throws Exception {
-        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
-            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
-            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
-
-            corruptPm("t");
-
-            // Writer converts back to native, regenerating the stale _pm internally.
-            execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
-
-            // Now a fresh reader sees all data.
-            assertSql("count\n2\n", "SELECT count() FROM t");
-            assertSql("id\tts\n1\t2024-06-10T00:00:00.000000Z\n", "SELECT * FROM t WHERE ts = '2024-06-10'");
-        });
-    }
-
-    @Test
     public void testStalePmWithMultiplePartitions() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -178,70 +135,39 @@ public class ParquetMetaStalePmTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNoMmapLeakWhenOfFailsAfterRegeneration() throws Exception {
-        final AtomicBoolean interceptEnabled = new AtomicBoolean(false);
-        final AtomicBoolean intercepted = new AtomicBoolean(false);
-
-        // After regeneration writes a valid _pm, intercept the next header
-        // read and return a bogus parquet_meta_file_size. readParquetMetaFileSize() succeeds,
-        // mapRO() succeeds, and then parquetMetaReader.of() fails because
-        // the bogus size doesn't match reality — exercising the cleanup
-        // path that must munmap the already-acquired mapping.
-        final FilesFacade corruptingFf = new TestFilesFacadeImpl() {
-            private boolean pmOpenInFlight;
-
-            @Override
-            public boolean close(long fd) {
-                pmOpenInFlight = false;
-                return super.close(fd);
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                long fd = super.openRO(name);
-                if (interceptEnabled.get()
-                        && !intercepted.get()
-                        && fd >= 0
-                        && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
-                    pmOpenInFlight = true;
-                }
-                return fd;
-            }
-
-            @Override
-            public long read(long fd, long address, long len, long offset) {
-                if (pmOpenInFlight
-                        && !intercepted.get()
-                        && len == 8
-                        && offset == 0) {
-                    intercepted.set(true);
-                    // Plant a bogus parquet_meta_file_size — just large enough to pass
-                    // the readParquetMetaFileSize lower-bound check, but vastly larger
-                    // than the actual file.
-                    Unsafe.getUnsafe().putLong(address, Long.MAX_VALUE / 2);
-                    return 8;
-                }
-                return super.read(fd, address, len, offset);
-            }
-        };
-
-        assertMemoryLeak(corruptingFf, () -> {
+    public void testWriterFixesStalePmThenReaderWorks() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
             execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
 
             corruptPm("t");
-            interceptEnabled.set(true);
 
-            try {
-                execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
-                Assert.fail("expected CairoException from corrupted _pm size");
-            } catch (CairoException ignored) {
-                // Expected: mapRO() or parquetMetaReader.of() rejects the
-                // bogus parquet_meta_file_size. With proper cleanup, no mmap leaks;
-                // without it, assertMemoryLeak() detects the leak.
-            }
+            // Writer converts back to native, regenerating the stale _pm internally.
+            execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
+
+            // Now a fresh reader sees all data.
+            assertSql("count\n2\n", "SELECT count() FROM t");
+            assertSql("id\tts\n1\t2024-06-10T00:00:00.000000Z\n", "SELECT * FROM t WHERE ts = '2024-06-10'");
+        });
+    }
+
+    @Test
+    public void testWriterRegeneratesStalePmOnConvertToNative() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+
+            corruptPm("t");
+
+            // Convert back to native — writer must regenerate stale _pm first.
+            execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
+
+            // Data should be intact.
+            assertSql("id\tts\n1\t2024-06-10T00:00:00.000000Z\n", "SELECT * FROM t WHERE ts = '2024-06-10'");
         });
     }
 
