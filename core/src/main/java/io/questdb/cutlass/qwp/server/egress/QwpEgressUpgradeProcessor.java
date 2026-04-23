@@ -749,12 +749,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long payload,
             int length
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        QwpEgressRequestDecoder decoder = state.getDecoder();
         long requestId = 0;
-        boolean streamingHandedOff = false;
-        RecordCursorFactory factory = null;
-        RecordCursor cursor = null;
-        PageFrameCursor pageFrameCursor = null;
         // Phase 1 supports a single in-flight query per connection. A second QUERY_REQUEST
         // arriving while the first is still streaming (e.g., the send side is parked on
         // PeerIsSlowToReadException) would overwrite streamingFactory/streamingCursor in
@@ -769,6 +764,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     "Phase 1 egress supports a single in-flight query per connection");
             return;
         }
+
+        QwpEgressRequestDecoder decoder = state.getDecoder();
+        boolean streamingHandedOff = false;
+        RecordCursorFactory factory = null;
+        RecordCursor cursor = null;
+        PageFrameCursor pageFrameCursor = null;
         try {
             decoder.decodeQueryRequest(payload, length, state.getBindVariableService());
             requestId = decoder.requestId;
