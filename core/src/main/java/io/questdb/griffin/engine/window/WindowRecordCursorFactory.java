@@ -175,6 +175,24 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
+     * Drives live view Phase 5 partition-state eviction across all window functions.
+     * Each partitioned function sheds accumulator entries whose last-seen row
+     * timestamp has fallen below {@code cutoffTs}. Non-partitioned window functions
+     * treat this as a no-op.
+     * <p>
+     * Called by the refresh job after {@code applyRetention} has advanced the
+     * retention cutoff, when the view's state horizon is not below the cutoff
+     * (for an expanded-horizon any-unbounded view the accumulator legitimately
+     * reflects pre-retention rows; eviction would discard work the disk-read
+     * replay paid for).
+     */
+    public void evictStalePartitionState(long cutoffTs) {
+        for (int i = 0, n = windowFunctions.size(); i < n; i++) {
+            windowFunctions.getQuick(i).evictStalePartitionState(cutoffTs);
+        }
+    }
+
+    /**
      * Clears all window functions to their initial state without freeing native
      * resources. Called by the live view refresh job before a full recompute so
      * that the subsequent bootstrap starts from a clean slate.

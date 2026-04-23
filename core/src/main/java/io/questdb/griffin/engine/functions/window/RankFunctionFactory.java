@@ -98,6 +98,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                         windowContext.getPartitionByKeyTypes(),
                         windowContext.getPartitionByRecord(),
                         windowContext.getPartitionBySink(),
+                        windowContext.getTimestampIndex(),
                         configuration,
                         false,
                         NAME);
@@ -333,23 +334,39 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private final String name;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
+        private final int tsColumnIndex;
+        // Value-layout index of the lastActivityTs slot (live view Phase 5). Lives at
+        // chainTypeIndex + 2, i.e. one slot past the existing rank/count pair.
         private int chainTypeIndex;
         private int columnIndex;
+        private int lastActivityTsValueIndex;
         private Map map;
+        private ArrayColumnTypes mapValueTypes;
         private long rank;
         private ObjList<DirectIntList> rankMaps;
         private RecordComparator recordComparator;
         private RecordValueSink recordValueSink;
+        private long sizeAfterLastEvict;
 
         public RankOverPartitionFunction(ColumnTypes keyColumnTypes,
                                          VirtualRecord partitionByRecord,
                                          RecordSink partitionBySink,
+                                         int tsColumnIndex,
                                          CairoConfiguration configuration,
                                          boolean dense,
                                          String name) {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
-            this.keyColumnTypes = keyColumnTypes;
+            // The WindowContext's partitionByKeyTypes is a transient buffer owned by
+            // SqlCodeGenerator that gets cleared on every window function compile. Phase 5
+            // partition eviction needs to allocate a scratch Map with the same key shape
+            // after compilation has moved on, so take our own copy.
+            ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+            for (int i = 0, n = keyColumnTypes.getColumnCount(); i < n; i++) {
+                keyTypesCopy.add(keyColumnTypes.getColumnType(i));
+            }
+            this.keyColumnTypes = keyTypesCopy;
+            this.tsColumnIndex = tsColumnIndex;
             this.configuration = configuration;
             this.dense = dense;
             this.name = name;
@@ -384,6 +401,31 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             recordValueSink.copy(record, mapValue);
             mapValue.putLong(chainTypeIndex, rank);
             mapValue.putLong(chainTypeIndex + 1, count + 1);
+            // Track per-key last-activity-ts for live view retention-driven eviction.
+            // tsColumnIndex is -1 when the window is defined over a source with no
+            // designated timestamp; writing Long.MIN_VALUE keeps those keys below any
+            // eviction cutoff, so they never get evicted (live views always have one).
+            mapValue.putLong(lastActivityTsValueIndex,
+                    tsColumnIndex >= 0 ? record.getTimestamp(tsColumnIndex) : Long.MIN_VALUE);
+        }
+
+        @Override
+        public void evictStalePartitionState(long cutoffTs) {
+            long size = map.size();
+            if (size == 0 || size < sizeAfterLastEvict * 2) {
+                return;
+            }
+            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+            try {
+                scratch.setKeyCapacity((int) Math.min(size, Integer.MAX_VALUE));
+                PartitionStateEvictor.rebuildKeeping(map, scratch, lastActivityTsValueIndex, cutoffTs);
+                Misc.free(map);
+                map = scratch;
+                scratch = null;
+                sizeAfterLastEvict = map.size();
+            } finally {
+                Misc.free(scratch);
+            }
         }
 
         @Override
@@ -430,8 +472,15 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 recordValueSink = RecordValueSinkFactory.getInstance(sqlGenerator.getAsm(), chainTypes, entityColumnFilter);
                 this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
-                chainTypes.add(ColumnType.LONG);
-                chainTypes.add(ColumnType.LONG);
+                chainTypes.add(ColumnType.LONG); // rank
+                chainTypes.add(ColumnType.LONG); // count
+                chainTypes.add(ColumnType.LONG); // lastActivityTs (live view Phase 5)
+                lastActivityTsValueIndex = chainTypeIndex + 2;
+                // Caller reuses the chainTypes buffer across window functions in the
+                // same query; take our own copy so {@link #evictStalePartitionState}
+                // can allocate a scratch Map with the exact same value layout.
+                mapValueTypes = new ArrayColumnTypes();
+                mapValueTypes.addAll(chainTypes);
                 this.map = MapFactory.createUnorderedMap(
                         configuration,
                         keyColumnTypes,
@@ -480,6 +529,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 map.reopen();
             }
             rank = 0;
+            sizeAfterLastEvict = 0;
         }
 
         @Override
@@ -487,6 +537,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             Misc.free(map);
             Misc.freeObjListAndKeepObjects(rankMaps);
             rank = 0;
+            sizeAfterLastEvict = 0;
         }
 
         @Override
@@ -509,6 +560,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             super.toTop();
             Misc.clear(map);
             rank = 0;
+            sizeAfterLastEvict = 0;
         }
     }
 

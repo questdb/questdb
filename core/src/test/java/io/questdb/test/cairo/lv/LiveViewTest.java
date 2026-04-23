@@ -461,6 +461,73 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionStateEvictionResetsRowNumberAfterRetention() throws Exception {
+        // Phase 5 semantic: once a partition key's rows all fall out of the retained
+        // window, its row_number accumulator state is discarded. A later row for the
+        // same key is treated as fresh (rn=1) rather than continuing the old counter.
+        // Matches the bounded-backfill semantic already established by Phase 1.
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_evict LAG 1s RETENTION 10s AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+        drainLiveViewQueue();
+
+        // Phase A: seed AAPL with three rows. AAPL's accumulator holds rn=1,2,3.
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:00:02.000000Z')," +
+                " ('AAPL', 102.0, '2024-01-01T00:00:05.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // Phase B: advance maxTsSeen by 20s with GOOG rows. Retention cutoff becomes
+        // 00:00:25 - 10s = 00:00:15, which drops every AAPL row from the view. With
+        // Phase 5 in place, AAPL's partition entry (lastActivityTs=00:00:05 < 00:00:15)
+        // is evicted from the row_number map during this refresh.
+        execute("INSERT INTO trades VALUES" +
+                " ('GOOG', 2000.0, '2024-01-01T00:00:20.000000Z')," +
+                " ('GOOG', 2001.0, '2024-01-01T00:00:25.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "GOOG\t2000.0\t2024-01-01T00:00:20.000000Z\t1\n" +
+                        "GOOG\t2001.0\t2024-01-01T00:00:25.000000Z\t2\n",
+                "SELECT * FROM live_evict",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // Phase C: re-insert AAPL. Because Phase 5 evicted AAPL's accumulator in Phase B,
+        // the new row is treated as a brand-new partition and rn restarts at 1. Without
+        // eviction the value would be 4, continuing from the discarded historical count.
+        // The subsequent retention cycle drops GOOG's earliest row (00:00:20 <= cutoff
+        // 00:00:30 - 10s = 00:00:20), leaving only the newer GOOG row and the fresh AAPL.
+        execute("INSERT INTO trades VALUES ('AAPL', 200.0, '2024-01-01T00:00:30.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "GOOG\t2001.0\t2024-01-01T00:00:25.000000Z\t2\n" +
+                        "AAPL\t200.0\t2024-01-01T00:00:30.000000Z\t1\n",
+                "SELECT * FROM live_evict",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_evict");
+    }
+
+    @Test
     public void testIncrementalRefreshResolvesPerTxnSymbolKeys() throws Exception {
         // Regression for the SYMBOL key collision: the WAL writer assigns symbol
         // keys as `initialSymCount + localId`, with `localId` reset between commits.

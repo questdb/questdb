@@ -236,6 +236,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             writeBuffer.applyRetention(retentionMicros);
             mergeBuffer.applyRetention(retentionMicros);
             mergeBuffer.compactIfNeeded();
+            // Phase 5 partition-state eviction is deliberately not run here. Bootstrap
+            // has just (re)populated the accumulator from scratch over the backfill
+            // window, so evicting immediately would discard work we just paid for. The
+            // next drainAndCommit cycle runs eviction once new hot-path rows have made
+            // stale keys identifiable.
             instance.publishWriteBuffer();
             // State now covers rows with ts > lowerBound (bootstrap's bounded backfill
             // is strict-greater-than). drainAndCommit uses this to decide whether a
@@ -448,6 +453,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             writeBuffer.applyRetention(retentionMicros);
             mergeBuffer.applyRetention(retentionMicros);
             mergeBuffer.compactIfNeeded();
+            evictStalePartitionState(windowFactory, mergeBuffer, retentionMicros);
             instance.publishWriteBuffer();
         } catch (Throwable t) {
             instance.abortWriteBuffer(writeBuffer);
@@ -474,6 +480,38 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setMergeBuffer(mergeBuffer);
         }
         return mergeBuffer;
+    }
+
+    /**
+     * Drives live view Phase 5 partition-state eviction. Sheds partition-keyed
+     * accumulator entries whose last-seen row timestamp has fallen below the
+     * retention cutoff ({@code maxTsSeen - retentionMicros}), so long-lived views
+     * with churning keys do not accumulate unbounded state.
+     * <p>
+     * Called only from the hot/warm path in {@link #drainAndCommit} after
+     * {@code applyRetention}. The disk-read warm-path branch returns early from
+     * {@link #drainAndCommit} before reaching this site, so an accumulator
+     * rebuilt via cold-path replay is not immediately evicted. Eviction does
+     * still fire on subsequent hot-path refreshes, which means the expanded-
+     * horizon coverage can be partially re-discarded over time; the deferred
+     * "cap horizon expansion" policy is the long-term fix. For the V1
+     * any-unbounded views in scope today, this trade-off matches the bounded-
+     * backfill semantics: once a partition key has no rows in the retained
+     * window, its accumulator state is treated as stale.
+     */
+    private void evictStalePartitionState(
+            WindowRecordCursorFactory windowFactory,
+            MergeBuffer mergeBuffer,
+            long retentionMicros
+    ) {
+        long maxTsSeen = mergeBuffer.getMaxTsSeen();
+        if (maxTsSeen == Long.MIN_VALUE || retentionMicros <= 0) {
+            return;
+        }
+        if (maxTsSeen < Long.MIN_VALUE + retentionMicros) {
+            return;
+        }
+        windowFactory.evictStalePartitionState(maxTsSeen - retentionMicros);
     }
 
     /**

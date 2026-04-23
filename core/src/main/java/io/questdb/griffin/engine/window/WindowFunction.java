@@ -53,6 +53,20 @@ public interface WindowFunction extends Function {
     default void computeNext(Record record) {
     }
 
+    /**
+     * Drops partition-by accumulator state whose last-seen row timestamp falls
+     * below {@code cutoffTs}. Default no-op; partitioned window functions that
+     * maintain per-key state override this to shed keys that retention has made
+     * unreachable (their last row has fallen outside the retained window and no
+     * warm-path replay can reach it).
+     * <p>
+     * Called from the live view refresh path after {@code applyRetention} has
+     * advanced the retention cutoff. Non-partitioned window functions keep the
+     * no-op default.
+     */
+    default void evictStalePartitionState(long cutoffTs) {
+    }
+
     @Override
     default ArrayView getArray(Record rec) {
         throw new UnsupportedOperationException();
