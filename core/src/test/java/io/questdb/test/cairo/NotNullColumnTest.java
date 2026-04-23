@@ -1360,6 +1360,66 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqTypedNullOnNotNullColumnFoldsToFalseAcrossEqFactories() throws Exception {
+        // Covers the `const == null && varFunc.isNotNull() -> BooleanConstant.FALSE`
+        // short-circuit in each type-specific Eq*FunctionFactory. These branches
+        // only fire when a type-typed NULL constant meets a NOT NULL column,
+        // which `col IS NULL` (routed through IsNullFunctionFactory for some
+        // types) does not exercise — explicit `col = CAST(NULL AS T)` does.
+        // Both left- and right-handed variants are covered, since the factories
+        // handle each position independently.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        i INT NOT NULL,
+                        l LONG NOT NULL,
+                        ip IPv4 NOT NULL,
+                        c CHAR NOT NULL,
+                        s SYMBOL NOT NULL,
+                        vc VARCHAR NOT NULL,
+                        str STRING NOT NULL,
+                        l256 LONG256 NOT NULL,
+                        uu UUID NOT NULL,
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 10, '1.2.3.4', 'a', 's1', 'vc1', 'str1',
+                         '0x01', '00000000-0000-0000-0000-000000000001',
+                         '2024-01-01')
+                    """);
+
+            // Right-hand constant NULL folded to FALSE across the Eq factories.
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE i = CAST(NULL AS INT)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l = CAST(NULL AS LONG)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ip = CAST(NULL AS IPv4)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE c = CAST(NULL AS CHAR)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE s = CAST(NULL AS CHAR)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE vc = CAST(NULL AS VARCHAR)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE str = CAST(NULL AS VARCHAR)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ts = CAST(NULL AS TIMESTAMP)");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE uu = CAST(NULL AS UUID)");
+
+            // Left-hand constant NULL — same factories but through the other
+            // createHalfConstantFunc branch (swapped a/b).
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS INT) = i");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS LONG) = l");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS IPv4) = ip");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS CHAR) = c");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS VARCHAR) = vc");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS TIMESTAMP) = ts");
+
+            // IS NOT NULL via `col != CAST(NULL AS T)` flips the fold to TRUE —
+            // exercises NegatingFunctionFactory's wrap over the same BooleanConstant.
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE i != CAST(NULL AS INT)");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE ip != CAST(NULL AS IPv4)");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE vc != CAST(NULL AS VARCHAR)");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE ts != CAST(NULL AS TIMESTAMP)");
+        });
+    }
+
+    @Test
     public void testAggregateOnNotNullColumnIsConsistent() throws Exception {
         assertMemoryLeak(() -> {
             // Every native aggregate kernel today (both the vectorized Vect.* / Rosti::keyed*
