@@ -1294,6 +1294,9 @@ public class SqlParser {
         CharSequence tok = tok(lexer, "transform name or 'if'");
         if (isIfKeyword(tok)) {
             if (isNotKeyword(tok(lexer, "'not'")) && isExistsKeyword(tok(lexer, "'exists'"))) {
+                if (isReplace) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "OR REPLACE and IF NOT EXISTS cannot be combined");
+                }
                 builder.setIgnoreIfExists(true);
                 tok = tok(lexer, "transform name");
             } else {

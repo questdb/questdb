@@ -62,7 +62,7 @@ public class PayloadFunctionFactory implements FunctionFactory {
     }
 
     private static class PayloadFunction extends StrFunction {
-        private String payload;
+        private CharSequence payload;
 
         @Override
         public CharSequence getStrA(Record rec) {
@@ -77,8 +77,7 @@ public class PayloadFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            CharSequence p = executionContext.getPayload();
-            this.payload = p != null ? p.toString() : null;
+            this.payload = executionContext.getPayload();
         }
 
         @Override

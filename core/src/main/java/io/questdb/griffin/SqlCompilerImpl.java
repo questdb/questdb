@@ -4528,7 +4528,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
             return true;
         } catch (Throwable th) {
-            if (th instanceof CairoException ce) {
+            if (th instanceof CairoException ce && ce.getPosition() == 0) {
                 ce.position(op.getNamePosition());
             }
             QueryProgress.logError(th, sqlId, op.getSqlText(), executionContext, beginNanos);
@@ -5220,12 +5220,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void validateNoTableReferences(IQueryModel model) throws SqlException {
         ExpressionNode tableName = model.getTableNameExpr();
-        if (tableName != null && tableName.type == ExpressionNode.LITERAL) {
-            // Skip pure CTE references: a literal that resolves to a CTE name in the
-            // current scope is not a real table reference, and the CTE definition itself
-            // is validated below.
-            if (model.getWithClauses().get(tableName.token) == null) {
-                throw SqlException.$(tableName.position, "payload transform must not reference tables [table=").put(tableName.token).put(']');
+        if (tableName != null) {
+            if (tableName.type == ExpressionNode.LITERAL) {
+                // Skip pure CTE references: a literal that resolves to a CTE name in the
+                // current scope is not a real table reference, and the CTE definition itself
+                // is validated below.
+                if (model.getWithClauses().get(tableName.token) == null) {
+                    throw SqlException.$(tableName.position, "payload transform must not reference tables [table=").put(tableName.token).put(']');
+                }
+            } else if (tableName.type == ExpressionNode.FUNCTION
+                    && !Chars.equals(tableName.token, "long_sequence")) {
+                // Only long_sequence is allowed as a table function source.
+                // Other table functions (e.g. read_parquet) can access external data
+                // and bypass the self-containedness contract.
+                throw SqlException.$(tableName.position, "payload transform must not use table functions [function=").put(tableName.token).put(']');
             }
         }
 

@@ -262,6 +262,9 @@ public class IngestProcessor implements HttpRequestHandler {
         ) throws SqlException {
             final String targetTableName = def.getTargetTable();
             final TableToken targetToken = engine.verifyTableName(targetTableName);
+            if (!targetToken.isWal()) {
+                throw SqlException.$(0, "target table must be WAL-enabled [table=").put(targetTableName).put(']');
+            }
             sqlExecutionContext.getSecurityContext().authorizeInsert(targetToken);
 
             final RecordMetadata cursorMetadata = factory.getMetadata();
