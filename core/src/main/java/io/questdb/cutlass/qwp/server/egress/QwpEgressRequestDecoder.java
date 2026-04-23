@@ -100,7 +100,15 @@ public class QwpEgressRequestDecoder {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("CREDIT frame too short: ").put(payloadLen);
         }
         long limit = payload + payloadLen;
-        return QwpVarint.decode(payload + 9, limit);
+        long credit = QwpVarint.decode(payload + 9, limit);
+        // A varint whose decoded long has the sign bit set would otherwise flow
+        // into flow-control accounting as a negative budget. Reject explicitly
+        // so credit bookkeeping never underflows.
+        if (credit < 0) {
+            throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
+                    .put("CREDIT: additional_bytes must be non-negative: ").put(credit);
+        }
+        return credit;
     }
 
     /**

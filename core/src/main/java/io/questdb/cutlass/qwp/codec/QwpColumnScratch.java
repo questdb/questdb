@@ -166,6 +166,14 @@ final class QwpColumnScratch implements QuietCloseable {
                 Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 12) & 0x3F)));
                 Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 6) & 0x3F)));
                 Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (cp & 0x3F)));
+            } else if (Character.isSurrogate(c)) {
+                // RFC 3629 forbids encoding U+D800..U+DFFF directly. A lone
+                // surrogate (unpaired high, or any low) is substituted with the
+                // Unicode replacement character U+FFFD so the wire bytes always
+                // round-trip through a strict UTF-8 decoder.
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) 0xEF);
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) 0xBF);
+                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) 0xBD);
             } else {
                 Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xE0 | (c >> 12)));
                 Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((c >> 6) & 0x3F)));

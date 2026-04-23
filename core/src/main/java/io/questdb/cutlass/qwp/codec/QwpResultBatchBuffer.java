@@ -379,7 +379,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      */
     public int emitTableBlock(long wireBuf, long wireLimit, long schemaId, boolean writeFullSchema) {
         long p = wireBuf;
-        if (p >= wireLimit) return -1;
+        // Preflight the fixed prelude: 1 byte empty-name + rowCount varint +
+        // columnCount varint. QwpVarint.encode has no internal bound check and
+        // can emit up to MAX_VARINT_BYTES per value; without the guard this
+        // loop walks past wireLimit whenever the caller's budget is tight.
+        if (p + 1 + 2L * QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
         // Anonymous result-set: empty name
         Unsafe.getUnsafe().putByte(p++, (byte) 0);
         p = QwpVarint.encode(p, rowCount);
