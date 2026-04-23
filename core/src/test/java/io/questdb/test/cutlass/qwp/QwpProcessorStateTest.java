@@ -191,6 +191,11 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 progress = state.collectDurableProgress(registry);
                 Assert.assertEquals(0, progress.size());
 
+                // A new commit re-enters the table into the pending set.
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{15L});
+                state.setHighestProcessedSequence(1);
+                state.commit();
+
                 registry.set("t~1", 15L);
                 progress = state.collectDurableProgress(registry);
                 Assert.assertEquals(1, progress.size());
@@ -256,12 +261,12 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(1, progress.size());
                 state.onDurableAckSent();
 
-                // 2. Table dropped — registry sets MAX_VALUE sentinel
+                // 2. Table dropped — registry sets MAX_VALUE sentinel.
+                // The table already left the pending set (durable caught up to
+                // committed), so the sentinel is not reported to this connection.
                 registry.set("orders~1", Long.MAX_VALUE);
                 progress = state.collectDurableProgress(registry);
-                Assert.assertEquals(1, progress.size());
-                Assert.assertEquals(Long.MAX_VALUE, progress.get("orders"));
-                state.onDurableAckSent();
+                Assert.assertEquals(0, progress.size());
 
                 // 3. Table re-created with same name, new dir "orders~2"
                 fake.queueCommit(new String[]{"orders"}, new String[]{"orders~2"}, new long[]{5L});
@@ -1328,6 +1333,11 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 // Same watermark should not be reported again
                 progress = state.collectDurableProgress(registry);
                 Assert.assertEquals(0, progress.size());
+
+                // A new commit re-enters the table into the pending set.
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{15L});
+                state.setHighestProcessedSequence(1);
+                state.commit();
 
                 // Further advance is reported
                 registry.set("t~1", 15L);

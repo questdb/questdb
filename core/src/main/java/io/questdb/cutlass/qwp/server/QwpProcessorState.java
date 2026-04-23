@@ -74,6 +74,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
     private final CharSequenceLongHashMap pendingAckSeqTxns = new CharSequenceLongHashMap();
+    private final CharSequenceObjHashMap<String> pendingDurableDirNames = new CharSequenceObjHashMap<>();
+    private final CharSequenceLongHashMap pendingDurableSeqTxns = new CharSequenceLongHashMap();
     private final StringSink rejectMsg = new StringSink();
     private final CharSequenceLongHashMap resumeAckSeqTxns = new CharSequenceLongHashMap();
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
@@ -205,16 +207,19 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
      * snapshot map (owned by this instance) containing only tables whose
      * durable seqTxn has advanced since the last durable ack was sent.
      * The caller must consume the map before the next call.
+     * <p>
+     * Only iterates tables with outstanding durable work, not every table
+     * the connection has ever written to.
      */
     public CharSequenceLongHashMap collectDurableProgress(DurableAckRegistry registry) {
         durableProgressSnapshot.clear();
         if (!durableAckEnabled) {
             return durableProgressSnapshot;
         }
-        ObjList<CharSequence> tableNames = tableDirNames.keys();
+        ObjList<CharSequence> tableNames = pendingDurableDirNames.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
-            String dirName = tableDirNames.get(tableName);
+            String dirName = pendingDurableDirNames.get(tableName);
             long uploadedSeqTxn = registry.getDurablyUploadedSeqTxn(dirName);
             if (uploadedSeqTxn >= 0) {
                 long lastSent = lastDurableSeqTxns.get(tableName);
@@ -365,13 +370,26 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     /**
      * Records a successful durable-ack send. Updates lastDurableSeqTxns
      * from the current durableProgressSnapshot so that the next
-     * collectDurableProgress() only reports further advances.
+     * collectDurableProgress() only reports further advances. Removes
+     * tables from the pending set when the durable watermark has caught
+     * up to or exceeded the committed seqTxn.
      */
     public void onDurableAckSent() {
         ObjList<CharSequence> keys = durableProgressSnapshot.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             CharSequence tableName = keys.getQuick(i);
-            lastDurableSeqTxns.put(tableName, durableProgressSnapshot.get(tableName));
+            long durableSeqTxn = durableProgressSnapshot.get(tableName);
+            lastDurableSeqTxns.put(tableName, durableSeqTxn);
+            if (durableSeqTxn >= pendingDurableSeqTxns.get(tableName)) {
+                int dirIdx = pendingDurableDirNames.keyIndex(tableName);
+                if (dirIdx < 0) {
+                    pendingDurableDirNames.removeAt(dirIdx);
+                }
+                int seqIdx = pendingDurableSeqTxns.keyIndex(tableName);
+                if (seqIdx < 0) {
+                    pendingDurableSeqTxns.removeAt(seqIdx);
+                }
+            }
         }
     }
 
@@ -396,6 +414,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         // uploads complete later, there is nobody left to notify.
         durableAckEnabled = false;
         pendingAckSeqTxns.clear();
+        pendingDurableDirNames.clear();
+        pendingDurableSeqTxns.clear();
         resumeAckSeqTxns.clear();
         lastDurableSeqTxns.clear();
         durableProgressSnapshot.clear();
@@ -607,6 +627,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             lastDurableSeqTxns.put(tableName, -1L);
         }
         tableDirNames.put(tableName, tableDirName);
+        if (durableAckEnabled) {
+            pendingDurableDirNames.put(tableName, tableDirName);
+            pendingDurableSeqTxns.put(tableName, seqTxn);
+        }
     }
 
     private void rejectCommitError(Throwable th) {
