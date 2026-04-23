@@ -28,6 +28,8 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -38,16 +40,25 @@ import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.map.UnorderedVarcharMap;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestDirectUtf8String;
@@ -232,6 +243,31 @@ public class MapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testBatchAddressableRejectsOversizedHeap() throws Exception {
+        // OrderedMap's MAX_HEAP_SIZE already sits below BATCH_OFFSET_MASK, so it
+        // does not carry a construction-time guard.
+        Assume.assumeTrue(mapType != MapType.ORDERED_MAP);
+        TestUtils.assertMemoryLeak(() -> {
+            // 64 x LONG256 = 2048 bytes of value per entry. At the map's
+            // post-ceilPow2 cap of 2^30 keys, entrySize * keyCapacity exceeds
+            // the 39-bit BATCH_OFFSET_MASK, so the guard must fail construction
+            // before any malloc.
+            final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            for (int i = 0; i < 64; i++) {
+                valueTypes.add(ColumnType.LONG256);
+            }
+            try {
+                // keyCapacity = 2^29 with loadFactor 0.5 drives post-ceilPow2 keyCapacity to 2^30,
+                // the map's hard cap.
+                createMap(keyColumnType(ColumnType.INT), valueTypes, 1 << 29, 0.5, Integer.MAX_VALUE);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "exceeds batched probe addressable range");
             }
         });
     }
@@ -631,6 +667,271 @@ public class MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProbeBatch() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // 6 keys, 4 distinct: first occurrence is new, duplicates are not.
+            final int[] logicalKeys = {10, 20, 30, 10, 20, 40};
+            final boolean[] expectedIsNew = {true, true, true, false, false, true};
+            final int batchRows = logicalKeys.length;
+
+            try (
+                    Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, 0.8, 24);
+                    DirectLongList batch = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(mapType, logicalKeys)
+            ) {
+                batch.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(columnTypeForMapType(), -1);
+
+                map.reserveCapacity(batchRows);
+                final long entryBase = map.probeBatch(testRecord, sink, 0, batchRows, batch.getAddress());
+                Assert.assertEquals(4, map.size());
+
+                for (int i = 0; i < batchRows; i++) {
+                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    Assert.assertEquals(i, Map.decodeBatchRowIndex(encoded));
+                    Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
+
+                    // Decoded offset must land inside the map's entry storage.
+                    final long offset = Map.decodeBatchOffset(encoded);
+                    final MapValue valueAt = map.valueAt(entryBase + offset);
+                    Assert.assertNotNull(valueAt);
+                }
+
+                assertMapContainsKeys(map, new int[]{10, 20, 30, 40});
+            }
+        });
+    }
+
+    @Test
+    public void testProbeBatchFiltered() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // 7 frame rows, filter selects 4 of them by frame-relative row id.
+            final int[] logicalKeys = {10, 20, 30, 40, 50, 10, 20};
+            final long[] selectedRowIds = {1, 3, 5, 6};
+            // Post-filter: 20 (new), 40 (new), 10 (new), 20 (dup)
+            final boolean[] expectedIsNew = {true, true, true, false};
+            final int batchRows = selectedRowIds.length;
+
+            try (
+                    Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, 0.8, 24);
+                    DirectLongList rowIds = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    DirectLongList batch = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(mapType, logicalKeys)
+            ) {
+                for (long rowId : selectedRowIds) {
+                    rowIds.add(rowId);
+                }
+                batch.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(columnTypeForMapType(), -1);
+
+                map.reserveCapacity(batchRows);
+                final long entryBase = map.probeBatchFiltered(
+                        testRecord, sink, rowIds.getAddress(), 0, batchRows, batch.getAddress()
+                );
+                Assert.assertEquals(3, map.size());
+
+                for (int i = 0; i < batchRows; i++) {
+                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    // Encoded rowIndex is the frame-relative row id, not the position in the filter list.
+                    Assert.assertEquals(selectedRowIds[i], Map.decodeBatchRowIndex(encoded));
+                    Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
+
+                    final long offset = Map.decodeBatchOffset(encoded);
+                    Assert.assertNotNull(map.valueAt(entryBase + offset));
+                }
+
+                assertMapContainsKeys(map, new int[]{10, 20, 40});
+            }
+        });
+    }
+
+    @Test
+    public void testProbeBatchFilteredOrderedMapVarSizeKey() throws Exception {
+        // Exercises OrderedMap.probeBatchFilteredVarSize (keySize == -1).
+        Assume.assumeTrue(mapType == MapType.ORDERED_MAP);
+        TestUtils.assertMemoryLeak(() -> {
+            final int[] logicalKeys = {10, 20, 30, 40, 50, 10, 20};
+            final long[] selectedRowIds = {1, 3, 5, 6};
+            final boolean[] expectedIsNew = {true, true, true, false};
+            final int batchRows = selectedRowIds.length;
+
+            try (
+                    Map map = new OrderedMap(
+                            32 * 1024,
+                            new SingleColumnType(ColumnType.VARCHAR),
+                            new SingleColumnType(ColumnType.LONG),
+                            64,
+                            0.8,
+                            24
+                    );
+                    DirectLongList rowIds = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    DirectLongList batch = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(MapType.UNORDERED_VARCHAR_MAP, logicalKeys)
+            ) {
+                for (long rowId : selectedRowIds) {
+                    rowIds.add(rowId);
+                }
+                batch.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(ColumnType.VARCHAR, -1);
+
+                map.reserveCapacity(batchRows);
+                final long entryBase = map.probeBatchFiltered(
+                        testRecord, sink, rowIds.getAddress(), 0, batchRows, batch.getAddress()
+                );
+                Assert.assertEquals(3, map.size());
+
+                for (int i = 0; i < batchRows; i++) {
+                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    Assert.assertEquals(selectedRowIds[i], Map.decodeBatchRowIndex(encoded));
+                    Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
+                    final long offset = Map.decodeBatchOffset(encoded);
+                    Assert.assertNotNull(map.valueAt(entryBase + offset));
+                }
+
+                final int[] found = new int[(int) map.size()];
+                int n = 0;
+                try (RecordCursor cursor = map.getCursor()) {
+                    final MapRecord record = (MapRecord) cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        found[n++] = Numbers.parseInt(record.getVarcharA(1));
+                    }
+                }
+                Arrays.sort(found);
+                Assert.assertArrayEquals(new int[]{10, 20, 40}, found);
+            }
+        });
+    }
+
+    @Test
+    public void testProbeBatchFilteredWithDirectColumnIndex() throws Exception {
+        // Exercises the direct-column fast path in Unordered4Map/Unordered8Map/UnorderedVarcharMap.
+        Assume.assumeTrue(mapType != MapType.ORDERED_MAP);
+        TestUtils.assertMemoryLeak(() -> {
+            final int[] logicalKeys = {7, 14, 21, 28, 7, 14, 35};
+            final long[] selectedRowIds = {0, 2, 4, 5};
+            // Post-filter: 7 (new), 21 (new), 7 (dup of row 0), 14 (new)
+            final boolean[] expectedIsNew = {true, true, false, true};
+            final int batchRows = selectedRowIds.length;
+
+            try (
+                    Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, 0.8, 24);
+                    DirectLongList rowIds = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    DirectLongList batch = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(mapType, logicalKeys)
+            ) {
+                for (long rowId : selectedRowIds) {
+                    rowIds.add(rowId);
+                }
+                batch.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(columnTypeForMapType(), 0);
+
+                map.reserveCapacity(batchRows);
+                final long entryBase = map.probeBatchFiltered(
+                        testRecord, sink, rowIds.getAddress(), 0, batchRows, batch.getAddress()
+                );
+                Assert.assertEquals(3, map.size());
+
+                for (int i = 0; i < batchRows; i++) {
+                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    Assert.assertEquals(selectedRowIds[i], Map.decodeBatchRowIndex(encoded));
+                    Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
+                    final long offset = Map.decodeBatchOffset(encoded);
+                    Assert.assertNotNull(map.valueAt(entryBase + offset));
+                }
+
+                assertMapContainsKeys(map, new int[]{7, 14, 21});
+            }
+        });
+    }
+
+    @Test
+    public void testProbeBatchOrderedMapVarSizeKey() throws Exception {
+        // Exercises OrderedMap.probeBatchVarSize (keySize == -1). The parameterized
+        // testProbeBatch covers the fixed-size path with an INT key.
+        Assume.assumeTrue(mapType == MapType.ORDERED_MAP);
+        TestUtils.assertMemoryLeak(() -> {
+            final int[] logicalKeys = {10, 20, 30, 10, 20, 40};
+            final boolean[] expectedIsNew = {true, true, true, false, false, true};
+            final int batchRows = logicalKeys.length;
+
+            try (
+                    Map map = new OrderedMap(
+                            32 * 1024,
+                            new SingleColumnType(ColumnType.VARCHAR),
+                            new SingleColumnType(ColumnType.LONG),
+                            64,
+                            0.8,
+                            24
+                    );
+                    DirectLongList batch = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(MapType.UNORDERED_VARCHAR_MAP, logicalKeys)
+            ) {
+                batch.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(ColumnType.VARCHAR, -1);
+
+                map.reserveCapacity(batchRows);
+                final long entryBase = map.probeBatch(testRecord, sink, 0, batchRows, batch.getAddress());
+                Assert.assertEquals(4, map.size());
+
+                for (int i = 0; i < batchRows; i++) {
+                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    Assert.assertEquals(i, Map.decodeBatchRowIndex(encoded));
+                    Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
+                    final long offset = Map.decodeBatchOffset(encoded);
+                    Assert.assertNotNull(map.valueAt(entryBase + offset));
+                }
+
+                final int[] found = new int[(int) map.size()];
+                int n = 0;
+                try (RecordCursor cursor = map.getCursor()) {
+                    final MapRecord record = (MapRecord) cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // Value column is at index 0 (LONG), key column is at index 1 (VARCHAR).
+                        found[n++] = Numbers.parseInt(record.getVarcharA(1));
+                    }
+                }
+                Arrays.sort(found);
+                Assert.assertArrayEquals(new int[]{10, 20, 30, 40}, found);
+            }
+        });
+    }
+
+    @Test
+    public void testProbeBatchWithDirectColumnIndex() throws Exception {
+        // OrderedMap never uses the direct-column fast path (it ignores getDirectColumnIndex
+        // and always dispatches to the keySize-based paths), so there's nothing extra to verify here.
+        Assume.assumeTrue(mapType != MapType.ORDERED_MAP);
+        TestUtils.assertMemoryLeak(() -> {
+            final int[] logicalKeys = {7, 14, 21, 7, 14};
+            final boolean[] expectedIsNew = {true, true, true, false, false};
+            final int batchRows = logicalKeys.length;
+
+            try (
+                    Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, 0.8, 24);
+                    DirectLongList batch = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(mapType, logicalKeys)
+            ) {
+                batch.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(columnTypeForMapType(), 0);
+
+                map.reserveCapacity(batchRows);
+                final long entryBase = map.probeBatch(testRecord, sink, 0, batchRows, batch.getAddress());
+                Assert.assertEquals(3, map.size());
+
+                for (int i = 0; i < batchRows; i++) {
+                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    Assert.assertEquals(i, Map.decodeBatchRowIndex(encoded));
+                    Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
+                    final long offset = Map.decodeBatchOffset(encoded);
+                    Assert.assertNotNull(map.valueAt(entryBase + offset));
+                }
+
+                assertMapContainsKeys(map, new int[]{7, 14, 21});
+            }
+        });
+    }
+
+    @Test
     public void testReopen() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
@@ -751,6 +1052,71 @@ public class MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReserveCapacityStrictContract() throws Exception {
+        // OrderedMap inherits the no-op default — only the unordered maps need the
+        // strict free > additionalKeys contract. UnorderedVarcharMap.probeBatch
+        // routes inserts through asNew, which rehashes when --free == 0; without
+        // the strict contract, the last insertion in a batch would reallocate
+        // memStart and invalidate offsets already packed into batchAddr.
+        Assume.assumeTrue(mapType != MapType.ORDERED_MAP);
+        TestUtils.assertMemoryLeak(() -> {
+            // keyCapacity=16, loadFactor=0.5: constructor rounds actual capacity up
+            // to 32, yielding an initial free of 16.
+            final int initialKeyCapacity = 32;
+            final int initialFree = 16;
+            final int batchRows = 5;
+            final int prefill = initialFree - batchRows;
+
+            final int[] batchKeys = new int[batchRows];
+            for (int i = 0; i < batchRows; i++) {
+                batchKeys[i] = 1_000 + i;
+            }
+
+            try (
+                    Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 16, 0.5, 24);
+                    DirectLongList batch = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(mapType, batchKeys)
+            ) {
+                Assert.assertEquals(initialKeyCapacity, map.getKeyCapacity());
+
+                // Pre-fill so that free == batchRows exactly, hitting the boundary
+                // case where the old contract left reserveCapacity as a no-op.
+                // Starts at 1 so the zero-key slot in Unordered4Map/Unordered8Map
+                // (which doesn't consume a free hash-table slot) stays untouched.
+                for (int i = 1; i <= prefill; i++) {
+                    MapKey key = map.withKey();
+                    populateKey(key, i);
+                    Assert.assertTrue(key.createValue().isNew());
+                }
+                Assert.assertEquals(prefill, map.size());
+                Assert.assertEquals(initialKeyCapacity, map.getKeyCapacity());
+
+                // At free == batchRows, reserveCapacity must rehash to guarantee
+                // free > batchRows on return.
+                map.reserveCapacity(batchRows);
+                final int capAfterReserve = map.getKeyCapacity();
+                Assert.assertTrue(capAfterReserve > initialKeyCapacity);
+
+                batch.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(columnTypeForMapType(), -1);
+                final long entryBase = map.probeBatch(testRecord, sink, 0, batchRows, batch.getAddress());
+
+                // probeBatch must not trigger a rehash — reserveCapacity already
+                // left enough headroom for all batchRows insertions.
+                Assert.assertEquals(capAfterReserve, map.getKeyCapacity());
+                Assert.assertEquals(prefill + batchRows, map.size());
+
+                for (int i = 0; i < batchRows; i++) {
+                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    Assert.assertTrue(Map.isNewBatchEntry(encoded));
+                    final long offset = Map.decodeBatchOffset(encoded);
+                    Assert.assertNotNull(map.valueAt(entryBase + offset));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRestoreInitialCapacity() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
@@ -840,6 +1206,78 @@ public class MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetBatchEmptyValue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long sentinel = 0xDEAD_BEEFL;
+            final int[] logicalKeys = {5, 15, 5, 25};
+            final boolean[] expectedIsNew = {true, true, false, true};
+            final int batchRows = logicalKeys.length;
+
+            try (
+                    Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, 0.8, 24);
+                    DirectLongList batch = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(mapType, logicalKeys)
+            ) {
+                batch.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(columnTypeForMapType(), -1);
+
+                map.setBatchEmptyValue(new TestFunctionsUpdater(sentinel));
+                map.reserveCapacity(batchRows);
+                final long entryBase = map.probeBatch(testRecord, sink, 0, batchRows, batch.getAddress());
+
+                Assert.assertEquals(3, map.size());
+                for (int i = 0; i < batchRows; i++) {
+                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
+                    final long offset = Map.decodeBatchOffset(encoded);
+                    // Newly inserted entries were prefilled with the sentinel via setBatchEmptyValue.
+                    // Duplicates reference existing entries that were also created via the same path.
+                    // batchAddr offsets now point at the start of the value region.
+                    Assert.assertEquals(sentinel, Unsafe.getUnsafe().getLong(entryBase + offset));
+                }
+
+                // Clear the empty value pattern so subsequent tests don't leak the scratch buffer.
+                map.setBatchEmptyValue(null);
+            }
+        });
+    }
+
+    @Test
+    public void testSetBatchEmptyValueAllZero() throws Exception {
+        // Maps detect an all-zero empty value pattern and skip the per-entry memcpy.
+        // New entries must still read as zero because fresh slots are zeroed by clear().
+        TestUtils.assertMemoryLeak(() -> {
+            final int[] logicalKeys = {1, 2, 3};
+            final int batchRows = logicalKeys.length;
+
+            try (
+                    Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, 0.8, 24);
+                    DirectLongList batch = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(mapType, logicalKeys)
+            ) {
+                batch.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(columnTypeForMapType(), -1);
+
+                map.setBatchEmptyValue(new TestFunctionsUpdater(0L));
+                map.reserveCapacity(batchRows);
+                final long entryBase = map.probeBatch(testRecord, sink, 0, batchRows, batch.getAddress());
+
+                Assert.assertEquals(3, map.size());
+                for (int i = 0; i < batchRows; i++) {
+                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    Assert.assertTrue(Map.isNewBatchEntry(encoded));
+                    final long offset = Map.decodeBatchOffset(encoded);
+                    Assert.assertEquals(0L, Unsafe.getUnsafe().getLong(entryBase + offset));
+                }
+
+                // Clearing a null updater must be a no-op and idempotent.
+                map.setBatchEmptyValue(null);
+                map.setBatchEmptyValue(null);
+            }
+        });
+    }
+
+    @Test
     public void testSetKeyCapacity() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.5, 2147483647)) {
@@ -885,6 +1323,34 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "value type is not supported"));
             }
         });
+    }
+
+    private void assertMapContainsKeys(Map map, int[] expected) throws NumericException {
+        final int[] sorted = Arrays.copyOf(expected, expected.length);
+        Arrays.sort(sorted);
+        final int[] actual = new int[(int) map.size()];
+        int n = 0;
+        try (RecordCursor cursor = map.getCursor()) {
+            final MapRecord record = (MapRecord) cursor.getRecord();
+            while (cursor.hasNext()) {
+                // Value column is at index 0 (LONG), key column is at index 1.
+                actual[n++] = readKey(record, 1);
+            }
+        }
+        Assert.assertEquals(sorted.length, n);
+        Arrays.sort(actual);
+        Assert.assertArrayEquals(sorted, actual);
+    }
+
+    private int columnTypeForMapType() {
+        switch (mapType) {
+            case UNORDERED_8_MAP:
+                return ColumnType.LONG;
+            case UNORDERED_VARCHAR_MAP:
+                return ColumnType.VARCHAR;
+            default:
+                return ColumnType.INT;
+        }
     }
 
     private Map createMap(ColumnTypes keyTypes, ColumnTypes valueTypes, int keyCapacity, double loadFactor, int maxResizes) {
@@ -951,11 +1417,145 @@ public class MapTest extends AbstractCairoTest {
         ORDERED_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP, UNORDERED_VARCHAR_MAP
     }
 
+    private static class TestFunctionsUpdater implements GroupByFunctionsUpdater {
+        private final long sentinelValue;
+
+        TestFunctionsUpdater(long sentinelValue) {
+            this.sentinelValue = sentinelValue;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void setFunctions(ObjList<GroupByFunction> groupByFunctions) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void updateEmpty(MapValue value) {
+            value.putLong(0, sentinelValue);
+        }
+
+        @Override
+        public void updateExisting(MapValue value, Record record, long rowId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void updateNew(MapValue value, Record record, long rowId) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
     private static class TestMapValueMergeFunction implements MapValueMergeFunction {
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
             destValue.addInt(0, srcValue.getInt(0));
+        }
+    }
+
+    // Minimal PageFrameMemoryRecord for exercising probeBatch paths: stores the
+    // logical keys once and services both the direct-column fast path (via
+    // getPageAddress) and the sink-based slow path (via getInt/getLong/getVarcharA).
+    private static class TestPageFrameRecord extends PageFrameMemoryRecord {
+        private final int[] logicalKeys;
+        private final MapType mapType;
+        private final ObjList<Utf8String> varcharKeys;
+        private long bufferAddr;
+        private long bufferSize;
+
+        TestPageFrameRecord(MapType mapType, int[] logicalKeys) {
+            this.mapType = mapType;
+            this.logicalKeys = logicalKeys;
+            if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
+                this.varcharKeys = new ObjList<>(logicalKeys.length);
+                for (int i = 0; i < logicalKeys.length; i++) {
+                    this.varcharKeys.add(new Utf8String(String.valueOf(logicalKeys[i])));
+                }
+                this.bufferAddr = 0;
+                this.bufferSize = 0;
+            } else {
+                this.varcharKeys = null;
+                final long elemSize = mapType == MapType.UNORDERED_8_MAP ? Long.BYTES : Integer.BYTES;
+                this.bufferSize = (long) logicalKeys.length * elemSize;
+                this.bufferAddr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+                for (int i = 0; i < logicalKeys.length; i++) {
+                    if (mapType == MapType.UNORDERED_8_MAP) {
+                        Unsafe.getUnsafe().putLong(bufferAddr + (long) i * Long.BYTES, logicalKeys[i]);
+                    } else {
+                        Unsafe.getUnsafe().putInt(bufferAddr + (long) i * Integer.BYTES, logicalKeys[i]);
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            if (bufferAddr != 0) {
+                bufferAddr = Unsafe.free(bufferAddr, bufferSize, MemoryTag.NATIVE_DEFAULT);
+                bufferSize = 0;
+            }
+        }
+
+        @Override
+        public int getInt(int columnIndex) {
+            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * Integer.BYTES);
+        }
+
+        @Override
+        public long getLong(int columnIndex) {
+            return Unsafe.getUnsafe().getLong(bufferAddr + rowIndex * Long.BYTES);
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return bufferAddr;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int columnIndex) {
+            return varcharKeys.getQuick((int) rowIndex);
+        }
+    }
+
+    private static class TestRecordSink implements RecordSink {
+        private final int columnType;
+        private final int directColumnIndex;
+
+        TestRecordSink(int columnType, int directColumnIndex) {
+            this.columnType = columnType;
+            this.directColumnIndex = directColumnIndex;
+        }
+
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            switch (columnType) {
+                case ColumnType.INT:
+                    w.putInt(r.getInt(0));
+                    break;
+                case ColumnType.LONG:
+                    w.putLong(r.getLong(0));
+                    break;
+                case ColumnType.VARCHAR:
+                    w.putVarchar(r.getVarcharA(0));
+                    break;
+                default:
+                    throw new UnsupportedOperationException("column type: " + ColumnType.nameOf(columnType));
+            }
+        }
+
+        @Override
+        public int getDirectColumnIndex() {
+            return directColumnIndex;
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+            // no-op
         }
     }
 }
