@@ -281,6 +281,32 @@ public class DirectLongHashSetTest {
     }
 
     @Test
+    public void testRehashMaintainsLoadFactor() throws Exception {
+        // Regression fence: rehash() must reset free to (capacity * loadFactor - size),
+        // not (capacity - size) * loadFactor. The latter leaves an inflated free budget
+        // and lets the set run above the configured load factor.
+        assertMemoryLeak(() -> {
+            // With loadFactor=0.5 and initialCapacity=4, the constructor rounds up to
+            // capacity=16, so the first rehash fires after 8 inserts.
+            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.5, MemoryTag.NATIVE_DEFAULT)) {
+                for (int i = 1; i <= 8; i++) {
+                    set.add(i);
+                }
+                Assert.assertEquals(32, set.capacity());
+
+                // At load factor 0.5 on capacity 32 the next rehash must fire at size 16,
+                // i.e. exactly 8 more inserts. The buggy formula would only trigger at 20.
+                for (int i = 9; i <= 15; i++) {
+                    set.add(i);
+                }
+                Assert.assertEquals(32, set.capacity());
+                set.add(16);
+                Assert.assertEquals(64, set.capacity());
+            }
+        });
+    }
+
+    @Test
     public void testSentinelValues() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectLongHashSet set = new DirectLongHashSet(16)) {

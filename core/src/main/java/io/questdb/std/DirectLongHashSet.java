@@ -245,6 +245,6 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         memLimit = newMemStart + newSizeBytes;
         capacity = newCapacity;
         mask = newMask;
-        free = (int) ((capacity - size) * loadFactor);
+        free = (int) (capacity * loadFactor) - size;
     }
 }
