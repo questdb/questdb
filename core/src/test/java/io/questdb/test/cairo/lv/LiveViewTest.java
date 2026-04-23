@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewTimerJob;
 import io.questdb.cairo.lv.MergeBuffer;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -117,14 +118,13 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testColdPathSkipDisabledForUnboundedWindowFunctions() throws Exception {
-        // row_number() reports an unbounded lookback (its implicit frame spans the whole
-        // partition up to the current row). The live view refresh job must therefore leave
-        // the cold-path skip disabled: late-row correctness for any-unbounded views needs
-        // the disk-read replay path, which is scheduled for V1 but not yet implemented.
-        // Pinning coldRowSkipCount at 0 catches the regression where a future change would
-        // accidentally enable skipping for these views, which would silently drop rows that
-        // still belong in the accumulator on the intended replay path.
+    public void testColdPathDiskReadReplayForUnboundedView() throws Exception {
+        // Cold-path disk-read replay for any-unbounded views: a row older than the
+        // merge buffer's retention coverage (ts < maxTsSeen - retention) bypasses the
+        // merge buffer entirely. The refresh job expands {@code stateHorizonTs} and
+        // re-bootstraps from the base table over [horizon, maxTs], so the unbounded
+        // window function's accumulator reflects the cold row without reaching for
+        // the all-bounded skip counter.
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
@@ -140,23 +140,179 @@ public class LiveViewTest extends AbstractCairoTest {
         drainWalQueue();
         drainLiveViewQueue();
 
-        // Insert a row whose ts is four years before the current published horizon.
-        // For an unbounded view, this reaches the merge buffer and flows through
-        // the warm-path replay (pendingLateCount increments in MergeBuffer.addRow).
+        // Sanity check before the cold row: bounded backfill uses ts > maxTs -
+        // retention, so the boundary row at exactly 0s sits outside state and the
+        // remaining two rows land with rn=1, 2.
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:05.000000Z\t1\n" +
+                        "AAPL\t102.0\t2024-01-01T00:00:10.000000Z\t2\n",
+                "SELECT * FROM live_cold",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // Insert a row whose ts is four years before the currently visible range.
+        // For an unbounded view, this row cannot ride through the merge buffer: its
+        // ts sits below the merge buffer's retention coverage, so the refresh
+        // diverts it to disk-read replay.
         execute("INSERT INTO trades VALUES ('AAPL', 1.0, '2020-01-01T00:00:00.000000Z')");
         drainWalQueue();
         drainLiveViewQueue();
 
         LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_cold");
+        // All-bounded cold-path skip counter stays at 0 — disk-read replay is a
+        // different mechanism.
         Assert.assertEquals(
-                "unbounded view must never trigger cold-path skip",
+                "unbounded view must not trigger all-bounded cold-path skip",
                 0,
                 instance.getColdRowSkipCount()
         );
-        // Late-row accounting still fires as usual: the row reached the merge buffer.
-        Assert.assertTrue(instance.getMergeBuffer().getLateRowCount() > 0);
+        // Cold rows skip the merge buffer (the late-row path). Late-row accounting
+        // therefore stays at zero even though the row is dramatically out of order.
+        Assert.assertEquals(
+                "cold row must not pass through the merge buffer",
+                0,
+                instance.getMergeBuffer().getLateRowCount()
+        );
+        // Disk-read replay expanded the state horizon to one tick below the cold
+        // row's ts — bootstrap uses a strict > lower bound, so the stored horizon
+        // is the exclusive bound that keeps the cold row in state.
+        Assert.assertEquals(
+                "state horizon must expand to include the cold row",
+                MicrosFormatUtils.parseUTCTimestamp("2020-01-01T00:00:00.000000Z") - 1,
+                instance.getStateHorizonTs()
+        );
+        // Disk-read rebuild scanned (newHorizon, maxTs], which is (2020 - 1µs,
+        // 2024-01-01T00:00:10] — the 0s boundary row is now part of state too.
+        // applyRetention evicts ts <= 0s, leaving the two newer rows visible with
+        // shifted rn values reflecting the four upstream rows in state.
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:05.000000Z\t3\n" +
+                        "AAPL\t102.0\t2024-01-01T00:00:10.000000Z\t4\n",
+                "SELECT * FROM live_cold",
+                null,
+                "ts",
+                true,
+                true
+        );
 
         execute("DROP LIVE VIEW live_cold");
+    }
+
+    @Test
+    public void testColdPathHorizonPersistsAcrossWarmPath() throws Exception {
+        // Once the state horizon expands via a cold row, subsequent warm-path replays
+        // (late rows within retention) must preserve that horizon. Without the
+        // disk-read branch in drainAndCommit, a merge-buffer-only replay would
+        // rebuild state from the retention window alone and silently drop the cold
+        // row's contribution to the accumulator.
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_horizon LAG 1s RETENTION 10s AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:00:05.000000Z')," +
+                " ('AAPL', 102.0, '2024-01-01T00:00:10.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // Cold row: expands the horizon, rn shifts by 1 across the visible range.
+        execute("INSERT INTO trades VALUES ('AAPL', 1.0, '2020-01-01T00:00:00.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // Warm row: within retention but arrives late. For an any-unbounded view
+        // whose horizon has been expanded, drainAndCommit must route warm-path
+        // replay back through disk-read so the cold row stays in the accumulator.
+        execute("INSERT INTO trades VALUES ('AAPL', 150.0, '2024-01-01T00:00:07.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_horizon");
+        // Horizon stays at the cold row's exclusive lower bound even after the warm
+        // path fired — the disk-read branch in drainAndCommit is what keeps it
+        // there.
+        Assert.assertEquals(
+                "horizon must persist across warm-path disk-read replay",
+                MicrosFormatUtils.parseUTCTimestamp("2020-01-01T00:00:00.000000Z") - 1,
+                instance.getStateHorizonTs()
+        );
+        // The warm row is inserted between 5s and 10s. State now carries five rows
+        // (cold + 0s + 5s + warm + 10s). applyRetention evicts ts <= 0s, so visible
+        // output shows the last three with rn shifted by 2 (two evicted but
+        // accumulated rows precede them in state).
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:05.000000Z\t3\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:07.000000Z\t4\n" +
+                        "AAPL\t102.0\t2024-01-01T00:00:10.000000Z\t5\n",
+                "SELECT * FROM live_horizon",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_horizon");
+    }
+
+    @Test
+    public void testMultipleColdRowsInOneBatchTakeMinHorizon() throws Exception {
+        // When two cold rows arrive in the same WAL batch, the horizon expands to
+        // the older of the two — a single disk-read replay picks up both.
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_multi_cold LAG 1s RETENTION 10s AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:00:05.000000Z')," +
+                " ('AAPL', 102.0, '2024-01-01T00:00:10.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // Two cold rows in one batch at different depths.
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 2.0, '2021-01-01T00:00:00.000000Z')," +
+                " ('AAPL', 1.0, '2020-01-01T00:00:00.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_multi_cold");
+        // Horizon advances to the older of the two cold rows (stored as the
+        // exclusive lower bound used by the disk-read replay).
+        Assert.assertEquals(
+                "horizon must take the min of all cold timestamps in a batch",
+                MicrosFormatUtils.parseUTCTimestamp("2020-01-01T00:00:00.000000Z") - 1,
+                instance.getStateHorizonTs()
+        );
+        // Accumulator sees five rows (2020, 2021, 0s, 5s, 10s). applyRetention
+        // evicts ts <= 0s, leaving the two newer rows visible with rn=4, 5.
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:05.000000Z\t4\n" +
+                        "AAPL\t102.0\t2024-01-01T00:00:10.000000Z\t5\n",
+                "SELECT * FROM live_multi_cold",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_multi_cold");
     }
 
     @Test

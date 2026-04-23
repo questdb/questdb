@@ -87,6 +87,12 @@ public class LiveViewInstance implements QuietCloseable {
     // pin the non-published buffer. LiveViewTimerJob polls this on each tick and
     // enqueues a force-drain task to retry. Cleared on a successful publishWriteBuffer.
     private volatile boolean pendingRefresh;
+    // Earliest base-table ts currently included in the window-function accumulator.
+    // Set by bootstrap (equal to the effective lower bound used for the base scan) and
+    // expanded backward by the cold-path disk-read replay when an any-unbounded view
+    // sees a row older than the merge buffer's retention coverage. Long.MAX_VALUE until
+    // the first bootstrap completes. Accessed only while the refresh latch is held.
+    private long stateHorizonTs = Long.MAX_VALUE;
 
     public LiveViewInstance(LiveViewDefinition definition) {
         this.definition = definition;
@@ -167,6 +173,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public MergeBuffer getMergeBuffer() {
         return mergeBuffer;
+    }
+
+    public long getStateHorizonTs() {
+        return stateHorizonTs;
     }
 
     public void invalidate(String reason) {
@@ -255,6 +265,18 @@ public class LiveViewInstance implements QuietCloseable {
             Misc.free(this.mergeBuffer);
             this.mergeBuffer = mergeBuffer;
         }
+    }
+
+    /**
+     * Records the earliest base-table ts covered by the current window-function state.
+     * Set by bootstrap to the effective lower bound used for the base scan; the cold-path
+     * disk-read replay reads this to decide whether a warm-path can use the merge buffer
+     * (state coverage matches merge buffer coverage) or must re-read from disk (state
+     * coverage extends below merge buffer coverage). Must be called while the refresh
+     * latch is held.
+     */
+    public void setStateHorizonTs(long stateHorizonTs) {
+        this.stateHorizonTs = stateHorizonTs;
     }
 
     /**

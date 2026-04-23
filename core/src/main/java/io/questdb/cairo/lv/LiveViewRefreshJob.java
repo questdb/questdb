@@ -150,8 +150,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * When {@code forceDrain} is true the watermark equals the max timestamp observed,
      * so every buffered row is emitted — used for idle-timer flushes where we want
      * to publish everything currently held back.
+     * <p>
+     * Also the disk-read replay entry point for any-unbounded views: pass a
+     * {@code lowerBoundOverride} older than {@code maxTs - retention} to expand the
+     * backfill window and rebuild the accumulator so it reflects a cold row (one
+     * that arrived past retention and cannot pass through the merge buffer). Pass
+     * {@link Long#MAX_VALUE} for the normal bounded backfill. The effective lower
+     * bound becomes the view's {@code stateHorizonTs}, which {@link #drainAndCommit}
+     * consults on subsequent warm paths to decide between merge-buffer replay and
+     * another disk-read replay.
      */
-    private void bootstrap(LiveViewInstance instance, boolean forceDrain) throws SqlException {
+    private void bootstrap(LiveViewInstance instance, boolean forceDrain, long lowerBoundOverride) throws SqlException {
         WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
         RecordCursorFactory baseFactory = windowFactory.getBaseFactory();
 
@@ -185,6 +194,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 long maxTs = reader.getMaxTimestamp();
                 if (maxTs != Long.MIN_VALUE) {
                     lowerBound = maxTs - retentionMicros;
+                    if (lowerBoundOverride != Long.MAX_VALUE && lowerBoundOverride < lowerBound) {
+                        lowerBound = lowerBoundOverride;
+                    }
                 }
                 bootstrapSeqTxn = reader.getSeqTxn();
             }
@@ -225,6 +237,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             mergeBuffer.applyRetention(retentionMicros);
             mergeBuffer.compactIfNeeded();
             instance.publishWriteBuffer();
+            // State now covers rows with ts > lowerBound (bootstrap's bounded backfill
+            // is strict-greater-than). drainAndCommit uses this to decide whether a
+            // subsequent warm path can replay from the merge buffer alone or must
+            // route back through disk-read replay.
+            instance.setStateHorizonTs(lowerBound);
             // Advance the high watermark even when the inbound notification carried
             // seqTxn=-1 (initial flush triggered by forceFlushAllViews). Without this,
             // the next refresh re-enters the bootstrap branch and calls
@@ -274,13 +291,49 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Computes the ts below which an incoming WAL row is cold for an any-unbounded
+     * view and must divert to disk-read replay. The cutoff is
+     * {@code mergeBuffer.maxTsSeen - retention} — rows older than this have already
+     * fallen outside what the merge buffer can carry across a warm-path replay, so
+     * for a view with at least one unbounded window function they cannot be routed
+     * through the normal merge-buffer path without corrupting the accumulator.
+     * Returns {@code Long.MIN_VALUE} when:
+     * <ul>
+     *     <li>the view is all-bounded — the regular {@link #computeColdCutoff}
+     *         drives the skip path in that case;</li>
+     *     <li>the merge buffer has never seen a row (empty) — there is no meaningful
+     *         coverage boundary yet;</li>
+     *     <li>the subtraction would underflow a signed long.</li>
+     * </ul>
+     */
+    private long computeAnyUnboundedColdCutoff(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            MergeBuffer mergeBuffer
+    ) {
+        if (windowFactory.getMaxLookbackMicros() >= 0) {
+            return Long.MIN_VALUE;
+        }
+        long maxTsSeen = mergeBuffer.getMaxTsSeen();
+        if (maxTsSeen == Long.MIN_VALUE) {
+            return Long.MIN_VALUE;
+        }
+        long retentionMicros = instance.getDefinition().getRetentionMicros();
+        if (retentionMicros <= 0 || maxTsSeen < Long.MIN_VALUE + retentionMicros) {
+            return Long.MIN_VALUE;
+        }
+        return maxTsSeen - retentionMicros;
+    }
+
+    /**
      * Computes the ts below which an incoming WAL row is cold relative to the
      * live view's currently-published output. Returns {@code Long.MIN_VALUE} to
      * disable skipping when:
      * <ul>
      *     <li>any window function reports an unbounded (or ts-inexpressible)
-     *         lookback — a cold row would pollute the accumulator and the
-     *         V1 refresh cannot recover without a disk-read replay;</li>
+     *         lookback — a cold row cannot be safely skipped because it would
+     *         change the accumulator; the disk-read replay path
+     *         ({@link #computeAnyUnboundedColdCutoff}) handles those views;</li>
      *     <li>the published buffer is empty — no visible rows to protect, so
      *         the row must flow through the normal hot/warm path;</li>
      *     <li>the subtraction would underflow a signed long.</li>
@@ -316,6 +369,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * state for that time range out of order. Reset window state, clear the write
      * buffer, and re-emit every retained row in sort order through
      * {@link MergeBuffer#replay} so the accumulator rebuilds from the retained horizon.
+     * <p>
+     * Any-unbounded disk-read branch: when the view has at least one unbounded window
+     * function and its {@code stateHorizonTs} is older than the merge buffer's retention
+     * coverage, warm-path replay from the merge buffer alone would shrink the
+     * accumulator's coverage (merge buffer has already evicted rows the accumulator
+     * still reflects). The warm path therefore routes back through
+     * {@link #bootstrap} with the horizon as the lower-bound override, re-reading the
+     * base table and rebuilding the accumulator over the wider window.
      */
     private void drainAndCommit(
             LiveViewInstance instance,
@@ -324,6 +385,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean forceDrain
     ) throws SqlException {
         if (mergeBuffer.isEmpty()) {
+            return;
+        }
+        if (needsDiskReadWarmPath(instance, windowFactory, mergeBuffer)) {
+            LOG.info().$("live view warm-path disk-read replay [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", horizonMicros=").$(instance.getStateHorizonTs())
+                    .$(", maxTsSeenMicros=").$(mergeBuffer.getMaxTsSeen()).I$();
+            bootstrap(instance, forceDrain, instance.getStateHorizonTs());
             return;
         }
         InMemoryTable writeBuffer = instance.tryAcquireWriteBuffer();
@@ -413,7 +482,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * refresh impossible.
      */
     private void fullRecompute(LiveViewInstance instance, boolean forceDrain) throws SqlException {
-        bootstrap(instance, forceDrain);
+        bootstrap(instance, forceDrain, Long.MAX_VALUE);
     }
 
     private WindowRecordCursorFactory getWindowFactory(LiveViewInstance instance) throws SqlException {
@@ -472,12 +541,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // is {@code Long.MIN_VALUE} (skip disabled) when the view has any unbounded
         // window function (max lookback < 0), when the published buffer is empty
         // (nothing visible to protect), or when the subtraction would underflow.
-        // TODO(live-view): add a disk-read replay path for any-unbounded views so
-        //  late rows past retention produce correct output instead of polluting
-        //  window state.
         final int baseTsIdx = baseMetadata.getTimestampIndex();
         final long coldCutoff = computeColdCutoff(instance, windowFactory);
+        // Any-unbounded cold threshold: rows older than the merge buffer's retention
+        // coverage cannot pass through merge-buffer replay (they would be evicted
+        // before a warm path could process them) and, because at least one window
+        // function is unbounded, changing them silently corrupts the accumulator. A
+        // row below this threshold is diverted: it skips the merge buffer and
+        // triggers a disk-read replay after the WAL loop finishes. {@code
+        // Long.MIN_VALUE} means the check is off (merge buffer is empty or the view
+        // is all-bounded).
+        final long anyUnboundedColdCutoff = computeAnyUnboundedColdCutoff(instance, windowFactory, mergeBuffer);
         long skippedColdRows = 0;
+        long batchMinColdTs = Long.MAX_VALUE;
 
         WalSegmentPageFrameCursor frameCursor = new WalSegmentPageFrameCursor(
                 engine.getConfiguration(), columnIndexes, columnSizeShifts
@@ -535,8 +611,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
                     Record record = source.getRecord();
                     while (source.hasNext()) {
-                        if (coldCutoff != Long.MIN_VALUE && record.getTimestamp(baseTsIdx) < coldCutoff) {
+                        long ts = record.getTimestamp(baseTsIdx);
+                        if (coldCutoff != Long.MIN_VALUE && ts < coldCutoff) {
                             skippedColdRows++;
+                            continue;
+                        }
+                        if (anyUnboundedColdCutoff != Long.MIN_VALUE && ts < anyUnboundedColdCutoff) {
+                            if (ts < batchMinColdTs) {
+                                batchMinColdTs = ts;
+                            }
                             continue;
                         }
                         mergeBuffer.addRow(record);
@@ -554,7 +637,64 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", coldCutoffMicros=").$(coldCutoff).I$();
         }
 
+        if (batchMinColdTs != Long.MAX_VALUE) {
+            // Any-unbounded view saw a row below merge-buffer retention. Route the
+            // refresh through disk-read replay: bootstrap re-reads the base table
+            // over (override, maxTs], rebuilds the accumulator so it includes the
+            // cold row, and publishes a fresh snapshot. The diverted cold row is
+            // already durable in the base table via WAL apply, so the disk scan
+            // picks it up without the merge buffer having to carry it. Bootstrap
+            // installs the effective lower bound on {@code stateHorizonTs} only
+            // after it succeeds, so a mid-way failure leaves the previous horizon
+            // intact.
+            // <p>
+            // {@code - 1}: bootstrap's bounded-backfill predicate is {@code ts >
+            // lowerBound}, so passing {@code batchMinColdTs - 1} makes the cold row
+            // at exactly {@code batchMinColdTs} pass the filter.
+            long newHorizon = Math.min(instance.getStateHorizonTs(), batchMinColdTs - 1);
+            LOG.info().$("live view cold-path disk-read replay [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", minColdTsMicros=").$(batchMinColdTs)
+                    .$(", newHorizonMicros=").$(newHorizon).I$();
+            bootstrap(instance, forceDrain, newHorizon);
+            return;
+        }
+
         drainAndCommit(instance, windowFactory, mergeBuffer, forceDrain);
+    }
+
+    /**
+     * Reports whether the upcoming commit must route through
+     * {@link #bootstrap}'s disk-read replay rather than a merge-buffer replay. Fires
+     * only when the view has at least one unbounded window function, a warm path is
+     * pending, and {@code stateHorizonTs} sits older than the merge buffer's retention
+     * coverage — at which point replaying the merge buffer alone would shrink the
+     * accumulator by discarding rows the state still reflects.
+     */
+    private boolean needsDiskReadWarmPath(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            MergeBuffer mergeBuffer
+    ) {
+        if (mergeBuffer.getPendingLateCount() == 0) {
+            return false;
+        }
+        if (windowFactory.getMaxLookbackMicros() >= 0) {
+            return false;
+        }
+        long horizon = instance.getStateHorizonTs();
+        if (horizon == Long.MAX_VALUE) {
+            return false;
+        }
+        long maxTsSeen = mergeBuffer.getMaxTsSeen();
+        if (maxTsSeen == Long.MIN_VALUE) {
+            return false;
+        }
+        long retentionMicros = instance.getDefinition().getRetentionMicros();
+        if (retentionMicros <= 0 || maxTsSeen < Long.MIN_VALUE + retentionMicros) {
+            return false;
+        }
+        return horizon < maxTsSeen - retentionMicros;
     }
 
     private boolean processNotifications() {
@@ -584,7 +724,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 boolean bootstrapAttempted = false;
                 if (lastSeqTxn < 0) {
                     bootstrapAttempted = true;
-                    bootstrap(instance, forceDrain);
+                    bootstrap(instance, forceDrain, Long.MAX_VALUE);
                 } else if (seqTxn > lastSeqTxn) {
                     incrementalRefresh(instance, lastSeqTxn, seqTxn, forceDrain);
                 } else if (forceDrain) {
@@ -603,7 +743,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // re-read the same WAL segments. Bootstrap is different — it never touches
                 // WAL state on a pending-refresh bail, so do not advance or the retry would
                 // take the incremental branch on an un-bootstrapped view.
-                if (seqTxn > lastSeqTxn && !(bootstrapAttempted && instance.isPendingRefresh())) {
+                // <p>
+                // Compare against the current lastProcessedSeqTxn rather than the captured
+                // {@code lastSeqTxn}: the disk-read replay path invokes {@link #bootstrap}
+                // from within {@link #incrementalRefresh0}, which advances
+                // lastProcessedSeqTxn to the reader's seqTxn (often past {@code seqTxn}).
+                // A blind overwrite would downgrade it and force the next refresh to
+                // re-read WAL segments already absorbed by the disk scan — for any-unbounded
+                // views, the same cold row would trigger another disk-read replay.
+                if (seqTxn > instance.getLastProcessedSeqTxn() && !(bootstrapAttempted && instance.isPendingRefresh())) {
                     instance.setLastProcessedSeqTxn(seqTxn);
                 }
                 instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
