@@ -59,6 +59,17 @@ if [ -n "$JVM_PREPEND" ]; then
     JAVA_COMMAND="$JAVA_COMMAND $JVM_PREPEND"
 fi
 
+# Offline recovery mode: launch RecoveryMain and exit
+if [ "$1" = "recover" ]; then
+    shift
+    RECOVER_CMD="$JAVA_COMMAND $QUESTDB_LIBS_DIR_PROP -ea -Dnoebug -m io.questdb/io.questdb.RecoveryMain -d ${QUESTDB_DATA_DIR} $@"
+    if [ "$(id -u)" = '0' ] && [ "${QUESTDB_DATA_DIR%/}" != "/root/.questdb" ] && [ "$RUN_AS_ROOT" = "false" ] && [ -x "$(command -v gosu)" ]; then
+        exec gosu $QUESTDB_UID:$QUESTDB_GID $RECOVER_CMD
+    else
+        exec $RECOVER_CMD
+    fi
+fi
+
 # Setup async profiler if enabled
 PROFILER_AGENT=""
 if [ "$PROFILER_ENABLED" = "true" ]; then
