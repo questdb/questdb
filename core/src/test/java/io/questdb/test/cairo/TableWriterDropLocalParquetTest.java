@@ -40,7 +40,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Covers {@link TableWriter#dropLocalParquetForColdPartition(long)}: drops the
+ * Covers {@link TableWriter#dropLocalPartitionData(long)}: drops the
  * local {@code data.parquet} while keeping the {@code _pm} sidecar, the
  * partition directory, and the partition's {@code TxReader} entry intact. The
  * SELECT-through-cold-resolver read path is exercised in
@@ -63,7 +63,7 @@ public class TableWriterDropLocalParquetTest extends AbstractCairoTest {
             final long activeTs = findPartitionTimestamp(token, 2);
 
             try (TableWriter writer = getWriter(token)) {
-                writer.dropLocalParquetForColdPartition(activeTs);
+                writer.dropLocalPartitionData(activeTs);
             }
 
             assertSql("id\tts\n3\t2024-06-12T00:00:00.000000Z\n",
@@ -86,7 +86,7 @@ public class TableWriterDropLocalParquetTest extends AbstractCairoTest {
                     pmExists(token, targetTs, nameTxn));
 
             try (TableWriter writer = getWriter(token)) {
-                writer.dropLocalParquetForColdPartition(targetTs);
+                writer.dropLocalPartitionData(targetTs);
             }
 
             Assert.assertFalse("data.parquet must be gone after drop",
@@ -108,12 +108,12 @@ public class TableWriterDropLocalParquetTest extends AbstractCairoTest {
             final long nameTxn = findPartitionNameTxn(token, targetTs);
 
             try (TableWriter writer = getWriter(token)) {
-                writer.dropLocalParquetForColdPartition(targetTs);
+                writer.dropLocalPartitionData(targetTs);
                 final long txnAfterFirstDrop = writer.getTxn();
                 // Second call must not throw, must leave state unchanged, and
                 // must not advance the transaction. The ff.exists guard in the
                 // method is the contract: no-op drops write no txn entry.
-                writer.dropLocalParquetForColdPartition(targetTs);
+                writer.dropLocalPartitionData(targetTs);
                 Assert.assertEquals(
                         "no-op drop must not advance the transaction",
                         txnAfterFirstDrop,
@@ -146,7 +146,7 @@ public class TableWriterDropLocalParquetTest extends AbstractCairoTest {
 
             try (TableWriter writer = getWriter(token)) {
                 try {
-                    writer.dropLocalParquetForColdPartition(nativeTs);
+                    writer.dropLocalPartitionData(nativeTs);
                     Assert.fail("expected CairoException for non-parquet partition");
                 } catch (CairoException e) {
                     Assert.assertTrue(
@@ -175,7 +175,7 @@ public class TableWriterDropLocalParquetTest extends AbstractCairoTest {
             final long unknownTs = knownTs + 365L * 24L * 3_600L * 1_000_000L;
 
             try (TableWriter writer = getWriter(token)) {
-                writer.dropLocalParquetForColdPartition(unknownTs);
+                writer.dropLocalPartitionData(unknownTs);
             }
 
             Assert.assertTrue("known parquet partition must be untouched",

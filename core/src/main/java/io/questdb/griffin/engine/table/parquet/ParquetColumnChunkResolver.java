@@ -32,11 +32,6 @@ public interface ParquetColumnChunkResolver {
 
     void resolve(DirectUtf8Sequence partitionPath, DirectLongList byteRanges, int columnsSize, DirectLongList chunksOut);
 
-    /**
-     * Holds the process-wide resolver reference. Null in open-source builds;
-     * enterprise entry points set it at startup. Kept in a separate class
-     * because interface fields are implicitly {@code static final}.
-     */
     final class Holder {
         public static volatile ParquetColumnChunkResolver INSTANCE;
 

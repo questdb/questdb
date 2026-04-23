@@ -1954,19 +1954,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * Drops the local {@code data.parquet} file for a parquet-format partition
-     * while keeping the {@code _pm} sidecar, the partition directory, and the
-     * partition's {@code TxReader} entry. Callers use this when the partition
-     * has been uploaded to cold storage and they want to free the local copy;
-     * queries then route through {@code ParquetColumnChunkResolver} to fetch
-     * byte ranges from the object store.
-     * <p>
-     * The partition must already be in parquet format
-     * ({@code txWriter.isPartitionParquet(partitionIndex) == true}); otherwise
-     * this method throws. The active (most recent) partition is skipped.
-     */
-    public void dropLocalParquetForColdPartition(long partitionTimestamp) {
+    public void dropLocalPartitionData(long partitionTimestamp) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
@@ -2008,7 +1996,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw CairoException.critical(ff.errno())
                             .put("could not remove local parquet file [path=").put(path).put(']');
                 }
-                LOG.info().$("dropped local parquet, partition now served from cold storage [path=")
+                LOG.info().$("dropped local parquet [path=")
                         .$substr(pathRootSize, path).I$();
             }
         } finally {

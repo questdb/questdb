@@ -149,7 +149,8 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         if (parquetAddr != 0) {
             decodeRowGroupWithRowFilter(
                     decodeContextPtr, parquetAddr, parquetSize,
-                    parquetMetaAddr, parquetMetaSize, rowGroupBuffers.ptr(), columnOffset,
+                    parquetMetaReader.getOrCreateNativeReaderPtr(),
+                    rowGroupBuffers.ptr(), columnOffset,
                     columns.getAddress(), columnsSize,
                     rowGroupIndex, rowLo, rowHi,
                     filteredRows.getAddress(), filteredRows.size()
