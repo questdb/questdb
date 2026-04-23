@@ -464,9 +464,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private RecordCursorFactory ensureCompiledFactory(LiveViewInstance instance) throws SqlException {
         RecordCursorFactory factory = instance.getCompiledFactory();
         if (factory == null) {
+            // Flags the compile so window function factories can tell they are
+            // being compiled inside a live view and opt into live-view-only
+            // machinery (e.g. the lastActivityTs value-layout slot that drives
+            // Phase 5 partition-state eviction). Regular queries leave the flag
+            // clear and skip the extra slot.
+            executionContext.setLiveViewCompile(true);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile(instance.getDefinition().getViewSql(), executionContext);
                 factory = cq.getRecordCursorFactory();
+            } finally {
+                executionContext.setLiveViewCompile(false);
             }
             instance.setCompiledFactory(factory);
         }

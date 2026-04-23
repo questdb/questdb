@@ -54,14 +54,13 @@ import io.questdb.std.Unsafe;
 public class RowNumberFunctionFactory implements FunctionFactory {
 
     public static final String NAME = "row_number";
-    // Value layout: [rowNumber:LONG, lastActivityTs:LONG]. The second slot drives
-    // live view Phase 5 partition-state eviction — see
-    // {@link RowNumberFunction#evictStalePartitionState}. For non-live-view
-    // queries it is written but never read; the storage overhead is 8 bytes per
-    // partition key for the lifetime of the query.
+    // Base value layout for regular queries: [rowNumber:LONG]. When compiling
+    // inside a live view, RowNumberFunction appends a second LONG slot for
+    // lastActivityTs — consumed by Phase 5 partition-state eviction (see
+    // {@link RowNumberFunction#evictStalePartitionState}). The slot is
+    // omitted for non-live-view queries to avoid the 8 bytes per partition
+    // key overhead.
     private static final int ROW_NUMBER_VALUE_INDEX = 0;
-    private static final int LAST_ACTIVITY_TS_VALUE_INDEX = 1;
-    private static final ArrayColumnTypes VALUE_COLUMN_TYPES;
     private static final String SIGNATURE = NAME + "()";
 
     @Override
@@ -97,10 +96,17 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             for (int i = 0, n = contextKeyTypes.getColumnCount(); i < n; i++) {
                 keyTypes.add(contextKeyTypes.getColumnType(i));
             }
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG); // rowNumber
+            int lastActivityTsValueIndex = -1;
+            if (windowContext.isLiveView()) {
+                valueTypes.add(ColumnType.LONG); // lastActivityTs (live view Phase 5)
+                lastActivityTsValueIndex = 1;
+            }
             Map map = MapFactory.createUnorderedMap(
                     configuration,
                     keyTypes,
-                    VALUE_COLUMN_TYPES
+                    valueTypes
             );
             return new RowNumberFunction(
                     map,
@@ -108,6 +114,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                     windowContext.getPartitionBySink(),
                     windowContext.getTimestampIndex(),
                     keyTypes,
+                    valueTypes,
+                    lastActivityTsValueIndex,
                     configuration
             );
         }
@@ -118,9 +126,13 @@ public class RowNumberFunctionFactory implements FunctionFactory {
     private static class RowNumberFunction extends LongFunction implements WindowFunction, Reopenable {
         private final CairoConfiguration configuration;
         private final ColumnTypes keyColumnTypes;
+        // -1 when the value layout does not carry a lastActivityTs slot, i.e. for
+        // regular (non-live-view) queries. Phase 5 eviction is a no-op in that case.
+        private final int lastActivityTsValueIndex;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
         private final int tsColumnIndex;
+        private final ColumnTypes valueColumnTypes;
         private int columnIndex;
         private Map map;
         private long rowNumber;
@@ -132,6 +144,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                 RecordSink partitionBySink,
                 int tsColumnIndex,
                 ColumnTypes keyColumnTypes,
+                ColumnTypes valueColumnTypes,
+                int lastActivityTsValueIndex,
                 CairoConfiguration configuration
         ) {
             this.map = map;
@@ -139,6 +153,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             this.partitionBySink = partitionBySink;
             this.tsColumnIndex = tsColumnIndex;
             this.keyColumnTypes = keyColumnTypes;
+            this.valueColumnTypes = valueColumnTypes;
+            this.lastActivityTsValueIndex = lastActivityTsValueIndex;
             this.configuration = configuration;
         }
 
@@ -162,24 +178,31 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             }
             rowNumber = x + 1;
             value.putLong(ROW_NUMBER_VALUE_INDEX, rowNumber);
-            // Track per-key last-activity-ts for live view retention-driven eviction.
-            // tsColumnIndex is -1 when the window is defined over a source with no
-            // designated timestamp; writing Long.MIN_VALUE keeps those keys below any
-            // eviction cutoff, so they never get evicted (live views always have one).
-            value.putLong(LAST_ACTIVITY_TS_VALUE_INDEX,
-                    tsColumnIndex >= 0 ? record.getTimestamp(tsColumnIndex) : Long.MIN_VALUE);
+            if (lastActivityTsValueIndex >= 0) {
+                // Track per-key last-activity-ts for live view retention-driven eviction.
+                // tsColumnIndex is -1 when the window is defined over a source with no
+                // designated timestamp; writing Long.MIN_VALUE keeps those keys below any
+                // eviction cutoff, so they never get evicted (live views always have one).
+                value.putLong(lastActivityTsValueIndex,
+                        tsColumnIndex >= 0 ? record.getTimestamp(tsColumnIndex) : Long.MIN_VALUE);
+            }
         }
 
         @Override
         public void evictStalePartitionState(long cutoffTs) {
+            if (lastActivityTsValueIndex < 0) {
+                // Non-live-view queries do not carry the lastActivityTs slot and
+                // do not exercise Phase 5 eviction.
+                return;
+            }
             long size = map.size();
             if (size == 0 || size < sizeAfterLastEvict * 2) {
                 return;
             }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, VALUE_COLUMN_TYPES);
+            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, valueColumnTypes);
             try {
                 scratch.setKeyCapacity((int) Math.min(size, Integer.MAX_VALUE));
-                PartitionStateEvictor.rebuildKeeping(map, scratch, LAST_ACTIVITY_TS_VALUE_INDEX, cutoffTs);
+                PartitionStateEvictor.rebuildKeeping(map, scratch, lastActivityTsValueIndex, cutoffTs);
                 Misc.free(map);
                 map = scratch;
                 scratch = null;
@@ -299,11 +322,5 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void toTop() {
             rowNumber = 0;
         }
-    }
-
-    static {
-        VALUE_COLUMN_TYPES = new ArrayColumnTypes();
-        VALUE_COLUMN_TYPES.add(ColumnType.LONG); // rowNumber
-        VALUE_COLUMN_TYPES.add(ColumnType.LONG); // lastActivityTs (live view Phase 5)
     }
 }

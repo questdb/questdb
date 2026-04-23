@@ -101,6 +101,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                         windowContext.getTimestampIndex(),
                         configuration,
                         false,
+                        windowContext.isLiveView(),
                         NAME);
             } else {
                 // Rank() over (order by xxx)
@@ -331,15 +332,20 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private final CairoConfiguration configuration;
         private final boolean dense;
         private final ColumnTypes keyColumnTypes;
+        // True when this function is being compiled as part of a live view's
+        // SELECT. Drives opt-in allocation of the lastActivityTs value-layout
+        // slot used by Phase 5 partition-state eviction.
+        private final boolean liveView;
         private final String name;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
         private final int tsColumnIndex;
-        // Value-layout index of the lastActivityTs slot (live view Phase 5). Lives at
-        // chainTypeIndex + 2, i.e. one slot past the existing rank/count pair.
         private int chainTypeIndex;
         private int columnIndex;
-        private int lastActivityTsValueIndex;
+        // Value-layout index of the lastActivityTs slot (live view Phase 5). Lives
+        // at chainTypeIndex + 2 when present, or is -1 for regular queries where
+        // the slot is omitted.
+        private int lastActivityTsValueIndex = -1;
         private Map map;
         private ArrayColumnTypes mapValueTypes;
         private long rank;
@@ -354,6 +360,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                                          int tsColumnIndex,
                                          CairoConfiguration configuration,
                                          boolean dense,
+                                         boolean liveView,
                                          String name) {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
@@ -369,6 +376,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             this.tsColumnIndex = tsColumnIndex;
             this.configuration = configuration;
             this.dense = dense;
+            this.liveView = liveView;
             this.name = name;
         }
 
@@ -401,16 +409,23 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             recordValueSink.copy(record, mapValue);
             mapValue.putLong(chainTypeIndex, rank);
             mapValue.putLong(chainTypeIndex + 1, count + 1);
-            // Track per-key last-activity-ts for live view retention-driven eviction.
-            // tsColumnIndex is -1 when the window is defined over a source with no
-            // designated timestamp; writing Long.MIN_VALUE keeps those keys below any
-            // eviction cutoff, so they never get evicted (live views always have one).
-            mapValue.putLong(lastActivityTsValueIndex,
-                    tsColumnIndex >= 0 ? record.getTimestamp(tsColumnIndex) : Long.MIN_VALUE);
+            if (lastActivityTsValueIndex >= 0) {
+                // Track per-key last-activity-ts for live view retention-driven eviction.
+                // tsColumnIndex is -1 when the window is defined over a source with no
+                // designated timestamp; writing Long.MIN_VALUE keeps those keys below any
+                // eviction cutoff, so they never get evicted (live views always have one).
+                mapValue.putLong(lastActivityTsValueIndex,
+                        tsColumnIndex >= 0 ? record.getTimestamp(tsColumnIndex) : Long.MIN_VALUE);
+            }
         }
 
         @Override
         public void evictStalePartitionState(long cutoffTs) {
+            if (lastActivityTsValueIndex < 0) {
+                // Non-live-view queries do not carry the lastActivityTs slot and
+                // do not exercise Phase 5 eviction.
+                return;
+            }
             long size = map.size();
             if (size == 0 || size < sizeAfterLastEvict * 2) {
                 return;
@@ -474,13 +489,15 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
                 chainTypes.add(ColumnType.LONG); // rank
                 chainTypes.add(ColumnType.LONG); // count
-                chainTypes.add(ColumnType.LONG); // lastActivityTs (live view Phase 5)
-                lastActivityTsValueIndex = chainTypeIndex + 2;
-                // Caller reuses the chainTypes buffer across window functions in the
-                // same query; take our own copy so {@link #evictStalePartitionState}
-                // can allocate a scratch Map with the exact same value layout.
-                mapValueTypes = new ArrayColumnTypes();
-                mapValueTypes.addAll(chainTypes);
+                if (liveView) {
+                    chainTypes.add(ColumnType.LONG); // lastActivityTs (live view Phase 5)
+                    lastActivityTsValueIndex = chainTypeIndex + 2;
+                    // Caller reuses the chainTypes buffer across window functions in the
+                    // same query; take our own copy so {@link #evictStalePartitionState}
+                    // can allocate a scratch Map with the exact same value layout.
+                    mapValueTypes = new ArrayColumnTypes();
+                    mapValueTypes.addAll(chainTypes);
+                }
                 this.map = MapFactory.createUnorderedMap(
                         configuration,
                         keyColumnTypes,

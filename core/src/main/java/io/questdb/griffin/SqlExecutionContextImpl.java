@@ -89,6 +89,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean containsSecret;
     private int intervalFunctionType;
     private int jitMode;
+    private boolean liveViewCompile;
     private long nowMicros;
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory
@@ -343,6 +344,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isLiveViewCompile() {
+        return liveViewCompile;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
@@ -475,6 +481,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setLiveViewCompile(boolean value) {
+        this.liveViewCompile = value;
+        this.windowContext.setLiveView(value);
     }
 
     @Override

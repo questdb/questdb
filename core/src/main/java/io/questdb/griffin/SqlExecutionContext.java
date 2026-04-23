@@ -205,6 +205,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isCacheHit();
 
+    // Returns true when the current compile is the refresh-time compile of a
+    // live view's SELECT. Compile-time switch that lets window function
+    // factories opt into live-view-only machinery (e.g. the lastActivityTs
+    // value-layout slot that drives Phase 5 partition-state eviction).
+    default boolean isLiveViewCompile() {
+        return false;
+    }
+
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
         return false;
@@ -269,6 +277,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setIntervalFunctionType(int intervalType);
 
     void setJitMode(int jitMode);
+
+    default void setLiveViewCompile(boolean value) {
+    }
 
     void setNowAndFixClock(long now, int nowTimestampType);
 
