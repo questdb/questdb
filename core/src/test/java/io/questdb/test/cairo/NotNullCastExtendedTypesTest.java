@@ -30,14 +30,17 @@ import org.junit.Test;
 /**
  * Cast-to-string / cast-to-varchar coverage for the NOT NULL FuncNotNull paths
  * of CastIPv4ToStrFunctionFactory, CastUuidToStrFunctionFactory,
- * CastLong256ToStrFunctionFactory, and CastCharToStrFunctionFactory (and the
- * varchar siblings).
+ * CastLong256ToStrFunctionFactory, CastCharToStrFunctionFactory,
+ * CastDecimalToStrFunctionFactory (DECIMAL 64 / 128 / 256 variants),
+ * CastDateToStrFunctionFactory, CastFloatToStrFunctionFactory,
+ * CastIntervalToStrFunctionFactory, and their varchar siblings.
  * <p>
  * NotNullColumnTest already asserts the INT / LONG / DOUBLE / TIMESTAMP shape
- * (testCastToStringOnNotNullColumn). The four types covered here go through
+ * (testCastToStringOnNotNullColumn). The types covered here go through
  * dedicated cast factories that pick FuncNotNull when the source column is
- * NOT NULL — this test exercises that picked path with the type's null
- * sentinel as the input.
+ * NOT NULL — this test exercises both that picked path with the type's null
+ * sentinel as the input and the nullable Func counterpart (where the factory
+ * still falls through to a NULL result for a NULL row).
  */
 public class NotNullCastExtendedTypesTest extends AbstractCairoTest {
 
@@ -179,6 +182,229 @@ public class NotNullCastExtendedTypesTest extends AbstractCairoTest {
                             a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
                             """,
                     "SELECT uu::varchar u_v FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testCastDecimalNotNullColumnToStringAndVarchar() throws Exception {
+        // Each DECIMAL precision tier routes the cast factory to a different
+        // NotNull class:
+        //   DECIMAL(<=18)   -> Func64NotNull  (via Decimal64LoaderFunctionFactory)
+        //   DECIMAL(19-38)  -> Func128NotNull
+        //   DECIMAL(39-76)  -> FuncNotNull    (256-bit)
+        // FuncNotNull variants skip the decimal.isNull() guard and always call
+        // Decimal{64,128,256}.toSink. For a row produced by INSERT NULL into a
+        // NOT NULL column, the stored bit pattern is the type's null sentinel,
+        // and toSink renders an empty cell (QuestDB prints the decimal NULL
+        // sentinel as an empty value, same as CursorPrinter's "dec*\tNULL"
+        // convention seen in NotNullColumnTest#testCastToStringOnNotNullColumn).
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        d64 DECIMAL(9, 2) NOT NULL,
+                        d128 DECIMAL(30, 2) NOT NULL,
+                        d256 DECIMAL(60, 2) NOT NULL,
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        (NULL, NULL, NULL, '2024-01-01'),
+                        (123.45::DECIMAL(9, 2), 99999.99::DECIMAL(30, 2), 12345.67::DECIMAL(60, 2), '2024-01-02')
+                    """);
+
+            // Func*NotNull.getStrA (DECIMAL64 / DECIMAL128 / DECIMAL256).
+            assertSql(
+                    """
+                            d64_s\td128_s\td256_s
+                            \t\t
+                            123.45\t99999.99\t12345.67
+                            """,
+                    "SELECT d64::string d64_s, d128::string d128_s, d256::string d256_s FROM t ORDER BY ts"
+            );
+
+            // Func*NotNull.getVarcharA on the same paths.
+            assertSql(
+                    """
+                            d64_v\td128_v\td256_v
+                            \t\t
+                            123.45\t99999.99\t12345.67
+                            """,
+                    "SELECT d64::varchar d64_v, d128::varchar d128_v, d256::varchar d256_v FROM t ORDER BY ts"
+            );
+
+            // DISTINCT drives both getStrA and getStrB (record-staging path).
+            assertSql(
+                    """
+                            d64_s
+
+                            123.45
+                            """,
+                    "SELECT DISTINCT d64::string d64_s FROM t ORDER BY d64_s"
+            );
+        });
+    }
+
+    @Test
+    public void testCastDecimalNullableColumnToStringAndVarchar() throws Exception {
+        // Nullable sibling of the NOT NULL test. Each DECIMAL tier picks the
+        // Func / Func128 / Func64 class, which check decimal.isNull() and
+        // return null for the sentinel — this covers the null-branch of
+        // getStrA / getVarcharA.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        d64 DECIMAL(9, 2),
+                        d128 DECIMAL(30, 2),
+                        d256 DECIMAL(60, 2),
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        (NULL, NULL, NULL, '2024-01-01'),
+                        (-0.25::DECIMAL(9, 2), -9999.99::DECIMAL(30, 2), 42.00::DECIMAL(60, 2), '2024-01-02')
+                    """);
+
+            assertSql(
+                    """
+                            d64_s\td128_s\td256_s
+                            \t\t
+                            -0.25\t-9999.99\t42.00
+                            """,
+                    "SELECT d64::string d64_s, d128::string d128_s, d256::string d256_s FROM t ORDER BY ts"
+            );
+
+            assertSql(
+                    """
+                            d64_v\td128_v\td256_v
+                            \t\t
+                            -0.25\t-9999.99\t42.00
+                            """,
+                    "SELECT d64::varchar d64_v, d128::varchar d128_v, d256::varchar d256_v FROM t ORDER BY ts"
+            );
+
+            // DISTINCT drives getStrB on the nullable path too.
+            assertSql(
+                    """
+                            d256_s
+
+                            42.00
+                            """,
+                    "SELECT DISTINCT d256::string d256_s FROM t ORDER BY d256_s"
+            );
+        });
+    }
+
+    @Test
+    public void testCastDateNotNullSentinelToStringRendersRawLong() throws Exception {
+        // DATE null sentinel is Long.MIN_VALUE. FuncNotNull.format special-cases
+        // MIN_VALUE to fall back to Numbers.append (decimal integer) rather than
+        // StringSink.putISODateMillis, which would short-circuit on MIN_VALUE
+        // and silently emit "null". This mirrors CursorPrinter's NOT NULL
+        // branch for DATE and is the behavioural contract for a NOT NULL DATE
+        // column that somehow stored the sentinel (e.g., via INSERT NULL).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DATE NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (NULL, '2024-01-01'),
+                        ('2024-06-15T12:00:00.000Z', '2024-01-02')
+                    """);
+
+            assertSql(
+                    """
+                            d_str
+                            -9223372036854775808
+                            2024-06-15T12:00:00.000Z
+                            """,
+                    "SELECT d::string d_str FROM t ORDER BY ts"
+            );
+
+            assertSql(
+                    """
+                            d_v
+                            -9223372036854775808
+                            2024-06-15T12:00:00.000Z
+                            """,
+                    "SELECT d::varchar d_v FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testCastFloatNotNullSentinelToStringRendersNaN() throws Exception {
+        // FLOAT null sentinel is NaN. FuncNotNull.getStrA calls sinkA.put(float)
+        // unconditionally, which emits "NaN" for NaN inputs — matching the
+        // SELECT * output pinned in NotNullColumnTest#testNotNullFloatSpecialValues.
+        // The nullable Func variant checks Numbers.isNull and returns null
+        // instead; that divergence is what FuncNotNull pins.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (f FLOAT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (NULL, '2024-01-01'),
+                        (1.5::FLOAT, '2024-01-02'),
+                        (CAST('Infinity' AS FLOAT), '2024-01-03')
+                    """);
+
+            assertSql(
+                    """
+                            f_str
+                            NaN
+                            1.5
+                            Infinity
+                            """,
+                    "SELECT f::string f_str FROM t ORDER BY ts"
+            );
+
+            assertSql(
+                    """
+                            f_v
+                            NaN
+                            1.5
+                            Infinity
+                            """,
+                    "SELECT f::varchar f_v FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testCastIntervalExpressionToStringAndVarchar() throws Exception {
+        // INTERVAL is not a persisted column type, so NotNullCastExtendedTypes
+        // exercises CastIntervalToStr/VarcharFunctionFactory via an interval
+        // expression whose arguments are columns. The resulting Function is
+        // non-constant and defaults to isNotNull() == false, which routes the
+        // cast factory through its Func (nullable) class. This covers the
+        // main getStrA / getVarcharA path plus the Interval.NULL.equals guard
+        // for a row where the interval expression yielded NULL (produced by
+        // either timestamp argument being NULL sentinel).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts1 TIMESTAMP, ts2 TIMESTAMP, tsOrder TIMESTAMP NOT NULL) TIMESTAMP(tsOrder) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-06-10T00:00:00.000Z', '2024-06-11T00:00:00.000Z', '2024-01-01'),
+                        (NULL, '2024-06-12T00:00:00.000Z', '2024-01-02')
+                    """);
+
+            assertSql(
+                    """
+                            i_str
+                            ('2024-06-10T00:00:00.000Z', '2024-06-11T00:00:00.000Z')
+
+                            """,
+                    "SELECT interval(ts1, ts2)::string i_str FROM t ORDER BY tsOrder"
+            );
+
+            assertSql(
+                    """
+                            i_v
+                            ('2024-06-10T00:00:00.000Z', '2024-06-11T00:00:00.000Z')
+
+                            """,
+                    "SELECT interval(ts1, ts2)::varchar i_v FROM t ORDER BY tsOrder"
             );
         });
     }
