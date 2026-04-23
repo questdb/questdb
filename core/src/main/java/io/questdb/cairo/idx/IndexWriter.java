@@ -173,6 +173,7 @@ public interface IndexWriter extends Closeable, Mutable {
             long partitionTimestamp,
             long partitionNameTxn,
             int partitionBy,
+            int timestampType,
             long currentTableTxn
     ) {
     }

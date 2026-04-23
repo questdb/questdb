@@ -1061,8 +1061,11 @@ public final class PostingIndexUtils {
             }
 
             @Override
-            public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-                ff.removeQuiet(valueFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn, sealTxn));
+            public void onValueFile(long fileColumnNameTxn, long sealTxn) {
+                if (fileColumnNameTxn != postingColumnNameTxn) {
+                    return;
+                }
+                ff.removeQuiet(valueFileName(path.trimTo(pathTrimTo), columnName, fileColumnNameTxn, sealTxn));
                 path.trimTo(pathTrimTo);
             }
         });

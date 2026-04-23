@@ -111,6 +111,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
+        super.setUp();
+    }
+
     @Test
     public void testAlreadyDetached1() throws Exception {
         assertFailure(

@@ -773,6 +773,7 @@ public class PostingIndexWriter implements IndexWriter {
             long partitionTimestamp,
             long partitionNameTxn,
             int partitionBy,
+            int timestampType,
             long currentTableTxn
     ) {
         if (pendingPurges.size() == 0 || partitionPath.size() == 0 || tableToken == null || messageBus == null) {
@@ -800,6 +801,7 @@ public class PostingIndexWriter implements IndexWriter {
                         partitionTimestamp,
                         partitionNameTxn,
                         partitionBy,
+                        timestampType,
                         entry.fromTableTxn,
                         toTxn
                 );

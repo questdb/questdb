@@ -37,6 +37,7 @@ public class PostingSealPurgeTask implements Mutable {
     private long postingColumnNameTxn;
     private long sealTxn;
     private TableToken tableToken;
+    private int timestampType;
     private long toTableTxn;
 
     @Override
@@ -77,6 +78,10 @@ public class PostingSealPurgeTask implements Mutable {
         return tableToken;
     }
 
+    public int getTimestampType() {
+        return timestampType;
+    }
+
     public long getToTableTxn() {
         return toTableTxn;
     }
@@ -93,6 +98,7 @@ public class PostingSealPurgeTask implements Mutable {
             long partitionTimestamp,
             long partitionNameTxn,
             int partitionBy,
+            int timestampType,
             long fromTableTxn,
             long toTableTxn
     ) {
@@ -104,6 +110,7 @@ public class PostingSealPurgeTask implements Mutable {
         this.partitionTimestamp = partitionTimestamp;
         this.partitionNameTxn = partitionNameTxn;
         this.partitionBy = partitionBy;
+        this.timestampType = timestampType;
         this.fromTableTxn = fromTableTxn;
         this.toTableTxn = toTableTxn;
     }

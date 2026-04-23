@@ -11172,7 +11172,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
             for (int i = 0, n = denseIndexers.size(); i < n; i++) {
                 denseIndexers.getQuick(i).publishPendingPurges(
-                        messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy, txWriter.getTxn());
+                        messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy, timestampType, txWriter.getTxn());
             }
         }
     }

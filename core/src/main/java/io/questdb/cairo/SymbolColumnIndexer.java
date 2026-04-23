@@ -210,9 +210,10 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             long partitionTimestamp,
             long partitionNameTxn,
             int partitionBy,
+            int timestampType,
             long currentTableTxn
     ) {
-        writer.publishPendingPurges(messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy, currentTableTxn);
+        writer.publishPendingPurges(messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy, timestampType, currentTableTxn);
     }
 
     @Override

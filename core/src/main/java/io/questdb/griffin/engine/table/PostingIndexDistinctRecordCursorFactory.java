@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -80,7 +81,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 PartitionFrameCursorFactory.ORDER_ASC
         );
         try {
-            cursor.of(frameCursor);
+            cursor.of(frameCursor, executionContext.getCircuitBreaker());
         } catch (Throwable th) {
             Misc.free(frameCursor);
             throw th;
@@ -111,6 +112,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         private final int queryColumnPosition;
         private final int readerColumnIndex;
         private final DistinctRecord record = new DistinctRecord();
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int foundCount;
         private PartitionFrameCursor frameCursor;
         private boolean isNullReturned;
@@ -118,10 +120,23 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         private int nextKeyToReturn;
         private int symbolCount;
         private TableReader tableReader;
+        private int yieldedCount;
 
         DistinctCursor(int readerColumnIndex, int queryColumnPosition) {
             this.readerColumnIndex = readerColumnIndex;
             this.queryColumnPosition = queryColumnPosition;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+            if (!isScanned) {
+                scanPartitions(circuitBreaker);
+                isScanned = true;
+            }
+            counter.add(foundCount - yieldedCount);
+            yieldedCount = foundCount;
+            nextKeyToReturn = symbolCount;
+            isNullReturned = true;
         }
 
         @Override
@@ -148,19 +163,21 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         @Override
         public boolean hasNext() {
             if (!isScanned) {
-                scanPartitions();
+                scanPartitions(circuitBreaker);
                 isScanned = true;
             }
             while (nextKeyToReturn < symbolCount) {
                 int key = nextKeyToReturn++;
                 if (foundKeys.get(key + 1)) {
                     record.symbolKey = key;
+                    yieldedCount++;
                     return true;
                 }
             }
             if (foundKeys.get(0) && !isNullReturned) {
                 isNullReturned = true;
                 record.symbolKey = SymbolTable.VALUE_IS_NULL;
+                yieldedCount++;
                 return true;
             }
             return false;
@@ -183,7 +200,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
 
         @Override
         public long size() {
-            return -1;
+            return isScanned ? foundCount : -1;
         }
 
         @Override
@@ -191,6 +208,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             nextKeyToReturn = 0;
             isScanned = false;
             foundCount = 0;
+            yieldedCount = 0;
             isNullReturned = false;
             foundKeys.clear();
             if (frameCursor != null) {
@@ -198,22 +216,19 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             }
         }
 
-        private void scanPartitions() {
-            // totalExpected = symbolCount non-null keys + 1 potential NULL key
+        private void scanPartitions(SqlExecutionCircuitBreaker cb) {
             int totalExpected = symbolCount + 1;
             while (foundCount < totalExpected) {
                 PartitionFrame frame = frameCursor.next();
                 if (frame == null) {
                     return;
                 }
+                cb.statefulThrowExceptionIfTripped();
                 IndexReader indexReader = tableReader.getIndexReader(
                         frame.getPartitionIndex(),
                         readerColumnIndex,
                         IndexReader.DIR_FORWARD
                 );
-                // Bulk stride-scan: walks all dense/sparse gens in one sequential pass
-                // and marks present keys in the bit set. Returns newly found count,
-                // or -1 if not supported (bitmap index fallback).
                 int newlyFound = indexReader.collectDistinctKeys(foundKeys);
                 if (newlyFound >= 0) {
                     foundCount += newlyFound;
@@ -240,8 +255,9 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             }
         }
 
-        void of(PartitionFrameCursor frameCursor) {
+        void of(PartitionFrameCursor frameCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.frameCursor = frameCursor;
+            this.circuitBreaker = circuitBreaker;
             this.tableReader = frameCursor.getTableReader();
             SymbolMapReader smr = tableReader.getSymbolMapReader(readerColumnIndex);
             this.symbolCount = smr.getSymbolCount();
@@ -249,6 +265,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             this.nextKeyToReturn = 0;
             this.isScanned = false;
             this.foundCount = 0;
+            this.yieldedCount = 0;
             this.isNullReturned = false;
             foundKeys.reserve(symbolCount + 1);
             foundKeys.clear();

@@ -63,6 +63,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private static final int SEAL_TXN_COLUMN = 5;
     private static final int TABLE_ID_COLUMN = 2;
     private static final int TABLE_NAME_COLUMN = 1;
+    private static final int TIMESTAMP_TYPE_COLUMN = 11;
     private static final int TO_TABLE_TXN_COLUMN = 10;
     private final MicrosecondClock clock;
     private final Path completedPath;
@@ -124,6 +125,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                                 "partition_by int, " +
                                 "from_table_txn long, " +
                                 "to_table_txn long, " +
+                                "timestamp_type int, " +
                                 "completed timestamp" +
                                 ") timestamp(ts) partition by MONTH BYPASS WAL"
                         )
@@ -275,6 +277,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             row.putInt(PARTITION_BY_COLUMN, entry.getPartitionBy());
             row.putLong(FROM_TABLE_TXN_COLUMN, entry.getFromTableTxn());
             row.putLong(TO_TABLE_TXN_COLUMN, entry.getToTableTxn());
+            row.putInt(TIMESTAMP_TYPE_COLUMN, entry.getTimestampType());
             row.append();
             entry.logRowId = Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1);
         } catch (Throwable th) {
@@ -382,6 +385,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                             rec.getTimestamp(PARTITION_TIMESTAMP_COLUMN),
                             rec.getLong(PARTITION_NAME_TXN_COLUMN),
                             rec.getInt(PARTITION_BY_COLUMN),
+                            rec.getInt(TIMESTAMP_TYPE_COLUMN),
                             rec.getLong(FROM_TABLE_TXN_COLUMN),
                             rec.getLong(TO_TABLE_TXN_COLUMN)
                     );
@@ -412,9 +416,6 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             Misc.free(factory);
         }
 
-        // Only truncate when every recovered task purged successfully. Leaving
-        // rows in place ensures the next startup retries failed tasks; any
-        // missing files are harmless because removeQuiet tolerates ENOENT.
         if (failed == 0 && succeeded > 0 && writer != null) {
             try {
                 writer.truncate();
@@ -476,6 +477,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                     src.getPartitionTimestamp(),
                     src.getPartitionNameTxn(),
                     src.getPartitionBy(),
+                    src.getTimestampType(),
                     src.getFromTableTxn(),
                     src.getToTableTxn()
             );

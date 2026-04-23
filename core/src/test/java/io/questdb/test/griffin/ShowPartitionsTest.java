@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -79,6 +80,13 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         int idx = tableName.indexOf('[');
         tableName = idx > 0 ? tableName.substring(0, idx) : tableName;
         return tableNameSuffix == null ? tableName : tableName + '_' + tableNameSuffix;
+    }
+
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
+        super.setUp();
     }
 
     @Test

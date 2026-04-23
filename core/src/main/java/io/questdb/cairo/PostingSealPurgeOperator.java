@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.PostingIndexUtils;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -46,13 +45,17 @@ import java.io.Closeable;
  * {@link PostingSealPurgeJob} owns one instance and feeds it tasks
  * sequentially.
  */
-public class PostingSealPurgeOperator implements Closeable {
+public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.SealedFileVisitor {
 
     private static final Log LOG = LogFactory.getLog(PostingSealPurgeOperator.class);
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final Path path;
     private final int pathRootLen;
+    private boolean scanAllCoversRemoved;
+    private CharSequence scanColumnName;
+    private int scanPartitionPathLen;
+    private long scanTargetSealTxn;
     private TxnScoreboard txnScoreboard;
 
     public PostingSealPurgeOperator(CairoEngine engine) {
@@ -73,6 +76,23 @@ public class PostingSealPurgeOperator implements Closeable {
     public void close() {
         Misc.free(path);
         txnScoreboard = Misc.free(txnScoreboard);
+    }
+
+    @Override
+    public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+        if (sealTxn != scanTargetSealTxn) {
+            return;
+        }
+        LPSZ pc = PostingIndexUtils.coverDataFileName(path.trimTo(scanPartitionPathLen),
+                scanColumnName, includeIdx, coveredColumnNameTxn, sealTxn);
+        if (!ff.removeQuiet(pc)) {
+            scanAllCoversRemoved = false;
+        }
+        path.trimTo(scanPartitionPathLen);
+    }
+
+    @Override
+    public void onValueFile(long postingColumnNameTxn, long sealTxn) {
     }
 
     public boolean purge(PostingSealPurgeTask task) {
@@ -123,79 +143,39 @@ public class PostingSealPurgeOperator implements Closeable {
         int pathTableLen = path.size();
         TableUtils.setPathForNativePartition(
                 path,
-                taskTimestampType(task, liveToken),
+                task.getTimestampType(),
                 task.getPartitionBy(),
                 task.getPartitionTimestamp(),
                 task.getPartitionNameTxn()
         );
         int pathPartitionLen = path.size();
 
-        // Remove the .pv at the target sealTxn
         boolean allRemoved = true;
         path.trimTo(pathPartitionLen);
         LPSZ pv = PostingIndexUtils.valueFileName(path, task.getIndexColumnName(),
                 task.getPostingColumnNameTxn(), task.getSealTxn());
         if (!ff.removeQuiet(pv)) {
-            // Either it's a Windows file-in-use case or a transient I/O error;
-            // either way, a follow-up retry will resolve it.
             allRemoved = false;
         }
 
-        // Remove every .pc<N> at the target sealTxn. We cannot enumerate by
-        // postingColumnNameTxn (the .pc<N> filename only has coveredColumnNameTxn),
-        // so scanSealedFiles is the safe enumerator.
-        final boolean[] coverRemoved = {true};
-        final long targetSealTxn = task.getSealTxn();
-        final CharSequence columnName = task.getIndexColumnName();
+        scanAllCoversRemoved = true;
+        scanTargetSealTxn = task.getSealTxn();
+        scanColumnName = task.getIndexColumnName();
+        scanPartitionPathLen = pathPartitionLen;
         path.trimTo(pathPartitionLen);
-        PostingIndexUtils.scanSealedFiles(ff, path, pathPartitionLen, columnName, new PostingIndexUtils.SealedFileVisitor() {
-            @Override
-            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
-                if (sealTxn != targetSealTxn) {
-                    return;
-                }
-                LPSZ pc = PostingIndexUtils.coverDataFileName(path.trimTo(pathPartitionLen),
-                        columnName, includeIdx, coveredColumnNameTxn, sealTxn);
-                if (!ff.removeQuiet(pc)) {
-                    coverRemoved[0] = false;
-                }
-                path.trimTo(pathPartitionLen);
-            }
-
-            @Override
-            public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-                // .pv handled above by exact-name removeQuiet; skip here.
-            }
-        });
+        PostingIndexUtils.scanSealedFiles(ff, path, pathPartitionLen, scanColumnName, this);
         path.trimTo(pathPartitionLen);
 
-        boolean done = allRemoved && coverRemoved[0];
+        boolean done = allRemoved && scanAllCoversRemoved;
         if (done) {
             LOG.info().$("purged posting sealed version [table=").$(liveToken.getTableName())
-                    .$(", column=").$(columnName)
+                    .$(", column=").$(scanColumnName)
                     .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
                     .$(", sealTxn=").$(task.getSealTxn())
                     .I$();
         }
+        scanColumnName = null;
         path.trimTo(pathTableLen);
         return done;
-    }
-
-    /**
-     * Reads the table's timestamp type from live metadata. The task does not
-     * carry the timestamp type because it can change only via ALTER (which
-     * also bumps {@code postingColumnNameTxn}, invalidating the task), so the
-     * live value is always correct.
-     */
-    private int taskTimestampType(PostingSealPurgeTask task, TableToken token) {
-        try (TableMetadata m = engine.getTableMetadata(token)) {
-            return m.getTimestampType();
-        } catch (Throwable th) {
-            // Fall back to micros (the historic default) if metadata is
-            // unavailable. The path may still resolve correctly because most
-            // tables use the default and the task's partitionBy + timestamp
-            // are still authoritative.
-            return ColumnType.TIMESTAMP_MICRO;
-        }
     }
 }

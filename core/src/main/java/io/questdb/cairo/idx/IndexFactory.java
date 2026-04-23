@@ -57,9 +57,10 @@ public final class IndexFactory {
             case IndexType.BITMAP -> direction == IndexReader.DIR_FORWARD
                     ? new BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
-            case IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF -> direction == IndexReader.DIR_FORWARD
-                    ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp)
-                    : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+            case IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF ->
+                    direction == IndexReader.DIR_FORWARD
+                            ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp)
+                            : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
             default -> throw unsupportedIndexType(indexType);
         };
     }
@@ -78,7 +79,8 @@ public final class IndexFactory {
     public static void initKeyMemory(byte indexType, MemoryMA keyMem, int blockCapacity) {
         switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexWriter.initKeyMemory(keyMem, blockCapacity);
-            case IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF -> PostingIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
+            case IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF ->
+                    PostingIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
             default -> throw unsupportedIndexType(indexType);
         }
     }

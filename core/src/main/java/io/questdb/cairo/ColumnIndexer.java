@@ -99,6 +99,7 @@ public interface ColumnIndexer extends QuietCloseable {
             long partitionTimestamp,
             long partitionNameTxn,
             int partitionBy,
+            int timestampType,
             long currentTableTxn
     ) {
     }
