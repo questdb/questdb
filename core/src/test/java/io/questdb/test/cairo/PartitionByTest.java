@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
@@ -620,6 +621,25 @@ public class PartitionByTest {
             Assert.fail();
         } catch (Exception ignored) {
             TestUtils.assertEquals("UNKNOWN", PartitionBy.toString(-1));
+        }
+    }
+
+    @Test
+    public void testValidateTtlGranularityZeroAccepted() throws SqlException {
+        PartitionBy.validateTtlGranularity(PartitionBy.HOUR, 0, 0);
+        PartitionBy.validateTtlGranularity(PartitionBy.DAY, 0, 0);
+        PartitionBy.validateTtlGranularity(PartitionBy.WEEK, 0, 0);
+        PartitionBy.validateTtlGranularity(PartitionBy.MONTH, 0, 0);
+        PartitionBy.validateTtlGranularity(PartitionBy.YEAR, 0, 0);
+    }
+
+    @Test
+    public void testValidateTtlGranularityNoneRejected() {
+        try {
+            PartitionBy.validateTtlGranularity(PartitionBy.NONE, 0, 42);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertEquals("[42] cannot set TTL on a non-partitioned table", e.getMessage());
         }
     }
 

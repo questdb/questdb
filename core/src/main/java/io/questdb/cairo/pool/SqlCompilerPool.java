@@ -37,8 +37,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Rnd;
@@ -172,7 +172,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
 
         @Override
         public RecordCursorFactory generateSelectWithRetries(
-                QueryModel queryModel,
+                IQueryModel queryModel,
                 @Nullable InsertModel insertModel,
                 SqlExecutionContext executionContext,
                 boolean generateProgressLogger
@@ -241,7 +241,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
+        public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
             return delegate.testParseExpression(expression, model);
         }
 

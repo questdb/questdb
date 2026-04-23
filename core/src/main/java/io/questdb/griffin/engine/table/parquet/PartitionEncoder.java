@@ -104,7 +104,8 @@ public class PartitionEncoder {
                 0,
                 0,
                 DEFAULT_BLOOM_FILTER_FPP,
-                minCompressionRatio
+                minCompressionRatio,
+                -1L
         );
     }
 
@@ -120,7 +121,8 @@ public class PartitionEncoder {
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            long squashTracker
     ) {
         assert bloomFilterColumnCount >= 0;
         assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
@@ -152,7 +154,8 @@ public class PartitionEncoder {
                     bloomFilterColumnIndexesPtr,
                     bloomFilterColumnCount,
                     bloomFilterFpp,
-                    minCompressionRatio
+                    minCompressionRatio,
+                    squashTracker
             );
         } finally {
             descriptor.clear();
@@ -162,9 +165,10 @@ public class PartitionEncoder {
     public static native long finishStreamingParquetWrite(long writerPtr) throws CairoException;
 
     public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor) throws CairoException {
-        final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
-        descriptor.of(tableReader.getTableToken().getTableName(), 0, timestampIndex);
         final TableReaderMetadata metadata = tableReader.getMetadata();
+        final int readerTimestampIndex = metadata.getTimestampIndex();
+        final int timestampIndex = readerTimestampIndex >= 0 ? metadata.getWriterIndex(readerTimestampIndex) : -1;
+        descriptor.of(tableReader.getTableToken().getTableName(), 0, timestampIndex);
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final int columnType = metadata.getColumnType(i);
             if (columnType > 0) {
@@ -189,10 +193,10 @@ public class PartitionEncoder {
     public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) throws CairoException {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
-        final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
-        descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex);
-
         final TableReaderMetadata metadata = tableReader.getMetadata();
+        final int readerTimestampIndex = metadata.getTimestampIndex();
+        final int timestampIndex = readerTimestampIndex >= 0 ? metadata.getWriterIndex(readerTimestampIndex) : -1;
+        descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex);
         final int columnCount = metadata.getColumnCount();
         final int columnBase = tableReader.getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
@@ -306,7 +310,8 @@ public class PartitionEncoder {
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            long squashTracker
     ) throws CairoException;
 
     static {

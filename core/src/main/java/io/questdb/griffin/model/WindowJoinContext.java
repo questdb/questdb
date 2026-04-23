@@ -45,7 +45,7 @@ public class WindowJoinContext implements Mutable {
     private char loExprTimeUnit;
     private int loKind = PRECEDING;
     private int loKindPos;
-    private QueryModel parentModel;
+    private IQueryModel parentModel;
 
     @Override
     public void clear() {
@@ -115,7 +115,7 @@ public class WindowJoinContext implements Mutable {
         return loKindPos;
     }
 
-    public QueryModel getParentModel() {
+    public IQueryModel getParentModel() {
         return parentModel;
     }
 
@@ -179,7 +179,7 @@ public class WindowJoinContext implements Mutable {
         this.loKindPos = loKindPos;
     }
 
-    public void setParentModel(QueryModel parentModel) {
+    public void setParentModel(IQueryModel parentModel) {
         this.parentModel = parentModel;
     }
 }

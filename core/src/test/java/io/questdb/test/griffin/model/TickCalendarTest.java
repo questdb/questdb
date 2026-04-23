@@ -441,6 +441,27 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testExchangeFilterWithNegativeDuration() throws SqlException {
+        // XNYS Jan 24: 14:30-21:00 UTC (6.5h session)
+        // ;-1h shrinks session by 1h from the end: 14:30-20:00
+        assertTickInterval(
+                "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T19:59:59.999999Z}]",
+                "2025-01-24#XNYS;-1h"
+        );
+    }
+
+    @Test
+    public void testExchangeFilterWithNegativeDurationMultipleDays() throws SqlException {
+        // XNYS ;-1h over Fri-Tue (Sat/Sun filtered out)
+        assertTickInterval(
+                "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T19:59:59.999999Z}," +
+                        "{lo=2025-01-27T14:30:00.000000Z, hi=2025-01-27T19:59:59.999999Z}," +
+                        "{lo=2025-01-28T14:30:00.000000Z, hi=2025-01-28T19:59:59.999999Z}]",
+                "2025-01-[24..28]#XNYS;-1h"
+        );
+    }
+
+    @Test
     public void testExchangeFilterWithDurationMultipleDays() throws SqlException {
         // Exchange filter with duration over multiple days
         // 2025-01-[24..28]#XNYS;1h

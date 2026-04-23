@@ -53,6 +53,7 @@ import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.HorizonJoinContext;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
@@ -456,6 +457,19 @@ public class SqlParser {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token, extraMessage);
     }
 
+    private static boolean isJsonUnnestSupportedType(int type) {
+        int tag = ColumnType.tagOf(type);
+        return tag == ColumnType.BOOLEAN
+                || tag == ColumnType.SHORT
+                || tag == ColumnType.INT
+                || tag == ColumnType.LONG
+                || tag == ColumnType.DATE
+                || tag == ColumnType.DOUBLE
+                || tag == ColumnType.STRING
+                || tag == ColumnType.VARCHAR
+                || tag == ColumnType.TIMESTAMP;
+    }
+
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
         return switch (token.charAt(0)) {
@@ -543,7 +557,7 @@ public class SqlParser {
         viewsBeingCompiled.clear();
     }
 
-    private void compileViewQuery(QueryModel model, TableToken viewToken, int viewPosition) throws SqlException {
+    private void compileViewQuery(IQueryModel model, TableToken viewToken, int viewPosition) throws SqlException {
         final CharSequence viewName = viewToken.getTableName();
 
         // Detect cycle: if we're already compiling this view, it's a circular reference
@@ -564,7 +578,7 @@ public class SqlParser {
         // Track that we're compiling this view
         viewsBeingCompiled.add(viewName);
         try {
-            final QueryModel viewModel = compileViewQuery(viewDefinition, viewPosition, model.getDecls());
+            final IQueryModel viewModel = compileViewQuery(viewDefinition, viewPosition, model.getDecls());
             viewModel.copyDeclsFrom(model, false);
             model.setNestedModel(viewModel);
             model.setNestedModelIsSubQuery(true);
@@ -576,7 +590,7 @@ public class SqlParser {
         }
     }
 
-    private QueryModel compileViewQuery(
+    private IQueryModel compileViewQuery(
             ViewDefinition viewDefinition,
             int viewPosition,
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
@@ -584,7 +598,7 @@ public class SqlParser {
         final GenericLexer viewLexer = viewLexers.next();
         viewLexer.of(viewDefinition.getViewSql());
 
-        final QueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls, true);
+        final IQueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls, true);
         final ExpressionNode viewExpr = literal(viewDefinition.getViewToken().getTableName(), viewPosition);
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
@@ -766,7 +780,7 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'offset' expected");
     }
 
-    private void expectSample(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    private void expectSample(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         final ExpressionNode n = expr(lexer, null, sqlParserCallback, model.getDecls());
         if (isFullSampleByPeriod(n)) {
             model.setSampleBy(n);
@@ -904,19 +918,6 @@ public class SqlParser {
         return Chars.equals(tok, ')') || Chars.equals(tok, ',');
     }
 
-    private static boolean isJsonUnnestSupportedType(int type) {
-        int tag = ColumnType.tagOf(type);
-        return tag == ColumnType.BOOLEAN
-                || tag == ColumnType.SHORT
-                || tag == ColumnType.INT
-                || tag == ColumnType.LONG
-                || tag == ColumnType.DATE
-                || tag == ColumnType.DOUBLE
-                || tag == ColumnType.STRING
-                || tag == ColumnType.VARCHAR
-                || tag == ColumnType.TIMESTAMP;
-    }
-
     private boolean isIncludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (isIncludeKeyword(tok)) {
             tok = tok(lexer, "'prevailing'");
@@ -937,6 +938,10 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "'preceding' expected");
         }
         return false;
+    }
+
+    private boolean isUnexpectedRightParenInTopLevelSelect(CharSequence tok) {
+        return Chars.equals(tok, ')') && !(subQueryMode || createTableMode || copyMode || createViewMode);
     }
 
     private ExpressionNode literal(GenericLexer lexer, CharSequence name) {
@@ -982,7 +987,7 @@ public class SqlParser {
         return tok;
     }
 
-    private QueryModel parseAsSubQueryAndExpectClosingBrace(
+    private IQueryModel parseAsSubQueryAndExpectClosingBrace(
             GenericLexer lexer,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
             boolean useTopLevelWithClauses,
@@ -992,7 +997,7 @@ public class SqlParser {
         return parseAsSubQueryAndExpectClosingBrace(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, false);
     }
 
-    private QueryModel parseAsSubQueryAndExpectClosingBrace(
+    private IQueryModel parseAsSubQueryAndExpectClosingBrace(
             GenericLexer lexer,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
             boolean useTopLevelWithClauses,
@@ -1000,7 +1005,7 @@ public class SqlParser {
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             boolean overrideDeclare
     ) throws SqlException {
-        final QueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, overrideDeclare);
+        final IQueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, overrideDeclare);
         expectTok(lexer, ')');
         return model;
     }
@@ -1025,7 +1030,7 @@ public class SqlParser {
             throw errUnexpected(lexer, tok);
         }
 
-        final QueryModel queryModel = queryModelPool.next();
+        final IQueryModel queryModel = queryModelPool.next();
         model.setQueryModel(queryModel);
 
         compileViewQuery(queryModel, tt, lexer.lastTokenPosition());
@@ -1566,7 +1571,7 @@ public class SqlParser {
                 expectTok(lexer, "select");
             }
             lexer.unparseLast();
-            final QueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+            final IQueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
             final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
             tableNames.clear();
@@ -1601,7 +1606,7 @@ public class SqlParser {
             }
             validateMatViewQuery(queryModel, baseTableNameStr);
 
-            final QueryModel nestedModel = queryModel.getNestedModel();
+            final IQueryModel nestedModel = queryModel.getNestedModel();
             if (nestedModel != null) {
                 if (nestedModel.getSampleByTimezoneName() != null) {
                     mvOpBuilder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
@@ -1663,16 +1668,7 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
-        if (tok != null && isTtlKeyword(tok)) {
-            final int ttlValuePos = lexer.getPosition();
-            final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
-            if (partitionBy != -1) {
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
-            }
-            tableOpBuilder.setTtlHoursOrMonths(ttlHoursOrMonths);
-            tableOpBuilder.setTtlPosition(ttlValuePos);
-            tok = optTok(lexer);
-        }
+        tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, tableOpBuilder, true);
 
         if (tok != null && isInKeyword(tok)) {
             parseInVolume(lexer, tableOpBuilder);
@@ -1824,13 +1820,7 @@ public class SqlParser {
             builder.setPartitionByExpr(partitionByExpr);
             tok = optTok(lexer);
 
-            if (tok != null && isTtlKeyword(tok)) {
-                final int ttlValuePos = lexer.getPosition();
-                final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
-                builder.setTtlHoursOrMonths(ttlHoursOrMonths);
-                tok = optTok(lexer);
-            }
+            tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, builder, false);
 
             if (tok != null) {
                 if (isWalKeyword(tok)) {
@@ -1863,7 +1853,7 @@ public class SqlParser {
 
         if (tok != null && isWithKeyword(tok)) {
             ExpressionNode expr;
-            while ((expr = expr(lexer, (QueryModel) null, sqlParserCallback)) != null) {
+            while ((expr = expr(lexer, (IQueryModel) null, sqlParserCallback)) != null) {
                 if (Chars.equals(expr.token, '=')) {
                     if (isMaxUncommittedRowsKeyword(expr.lhs.token)) {
                         try {
@@ -1971,7 +1961,7 @@ public class SqlParser {
         final int startOfSelect = lexer.getPosition();
         // Parse SELECT for the sake of basic SQL validation.
         // It'll be compiled and optimized later, at the execution phase.
-        QueryModel selectModel;
+        IQueryModel selectModel;
         createTableMode = true;
         try {
             selectModel = parseDml(lexer, startOfSelect, sqlParserCallback);
@@ -2261,7 +2251,7 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        final QueryModel queryModel;
+        final IQueryModel queryModel;
         try {
             createViewMode = true;
             queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
@@ -2291,7 +2281,7 @@ public class SqlParser {
         return parseCreateViewExt(lexer, executionContext, sqlParserCallback, tok, vOpBuilder);
     }
 
-    private void parseDeclare(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    private void parseDeclare(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         int contentLength = lexer.getContent().length();
         while (lexer.getPosition() < contentLength) {
             int pos = lexer.getPosition();
@@ -2355,7 +2345,7 @@ public class SqlParser {
         }
     }
 
-    private QueryModel parseDml(
+    private IQueryModel parseDml(
             GenericLexer lexer,
             int modelPosition,
             SqlParserCallback sqlParserCallback
@@ -2363,7 +2353,7 @@ public class SqlParser {
         return parseDml(lexer, null, modelPosition, true, sqlParserCallback, null, false);
     }
 
-    private QueryModel parseDml(
+    private IQueryModel parseDml(
             GenericLexer lexer,
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
             int modelPosition,
@@ -2372,8 +2362,8 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             boolean overrideDeclare
     ) throws SqlException {
-        QueryModel model = null;
-        QueryModel prevModel = null;
+        IQueryModel model = null;
+        IQueryModel prevModel = null;
 
         while (true) {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses = prevModel != null ? prevModel.getWithClauses() : withClauses;
@@ -2381,7 +2371,7 @@ public class SqlParser {
             // Propagate DECLARE variables from previous UNION branch, similar to how WITH clauses are propagated
             LowerCaseCharSequenceObjHashMap<ExpressionNode> parentDecls = prevModel != null ? prevModel.getDecls() : decls;
 
-            QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition, sqlParserCallback, parentDecls, overrideDeclare);
+            IQueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition, sqlParserCallback, parentDecls, overrideDeclare);
             if (prevModel == null) {
                 model = unionModel;
                 prevModel = model;
@@ -2408,10 +2398,10 @@ public class SqlParser {
             if (isUnionKeyword(tok)) {
                 tok = tok(lexer, "all or select");
                 if (isAllKeyword(tok)) {
-                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION_ALL);
+                    prevModel.setSetOperationType(IQueryModel.SET_OPERATION_UNION_ALL);
                     modelPosition = lexer.getPosition();
                 } else {
-                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION);
+                    prevModel.setSetOperationType(IQueryModel.SET_OPERATION_UNION);
                     if (isDistinctKeyword(tok)) {
                         // union distinct is equal to just union, we only consume to 'distinct' token and we are good
                         modelPosition = lexer.getPosition();
@@ -2425,10 +2415,10 @@ public class SqlParser {
             if (isExceptKeyword(tok)) {
                 tok = tok(lexer, "all or select");
                 if (isAllKeyword(tok)) {
-                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_EXCEPT_ALL);
+                    prevModel.setSetOperationType(IQueryModel.SET_OPERATION_EXCEPT_ALL);
                     modelPosition = lexer.getPosition();
                 } else {
-                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_EXCEPT);
+                    prevModel.setSetOperationType(IQueryModel.SET_OPERATION_EXCEPT);
                     lexer.unparseLast();
                     modelPosition = lexer.lastTokenPosition();
                 }
@@ -2437,10 +2427,10 @@ public class SqlParser {
             if (isIntersectKeyword(tok)) {
                 tok = tok(lexer, "all or select");
                 if (isAllKeyword(tok)) {
-                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_INTERSECT_ALL);
+                    prevModel.setSetOperationType(IQueryModel.SET_OPERATION_INTERSECT_ALL);
                     modelPosition = lexer.getPosition();
                 } else {
-                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_INTERSECT);
+                    prevModel.setSetOperationType(IQueryModel.SET_OPERATION_INTERSECT);
                     lexer.unparseLast();
                     modelPosition = lexer.lastTokenPosition();
                 }
@@ -2454,7 +2444,7 @@ public class SqlParser {
     }
 
     @NotNull
-    private QueryModel parseDml0(
+    private IQueryModel parseDml0(
             GenericLexer lexer,
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses,
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses,
@@ -2464,7 +2454,7 @@ public class SqlParser {
             boolean overrideDeclare
     ) throws SqlException {
         CharSequence tok;
-        QueryModel model = queryModelPool.next();
+        IQueryModel model = queryModelPool.next();
         model.setModelPosition(modelPosition);
 
         if (parentWithClauses != null) {
@@ -2505,19 +2495,19 @@ public class SqlParser {
             }
 
             if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) { // token can also be ';' on query boundary
-                QueryModel nestedModel = queryModelPool.next();
+                IQueryModel nestedModel = queryModelPool.next();
                 nestedModel.setModelPosition(modelPosition);
                 ExpressionNode tableNameExpr = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
                 tableNameExpr.paramCount = 1;
                 tableNameExpr.rhs = ONE;
                 nestedModel.setTableNameExpr(tableNameExpr);
-                model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
+                model.setSelectModelType(IQueryModel.SELECT_MODEL_VIRTUAL);
                 model.setNestedModel(nestedModel);
                 lexer.unparseLast();
                 return model;
             }
         } else if (isShowKeyword(tok)) {
-            model.setSelectModelType(QueryModel.SELECT_MODEL_SHOW);
+            model.setSelectModelType(IQueryModel.SELECT_MODEL_SHOW);
             int showKind = -1;
             tok = SqlUtil.fetchNext(lexer);
             if (tok != null) {
@@ -2535,57 +2525,57 @@ public class SqlParser {
                 // show create materialized view mv
                 // show create view v
                 if (isTablesKeyword(tok)) {
-                    showKind = QueryModel.SHOW_TABLES;
+                    showKind = IQueryModel.SHOW_TABLES;
                 } else if (isColumnsKeyword(tok)) {
                     parseFromTable(lexer, model);
-                    showKind = QueryModel.SHOW_COLUMNS;
+                    showKind = IQueryModel.SHOW_COLUMNS;
                 } else if (isPartitionsKeyword(tok)) {
                     parseFromTable(lexer, model);
-                    showKind = QueryModel.SHOW_PARTITIONS;
+                    showKind = IQueryModel.SHOW_PARTITIONS;
                 } else if (isTransactionKeyword(tok)) {
-                    showKind = QueryModel.SHOW_TRANSACTION;
+                    showKind = IQueryModel.SHOW_TRANSACTION;
                     validateShowTransactions(lexer);
                 } else if (isTransactionIsolation(tok)) {
-                    showKind = QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL;
+                    showKind = IQueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL;
                 } else if (isDefaultTransactionReadOnly(tok)) {
-                    showKind = QueryModel.SHOW_DEFAULT_TRANSACTION_READ_ONLY;
+                    showKind = IQueryModel.SHOW_DEFAULT_TRANSACTION_READ_ONLY;
                 } else if (isMaxIdentifierLength(tok)) {
-                    showKind = QueryModel.SHOW_MAX_IDENTIFIER_LENGTH;
+                    showKind = IQueryModel.SHOW_MAX_IDENTIFIER_LENGTH;
                 } else if (isStandardConformingStrings(tok)) {
-                    showKind = QueryModel.SHOW_STANDARD_CONFORMING_STRINGS;
+                    showKind = IQueryModel.SHOW_STANDARD_CONFORMING_STRINGS;
                 } else if (isSearchPath(tok)) {
-                    showKind = QueryModel.SHOW_SEARCH_PATH;
+                    showKind = IQueryModel.SHOW_SEARCH_PATH;
                 } else if (isDateStyleKeyword(tok)) {
-                    showKind = QueryModel.SHOW_DATE_STYLE;
+                    showKind = IQueryModel.SHOW_DATE_STYLE;
                 } else if (isTimeKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && isZoneKeyword(tok)) {
-                        showKind = QueryModel.SHOW_TIME_ZONE;
+                        showKind = IQueryModel.SHOW_TIME_ZONE;
                     }
                 } else if (isParametersKeyword(tok)) {
-                    showKind = QueryModel.SHOW_PARAMETERS;
+                    showKind = IQueryModel.SHOW_PARAMETERS;
                 } else if (isServerVersionKeyword(tok)) {
-                    showKind = QueryModel.SHOW_SERVER_VERSION;
+                    showKind = IQueryModel.SHOW_SERVER_VERSION;
                 } else if (isServerVersionNumKeyword(tok)) {
-                    showKind = QueryModel.SHOW_SERVER_VERSION_NUM;
+                    showKind = IQueryModel.SHOW_SERVER_VERSION_NUM;
                 } else if (isCreateKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && isTableKeyword(tok)) {
                         parseTableName(lexer, model);
-                        showKind = QueryModel.SHOW_CREATE_TABLE;
+                        showKind = IQueryModel.SHOW_CREATE_TABLE;
                     } else if (tok != null && isMaterializedKeyword(tok)) {
                         expectTok(lexer, "view");
                         parseTableName(lexer, model);
-                        showKind = QueryModel.SHOW_CREATE_MAT_VIEW;
+                        showKind = IQueryModel.SHOW_CREATE_MAT_VIEW;
                     } else if (tok != null && isViewKeyword(tok)) {
                         parseTableName(lexer, model);
-                        showKind = QueryModel.SHOW_CREATE_VIEW;
+                        showKind = IQueryModel.SHOW_CREATE_VIEW;
                     } else {
                         throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
                     }
                 } else if (isPayloadKeyword(tok)) {
                     expectTok(lexer, "transforms");
-                    showKind = QueryModel.SHOW_PAYLOAD_TRANSFORMS;
+                    showKind = IQueryModel.SHOW_PAYLOAD_TRANSFORMS;
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }
@@ -2610,8 +2600,8 @@ public class SqlParser {
             );
         }
 
-        if (model.getSelectModelType() != QueryModel.SELECT_MODEL_SHOW) {
-            QueryModel nestedModel = queryModelPool.next();
+        if (model.getSelectModelType() != IQueryModel.SELECT_MODEL_SHOW) {
+            IQueryModel nestedModel = queryModelPool.next();
             nestedModel.setModelPosition(modelPosition);
 
             nestedModel = parseFromClause(lexer, nestedModel, model, sqlParserCallback);
@@ -2619,7 +2609,7 @@ public class SqlParser {
                 model.setLimit(nestedModel.getLimitLo(), nestedModel.getLimitHi());
                 nestedModel.setLimit(null, null);
             }
-            model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+            model.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
             model.setNestedModel(nestedModel);
             final ExpressionNode n = nestedModel.getAlias();
             if (n != null) {
@@ -2629,23 +2619,23 @@ public class SqlParser {
         return model;
     }
 
-    private QueryModel parseDmlUpdate(
+    private IQueryModel parseDmlUpdate(
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        // Update QueryModel structure is
-        // QueryModel with SET column expressions (updateQueryModel)
-        // |-- nested QueryModel of select-virtual or select-choose of data selected for update (fromModel)
-        //     |-- nested QueryModel with selected data (nestedModel)
+        // Update IQueryModel structure is
+        // IQueryModel with SET column expressions (updateQueryModel)
+        // |-- nested IQueryModel of select-virtual or select-choose of data selected for update (fromModel)
+        //     |-- nested IQueryModel with selected data (nestedModel)
         //         |-- join QueryModels to represent FROM clause
         CharSequence tok;
         final int modelPosition = lexer.getPosition();
 
-        QueryModel updateQueryModel = queryModelPool.next();
+        IQueryModel updateQueryModel = queryModelPool.next();
         updateQueryModel.setModelType(ExecutionModel.UPDATE);
         updateQueryModel.setModelPosition(modelPosition);
-        QueryModel fromModel = queryModelPool.next();
+        IQueryModel fromModel = queryModelPool.next();
         fromModel.setModelPosition(modelPosition);
         updateQueryModel.setIsUpdate(true);
         fromModel.setIsUpdate(true);
@@ -2656,8 +2646,8 @@ public class SqlParser {
             // parse SET statements into updateQueryModel and rhs of SETs into fromModel to select
             parseUpdateClause(lexer, updateQueryModel, fromModel, sqlParserCallback);
 
-            // create nestedModel QueryModel to source rowids for the update
-            QueryModel nestedModel = queryModelPool.next();
+            // create nestedModel IQueryModel to source rowids for the update
+            IQueryModel nestedModel = queryModelPool.next();
             nestedModel.setTableNameExpr(fromModel.getTableNameExpr());
             nestedModel.setAlias(updateQueryModel.getAlias());
             nestedModel.setIsUpdate(true);
@@ -2772,7 +2762,7 @@ public class SqlParser {
         }
     }
 
-    private QueryModel parseFromClause(GenericLexer lexer, QueryModel model, QueryModel masterModel, SqlParserCallback sqlParserCallback) throws SqlException {
+    private IQueryModel parseFromClause(GenericLexer lexer, IQueryModel model, IQueryModel masterModel, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok = expectTableNameOrSubQuery(lexer);
 
         // copy decls down
@@ -2786,13 +2776,13 @@ public class SqlParser {
             longSeq.rhs = ONE;
             model.setTableNameExpr(longSeq);
 
-            QueryModel unnestModel = parseUnnest(lexer, model, model.getDecls(), sqlParserCallback);
+            IQueryModel unnestModel = parseUnnest(lexer, model, model.getDecls(), sqlParserCallback);
             unnestModel.setStandaloneUnnest(true);
             model.addJoinModel(unnestModel);
 
             tok = optTok(lexer);
         } else {
-            QueryModel proposedNested = null;
+            IQueryModel proposedNested = null;
             ExpressionNode variableExpr;
 
             // check for variable as subquery
@@ -2818,7 +2808,7 @@ public class SqlParser {
                 // do not collapse aliased sub-queries or those that have timestamp()
                 // select * from (table) x
                 if (tok == null || (tableAliasStop.contains(tok) && !isTimestampKeyword(tok))) {
-                    final QueryModel target = proposedNested.getNestedModel();
+                    final IQueryModel target = proposedNested.getNestedModel();
                     // when * is artificial, there is no union, there is no "where" clause inside sub-query,
                     // e.g. there was no "select * from" we should collapse sub-query to a regular table
                     if (
@@ -2912,17 +2902,17 @@ public class SqlParser {
                 // WINDOW JOIN - re-read "window" so tok is valid for parseJoin
                 tok = optTok(lexer);
             }
-            if (hasWindowJoin && joinType != QueryModel.JOIN_WINDOW) {
+            if (hasWindowJoin && joinType != IQueryModel.JOIN_WINDOW) {
                 throw SqlException.$((lexer.lastTokenPosition()), "no other join types allowed after window join");
             }
-            if (hasHorizonJoin && joinType != QueryModel.JOIN_HORIZON) {
+            if (hasHorizonJoin && joinType != IQueryModel.JOIN_HORIZON) {
                 throw SqlException.$((lexer.lastTokenPosition()), "only horizon joins can follow a horizon join");
             }
-            if (joinType == QueryModel.JOIN_HORIZON && !hasHorizonJoin && model.getJoinModels().size() > 1) {
+            if (joinType == IQueryModel.JOIN_HORIZON && !hasHorizonJoin && model.getJoinModels().size() > 1) {
                 throw SqlException.$((lexer.lastTokenPosition()), "horizon join cannot be combined with other joins");
             }
-            hasWindowJoin = joinType == QueryModel.JOIN_WINDOW;
-            hasHorizonJoin = joinType == QueryModel.JOIN_HORIZON;
+            hasWindowJoin = joinType == IQueryModel.JOIN_WINDOW;
+            hasHorizonJoin = joinType == IQueryModel.JOIN_HORIZON;
             model.addJoinModel(parseJoin(lexer, model, tok, joinType, masterModel.getWithClauses(), sqlParserCallback, model.getDecls()));
             tok = optTok(lexer);
         }
@@ -2930,7 +2920,7 @@ public class SqlParser {
         // expect [where]
 
         if (tok != null && isWhereKeyword(tok)) {
-            if (model.getLatestByType() == QueryModel.LATEST_BY_NEW) {
+            if (model.getLatestByType() == IQueryModel.LATEST_BY_NEW) {
                 throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'latest on'");
             }
             ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls());
@@ -2945,7 +2935,7 @@ public class SqlParser {
         // expect [latest by] (new syntax)
 
         if (tok != null && isLatestKeyword(tok)) {
-            if (model.getLatestByType() == QueryModel.LATEST_BY_DEPRECATED) {
+            if (model.getLatestByType() == IQueryModel.LATEST_BY_DEPRECATED) {
                 throw SqlException.$((lexer.lastTokenPosition()), "mix of new and deprecated 'latest by' syntax");
             }
             expectTok(lexer, "on");
@@ -2961,7 +2951,7 @@ public class SqlParser {
         if (tok != null && isPivotKeyword(tok)) {
             try {
                 pivotMode = true;
-                QueryModel pivotModel = queryModelPool.next();
+                IQueryModel pivotModel = queryModelPool.next();
                 pivotModel.setModelPosition(lexer.lastTokenPosition());
                 pivotModel.setNestedModel(model);
                 tok = parsePivot(lexer, pivotModel, sqlParserCallback);
@@ -2975,7 +2965,7 @@ public class SqlParser {
         // expect [sample by]
         if (tok != null && isSampleKeyword(tok)) {
             if (hasPivot) {
-                QueryModel parentModel = queryModelPool.next();
+                IQueryModel parentModel = queryModelPool.next();
                 parentModel.setNestedModel(model);
                 model = parentModel;
             }
@@ -3073,7 +3063,7 @@ public class SqlParser {
 
         if (tok != null && isGroupKeyword(tok)) {
             if (hasPivot) {
-                QueryModel parentModel = queryModelPool.next();
+                IQueryModel parentModel = queryModelPool.next();
                 parentModel.setNestedModel(model);
                 model = parentModel;
             }
@@ -3182,10 +3172,10 @@ public class SqlParser {
                 tok = optTok(lexer);
 
                 if (tok != null && isDescKeyword(tok)) {
-                    model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
+                    model.addOrderBy(n, IQueryModel.ORDER_DIRECTION_DESCENDING);
                     tok = optTok(lexer);
                 } else {
-                    model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
+                    model.addOrderBy(n, IQueryModel.ORDER_DIRECTION_ASCENDING);
 
                     if (tok != null && isAscKeyword(tok)) {
                         tok = optTok(lexer);
@@ -3210,6 +3200,11 @@ public class SqlParser {
             } else {
                 lexer.unparseLast();
             }
+            // questdb accepts open-ended limits like 'LIMIT 5,' and 'LIMIT ,5'.
+            // so reject only when neither side of the LIMIT clause parsed.
+            if (lo == null && hi == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "limit expression expected");
+            }
             model.setLimit(lo, hi);
         } else {
             lexer.unparseLast();
@@ -3217,7 +3212,7 @@ public class SqlParser {
         return model;
     }
 
-    private void parseFromTable(GenericLexer lexer, QueryModel model) throws SqlException {
+    private void parseFromTable(GenericLexer lexer, IQueryModel model) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !isFromKeyword(tok)) {
@@ -3226,7 +3221,7 @@ public class SqlParser {
         parseTableName(lexer, model);
     }
 
-    private void parseHints(GenericLexer lexer, QueryModel model) {
+    private void parseHints(GenericLexer lexer, IQueryModel model) {
         CharSequence hintToken;
         boolean parsingParams = false;
         CharSequence hintKey = null;
@@ -3375,7 +3370,7 @@ public class SqlParser {
         if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
-            final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false);
+            final IQueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false);
             model.setQueryModel(queryModel);
             tok = optTok(lexer);
             // no more tokens or ';' should indicate end of statement
@@ -3415,9 +3410,9 @@ public class SqlParser {
         throw err(lexer, tok, "'select' or 'values' expected");
     }
 
-    private QueryModel parseJoin(
+    private IQueryModel parseJoin(
             GenericLexer lexer,
-            QueryModel model,
+            IQueryModel model,
             CharSequence tok,
             int joinType,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> parent,
@@ -3431,34 +3426,34 @@ public class SqlParser {
             // was it "left", "right", "full" or window?
             if (isLeftKeyword(tok)) {
                 tok = tok(lexer, "join");
-                joinType = QueryModel.JOIN_LEFT_OUTER;
+                joinType = IQueryModel.JOIN_LEFT_OUTER;
                 if (isOuterKeyword(tok)) {
                     tok = tok(lexer, "join");
                 }
             } else if (isRightKeyword(tok)) {
                 tok = tok(lexer, "join");
-                joinType = QueryModel.JOIN_RIGHT_OUTER;
+                joinType = IQueryModel.JOIN_RIGHT_OUTER;
                 if (isOuterKeyword(tok)) {
                     tok = tok(lexer, "join");
                 }
             } else if (isFullKeyword(tok)) {
                 tok = tok(lexer, "join");
-                joinType = QueryModel.JOIN_FULL_OUTER;
+                joinType = IQueryModel.JOIN_FULL_OUTER;
                 if (isOuterKeyword(tok)) {
                     tok = tok(lexer, "join");
                 }
             } else if (isWindowKeyword(tok)) {
                 tok = tok(lexer, "join");
-                joinType = QueryModel.JOIN_WINDOW;
+                joinType = IQueryModel.JOIN_WINDOW;
             } else if (isHorizonKeyword(tok)) {
                 tok = tok(lexer, "join");
-                joinType = QueryModel.JOIN_HORIZON;
+                joinType = IQueryModel.JOIN_HORIZON;
             } else if (isLateralKeyword(tok)) {
-                joinType = QueryModel.JOIN_LATERAL_CROSS;
+                joinType = IQueryModel.JOIN_LATERAL_CROSS;
             } else {
                 tok = tok(lexer, "join");
             }
-            if (joinType != QueryModel.JOIN_LATERAL_CROSS && isNotJoinKeyword(tok)) {
+            if (joinType != IQueryModel.JOIN_LATERAL_CROSS && isNotJoinKeyword(tok)) {
                 throw SqlException.position(errorPos).put("'join' expected");
             }
         }
@@ -3470,18 +3465,18 @@ public class SqlParser {
             return parseUnnest(lexer, model, decls, sqlParserCallback);
         }
 
-        if (isLateralKeyword(tok) && joinType != QueryModel.JOIN_LATERAL_CROSS) {
+        if (isLateralKeyword(tok) && joinType != IQueryModel.JOIN_LATERAL_CROSS) {
             joinType = switch (joinType) {
-                case QueryModel.JOIN_LEFT_OUTER -> QueryModel.JOIN_LATERAL_LEFT;
-                case QueryModel.JOIN_INNER -> QueryModel.JOIN_LATERAL_INNER;
-                case QueryModel.JOIN_CROSS -> QueryModel.JOIN_LATERAL_CROSS;
+                case IQueryModel.JOIN_LEFT_OUTER -> IQueryModel.JOIN_LATERAL_LEFT;
+                case IQueryModel.JOIN_INNER -> IQueryModel.JOIN_LATERAL_INNER;
+                case IQueryModel.JOIN_CROSS -> IQueryModel.JOIN_LATERAL_CROSS;
                 default -> throw SqlException.position(lexer.lastTokenPosition())
                         .put("LATERAL is only supported with INNER, LEFT, or CROSS joins");
             };
             tok = expectTableNameOrSubQuery(lexer);
         }
 
-        if (QueryModel.isLateralJoin(joinType) && !Chars.equals(tok, '(')) {
+        if (IQueryModel.isLateralJoin(joinType) && !Chars.equals(tok, '(')) {
             throw SqlException.position(lexer.lastTokenPosition()).put("LATERAL requires a subquery");
         }
 
@@ -3502,28 +3497,28 @@ public class SqlParser {
 
         tok = setModelAliasAndGetOptTok(lexer, joinModel);
 
-        if ((joinType == QueryModel.JOIN_CROSS || joinType == QueryModel.JOIN_LATERAL_CROSS) && tok != null && isOnKeyword(tok)) {
+        if ((joinType == IQueryModel.JOIN_CROSS || joinType == IQueryModel.JOIN_LATERAL_CROSS) && tok != null && isOnKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "Cross joins cannot have join clauses");
         }
 
         boolean onClauseObserved = false;
         switch (joinType) {
-            case QueryModel.JOIN_ASOF:
-            case QueryModel.JOIN_LT:
-            case QueryModel.JOIN_SPLICE:
-            case QueryModel.JOIN_WINDOW:
-            case QueryModel.JOIN_HORIZON:
-            case QueryModel.JOIN_LATERAL_INNER:
-            case QueryModel.JOIN_LATERAL_LEFT:
+            case IQueryModel.JOIN_ASOF:
+            case IQueryModel.JOIN_LT:
+            case IQueryModel.JOIN_SPLICE:
+            case IQueryModel.JOIN_WINDOW:
+            case IQueryModel.JOIN_HORIZON:
+            case IQueryModel.JOIN_LATERAL_INNER:
+            case IQueryModel.JOIN_LATERAL_LEFT:
                 if (tok == null || !isOnKeyword(tok)) {
                     lexer.unparseLast();
                     break;
                 }
                 // intentional fall through
-            case QueryModel.JOIN_INNER:
-            case QueryModel.JOIN_LEFT_OUTER:
-            case QueryModel.JOIN_RIGHT_OUTER:
-            case QueryModel.JOIN_FULL_OUTER:
+            case IQueryModel.JOIN_INNER:
+            case IQueryModel.JOIN_LEFT_OUTER:
+            case IQueryModel.JOIN_RIGHT_OUTER:
+            case IQueryModel.JOIN_FULL_OUTER:
                 expectTok(lexer, tok, "on");
                 onClauseObserved = true;
                 try {
@@ -3564,7 +3559,7 @@ public class SqlParser {
         }
 
         tok = optTok(lexer);
-        if (joinType == QueryModel.JOIN_WINDOW) {
+        if (joinType == IQueryModel.JOIN_WINDOW) {
             expectTok(lexer, tok, "range");
             tok = optTok(lexer);
             expectTok(lexer, tok, "between");
@@ -3652,7 +3647,7 @@ public class SqlParser {
             return joinModel;
         }
 
-        if (joinType == QueryModel.JOIN_HORIZON) {
+        if (joinType == IQueryModel.JOIN_HORIZON) {
             HorizonJoinContext context = joinModel.getHorizonJoinContext();
 
             // RANGE/LIST clause is optional for non-last HORIZON JOINs in a multi-join chain.
@@ -3718,8 +3713,8 @@ public class SqlParser {
 
             // Create synthetic offset model for the horizon pseudo-table
             // This model represents the virtual table with offset/timestamp columns
-            QueryModel syntheticOffsetModel = queryModelPool.next();
-            syntheticOffsetModel.setJoinType(QueryModel.JOIN_CROSS);
+            IQueryModel syntheticOffsetModel = queryModelPool.next();
+            syntheticOffsetModel.setJoinType(IQueryModel.JOIN_CROSS);
             syntheticOffsetModel.setAlias(aliasNode);
 
             // Move HorizonJoinContext to the synthetic model
@@ -3745,7 +3740,7 @@ public class SqlParser {
             lexer.unparseLast();
             return joinModel;
         }
-        if (joinType != QueryModel.JOIN_ASOF && joinType != QueryModel.JOIN_LT) {
+        if (joinType != IQueryModel.JOIN_ASOF && joinType != IQueryModel.JOIN_LT) {
             throw SqlException.$(lexer.lastTokenPosition(), "TOLERANCE is only supported for ASOF and LT joins");
         }
 
@@ -3774,7 +3769,7 @@ public class SqlParser {
         return joinModel;
     }
 
-    private void parseLatestBy(GenericLexer lexer, QueryModel model) throws SqlException {
+    private void parseLatestBy(GenericLexer lexer, IQueryModel model) throws SqlException {
         CharSequence tok = optTok(lexer);
         if (tok != null) {
             if (isByKeyword(tok)) {
@@ -3789,7 +3784,7 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'on' or 'by' expected");
     }
 
-    private void parseLatestByDeprecated(GenericLexer lexer, QueryModel model) throws SqlException {
+    private void parseLatestByDeprecated(GenericLexer lexer, IQueryModel model) throws SqlException {
         // 'latest by' is already parsed at this point
 
         CharSequence tok;
@@ -3798,14 +3793,14 @@ public class SqlParser {
             tok = SqlUtil.fetchNext(lexer);
         } while (Chars.equalsNc(tok, ','));
 
-        model.setLatestByType(QueryModel.LATEST_BY_DEPRECATED);
+        model.setLatestByType(IQueryModel.LATEST_BY_DEPRECATED);
 
         if (tok != null) {
             lexer.unparseLast();
         }
     }
 
-    private void parseLatestByNew(GenericLexer lexer, QueryModel model) throws SqlException {
+    private void parseLatestByNew(GenericLexer lexer, IQueryModel model) throws SqlException {
         // 'latest on' is already parsed at this point
 
         // <timestamp>
@@ -3821,7 +3816,7 @@ public class SqlParser {
             tok = SqlUtil.fetchNext(lexer);
         } while (Chars.equalsNc(tok, ','));
 
-        model.setLatestByType(QueryModel.LATEST_BY_NEW);
+        model.setLatestByType(IQueryModel.LATEST_BY_NEW);
 
         if (tok != null) {
             lexer.unparseLast();
@@ -3844,7 +3839,7 @@ public class SqlParser {
      * significantly impact performance. This aligns with mainstream databases which also
      * do not support ELSE in PIVOT. For such requirements, user can use subqueries instead.
      */
-    private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    private CharSequence parsePivot(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         expectTok(lexer, '(');
 
@@ -4024,7 +4019,7 @@ public class SqlParser {
         return tok;
     }
 
-    private QueryColumn parsePivotAggregateColumn(GenericLexer lexer, QueryModel model, FunctionFactoryCache functionFactoryCache, SqlParserCallback sqlParserCallback) throws SqlException {
+    private QueryColumn parsePivotAggregateColumn(GenericLexer lexer, IQueryModel model, FunctionFactoryCache functionFactoryCache, SqlParserCallback sqlParserCallback) throws SqlException {
         ExpressionNode expr = expr(lexer, model, sqlParserCallback);
         if (expr == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "missing aggregate function expression");
@@ -4107,7 +4102,7 @@ public class SqlParser {
             boolean overrideDeclare
     ) throws SqlException {
         lexer.unparseLast();
-        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, overrideDeclare);
+        final IQueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, overrideDeclare);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             model.recordViews(recordedViews);
@@ -4119,7 +4114,7 @@ public class SqlParser {
         throw errUnexpected(lexer, tok);
     }
 
-    private void parseSelectClause(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    private void parseSelectClause(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         int pos = lexer.getPosition();
         CharSequence tok = SqlUtil.fetchNext(lexer, true);
         if (tok == null || (subQueryMode && Chars.equals(tok, ')'))) {
@@ -4157,6 +4152,10 @@ public class SqlParser {
 
                     if (isSelectKeyword(tok)) {
                         throw SqlException.$(lexer.getPosition(), "reserved name");
+                    }
+
+                    if (isUnexpectedRightParenInTopLevelSelect(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
                     }
 
                     lexer.unparseLast();
@@ -4241,13 +4240,13 @@ public class SqlParser {
                 }
 
                 if (Chars.equals(tok, ')')) {
-                    if (subQueryMode || createTableMode || copyMode || createViewMode) {
+                    if (isUnexpectedRightParenInTopLevelSelect(tok)) {
+                        // it's an unbalanced ')' in top-level SELECT
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
+                    } else {
                         // it's a balanced: ')'
                         lexer.unparseLast();
                         break;
-                    } else {
-                        // it's an unbalanced ')' in top-level SELECT
-                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
                     }
                 }
 
@@ -4287,7 +4286,7 @@ public class SqlParser {
 
     private void parseSelectFrom(
             GenericLexer lexer,
-            QueryModel model,
+            IQueryModel model,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
@@ -4317,7 +4316,7 @@ public class SqlParser {
             case ExpressionNode.CONSTANT:
                 final WithClauseModel withClause = masterModel.get(tableName);
                 if (withClause != null) {
-                    QueryModel cteModel = parseWith(lexer, withClause, sqlParserCallback, model.getDecls());
+                    IQueryModel cteModel = parseWith(lexer, withClause, sqlParserCallback, model.getDecls());
                     cteModel.setIsCteModel(true);
                     model.setNestedModel(cteModel);
                     model.setAlias(literal(tableName, expr.position));
@@ -4355,7 +4354,7 @@ public class SqlParser {
         return Numbers.ceilPow2(symbolCapacity);
     }
 
-    private void parseTableName(GenericLexer lexer, QueryModel model) throws SqlException {
+    private void parseTableName(GenericLexer lexer, IQueryModel model) throws SqlException {
         CharSequence tok = tok(lexer, "expected a table name");
         tok = sansPublicSchema(tok, lexer);
         final CharSequence tableName = assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
@@ -4398,9 +4397,9 @@ public class SqlParser {
         return null;
     }
 
-    private QueryModel parseUnnest(
+    private IQueryModel parseUnnest(
             GenericLexer lexer,
-            QueryModel parent,
+            IQueryModel parent,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
@@ -4415,9 +4414,9 @@ public class SqlParser {
         }
     }
 
-    private QueryModel parseUnnest0(
+    private IQueryModel parseUnnest0(
             GenericLexer lexer,
-            QueryModel parent,
+            IQueryModel parent,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
@@ -4548,7 +4547,7 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
         lexer.unparseLast();
-        final QueryModel model = parseDmlUpdate(lexer, sqlParserCallback, decls);
+        final IQueryModel model = parseDmlUpdate(lexer, sqlParserCallback, decls);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
@@ -4558,8 +4557,8 @@ public class SqlParser {
 
     private void parseUpdateClause(
             GenericLexer lexer,
-            QueryModel updateQueryModel,
-            QueryModel fromModel,
+            IQueryModel updateQueryModel,
+            IQueryModel fromModel,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         CharSequence tok = tok(lexer, "table name or alias");
@@ -4600,7 +4599,7 @@ public class SqlParser {
             expectTok(lexer, "=");
 
             // Value expression
-            ExpressionNode expr = expr(lexer, (QueryModel) null, sqlParserCallback);
+            ExpressionNode expr = expr(lexer, (IQueryModel) null, sqlParserCallback);
             ExpressionNode setColumnExpression = expressionNodePool.next().of(ExpressionNode.LITERAL, col, 0, colPosition);
             updateQueryModel.getUpdateExpressions().add(setColumnExpression);
 
@@ -4656,13 +4655,13 @@ public class SqlParser {
         throw SqlException.$(lexer.lastTokenPosition(), "'select' | 'update' | 'insert' expected");
     }
 
-    private QueryModel parseWith(
+    private IQueryModel parseWith(
             GenericLexer lexer,
             WithClauseModel wcm,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        QueryModel m = wcm.popModel();
+        IQueryModel m = wcm.popModel();
         if (m != null) {
             return m;
         }
@@ -4718,7 +4717,7 @@ public class SqlParser {
         } while (true);
     }
 
-    private CharSequence parseWithOffset(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    private CharSequence parseWithOffset(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         expectOffset(lexer);
         model.setSampleByOffset(expectExpr(lexer, sqlParserCallback, model.getDecls()));
@@ -5074,7 +5073,7 @@ public class SqlParser {
         return tok;
     }
 
-    private CharSequence setModelAliasAndGetOptTok(GenericLexer lexer, QueryModel joinModel) throws SqlException {
+    private CharSequence setModelAliasAndGetOptTok(GenericLexer lexer, IQueryModel joinModel) throws SqlException {
         CharSequence tok = optTok(lexer);
         if (tok != null && tableAliasStop.excludes(tok)) {
             if (isAsKeyword(tok)) {
@@ -5090,7 +5089,7 @@ public class SqlParser {
         return tok;
     }
 
-    private CharSequence setModelAliasAndTimestamp(GenericLexer lexer, QueryModel model) throws SqlException {
+    private CharSequence setModelAliasAndTimestamp(GenericLexer lexer, IQueryModel model) throws SqlException {
         CharSequence tok;
         tok = setModelAliasAndGetOptTok(lexer, model);
 
@@ -5190,8 +5189,8 @@ public class SqlParser {
         return tok;
     }
 
-    private void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
-        for (QueryModel m = model; m != null; m = m.getNestedModel()) {
+    private void validateMatViewQuery(IQueryModel model, String baseTableName) throws SqlException {
+        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
             tableNames.clear();
             tableNamePositions.clear();
             SqlUtil.collectAllTableNames(m, tableNames, null);
@@ -5243,16 +5242,16 @@ public class SqlParser {
                 }
             }
 
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
+                final IQueryModel joinModel = joinModels.getQuick(i);
                 if (joinModel == m) {
                     continue;
                 }
                 validateMatViewQuery(joinModel, baseTableName);
             }
 
-            final QueryModel unionModel = m.getUnionModel();
+            final IQueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
                 // allow self-UNION on base table, but disallow UNION on base table with any other tables
                 if (baseTableQueried && queriedTableCount > 1) {
@@ -5264,7 +5263,7 @@ public class SqlParser {
         }
     }
 
-    private void validateNamedWindowReferences(QueryModel model) throws SqlException {
+    private void validateNamedWindowReferences(IQueryModel model) throws SqlException {
         LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
         ObjList<QueryColumn> columns = model.getBottomUpColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -5366,7 +5365,7 @@ public class SqlParser {
 
     ExpressionNode expr(
             GenericLexer lexer,
-            QueryModel model,
+            IQueryModel model,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             @Nullable CharSequence exprTargetVariableName
@@ -5383,11 +5382,11 @@ public class SqlParser {
         }
     }
 
-    ExpressionNode expr(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+    ExpressionNode expr(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         return expr(lexer, model, sqlParserCallback, decls, null);
     }
 
-    ExpressionNode expr(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    ExpressionNode expr(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         return expr(lexer, model, sqlParserCallback, null, null);
     }
 
@@ -5458,7 +5457,7 @@ public class SqlParser {
         return parseSelectWithOverrides(lexer, sqlParserCallback, externalDecls, overrideDeclare);
     }
 
-    QueryModel parseAsSubQuery(
+    IQueryModel parseAsSubQuery(
             GenericLexer lexer,
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
             boolean useTopLevelWithClauses,
@@ -5466,7 +5465,7 @@ public class SqlParser {
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             boolean overrideDeclare
     ) throws SqlException {
-        QueryModel model;
+        IQueryModel model;
         this.subQueryMode = true;
         try {
             model = parseDml(lexer, withClauses, lexer.getPosition(), useTopLevelWithClauses, sqlParserCallback, decls, overrideDeclare);
@@ -5494,7 +5493,7 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        parseAsSubQuery(lexer, null, true, sqlParserCallback, null, false);
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
@@ -5594,22 +5593,22 @@ public class SqlParser {
         groupByStopSet.add(")");
         groupByStopSet.add(",");
 
-        joinStartSet.put("left", QueryModel.JOIN_INNER);
-        joinStartSet.put("right", QueryModel.JOIN_INNER);
-        joinStartSet.put("full", QueryModel.JOIN_INNER);
-        joinStartSet.put("join", QueryModel.JOIN_INNER);
-        joinStartSet.put("inner", QueryModel.JOIN_INNER);
-        joinStartSet.put("left", QueryModel.JOIN_LEFT_OUTER);
-        joinStartSet.put("window", QueryModel.JOIN_WINDOW);
-        joinStartSet.put("right", QueryModel.JOIN_RIGHT_OUTER);
-        joinStartSet.put("full", QueryModel.JOIN_FULL_OUTER);
-        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
-        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
-        joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
-        joinStartSet.put("lt", QueryModel.JOIN_LT);
-        joinStartSet.put("horizon", QueryModel.JOIN_HORIZON);
-        joinStartSet.put("lateral", QueryModel.JOIN_LATERAL_CROSS);
-        joinStartSet.put(",", QueryModel.JOIN_CROSS);
+        joinStartSet.put("left", IQueryModel.JOIN_INNER);
+        joinStartSet.put("right", IQueryModel.JOIN_INNER);
+        joinStartSet.put("full", IQueryModel.JOIN_INNER);
+        joinStartSet.put("join", IQueryModel.JOIN_INNER);
+        joinStartSet.put("inner", IQueryModel.JOIN_INNER);
+        joinStartSet.put("left", IQueryModel.JOIN_LEFT_OUTER);
+        joinStartSet.put("window", IQueryModel.JOIN_WINDOW);
+        joinStartSet.put("right", IQueryModel.JOIN_RIGHT_OUTER);
+        joinStartSet.put("full", IQueryModel.JOIN_FULL_OUTER);
+        joinStartSet.put("cross", IQueryModel.JOIN_CROSS);
+        joinStartSet.put("asof", IQueryModel.JOIN_ASOF);
+        joinStartSet.put("splice", IQueryModel.JOIN_SPLICE);
+        joinStartSet.put("lt", IQueryModel.JOIN_LT);
+        joinStartSet.put("horizon", IQueryModel.JOIN_HORIZON);
+        joinStartSet.put("lateral", IQueryModel.JOIN_LATERAL_CROSS);
+        joinStartSet.put(",", IQueryModel.JOIN_CROSS);
         //
         setOperations.add("union");
         setOperations.add("except");

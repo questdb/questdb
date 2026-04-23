@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.ServerDisconnectException;
 
 import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_GET;
@@ -107,7 +108,7 @@ public interface HttpRequestProcessor {
     default void onConnectionClosed(HttpConnectionContext context) {
     }
 
-    default void onHeadersReady(HttpConnectionContext context) {
+    default void onHeadersReady(HttpConnectionContext context) throws PeerDisconnectedException {
     }
 
     default void onRequestComplete(
@@ -138,7 +139,7 @@ public interface HttpRequestProcessor {
         return false;
     }
 
-    default void resumeRecv(HttpConnectionContext context) {
+    default void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
     }
 
     default void resumeSend(

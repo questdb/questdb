@@ -57,7 +57,6 @@ import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -438,11 +437,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (versionStr == null) {
             return DEFAULT_API_VERSION;
         } else {
-            try {
-                return (byte) Numbers.parseInt(versionStr);
-            } catch (NumericException e) {
-                return DEFAULT_API_VERSION;
-            }
+            int v = Numbers.parseNonNegativeIntQuiet(versionStr);
+            return v >= 0 ? (byte) v : DEFAULT_API_VERSION;
         }
     }
 
@@ -1281,7 +1277,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (explain) {
                 response.putAscii(',').putAsciiQuoted("explain").putAscii(':')
                         .putAscii('{')
-                        .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(queryJitCompiled ? "true" : "false")
+                        .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(Boolean.toString(queryJitCompiled))
                         .putAscii('}');
             }
             response.putAscii('}');

@@ -32,7 +32,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class WithClauseModel implements Mutable {
     public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
-    private QueryModel model;
+    private IQueryModel model;
     private LowerCaseCharSequenceObjHashMap<WithClauseModel> originalWithClauses;
     // Size of withClauses at time of `of()` method call. We need to maintain the 'snapshot' because
     // map can grow and subsequent WITH clause can override table used by current one,
@@ -67,7 +67,7 @@ public class WithClauseModel implements Mutable {
         return withClauses;
     }
 
-    public void of(int position, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses, QueryModel model) {
+    public void of(int position, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses, IQueryModel model) {
         this.position = position;
         this.model = model;
         this.originalWithClauses = withClauses;
@@ -79,12 +79,12 @@ public class WithClauseModel implements Mutable {
      * {@link #popModel()}, the model remains available for subsequent reads.
      * Use this for read-only inspection (e.g. validation passes).
      */
-    public QueryModel peekModel() {
+    public IQueryModel peekModel() {
         return model;
     }
 
-    public QueryModel popModel() {
-        QueryModel m = model;
+    public IQueryModel popModel() {
+        IQueryModel m = model;
         model = null;
         return m;
     }

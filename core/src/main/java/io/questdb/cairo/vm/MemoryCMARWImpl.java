@@ -227,8 +227,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         close();
         assert fd > 0;
         this.ff = ff;
-        this.extendSegmentMsb = ff.getMapPageSize();
-        this.minMappedMemorySize = this.extendSegmentMsb;
+        this.extendSegmentMsb = Numbers.msb(ff.getMapPageSize());
+        this.minMappedMemorySize = ff.getMapPageSize();
         this.fd = fd;
         map(ff, fileName, size, memoryTag);
     }

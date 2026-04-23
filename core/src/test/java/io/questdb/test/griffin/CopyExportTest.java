@@ -473,6 +473,97 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetDesignatedTimestampAfterDropColumn() throws Exception {
+        // Regression test for designated timestamp detection in the batch
+        // parquet encoder (create_partition_descriptor in jni.rs).
+        //
+        // populateFromTableReader() passes the reader timestamp index to Rust,
+        // but the Rust code compares it with col_id (writer index). After a
+        // DROP COLUMN the two diverge, causing the wrong column to be flagged
+        // as the designated timestamp. If that column is not a TIMESTAMP type,
+        // into_designated_with_order() fails and the export errors out.
+        //
+        //   dummy (0, INT) — dropped
+        //   val   (1, DOUBLE)
+        //   ts    (2, TIMESTAMP designated)
+        //   extra (3, LONG)
+        //
+        // After DROP dummy: val reader=0(writer=1), ts reader=1(writer=2)
+        // timestamp_index = 1 (reader index of ts).
+        // Bug: col_id(val)=1 == timestamp_index → val (DOUBLE) flagged
+        //      as designated → into_designated_with_order() fails.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        dummy INT,
+                        val DOUBLE,
+                        ts TIMESTAMP,
+                        extra LONG
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, 1.0, '2024-01-01T00:00:00.000000Z', 10),
+                    (2, 2.0, '2024-01-01T01:00:00.000000Z', 20),
+                    (3, 3.0, '2024-01-02T00:00:00.000000Z', 30)
+                    """);
+
+            execute("ALTER TABLE t DROP COLUMN dummy");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("COPY t TO 'drop_col_test' WITH FORMAT parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        // The export must complete successfully — the encoder
+                        // must correctly identify the designated timestamp
+                        // using the writer index, not the reader index.
+                        // Before the fix, the export failed with status=failed
+                        // because into_designated_with_order() errored on the
+                        // DOUBLE column that was incorrectly flagged.
+                        assertSql(
+                                "status\n" +
+                                        "finished\n",
+                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetEmptyPartitionAfterDropColumn() throws Exception {
+        // Regression test for populateEmptyPartition() timestamp index fix.
+        // When the table is empty, the exporter calls populateEmptyPartition
+        // instead of populateFromTableReader. After DROP COLUMN, the reader
+        // timestamp index diverges from the writer index. Without the fix,
+        // the Rust encoder misidentifies the designated timestamp column.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        dummy INT,
+                        val DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+
+            execute("ALTER TABLE t DROP COLUMN dummy");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("COPY t TO 'empty_drop_col' WITH FORMAT parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> assertSql(
+                            "status\nfinished\n",
+                            "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
+                    ));
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyParquetFailsWithIllegalSql() throws Exception {
         assertException(
                 "copy (select x from non_existing_table) to 'tmp' with format parquet",

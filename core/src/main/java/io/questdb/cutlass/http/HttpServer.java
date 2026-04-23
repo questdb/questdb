@@ -36,6 +36,7 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
+import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -166,6 +167,19 @@ public class HttpServer implements Closeable {
                 @Override
                 public HttpRequestHandler newInstance() {
                     return pingProcessor;
+                }
+            });
+
+            // QWP v1 endpoint (WebSocket only)
+            server.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjHashSet<String> getUrls() {
+                    return httpServerConfiguration.getContextPathQWP();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new QwpWebSocketHttpProcessor(cairoEngine, httpServerConfiguration);
                 }
             });
         }
@@ -411,9 +425,6 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private record IndexedHandler(HttpRequestHandler handler, int handlerId) {
-    }
-
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
 
         private final ObjList<HttpRequestHandler> handlersByIdList = new ObjList<>();
@@ -467,5 +478,8 @@ public class HttpServer implements Closeable {
             lastSelectedHandlerId = defaultProcessorId;
             return defaultRequestProcessor;
         }
+    }
+
+    private record IndexedHandler(HttpRequestHandler handler, int handlerId) {
     }
 }

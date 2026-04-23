@@ -262,7 +262,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 key.put(masterRecord, masterKeySink);
                 value = key.findValue();
                 if (value != null) {
-                    value.setMapRecordHere();
+                    currentJoinKeyMap.getRecord().of(value.getStartAddress());
                     if (toleranceInterval == Numbers.LONG_NULL) {
                         record.hasSlave(true);
                     } else {

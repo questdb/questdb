@@ -24,7 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import org.jetbrains.annotations.NotNull;
@@ -41,7 +41,7 @@ public final class SqlHints {
     public static final String MARKOUT_HORIZON_HINT = "markout_horizon";
 
     public static boolean hasAsOfDenseHint(
-            @NotNull QueryModel queryModel,
+            @NotNull IQueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
     ) {
@@ -49,7 +49,7 @@ public final class SqlHints {
     }
 
     public static boolean hasAsOfIndexHint(
-            @NotNull QueryModel queryModel,
+            @NotNull IQueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
     ) {
@@ -57,7 +57,7 @@ public final class SqlHints {
     }
 
     public static boolean hasAsOfLinearHint(
-            @NotNull QueryModel queryModel,
+            @NotNull IQueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
     ) {
@@ -65,7 +65,7 @@ public final class SqlHints {
     }
 
     public static boolean hasAsOfMemoizedDrivebyHint(
-            @NotNull QueryModel queryModel,
+            @NotNull IQueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
     ) {
@@ -73,7 +73,7 @@ public final class SqlHints {
     }
 
     public static boolean hasAsOfMemoizedHint(
-            @NotNull QueryModel queryModel,
+            @NotNull IQueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
     ) {
@@ -82,7 +82,7 @@ public final class SqlHints {
 
     // checks enable column pre-touch hint for parallel filters
     public static boolean hasEnablePreTouchHint(
-            @NotNull QueryModel queryModel,
+            @NotNull IQueryModel queryModel,
             @Nullable CharSequence tableName
     ) {
         LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
@@ -91,7 +91,7 @@ public final class SqlHints {
     }
 
     public static boolean hasMarkoutHorizonHint(
-            @NotNull QueryModel queryModel,
+            @NotNull IQueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
     ) {
@@ -99,7 +99,7 @@ public final class SqlHints {
     }
 
     private static boolean hasHintWithParams(
-            @NotNull QueryModel queryModel,
+            @NotNull IQueryModel queryModel,
             @NotNull CharSequence hintName,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
