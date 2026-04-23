@@ -826,21 +826,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // TableReferenceOutOfDateException leave a fingerprint behind; the
             // retry would then see the fingerprint as "reuse" and ship the first
             // batch in reference mode against an id the client never registered.
-            // Skip the select cache when bind variables are present. Factories
-            // compiled with bound values can specialise on bind types, so a
-            // cache keyed by SQL text alone can return a factory whose bind
-            // signature does not match the current request. Mirrors pgwire's
-            // TypesAndSelect design, which keys its cache by SQL plus bind
-            // types for the same reason.
-            final boolean cacheableSelect = state.getBindVariableService().getIndexedVariableCount() == 0;
+            // Compose the select-cache key: SQL text on its own for bindless
+            // queries (existing shape), or [type0,type1,...]sql when binds are
+            // present so factories compiled under different bind signatures
+            // occupy different cache slots. A SQL-only key can otherwise
+            // return a factory whose bind signature does not match the
+            // current request. Mirrors pgwire's TypesAndSelect design.
+            final CharSequence cacheKey = decoder.buildSelectCacheKey(state.getBindVariableService());
             int attempts = 0;
             while (true) {
                 attempts++;
                 try {
-                    // Cache lookup only on first attempt, and only when the
-                    // request carries no binds. Retry always recompiles.
-                    if (attempts == 1 && cacheableSelect) {
-                        factory = selectCache.poll(decoder.sql);
+                    // Cache lookup only on first attempt. Retry always recompiles.
+                    if (attempts == 1) {
+                        factory = selectCache.poll(cacheKey);
                     }
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -915,10 +914,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 return;
             }
             boolean schemaAlreadyKnown = state.wasLastSchemaIdReuse();
-            // Pass a null SQL key when the query carries binds so the factory
-            // is not returned to the select cache on completion. The key is
-            // also what cacheStreamingFactoryIfAvailable consults.
-            CharSequence cacheKey = cacheableSelect ? decoder.sql : null;
+            // Hand the composite cache key to beginStreaming so cache-back
+            // on successful completion writes under the same [types]sql key
+            // used to poll. State stringifies the CharSequence into its own
+            // heap copy, so the decoder's scratch is free to be overwritten
+            // by the next request on this connection.
             if (pageFrameCursor != null) {
                 // Streaming mode asks the cursor to release page cache pages
                 // after reading, so a 10M-row scan doesn't evict the server's

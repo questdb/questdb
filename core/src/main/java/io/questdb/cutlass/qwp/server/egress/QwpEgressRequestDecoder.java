@@ -50,6 +50,15 @@ import io.questdb.std.str.Utf8s;
  */
 public class QwpEgressRequestDecoder {
 
+    /**
+     * Reusable composite select-cache key built from the current request's
+     * bind-variable types and SQL text. Filled by
+     * {@link #buildSelectCacheKey(BindVariableService)} and consumed by the
+     * caller for {@code selectCache.poll} and, indirectly, for
+     * {@code selectCache.put} via the SQL-text slot on
+     * {@code QwpEgressProcessorState}.
+     */
+    public final StringSink selectCacheKey = new StringSink();
     public final StringSink sql = new StringSink();
     /**
      * Reusable sink passed to {@link BindVariableService#setStr}. The
@@ -77,6 +86,35 @@ public class QwpEgressRequestDecoder {
      * into. Holding it as a field removes the {@code boolean[1]} allocation per bind.
      */
     private boolean bindIsNull;
+
+    /**
+     * Builds the select-cache key for the just-decoded request. Returns the SQL
+     * text unchanged when there are no binds (preserving the existing
+     * SQL-as-cache-key shape for bindless queries). When binds are present,
+     * prefixes the SQL text with a bracketed list of ColumnType ints so
+     * factories compiled against different bind signatures occupy different
+     * cache slots. Mirrors pgwire's {@code TypesAndSelect} contract.
+     *
+     * <p>Call AFTER {@link #decodeQueryRequest} has pushed the bind types into
+     * the service; the returned CharSequence is valid until the next call to
+     * this method on the same decoder instance.
+     */
+    public CharSequence buildSelectCacheKey(BindVariableService bindVars) {
+        int bindCount = bindVars.getIndexedVariableCount();
+        if (bindCount == 0) {
+            return sql;
+        }
+        selectCacheKey.clear();
+        selectCacheKey.put('[');
+        for (int i = 0; i < bindCount; i++) {
+            if (i > 0) {
+                selectCacheKey.put(',');
+            }
+            selectCacheKey.put(bindVars.getFunction(i).getType());
+        }
+        selectCacheKey.put(']').put(sql);
+        return selectCacheKey;
+    }
 
     /**
      * Decodes a CANCEL frame body. Caller has already verified msg_kind == 0x14
@@ -174,6 +212,7 @@ public class QwpEgressRequestDecoder {
      */
     public void reset() {
         sql.clear();
+        selectCacheKey.clear();
         requestId = 0;
         initialCredit = 0;
     }
