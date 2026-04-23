@@ -164,7 +164,8 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                 execute("CREATE TABLE t (grp INT, arr DOUBLE[])");
 
                 StringBuilder insert = new StringBuilder("INSERT INTO t VALUES\n");
-                int[][] expectedCounts = new int[numGroups][1];
+                int[] expectedCounts = new int[numGroups];
+                double[] expectedSums = new double[numGroups];
                 boolean first = true;
                 for (int g = 0; g < numGroups; g++) {
                     for (int r = 0; r < rowsPerGroup; r++) {
@@ -182,27 +183,34 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                                 if (i > 0) {
                                     insert.append(",");
                                 }
-                                double val = Math.round(rnd.nextDouble() * 1000.0) / 10.0;
+                                double val = rnd.nextInt(1000);
                                 insert.append(val);
+                                expectedSums[g] += val;
                             }
                             insert.append("])");
-                            expectedCounts[g][0] += arrLen;
+                            expectedCounts[g] += arrLen;
                         }
                     }
                 }
                 execute(insert.toString());
 
-                // Verify element counts match per group
-                // When all arrays in a group are null, array_agg returns null,
-                // and array_count(null) returns 0.
-                StringBuilder expected = new StringBuilder("grp\tcnt\n");
+                // Verify element counts and sums match per group.
+                // When all arrays in a group are null, array_agg returns null:
+                // array_count(null) = 0, array_sum(null) = null.
+                StringBuilder expected = new StringBuilder("grp\tcnt\tsum\n");
                 for (int g = 0; g < numGroups; g++) {
-                    expected.append(g).append("\t").append(expectedCounts[g][0]).append("\n");
+                    expected.append(g).append("\t").append(expectedCounts[g]).append("\t");
+                    if (expectedCounts[g] == 0) {
+                        expected.append("null");
+                    } else {
+                        expected.append(expectedSums[g]);
+                    }
+                    expected.append("\n");
                 }
 
                 assertQueryNoLeakCheck(
                         expected.toString(),
-                        "SELECT grp, array_count(array_agg(arr)) cnt FROM t ORDER BY grp",
+                        "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) sum FROM t ORDER BY grp",
                         null,
                         true,
                         true

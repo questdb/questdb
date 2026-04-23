@@ -387,4 +387,40 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
             );
         });
     }
+
+    @Test
+    public void testParallelOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])");
+            // 10 groups x 1000 single-element arrays. Row i goes to group g(i%10) with ARRAY[i.0].
+            // Group gN receives elements N.0, (N+10).0, ..., (N+9990).0 in insertion order.
+            StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+            for (int i = 0; i < 10_000; i++) {
+                if (i > 0) {
+                    sb.append(",\n");
+                }
+                sb.append("('g").append(i % 10).append("', ARRAY[").append(i).append(".0])");
+            }
+            execute(sb.toString());
+            // Build expected: group gN has elements N.0, (N+10).0, ..., (N+9990).0.
+            StringBuilder expected = new StringBuilder("grp\tagg\n");
+            for (int g = 0; g < 10; g++) {
+                expected.append('g').append(g).append('\t').append('[');
+                for (int j = 0; j < 1_000; j++) {
+                    if (j > 0) {
+                        expected.append(',');
+                    }
+                    expected.append(g + j * 10).append(".0");
+                }
+                expected.append("]\n");
+            }
+            assertQueryNoLeakCheck(
+                    expected.toString(),
+                    "SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
 }
