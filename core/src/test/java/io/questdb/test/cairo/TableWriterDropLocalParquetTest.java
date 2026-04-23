@@ -42,10 +42,7 @@ import org.junit.Test;
 /**
  * Covers {@link TableWriter#dropLocalPartitionData(long)}: drops the
  * local {@code data.parquet} while keeping the {@code _pm} sidecar, the
- * partition directory, and the partition's {@code TxReader} entry intact. The
- * SELECT-through-cold-resolver read path is exercised in
- * {@code ParquetMetaPartitionDecoderTest}; here we focus on the on-disk and
- * transactional side effects of the drop itself.
+ * partition directory, and the partition's {@code TxReader} entry intact.
  */
 public class TableWriterDropLocalParquetTest extends AbstractCairoTest {
 

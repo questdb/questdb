@@ -16,12 +16,6 @@ use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet_read::row_groups::ParquetColumnIndex;
 
 /// Source of column-chunk bytes for a row-group decode.
-///
-/// `File` points at the full mmap'd parquet file; the per-column
-/// `(col_start, col_len)` from `_pm` slice into it. `Buffers` points at
-/// a flat `[addr0, size0, addr1, size1, ...]` array of caller-owned
-/// buffers, one pair per requested column, typically produced by a
-/// cold-storage resolver that fetched each chunk from object storage.
 pub enum ColumnChunkSource<'a> {
     File(&'a [u8]),
     Buffers(&'a [u64]),
@@ -54,9 +48,6 @@ impl<'a> ColumnChunkSource<'a> {
     }
 
     /// Return the column-chunk byte slice for column at `dest_col_idx`.
-    ///
-    /// For `File`, this slices the mmap'd file at the `_pm`-supplied offsets.
-    /// For `Buffers`, the caller already owns the per-chunk slice.
     fn chunk_data(
         &self,
         dest_col_idx: usize,
