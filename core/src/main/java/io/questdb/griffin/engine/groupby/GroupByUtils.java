@@ -444,6 +444,39 @@ public class GroupByUtils {
         return func;
     }
 
+    /**
+     * Returns the page-frame column index when {@code arg} is a direct
+     * {@link ColumnFunction} reference whose native storage matches
+     * {@code expectedType}, allowing the batched GROUP BY fast path to read
+     * values straight from page-frame memory. Returns -1 otherwise, signalling
+     * that the caller must fall back to {@code arg.getXxx(record)}.
+     * <p>
+     * The type check guards against silent type reinterpretation: a function
+     * like {@code avg(long_col)} keeps the raw {@code LongColumn} as its arg
+     * (no explicit cast, because {@link io.questdb.griffin.engine.functions.LongFunction#getDouble}
+     * already widens), but reading that column's 8-byte storage as a
+     * {@code double} would produce meaningless denormal values.
+     */
+    public static int directArgColumnIndex(Function arg, int expectedType) {
+        if (arg instanceof ColumnFunction cf && arg.getType() == expectedType) {
+            return cf.getColumnIndex();
+        }
+        return -1;
+    }
+
+    /**
+     * Variant of {@link #directArgColumnIndex} that matches by column type tag
+     * rather than by full type. Useful for parameterised types such as geohashes
+     * whose full {@code arg.getType()} value packs storage bits into the upper
+     * half and so never equals a bare tag like {@link ColumnType#GEOBYTE}.
+     */
+    public static int directArgColumnIndexByTag(Function arg, int expectedTag) {
+        if (arg instanceof ColumnFunction cf && ColumnType.tagOf(arg.getType()) == expectedTag) {
+            return cf.getColumnIndex();
+        }
+        return -1;
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {
