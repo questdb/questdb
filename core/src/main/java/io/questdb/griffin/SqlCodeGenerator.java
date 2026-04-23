@@ -5875,27 +5875,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (subsample != null) {
             validateSubsampleArity(subsample);
-            // Verify the SUBSAMPLE column can be resolved at this factory level.
-            // The optimizer may place SUBSAMPLE on a model where the column isn't
-            // available (e.g., count() wrapping a subquery with SUBSAMPLE inside).
-            // In that case, push SUBSAMPLE to the nested model for inner processing.
-            ExpressionNode columnNode = subsample.args.get(0);
-            int colIdx = factory.getMetadata().getColumnIndexQuiet(columnNode.token);
-            if (colIdx == -1) {
-                // Column not available here. Check if we can apply SELECT alias lookup.
-                final ObjList<QueryColumn> selectColumns = model.getColumns();
-                for (int i = 0, n = selectColumns.size(); i < n; i++) {
-                    final QueryColumn qc = selectColumns.getQuick(i);
-                    if (Chars.equalsIgnoreCase(qc.getAlias(), columnNode.token)
-                            || Chars.equalsIgnoreCase(qc.getName(), columnNode.token)) {
-                        colIdx = i;
-                        break;
+            if (isValueInspectingMethodByName(subsample.token)) {
+                // Value-inspecting: verify the SUBSAMPLE column can be resolved
+                // at this factory level. If not, push to nested model.
+                ExpressionNode columnNode = subsample.args.get(0);
+                int colIdx = factory.getMetadata().getColumnIndexQuiet(columnNode.token);
+                if (colIdx == -1) {
+                    final ObjList<QueryColumn> selectColumns = model.getColumns();
+                    for (int i = 0, n = selectColumns.size(); i < n; i++) {
+                        final QueryColumn qc = selectColumns.getQuick(i);
+                        if (Chars.equalsIgnoreCase(qc.getAlias(), columnNode.token)
+                                || Chars.equalsIgnoreCase(qc.getName(), columnNode.token)) {
+                            colIdx = i;
+                            break;
+                        }
                     }
                 }
-            }
-            if (colIdx == -1) {
-                model.setSubsample(null, 0);
-                throw SqlException.$(columnNode.position, "column not found: ").put(columnNode.token);
+                if (colIdx == -1) {
+                    model.setSubsample(null, 0);
+                    throw SqlException.$(columnNode.position, "column not found: ").put(columnNode.token);
+                }
             }
             if (factory.getMetadata().getTimestampIndex() == -1) {
                 // No designated timestamp. Allow if nested model has designated
@@ -5951,9 +5950,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     break;
                 }
                 validateSubsampleArity(nested.getSubsample());
-                ExpressionNode candidateCol = nested.getSubsample().args.get(0);
-                // Check: column resolvable AND factory has designated timestamp
-                // (or nested chain confirms designation was lost by aggregation)
+                boolean isValueMethod = isValueInspectingMethodByName(nested.getSubsample().token);
+                // Check: factory has designated timestamp (or nested chain confirms)
                 boolean hasDesignatedTs = factory.getMetadata().getTimestampIndex() != -1;
                 if (!hasDesignatedTs) {
                     IQueryModel n = model.getNestedModel();
@@ -5965,8 +5963,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         n = n.getNestedModel();
                     }
                 }
-                if (factory.getMetadata().getColumnIndexQuiet(candidateCol.token) != -1
-                        && hasDesignatedTs) {
+                // For value-inspecting methods, also check column resolvable
+                boolean columnOk = !isValueMethod
+                        || factory.getMetadata().getColumnIndexQuiet(nested.getSubsample().args.get(0).token) != -1;
+                if (columnOk && hasDesignatedTs) {
                     subsample = nested.getSubsample();
                     subsamplePos = nested.getSubsamplePosition();
                     nested.setSubsample(null, 0);
@@ -6001,80 +6001,108 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             method = SubsampleRecordCursorFactory.METHOD_M4;
         } else if (Chars.equalsIgnoreCase(methodName, "minmax")) {
             method = SubsampleRecordCursorFactory.METHOD_MINMAX;
+        } else if (Chars.equalsIgnoreCase(methodName, "uniform")) {
+            method = SubsampleRecordCursorFactory.METHOD_UNIFORM;
+        } else if (Chars.equalsIgnoreCase(methodName, "cadence")) {
+            method = SubsampleRecordCursorFactory.METHOD_CADENCE;
         } else {
             throw SqlException.$(subsample.position, "unknown subsample method: ").put(methodName)
-                    .put(". Supported methods: lttb, m4, minmax");
+                    .put(". Supported methods: lttb, m4, minmax, uniform, cadence");
         }
+
+        boolean isValueInspecting = isValueInspectingMethod(method);
 
         // Validate argument count per method
-        if (subsample.paramCount < 2) {
-            throw SqlException.$(subsample.position, "SUBSAMPLE ")
-                    .put(methodName).put("() requires at least 2 arguments: column and target points");
-        }
-        if (method == SubsampleRecordCursorFactory.METHOD_M4 || method == SubsampleRecordCursorFactory.METHOD_MINMAX) {
-            if (subsample.paramCount > 2) {
-                throw SqlException.$(subsample.args.get(2).position, methodName)
-                        .put("() accepts exactly 2 arguments: column and target points");
+        if (isValueInspecting) {
+            if (subsample.paramCount < 2) {
+                throw SqlException.$(subsample.position, "SUBSAMPLE ")
+                        .put(methodName).put("() requires at least 2 arguments: column and target points");
             }
-        } else if (method == SubsampleRecordCursorFactory.METHOD_LTTB) {
-            if (subsample.paramCount > 3) {
-                throw SqlException.$(subsample.args.get(3).position, "lttb() accepts at most 3 arguments: column, target points, and optional gap threshold");
-            }
-        }
-
-        // Args are in parse order: args[0]=column, args[1]=n, args[2]=gap (optional)
-        final ExpressionNode columnNode = subsample.args.get(0);
-        final ExpressionNode targetNode = subsample.args.get(1);
-
-        // Resolve value column index. First try factory metadata (direct column names),
-        // then try SELECT column aliases (needed for SAMPLE BY aggregates where the
-        // metadata name is e.g. "avg(price)" but the user references alias "avg").
-        final CharSequence columnName = columnNode.token;
-        int valueColumnIndex = factory.getMetadata().getColumnIndexQuiet(columnName);
-        if (valueColumnIndex == -1) {
-            // Try matching against SELECT column aliases
-            final ObjList<QueryColumn> selectColumns = model.getColumns();
-            for (int i = 0, n = selectColumns.size(); i < n; i++) {
-                final QueryColumn qc = selectColumns.getQuick(i);
-                if (Chars.equalsIgnoreCase(qc.getAlias(), columnName)
-                        || Chars.equalsIgnoreCase(qc.getName(), columnName)) {
-                    valueColumnIndex = i;
-                    break;
+            if (method == SubsampleRecordCursorFactory.METHOD_M4 || method == SubsampleRecordCursorFactory.METHOD_MINMAX) {
+                if (subsample.paramCount > 2) {
+                    throw SqlException.$(subsample.args.get(2).position, methodName)
+                            .put("() accepts exactly 2 arguments: column and target points");
+                }
+            } else if (method == SubsampleRecordCursorFactory.METHOD_LTTB) {
+                if (subsample.paramCount > 3) {
+                    throw SqlException.$(subsample.args.get(3).position, "lttb() accepts at most 3 arguments: column, target points, and optional gap threshold");
                 }
             }
-        }
-        if (valueColumnIndex == -1) {
-            throw SqlException.$(columnNode.position, "column not found: ").put(columnName);
-        }
-        // Validate column type is numeric
-        final int columnType = ColumnType.tagOf(factory.getMetadata().getColumnType(valueColumnIndex));
-        if (columnType != ColumnType.DOUBLE && columnType != ColumnType.FLOAT
-                && columnType != ColumnType.INT && columnType != ColumnType.LONG
-                && columnType != ColumnType.SHORT && columnType != ColumnType.BYTE) {
-            throw SqlException.$(columnNode.position, "numeric column expected, got: ")
-                    .put(ColumnType.nameOf(factory.getMetadata().getColumnType(valueColumnIndex)));
+        } else if (method == SubsampleRecordCursorFactory.METHOD_UNIFORM) {
+            if (subsample.paramCount != 1) {
+                throw SqlException.$(subsample.position, "uniform() requires exactly 1 argument: target points");
+            }
+        } else { // cadence
+            if (subsample.paramCount < 1 || subsample.paramCount > 2) {
+                throw SqlException.$(subsample.position, "cadence() requires 1 or 2 arguments: stride and optional seed");
+            }
         }
 
-        // Compile target point count as a Function to support bind variables.
+        int valueColumnIndex = -1;
+        int columnType = ColumnType.UNDEFINED;
+        ExpressionNode targetNode;
+
+        if (isValueInspecting) {
+            // Args: args[0]=column, args[1]=target, args[2]=gap (LTTB only)
+            final ExpressionNode columnNode = subsample.args.get(0);
+            targetNode = subsample.args.get(1);
+
+            // Resolve value column index
+            final CharSequence columnName = columnNode.token;
+            valueColumnIndex = factory.getMetadata().getColumnIndexQuiet(columnName);
+            if (valueColumnIndex == -1) {
+                final ObjList<QueryColumn> selectColumns = model.getColumns();
+                for (int i = 0, n = selectColumns.size(); i < n; i++) {
+                    final QueryColumn qc = selectColumns.getQuick(i);
+                    if (Chars.equalsIgnoreCase(qc.getAlias(), columnName)
+                            || Chars.equalsIgnoreCase(qc.getName(), columnName)) {
+                        valueColumnIndex = i;
+                        break;
+                    }
+                }
+            }
+            if (valueColumnIndex == -1) {
+                throw SqlException.$(columnNode.position, "column not found: ").put(columnName);
+            }
+            columnType = ColumnType.tagOf(factory.getMetadata().getColumnType(valueColumnIndex));
+            if (columnType != ColumnType.DOUBLE && columnType != ColumnType.FLOAT
+                    && columnType != ColumnType.INT && columnType != ColumnType.LONG
+                    && columnType != ColumnType.SHORT && columnType != ColumnType.BYTE) {
+                throw SqlException.$(columnNode.position, "numeric column expected, got: ")
+                        .put(ColumnType.nameOf(factory.getMetadata().getColumnType(valueColumnIndex)));
+            }
+        } else {
+            // Position-only: args[0]=targetPoints/stride
+            targetNode = subsample.args.get(0);
+        }
+
+        // Compile target/stride as a Function to support bind variables.
         final Function targetFunc = functionParser.parseFunction(targetNode, EmptyRecordMetadata.INSTANCE, executionContext);
-        // All subsequent work must free targetFunc on error since it's not yet
-        // owned by a factory.
+        Function seedFunc = null;
         try {
             if (!targetFunc.isConstant() && !targetFunc.isRuntimeConstant()) {
-                throw SqlException.$(targetNode.position, "target point count must be a constant or bind variable");
+                CharSequence paramName = method == SubsampleRecordCursorFactory.METHOD_CADENCE ? "stride" : "target point count";
+                throw SqlException.$(targetNode.position, paramName).put(" must be a constant or bind variable");
             }
-            // Coerce UNDEFINED bind variables to LONG (same pattern as LIMIT)
             coerceRuntimeConstantType(targetFunc, ColumnType.LONG, executionContext,
-                    "target point count must be an integer", targetNode.position);
+                    method == SubsampleRecordCursorFactory.METHOD_CADENCE
+                            ? "stride must be an integer" : "target point count must be an integer",
+                    targetNode.position);
             final int targetType = ColumnType.tagOf(targetFunc.getType());
             if (targetType != ColumnType.INT && targetType != ColumnType.LONG
                     && targetType != ColumnType.SHORT && targetType != ColumnType.BYTE) {
-                throw SqlException.$(targetNode.position, "integer expected for target point count");
+                throw SqlException.$(targetNode.position, method == SubsampleRecordCursorFactory.METHOD_CADENCE
+                        ? "integer expected for stride" : "integer expected for target point count");
             }
             if (targetFunc.isConstant()) {
-                getTargetPoints(targetFunc, targetType, targetNode.position);
+                if (method == SubsampleRecordCursorFactory.METHOD_CADENCE) {
+                    getStride(targetFunc, targetType, targetNode.position);
+                } else {
+                    getTargetPoints(targetFunc, targetType, targetNode.position);
+                }
             }
-            // Parse optional gap threshold (3rd argument, LTTB only)
+
+            // Parse optional gap threshold (LTTB only)
             long gapThresholdMicros = 0;
             if (subsample.paramCount >= 3 && method == SubsampleRecordCursorFactory.METHOD_LTTB) {
                 final ExpressionNode gapNode = subsample.args.get(2);
@@ -6094,6 +6122,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             throw SqlException.$(gapNode.position + k, "unsupported interval unit: ").put(interval.charAt(k))
                                     .put(". Supported: s, m, h, d");
                 };
+            }
+
+            // Parse optional seed (cadence only)
+            int seedMode = SubsampleRecordCursorFactory.SEED_MODE_NONE;
+            int seedPosition = 0;
+            if (method == SubsampleRecordCursorFactory.METHOD_CADENCE && subsample.paramCount == 2) {
+                final ExpressionNode seedNode = subsample.args.get(1);
+                seedPosition = seedNode.position;
+                seedFunc = functionParser.parseFunction(seedNode, EmptyRecordMetadata.INSTANCE, executionContext);
+                if (ColumnType.isNull(seedFunc.getType())) {
+                    // Literal NULL -> random mode. seedFunc is not needed at runtime.
+                    Misc.free(seedFunc);
+                    seedFunc = null;
+                    seedMode = SubsampleRecordCursorFactory.SEED_MODE_RANDOM;
+                } else {
+                    if (!seedFunc.isConstant() && !seedFunc.isRuntimeConstant()) {
+                        throw SqlException.$(seedNode.position, "seed must be a constant, bind variable, or NULL");
+                    }
+                    coerceRuntimeConstantType(seedFunc, ColumnType.LONG, executionContext,
+                            "seed must be an integer or NULL", seedNode.position);
+                    int seedType = ColumnType.tagOf(seedFunc.getType());
+                    if (seedType != ColumnType.INT && seedType != ColumnType.LONG
+                            && seedType != ColumnType.SHORT && seedType != ColumnType.BYTE) {
+                        throw SqlException.$(seedNode.position, "integer or NULL expected for seed");
+                    }
+                    seedMode = SubsampleRecordCursorFactory.SEED_MODE_DETERMINISTIC;
+                }
             }
 
             int timestampIndex = factory.getMetadata().getTimestampIndex();
@@ -6136,9 +6191,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     configuration.getSubsampleMaxRows(),
                     columnType,
                     recordSink,
-                    useDirectAccess
+                    useDirectAccess,
+                    seedFunc,
+                    seedMode,
+                    seedPosition
             );
         } catch (Throwable e) {
+            Misc.free(seedFunc);
             Misc.free(targetFunc);
             Misc.free(factory);
             throw e;
@@ -6174,6 +6233,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return (int) value;
     }
 
+    static int getStride(Function targetFunc, int targetType, int position) throws SqlException {
+        long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "stride must be set");
+            }
+        } else {
+            int intVal = targetFunc.getInt(null);
+            if (intVal == Numbers.INT_NULL) {
+                throw SqlException.$(position, "stride must be set");
+            }
+            value = intVal;
+        }
+        if (value < 1) {
+            throw SqlException.$(position, "stride must be at least 1");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return (int) value;
+    }
+
     // parsePositiveInterval uses Numbers.parseInt (max Integer.MAX_VALUE).
     // parseInt throws NumericException on overflow, so n is always in int range.
     // However, n * DAY_MICROS (86_400_000_000) can overflow long for large n.
@@ -6184,11 +6266,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return n * unitMicros;
     }
 
+    private static boolean isValueInspectingMethod(int method) {
+        return method == SubsampleRecordCursorFactory.METHOD_LTTB
+                || method == SubsampleRecordCursorFactory.METHOD_M4
+                || method == SubsampleRecordCursorFactory.METHOD_MINMAX;
+    }
+
+    private static boolean isValueInspectingMethodByName(CharSequence name) {
+        return Chars.equalsIgnoreCase(name, "lttb")
+                || Chars.equalsIgnoreCase(name, "m4")
+                || Chars.equalsIgnoreCase(name, "minmax");
+    }
+
+    private static boolean isKnownSubsampleMethod(CharSequence name) {
+        return isValueInspectingMethodByName(name)
+                || Chars.equalsIgnoreCase(name, "uniform")
+                || Chars.equalsIgnoreCase(name, "cadence");
+    }
+
     private static void validateSubsampleArity(ExpressionNode subsample) throws SqlException {
-        if (subsample.paramCount < 2) {
+        if (!isKnownSubsampleMethod(subsample.token)) {
+            // Unknown method: skip arity check. generateSubsample() will
+            // report the proper "unknown subsample method" error.
+            return;
+        }
+        boolean isValueInspecting = isValueInspectingMethodByName(subsample.token);
+        int minArgs = isValueInspecting ? 2 : 1;
+        if (subsample.paramCount < minArgs) {
+            if (isValueInspecting) {
+                throw SqlException.$(subsample.position, "SUBSAMPLE ")
+                        .put(subsample.token)
+                        .put("() requires at least 2 arguments: column and target points");
+            }
             throw SqlException.$(subsample.position, "SUBSAMPLE ")
-                    .put(subsample.token)
-                    .put("() requires at least 2 arguments: column and target points");
+                    .put(subsample.token).put("() requires at least 1 argument");
         }
     }
 
@@ -7075,19 +7186,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         break;
                     }
                     validateSubsampleArity(nested.getSubsample());
-                    // Check if the SUBSAMPLE column exists in the current model's columns
-                    CharSequence colName = nested.getSubsample().args.get(0).token;
-                    boolean columnResolvable = false;
-                    ObjList<QueryColumn> cols = model.getColumns();
-                    for (int i = 0, n = cols.size(); i < n; i++) {
-                        QueryColumn qc = cols.getQuick(i);
-                        if (Chars.equalsIgnoreCase(qc.getAlias(), colName)
-                                || Chars.equalsIgnoreCase(qc.getName(), colName)) {
-                            columnResolvable = true;
-                            break;
+                    boolean isValueMethod = isValueInspectingMethodByName(nested.getSubsample().token);
+                    boolean canPullUp;
+                    if (isValueMethod) {
+                        // Check if the SUBSAMPLE column exists in the current model's columns
+                        CharSequence colName = nested.getSubsample().args.get(0).token;
+                        canPullUp = false;
+                        ObjList<QueryColumn> cols = model.getColumns();
+                        for (int i = 0, n = cols.size(); i < n; i++) {
+                            QueryColumn qc = cols.getQuick(i);
+                            if (Chars.equalsIgnoreCase(qc.getAlias(), colName)
+                                    || Chars.equalsIgnoreCase(qc.getName(), colName)) {
+                                canPullUp = true;
+                                break;
+                            }
                         }
+                    } else {
+                        // Position-only methods don't need column resolution
+                        canPullUp = true;
                     }
-                    if (columnResolvable) {
+                    if (canPullUp) {
                         model.setSubsample(nested.getSubsample(), nested.getSubsamplePosition());
                         nested.setSubsample(null, 0);
                     }

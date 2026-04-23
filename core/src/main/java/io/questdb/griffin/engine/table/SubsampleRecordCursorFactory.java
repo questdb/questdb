@@ -43,13 +43,15 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * Wraps a base cursor and emits only the rows selected by a downsampling
- * algorithm (LTTB, M4, MinMax).
+ * algorithm (LTTB, M4, MinMax, uniform, cadence).
  * <p>
  * Two execution paths based on the base factory's capabilities:
  * <ul>
@@ -72,12 +74,19 @@ import org.jetbrains.annotations.Nullable;
  */
 public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
 
+    public static final int METHOD_CADENCE = 4;
     public static final int METHOD_LTTB = 0;
     public static final int METHOD_M4 = 1;
     public static final int METHOD_MINMAX = 2;
+    public static final int METHOD_UNIFORM = 3;
+    public static final int SEED_MODE_DETERMINISTIC = 1;
+    public static final int SEED_MODE_NONE = 0;
+    public static final int SEED_MODE_RANDOM = 2;
 
     private final RecordCursorFactory base;
     private final SubsampleRecordCursor cursor;
+    private final @Nullable Function seedFunc;
+    private final int seedMode;
     private final int subsamplePosition;
     private final Function targetFunc;
     private final int targetPosition;
@@ -96,7 +105,10 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             long maxRows,
             int valueColumnType,
             @Nullable RecordSink recordSink,
-            boolean useDirectAccess
+            boolean useDirectAccess,
+            @Nullable Function seedFunc,
+            int seedMode,
+            int seedPosition
     ) {
         super(base.getMetadata());
         this.base = base;
@@ -104,13 +116,20 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
         this.targetType = ColumnType.tagOf(targetFunc.getType());
         this.subsamplePosition = subsamplePosition;
         this.targetPosition = targetPosition;
+        this.seedFunc = seedFunc;
+        this.seedMode = seedMode;
+        boolean hasValueColumn = method != METHOD_UNIFORM && method != METHOD_CADENCE;
         this.cursor = new SubsampleRecordCursor(
                 configuration, method, valueColumnIndex,
                 timestampColumnIndex, subsamplePosition,
                 gapThresholdMicros, maxRows, valueColumnType,
                 useDirectAccess,
                 useDirectAccess ? null : base.getMetadata(),
-                recordSink
+                recordSink,
+                hasValueColumn,
+                seedFunc,
+                seedMode,
+                seedPosition
         );
     }
 
@@ -122,7 +141,10 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         targetFunc.init(null, executionContext);
-        final int targetPoints = getTargetPoints();
+        if (seedFunc != null) {
+            seedFunc.init(null, executionContext);
+        }
+        final int targetPoints = cursor.method == METHOD_CADENCE ? getStride() : getTargetPoints();
 
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
@@ -149,8 +171,20 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Subsample");
-        sink.attr("method").val(cursor.method == METHOD_LTTB ? "lttb" : cursor.method == METHOD_M4 ? "m4" : "minmax");
-        sink.attr("points").val(targetFunc);
+        String methodName = switch (cursor.method) {
+            case METHOD_LTTB -> "lttb";
+            case METHOD_M4 -> "m4";
+            case METHOD_MINMAX -> "minmax";
+            case METHOD_UNIFORM -> "uniform";
+            case METHOD_CADENCE -> "cadence";
+            default -> "unknown";
+        };
+        sink.attr("method").val(methodName);
+        if (cursor.method == METHOD_CADENCE) {
+            sink.attr("stride").val(targetFunc);
+        } else {
+            sink.attr("points").val(targetFunc);
+        }
         sink.child(base);
     }
 
@@ -158,23 +192,23 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
     protected void _close() {
         Misc.free(base);
         Misc.free(targetFunc);
+        Misc.free(seedFunc);
         cursor.destroy();
     }
 
-    private int getTargetPoints() throws SqlException {
-        long value;
-        if (targetType == ColumnType.LONG) {
-            value = targetFunc.getLong(null);
-            if (value == Numbers.LONG_NULL) {
-                throw SqlException.$(targetPosition, "target point count must be set");
-            }
-        } else {
-            int intVal = targetFunc.getInt(null);
-            if (intVal == Numbers.INT_NULL) {
-                throw SqlException.$(targetPosition, "target point count must be set");
-            }
-            value = intVal;
+    private int getStride() throws SqlException {
+        long value = readTargetFuncValue("stride");
+        if (value < 1) {
+            throw SqlException.$(targetPosition, "stride must be at least 1");
         }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(targetPosition, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return (int) value;
+    }
+
+    private int getTargetPoints() throws SqlException {
+        long value = readTargetFuncValue("target point count");
         if (value < 2) {
             throw SqlException.$(targetPosition, "target points must be at least 2");
         }
@@ -184,6 +218,21 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
         return (int) value;
     }
 
+    private long readTargetFuncValue(CharSequence name) throws SqlException {
+        if (targetType == ColumnType.LONG) {
+            long value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(targetPosition, name).put(" must be set");
+            }
+            return value;
+        }
+        int intVal = targetFunc.getInt(null);
+        if (intVal == Numbers.INT_NULL) {
+            throw SqlException.$(targetPosition, name).put(" must be set");
+        }
+        return intVal;
+    }
+
     private static class SubsampleRecordCursor implements RecordCursor {
         private static final int ENTRY_SIZE = 24; // 8 bytes payload + 8 bytes timestamp + 8 bytes value
         private static final int INITIAL_CAPACITY = 1024;
@@ -191,8 +240,12 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
         private final SubsampleAlgorithm algorithm;
         // Fallback path only: materializes full rows
         private final RecordChain chain;
+        private final boolean hasValueColumn;
         private final long maxRows;
         private final int method;
+        private final @Nullable Function seedFunc;
+        private final int seedMode;
+        private final int seedPosition;
         private final DirectLongList selectedIndices;
         private final int subsamplePosition;
         private final int timestampColumnIndex;
@@ -226,12 +279,20 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                 int valueColumnType,
                 boolean useDirectAccess,
                 @Nullable io.questdb.cairo.sql.RecordMetadata metadata,
-                @Nullable RecordSink recordSink
+                @Nullable RecordSink recordSink,
+                boolean hasValueColumn,
+                @Nullable Function seedFunc,
+                int seedMode,
+                int seedPosition
         ) {
             this.method = method;
             this.valueColumnIndex = valueColumnIndex;
             this.timestampColumnIndex = timestampColumnIndex;
             this.subsamplePosition = subsamplePosition;
+            this.hasValueColumn = hasValueColumn;
+            this.seedFunc = seedFunc;
+            this.seedMode = seedMode;
+            this.seedPosition = seedPosition;
             if (maxRows < 1 || maxRows > Integer.MAX_VALUE) {
                 throw CairoException.nonCritical().position(subsamplePosition)
                         .put("cairo.sql.subsample.max.rows must be between 1 and ")
@@ -244,6 +305,8 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                 case METHOD_LTTB -> new LttbAlgorithm(gapThresholdMicros);
                 case METHOD_M4 -> M4Algorithm.INSTANCE;
                 case METHOD_MINMAX -> MinMaxAlgorithm.INSTANCE;
+                case METHOD_UNIFORM -> UniformAlgorithm.INSTANCE;
+                case METHOD_CADENCE -> null; // cadence uses static method, not interface
                 default -> throw new IllegalArgumentException("unknown method: " + method);
             };
             this.selectedIndices = new DirectLongList(INITIAL_CAPACITY, MemoryTag.NATIVE_FUNC_RSS);
@@ -391,12 +454,35 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             if (!useDirectAccess && bufferSize > 1 && !isSorted) {
                 nativeSortBufferByTimestamp();
             }
-            if (bufferSize <= targetPoints) {
+            if (method == METHOD_CADENCE) {
+                int stride = targetPoints;
+                int offset = computeCadenceOffset(stride);
+                CadenceAlgorithm.select(buffer, (int) bufferSize, stride, offset, selectedIndices, circuitBreaker);
+                selectedCount = selectedIndices.size();
+            } else if (bufferSize <= targetPoints) {
                 selectAll();
             } else {
                 algorithm.select(buffer, (int) bufferSize, targetPoints, selectedIndices, circuitBreaker);
                 selectedCount = selectedIndices.size();
             }
+        }
+
+        private int computeCadenceOffset(int stride) {
+            if (seedMode == SEED_MODE_NONE || stride <= 1) {
+                return 0;
+            }
+            if (seedMode == SEED_MODE_RANDOM) {
+                Rnd rnd = new Rnd(Os.currentTimeMicros(), Thread.currentThread().getId());
+                return rnd.nextInt(stride);
+            }
+            // SEED_MODE_DETERMINISTIC
+            long seedVal = seedFunc.getLong(null);
+            if (seedVal == Numbers.LONG_NULL) {
+                throw CairoException.nonCritical().position(seedPosition)
+                        .put("seed must be set");
+            }
+            Rnd rnd = new Rnd(seedVal, seedVal);
+            return rnd.nextInt(stride);
         }
 
         private void bufferInput() {
@@ -422,11 +508,16 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (ts == Numbers.LONG_NULL) {
                     continue;
                 }
-                double value = getValueAsDouble(baseRecord);
-                if (Double.isNaN(value)) {
-                    continue; // NaN-filtered rows don't affect monotonicity
+                double value;
+                if (hasValueColumn) {
+                    value = getValueAsDouble(baseRecord);
+                    if (Double.isNaN(value)) {
+                        continue;
+                    }
+                } else {
+                    value = 0.0;
                 }
-                // Track monotonicity for buffered rows only (after NaN filter)
+                // Track monotonicity for buffered rows only
                 if (ts < prevTs) {
                     isSorted = false;
                 }

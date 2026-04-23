@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -2591,6 +2592,685 @@ public class SubsampleTest extends AbstractCairoTest {
                             "90.0\t2024-01-01T01:00:00.000000Z\n" +
                             "10.0\t2024-01-01T02:00:00.000000Z\n",
                     "SELECT price, ts FROM t SUBSAMPLE minmax(price, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z'),
+                    (60.0, '2024-01-01T05:00:00.000000Z'),
+                    (70.0, '2024-01-01T06:00:00.000000Z'),
+                    (80.0, '2024-01-01T07:00:00.000000Z'),
+                    (90.0, '2024-01-01T08:00:00.000000Z'),
+                    (100.0, '2024-01-01T09:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // 10 rows, target 4: positions 0, 3, 6, 9
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "40.0\t2024-01-01T03:00:00.000000Z\n" +
+                            "70.0\t2024-01-01T06:00:00.000000Z\n" +
+                            "100.0\t2024-01-01T09:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE uniform(4)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            assertSql(
+                    "price\tts\n",
+                    "SELECT price, ts FROM t SUBSAMPLE uniform(10)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformInputSmallerThanTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "20.0\t2024-01-01T01:00:00.000000Z\n" +
+                            "30.0\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE uniform(10)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformNoColumnLookup() throws Exception {
+        // uniform(4) must not try to resolve "4" as a column name
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "20.0\t2024-01-01T01:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE uniform(10)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformPreservesNullValues() throws Exception {
+        // uniform does not inspect values; NaN/NULL data should pass through
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (NaN, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (NaN, '2024-01-01T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            assertSql(
+                    "price\tts\n" +
+                            "null\t2024-01-01T00:00:00.000000Z\n" +
+                            "20.0\t2024-01-01T01:00:00.000000Z\n" +
+                            "null\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE uniform(10)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformTargetTooLow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE uniform(1)",
+                    42,
+                    "target points must be at least 2"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformTargetTwo() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // target 2: first and last only
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE uniform(2)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z'),
+                    (60.0, '2024-01-01T05:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // stride 2, offset 0: emit 0, then 2+0=2, 4+0=4, pin last=5
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "30.0\t2024-01-01T02:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\n" +
+                            "60.0\t2024-01-01T05:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE cadence(2)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            assertSql(
+                    "price\tts\n",
+                    "SELECT price, ts FROM t SUBSAMPLE cadence(5)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceNoColumnLookup() throws Exception {
+        // cadence(2) must not try to resolve "2" as a column name
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (10.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE cadence(5)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadencePreservesNullValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (NaN, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (NaN, '2024-01-01T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // cadence(1) returns all rows including NaN values
+            assertSql(
+                    "price\tts\n" +
+                            "null\t2024-01-01T00:00:00.000000Z\n" +
+                            "20.0\t2024-01-01T01:00:00.000000Z\n" +
+                            "null\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE cadence(1)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceStrideOne() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // stride 1: all rows returned unchanged
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "20.0\t2024-01-01T01:00:00.000000Z\n" +
+                            "30.0\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE cadence(1)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceStrideLargerThanInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // stride 100 > 3 rows: only first row, no last pinning
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE cadence(100)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceWithSeed() throws Exception {
+        // cadence(3, 42): 10 rows, stride 3, seed 42.
+        // Offset = Rnd(42, 42).nextInt(3). Emit 0, then stride+offset series, then last.
+        // This test computes the expected offset and asserts exact output.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z'),
+                    (60.0, '2024-01-01T05:00:00.000000Z'),
+                    (70.0, '2024-01-01T06:00:00.000000Z'),
+                    (80.0, '2024-01-01T07:00:00.000000Z'),
+                    (90.0, '2024-01-01T08:00:00.000000Z'),
+                    (100.0, '2024-01-01T09:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // Compute expected offset
+            Rnd rnd = new Rnd(42, 42);
+            int offset = rnd.nextInt(3);
+            // Build expected rows: 0, then stride+offset, 2*stride+offset, ..., pin last=9
+            String[] rows = {
+                    "10.0\t2024-01-01T00:00:00.000000Z",
+                    "20.0\t2024-01-01T01:00:00.000000Z",
+                    "30.0\t2024-01-01T02:00:00.000000Z",
+                    "40.0\t2024-01-01T03:00:00.000000Z",
+                    "50.0\t2024-01-01T04:00:00.000000Z",
+                    "60.0\t2024-01-01T05:00:00.000000Z",
+                    "70.0\t2024-01-01T06:00:00.000000Z",
+                    "80.0\t2024-01-01T07:00:00.000000Z",
+                    "90.0\t2024-01-01T08:00:00.000000Z",
+                    "100.0\t2024-01-01T09:00:00.000000Z"
+            };
+            StringBuilder expected = new StringBuilder("price\tts\n");
+            expected.append(rows[0]).append('\n');
+            int lastEmitted = 0;
+            for (int pos = 3 + offset; pos < 10; pos += 3) {
+                expected.append(rows[pos]).append('\n');
+                lastEmitted = pos;
+            }
+            if (lastEmitted != 9) {
+                expected.append(rows[9]).append('\n');
+            }
+            assertSql(expected.toString(), "SELECT price, ts FROM t SUBSAMPLE cadence(3, 42)");
+            // Deterministic: second run produces identical output
+            assertSql(expected.toString(), "SELECT price, ts FROM t SUBSAMPLE cadence(3, 42)");
+        });
+    }
+
+    @Test
+    public void testCadenceDifferentSeeds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z'),
+                    (60.0, '2024-01-01T05:00:00.000000Z'),
+                    (70.0, '2024-01-01T06:00:00.000000Z'),
+                    (80.0, '2024-01-01T07:00:00.000000Z'),
+                    (90.0, '2024-01-01T08:00:00.000000Z'),
+                    (100.0, '2024-01-01T09:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // Find two seeds that produce different offsets for stride=5
+            int seedA = -1;
+            int seedB = -1;
+            int offsetA = -1;
+            for (int s = 0; s < 100; s++) {
+                int off = new Rnd(s, s).nextInt(5);
+                if (seedA == -1) {
+                    seedA = s;
+                    offsetA = off;
+                } else if (off != offsetA) {
+                    seedB = s;
+                    break;
+                }
+            }
+            Assert.assertTrue("could not find two seeds with different offsets", seedB != -1);
+            sink.clear();
+            printSql("SELECT price, ts FROM t SUBSAMPLE cadence(5, " + seedA + ")", sink);
+            String resultA = sink.toString();
+            sink.clear();
+            printSql("SELECT price, ts FROM t SUBSAMPLE cadence(5, " + seedB + ")", sink);
+            String resultB = sink.toString();
+            Assert.assertNotEquals("different seeds must produce different output", resultA, resultB);
+        });
+    }
+
+    @Test
+    public void testCadenceWithNullSeed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // cadence(3, NULL): random mode. First row always present, last pinned.
+            sink.clear();
+            printSql("SELECT price, ts FROM t SUBSAMPLE cadence(3, NULL)", sink);
+            String result = sink.toString();
+            Assert.assertTrue(result.contains("10.0\t2024-01-01T00:00:00.000000Z"));
+            Assert.assertTrue(result.contains("50.0\t2024-01-01T04:00:00.000000Z"));
+            // Result should have 3-4 rows (first, 1-2 stride rows, last)
+            long rowCount = result.chars().filter(c -> c == '\n').count() - 1;
+            Assert.assertTrue("expected 3-4 rows, got " + rowCount, rowCount >= 2 && rowCount <= 4);
+        });
+    }
+
+    @Test
+    public void testCadenceLastRowIncluded() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // stride 3, offset 0: emit 0, then 3+0=3, last=4 (pinned)
+            // 5 rows, stride 3 doesn't divide evenly
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "40.0\t2024-01-01T03:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE cadence(3)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformWithBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 2);
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE uniform($1)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformWithDeclareVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\n",
+                    "DECLARE @n := 2 SELECT price, ts FROM t SUBSAMPLE uniform(@n)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformAfterSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (15.0, '2024-01-01T00:30:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (25.0, '2024-01-01T01:30:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (35.0, '2024-01-01T02:30:00.000000Z')
+                    """);
+            drainWalQueue();
+            // SAMPLE BY 1h -> 3 rows, uniform(2) -> first and last
+            assertSql(
+                    "ts\tavg\n" +
+                            "2024-01-01T00:00:00.000000Z\t12.5\n" +
+                            "2024-01-01T02:00:00.000000Z\t32.5\n",
+                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE uniform(2)"
+            );
+        });
+    }
+
+    @Test
+    public void testUniformInsideSubqueryWithOuterWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, 1, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, 2, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, 3, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, 4, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, 5, '2024-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // uniform(3) on 5 rows: positions 0, 2, 4 -> qty 1, 3, 5
+            // outer WHERE qty > 3 -> keeps qty 5 only
+            assertSql(
+                    "price\tqty\tts\n" +
+                            "50.0\t5\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT * FROM (SELECT price, qty, ts FROM t SUBSAMPLE uniform(3)) WHERE qty > 3"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceStrideNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE cadence(-1)",
+                    42,
+                    "stride must be at least 1"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceSeedFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE cadence(5, 1.5)",
+                    45,
+                    "integer or NULL expected for seed"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceUnsetBindSeed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (10.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 5);
+            // $2 unset -> coerced to LONG, reads as NULL -> "seed must be set"
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE cadence($1, $2)",
+                    46,
+                    "seed must be set"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceStrideOneWithNullSeed() throws Exception {
+        // cadence(1, NULL): validates seed type, but stride=1 returns all rows
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "20.0\t2024-01-01T01:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE cadence(1, NULL)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceAfterSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (15.0, '2024-01-01T00:30:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (25.0, '2024-01-01T01:30:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (35.0, '2024-01-01T02:30:00.000000Z')
+                    """);
+            drainWalQueue();
+            // SAMPLE BY 1h -> 3 rows, cadence(2) -> first, stride row, last
+            assertSql(
+                    "ts\tavg\n" +
+                            "2024-01-01T00:00:00.000000Z\t12.5\n" +
+                            "2024-01-01T02:00:00.000000Z\t32.5\n",
+                    "SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE cadence(2)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceWithBindStride() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 3);
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "40.0\t2024-01-01T03:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\n",
+                    "SELECT price, ts FROM t SUBSAMPLE cadence($1)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceWithDeclareStride() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            assertSql(
+                    "price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                            "40.0\t2024-01-01T03:00:00.000000Z\n" +
+                            "50.0\t2024-01-01T04:00:00.000000Z\n",
+                    "DECLARE @s := 3 SELECT price, ts FROM t SUBSAMPLE cadence(@s)"
+            );
+        });
+    }
+
+    @Test
+    public void testCadenceWithBindSeed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 3);
+            bindVariableService.setLong(1, 42);
+            // cadence($1, $2) with stride=3, seed=42
+            sink.clear();
+            printSql("SELECT price, ts FROM t SUBSAMPLE cadence($1, $2)", sink);
+            String result = sink.toString();
+            Assert.assertTrue(result.contains("10.0\t2024-01-01T00:00:00.000000Z"));
+            Assert.assertTrue(result.contains("50.0\t2024-01-01T04:00:00.000000Z"));
+        });
+    }
+
+    @Test
+    public void testCadenceInsideSubqueryWithOuterWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, 1, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, 2, '2024-01-01T01:00:00.000000Z'),
+                    (30.0, 3, '2024-01-01T02:00:00.000000Z'),
+                    (40.0, 4, '2024-01-01T03:00:00.000000Z'),
+                    (50.0, 5, '2024-01-01T04:00:00.000000Z'),
+                    (60.0, 6, '2024-01-01T05:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            // cadence(3) on 6 rows: emit 0, 3, pin 5 -> qty 1, 4, 6
+            // outer WHERE qty > 3 keeps qty 4 and 6
+            assertSql(
+                    "price\tqty\tts\n" +
+                            "40.0\t4\t2024-01-01T03:00:00.000000Z\n" +
+                            "60.0\t6\t2024-01-01T05:00:00.000000Z\n",
+                    "SELECT * FROM (SELECT price, qty, ts FROM t SUBSAMPLE cadence(3)) WHERE qty > 3"
             );
         });
     }
