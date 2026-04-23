@@ -617,6 +617,91 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     /**
+     * Spec {@code docs/QWP_EGRESS_EXTENSION.md:278-279} requires the server to send
+     * one RESULT_BATCH with row_count = 0 on every empty result, including when the
+     * schema id is reused from an earlier query on the same connection. Otherwise
+     * the client's per-query onBatch callback never fires and downstream consumers
+     * that rely on it to learn per-query column metadata silently break.
+     * <p>
+     * Two queries on one connection with identical column shape: query 1 returns
+     * rows (schema id allocated, full schema shipped), query 2 returns an empty
+     * result with the same shape (schemaAlreadyKnown == true). Both queries must
+     * deliver at least one RESULT_BATCH to the client.
+     */
+    @Test
+    public void testEmptyResultSetOnReusedSchemaStillDeliversOneBatch() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE reuse_t(id LONG, name STRING, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO reuse_t VALUES (1, 'one', 1::TIMESTAMP), "
+                        + "(2, 'two', 2::TIMESTAMP), (3, 'three', 3::TIMESTAMP)");
+                serverMain.awaitTable("reuse_t");
+
+                final int[] q1Batches = {0};
+                final int[] q1Rows = {0};
+                final int[] q2Batches = {0};
+                final int[] q2Rows = {0};
+                final int[] q2SchemaCols = {-1};
+                final boolean[] q2EndSeen = {false};
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+
+                    // Query 1: populates the connection-scoped schema cache with a fresh id
+                    // for shape (id LONG, name STRING).
+                    client.execute("SELECT id, name FROM reuse_t WHERE id >= 0", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            q1Batches[0]++;
+                            q1Rows[0] += batch.getRowCount();
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error on q1: " + message);
+                        }
+                    });
+
+                    // Query 2: identical column shape -> server hits schemaAlreadyKnown=true.
+                    // WHERE predicate filters everything out -> empty cursor.
+                    client.execute("SELECT id, name FROM reuse_t WHERE id < 0", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            q2Batches[0]++;
+                            q2SchemaCols[0] = batch.getColumnCount();
+                            q2Rows[0] += batch.getRowCount();
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            q2EndSeen[0] = true;
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error on q2: " + message);
+                        }
+                    });
+                }
+                Assert.assertEquals("q1 must deliver at least one batch", 1, q1Batches[0]);
+                Assert.assertEquals(3, q1Rows[0]);
+                Assert.assertTrue("q2 RESULT_END must still fire", q2EndSeen[0]);
+                Assert.assertEquals(0, q2Rows[0]);
+                Assert.assertEquals("empty-result q2 on reused schema must still deliver one RESULT_BATCH (spec sec. 7)",
+                        1, q2Batches[0]);
+                Assert.assertEquals("schema must surface to the handler on q2 even with no rows",
+                        2, q2SchemaCols[0]);
+            }
+        });
+    }
+
+    /**
      * Regression / defense-in-depth for C1: many queries that fail at various stages
      * of the server-side handle path (compile error, table-not-found, non-SELECT)
      * must not leak native resources. assertMemoryLeak catches any leaked factory,

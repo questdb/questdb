@@ -47,6 +47,25 @@ public final class QwpConstants {
     public static final int DEFAULT_MAX_BATCH_SIZE = 16 * 1024 * 1024;
 
     /**
+     * Default maximum bytes the egress connection-scoped SYMBOL dict may hold
+     * before the server emits a {@code CACHE_RESET} and starts over.
+     */
+    public static final int DEFAULT_MAX_EGRESS_DICT_HEAP_BYTES = 8 * 1024 * 1024;
+    /**
+     * Default maximum entry count the egress connection-scoped SYMBOL dict may
+     * hold before the server emits a {@code CACHE_RESET} and starts over.
+     */
+    public static final int DEFAULT_MAX_EGRESS_DICT_ENTRIES = 100_000;
+    /**
+     * Default soft cap on distinct schemas registered by an egress connection.
+     * On exceeding this threshold the server emits a {@code CACHE_RESET} and
+     * resets the schema-fingerprint cache; the connection remains usable and
+     * continues with fresh schema ids. Tighter than the shared
+     * {@link #DEFAULT_MAX_SCHEMAS_PER_CONNECTION} because egress-side state is
+     * fully server-owned and reusable.
+     */
+    public static final int DEFAULT_MAX_EGRESS_SCHEMAS_PER_CONNECTION = 4_096;
+    /**
      * Default maximum rows per table in a batch.
      */
     public static final int DEFAULT_MAX_ROWS_PER_TABLE = 1_000_000;
@@ -124,9 +143,19 @@ public final class QwpConstants {
      */
     public static final byte SCHEMA_MODE_FULL = 0x00;
     /**
+     * Status: Egress-only. Query aborted because the client sent a {@code CANCEL}
+     * frame or the server invoked explicit cancellation.
+     */
+    public static final byte STATUS_CANCELLED = 0x0A;
+    /**
      * Status: Server error.
      */
     public static final byte STATUS_INTERNAL_ERROR = 0x06;
+    /**
+     * Status: Egress-only. Query aborted because a server-side limit was hit
+     * (query timeout, memory cap, circuit breaker, OOM).
+     */
+    public static final byte STATUS_LIMIT_EXCEEDED = 0x0B;
     /**
      * Status: Batch accepted successfully.
      */

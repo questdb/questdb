@@ -36,7 +36,8 @@ import io.questdb.std.Unsafe;
  * <pre>
  *   [WebSocket frame header (reserved, patched last)]
  *   [QWP message header (12 bytes)]
- *   [msg_kind (1 byte) | request_id (8 bytes) | batch_seq (varint)]   -- for RESULT_BATCH only
+ *   [msg_kind (1 byte) | request_id (8 bytes)]
+ *   [batch_seq (varint)]                                 -- RESULT_BATCH only
  *   [table block body or control-message body]
  * </pre>
  * <p>
@@ -68,6 +69,20 @@ public final class QwpEgressFrameWriter {
         Unsafe.getUnsafe().putShort(bufAddr + QwpConstants.HEADER_OFFSET_TABLE_COUNT, (short) tableCount);
         Unsafe.getUnsafe().putInt(bufAddr + QwpConstants.HEADER_OFFSET_PAYLOAD_LENGTH, payloadLength);
         return bufAddr + QwpConstants.HEADER_SIZE;
+    }
+
+    /**
+     * Writes the body of a {@code CACHE_RESET} frame: msg_kind + reset_mask.
+     * {@code resetMask} is the bitwise OR of
+     * {@link QwpEgressMsgKind#RESET_MASK_DICT} and
+     * {@link QwpEgressMsgKind#RESET_MASK_SCHEMAS}.
+     *
+     * @return address just past the body
+     */
+    public static long writeCacheReset(long bufAddr, byte resetMask) {
+        Unsafe.getUnsafe().putByte(bufAddr, QwpEgressMsgKind.CACHE_RESET);
+        Unsafe.getUnsafe().putByte(bufAddr + 1, resetMask);
+        return bufAddr + 2;
     }
 
     /**

@@ -147,6 +147,46 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
         return heapAddr;
     }
 
+    /**
+     * Bytes committed to the concatenated-UTF-8 heap so far. Combined with
+     * {@link #size()}, lets callers enforce connection-level memory caps and
+     * decide when to emit a {@code CACHE_RESET} frame.
+     */
+    public int heapBytes() {
+        return heapPos;
+    }
+
+    /**
+     * Truncates the dict back to {@code targetSize} entries, restoring both the
+     * heap write pointer and the dedup map. Used by the egress server to undo
+     * entries that were committed by an aborted batch -- a batch that called
+     * {@link #addEntry} during row iteration but then failed to ship its
+     * {@code RESULT_BATCH} frame on the wire. Without this rollback, the next
+     * batch's {@code emitDeltaSection} would omit those ids from the delta
+     * window but the dedup map would still hand them back to the row encoder,
+     * surfacing a connId the client has never been taught.
+     * <p>
+     * {@code targetSize == size} is a no-op. Passing a target outside
+     * {@code [0, size]} is a programming error.
+     */
+    public void rollbackTo(int targetSize) {
+        if (targetSize == size) {
+            return;
+        }
+        assert targetSize >= 0 && targetSize < size;
+        for (int i = targetSize; i < size; i++) {
+            long start = heapAddr + entryStart(i);
+            long end = heapAddr + entryEnd(i);
+            dedupProbe.of(start, end);
+            int idx = dedupMap.keyIndex(dedupProbe);
+            if (idx < 0) {
+                dedupMap.removeAt(idx);
+            }
+        }
+        heapPos = targetSize == 0 ? 0 : entryEnd(targetSize - 1);
+        size = targetSize;
+    }
+
     public int size() {
         return size;
     }

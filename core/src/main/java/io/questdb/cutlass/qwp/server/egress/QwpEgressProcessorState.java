@@ -37,6 +37,7 @@ import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
+import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -52,6 +53,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceIntHashMap;
 import io.questdb.std.Zstd;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -72,9 +74,18 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * cached id even in this state; only net-new schemas are refused.
      */
     public static final int SCHEMA_ID_EXHAUSTED = -1;
-
     private static final Log LOG = LogFactory.getLog(QwpEgressProcessorState.class);
-
+    // Test-only default overrides for the CACHE_RESET soft caps. Set these
+    // before opening a connection so every new {@link QwpEgressProcessorState}
+    // picks them up in its constructor; set back to {@code -1} at the end of
+    // the test to restore production defaults for subsequent tests in the same
+    // JVM. Production code never touches these.
+    @TestOnly
+    public static volatile int defaultMaxDictEntriesOverrideForTest = -1;
+    @TestOnly
+    public static volatile int defaultMaxDictHeapBytesOverrideForTest = -1;
+    @TestOnly
+    public static volatile int defaultMaxSchemasOverrideForTest = -1;
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
     private final ObjList<QwpEgressColumnDef> columnDefsPool = new ObjList<>();
@@ -144,6 +155,13 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // Set once per handshake from {@link #setMaxBatchRows}; read on every
     // iteration of the streamResults emit loop.
     private int maxBatchRows;
+    // Soft-cap overrides for the CACHE_RESET mechanism. -1 means "use the
+    // QwpConstants default"; any non-negative value wins. Exposed so tests can
+    // trigger resets deterministically at small row / entry counts; production
+    // callers never set these.
+    private int maxDictEntriesOverride;
+    private int maxDictHeapBytesOverride;
+    private int maxSchemasOverride;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
     private int nextSchemaId;
     // Page-frame iteration scaffolding. Allocated lazily on first page-frame query and
@@ -267,6 +285,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public QwpEgressProcessorState(io.questdb.cairo.CairoConfiguration cairoConfiguration) {
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
+        // Pick up any test-only default overrides active at construction time
+        // so tests that need tiny soft caps don't have to reach into every
+        // per-connection state instance.
+        this.maxDictEntriesOverride = defaultMaxDictEntriesOverrideForTest;
+        this.maxDictHeapBytesOverride = defaultMaxDictHeapBytesOverrideForTest;
+        this.maxSchemasOverride = defaultMaxSchemasOverrideForTest;
     }
 
     /**
@@ -326,6 +350,30 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             streamingPageFrameIndex++;
         }
         return streamingCurrentPageFrame;
+    }
+
+    /**
+     * Clears the connection-scoped caches indicated by {@code resetMask}
+     * (bitwise OR of {@link QwpEgressMsgKind#RESET_MASK_DICT} and
+     * {@link QwpEgressMsgKind#RESET_MASK_SCHEMAS}). Caller must have emitted a
+     * {@code CACHE_RESET} frame carrying the same mask before calling this, so
+     * the client's view of the caches stays in lockstep with the server's.
+     * <p>
+     * The dict bit also clears every per-column scratch's native-key to
+     * conn-id cache via {@link QwpResultBatchBuffer#resetForNewQuery()} --
+     * without that, a cached key would resolve to an id the reset dict has
+     * already dropped, and the next batch's row payload would reference an id
+     * the client was never taught.
+     */
+    public void applyCacheReset(byte resetMask) {
+        if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
+            connSymbolDict.clear();
+            batchBuffer.resetForNewQuery();
+        }
+        if ((resetMask & QwpEgressMsgKind.RESET_MASK_SCHEMAS) != 0) {
+            schemaFingerprintToId.clear();
+            nextSchemaId = 0;
+        }
     }
 
     public void beginStreaming(
@@ -496,6 +544,37 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
+     * Returns which connection-scoped caches have outgrown their soft caps and
+     * should be flushed via a {@code CACHE_RESET} frame. Computed as the
+     * bitwise OR of {@link QwpEgressMsgKind#RESET_MASK_DICT} (when the
+     * SYMBOL dict exceeds {@link QwpConstants#DEFAULT_MAX_EGRESS_DICT_ENTRIES}
+     * or {@link QwpConstants#DEFAULT_MAX_EGRESS_DICT_HEAP_BYTES}) and
+     * {@link QwpEgressMsgKind#RESET_MASK_SCHEMAS} (when the schema-fingerprint
+     * cache exceeds {@link QwpConstants#DEFAULT_MAX_EGRESS_SCHEMAS_PER_CONNECTION}).
+     * Zero means no cache is over cap.
+     * <p>
+     * Bounds apply per connection. The caller -- typically {@code
+     * QwpEgressUpgradeProcessor} at a query boundary -- decides when it is
+     * safe to emit the frame; this method has no side effects.
+     */
+    public byte computeCacheResetMask() {
+        byte mask = 0;
+        int dictEntriesCap = maxDictEntriesOverride >= 0
+                ? maxDictEntriesOverride : QwpConstants.DEFAULT_MAX_EGRESS_DICT_ENTRIES;
+        int dictHeapCap = maxDictHeapBytesOverride >= 0
+                ? maxDictHeapBytesOverride : QwpConstants.DEFAULT_MAX_EGRESS_DICT_HEAP_BYTES;
+        int schemasCap = maxSchemasOverride >= 0
+                ? maxSchemasOverride : QwpConstants.DEFAULT_MAX_EGRESS_SCHEMAS_PER_CONNECTION;
+        if (connSymbolDict.size() >= dictEntriesCap || connSymbolDict.heapBytes() >= dictHeapCap) {
+            mask |= QwpEgressMsgKind.RESET_MASK_DICT;
+        }
+        if (nextSchemaId >= schemasCap) {
+            mask |= QwpEgressMsgKind.RESET_MASK_SCHEMAS;
+        }
+        return mask;
+    }
+
+    /**
      * Consumes the seq-commit flag set by {@link #onStreamingBatchSent}, asserting
      * the ordering invariant: a batch send never reaches the response sink without
      * having first bumped the seq + row counters. Call at the top of
@@ -611,11 +690,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return bindVariableService;
     }
 
-    /**
-     * Returns the connection-scoped SYMBOL dictionary. {@link QwpResultBatchBuffer}
-     * appends new entries to it directly from its SYMBOL appendRow branch and
-     * emits the per-batch slice from {@code emitDeltaSection}.
-     */
     public byte getCompressionCodec() {
         return compressionCodec;
     }
@@ -624,6 +698,11 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return compressionLevel;
     }
 
+    /**
+     * Returns the connection-scoped SYMBOL dictionary. {@link QwpResultBatchBuffer}
+     * appends new entries to it directly from its SYMBOL appendRow branch and
+     * emits the per-batch slice from {@code emitDeltaSection}.
+     */
     public QwpEgressConnSymbolDict getConnSymbolDict() {
         return connSymbolDict;
     }
@@ -824,6 +903,21 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingFullSchemaSent = true;
         streamingRowsEmitted += rowsEmittedInBatch;
         streamingBatchSeqCommitted = true;
+    }
+
+    /**
+     * Test-only: override the egress CACHE_RESET soft caps so tests can trip
+     * resets at low entry counts without stuffing the connection with millions
+     * of rows. Any argument set to {@code -1} restores the corresponding
+     * production default ({@link QwpConstants#DEFAULT_MAX_EGRESS_DICT_ENTRIES},
+     * {@link QwpConstants#DEFAULT_MAX_EGRESS_DICT_HEAP_BYTES},
+     * {@link QwpConstants#DEFAULT_MAX_EGRESS_SCHEMAS_PER_CONNECTION}).
+     */
+    @TestOnly
+    public void setCacheResetCapsForTest(int maxDictEntries, int maxDictHeapBytes, int maxSchemas) {
+        this.maxDictEntriesOverride = maxDictEntries;
+        this.maxDictHeapBytesOverride = maxDictHeapBytes;
+        this.maxSchemasOverride = maxSchemas;
     }
 
     /**

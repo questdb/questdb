@@ -7,7 +7,7 @@ header, type system, and column encodings unchanged. The deltas are limited to:
 
 - a new endpoint and version namespace,
 - a one-byte message kind discriminator at the start of each payload,
-- five new message kinds for the request/response/cancel/credit lifecycle.
+- eight new message kinds covering the request/response/cancel/credit/exec-ack/cache-reset lifecycle.
 
 ## Table of Contents
 
@@ -25,6 +25,7 @@ header, type system, and column encodings unchanged. The deltas are limited to:
 11.5. [NULL Sentinel Conventions](#115-null-sentinel-conventions-inherited-from-questdb)
 11.5.1. [Array element NULLs](#1151-array-element-nulls)
 11.6. [EXEC_DONE (0x16)](#116-exec_done-0x16)
+11.7. [CACHE_RESET (0x17)](#117-cache_reset-0x17)
 12. [Schema and Symbol Dictionary Scope](#12-schema-and-symbol-dictionary-scope)
 13. [Cursor Lifecycle](#13-cursor-lifecycle)
 14. [Flow Control](#14-flow-control)
@@ -163,8 +164,9 @@ Endpoint disambiguation is sufficient because connections are direction-pure.
 | `0x14` | CANCEL            | C -> S    | Stop a running query                  |
 | `0x15` | CREDIT            | C -> S    | Extend the byte window                |
 | `0x16` | EXEC_DONE         | S -> C    | Non-SELECT statement acknowledgement  |
+| `0x17` | CACHE_RESET       | S -> C    | Clear connection-scoped caches        |
 
-`0x17` through `0x1F` are reserved for future egress kinds (prepared
+`0x18` through `0x1F` are reserved for future egress kinds (prepared
 statements, transactions, server-driven keepalives). `0x20+` is reserved for
 future protocol extensions.
 
@@ -421,6 +423,92 @@ not expect any further frames for this `request_id`.
 
 If the statement fails, the server sends `QUERY_ERROR` (§9) instead.
 
+## 11.7 CACHE_RESET (0x17)
+
+Server to client. Clears one or both of the connection-scoped caches
+(SYMBOL delta dict; schema-fingerprint cache) when the server-side usage
+crosses a configured soft cap. Emitted at a query boundary (between the
+previous query's terminator and the next query's first `RESULT_BATCH` or
+`EXEC_DONE`); never mid-stream, so no in-flight frame references an id the
+reset would invalidate.
+
+```
++---------------------------------------------------------+
+| msg_kind:    uint8    0x17                              |
+| reset_mask:  uint8    Bit 0 = SYMBOL dict               |
+|                       Bit 1 = schema-fingerprint cache  |
+|                       Bits 2-7 reserved, must be zero   |
++---------------------------------------------------------+
+```
+
+`table_count` in the header is `0`. No `request_id`: the frame targets
+connection state, not a specific query.
+
+### Semantics by bit
+
+- **Bit 0, `RESET_MASK_DICT`**: the peer clears its connection-scoped SYMBOL
+  dictionary. After the reset, the dictionary is empty (size 0, heap position
+  0). The next `RESULT_BATCH` carrying `FLAG_DELTA_SYMBOL_DICT` MUST start its
+  delta section at `deltaStart = 0`; batches with the flag and a mismatching
+  `deltaStart` are a protocol error (clients should raise a decode failure).
+  The server MUST also clear any per-column native-key -> connId caches on
+  its side; failing to do so would let a scratch hand back an id the reset
+  dictionary has already dropped.
+- **Bit 1, `RESET_MASK_SCHEMAS`**: the peer clears its connection-scoped
+  schema registry. Every previously assigned `schema_id` is discarded. The
+  next `RESULT_BATCH` that would have shipped `SCHEMA_MODE_REFERENCE` (§7.1)
+  for a cached shape MUST instead ship `SCHEMA_MODE_FULL` with a freshly
+  allocated id. Schema ids allocated after the reset may collide with
+  previously-used values (the server's counter restarts at 0).
+
+Both bits MAY be set in the same frame. Reserved bits MUST be zero on
+transmit; recipients MUST ignore any reserved bits that are set.
+
+### When the server emits it
+
+Each QuestDB server enforces configurable soft caps on two metrics:
+
+| Cap | Default | Triggers |
+|-----|---------|----------|
+| Entry count in the SYMBOL delta dict | 100,000 | `RESET_MASK_DICT` |
+| UTF-8 heap bytes in the SYMBOL delta dict | 8 MiB | `RESET_MASK_DICT` |
+| Distinct registered schemas | 4,096 | `RESET_MASK_SCHEMAS` |
+
+Actual cap values are implementation-defined; clients MUST accept any cap
+policy and MUST be prepared to receive `CACHE_RESET` after any query
+boundary, including on otherwise-identical workloads where a previous run
+did not trigger one.
+
+### Why not mid-stream
+
+Resetting the dictionary or the schema registry while a `RESULT_BATCH` is
+in flight would invalidate ids already referenced in that batch's row
+payload. The server therefore postpones the reset until a natural query
+boundary. This has two knock-on effects:
+
+- Under a saturating workload, the server may exceed its soft caps for the
+  duration of a single query; the caps are self-healing and bounded by the
+  size of any one query's distinct symbol / schema footprint.
+- The client cannot infer dict or schema state purely from frame order:
+  every `RESULT_BATCH` may be preceded by a `CACHE_RESET` that resets the
+  counter. Clients SHOULD treat `CACHE_RESET` as transparent.
+
+### Wire-level example
+
+Server's dict has grown past the 100k-entry cap. The client's next
+`QUERY_REQUEST` triggers:
+
+```
+client -> QUERY_REQUEST(request_id=42, ...)
+server -> CACHE_RESET(reset_mask=0x01)      // dict bit only
+server -> RESULT_BATCH(request_id=42, batch_seq=0, deltaStart=0, ...)
+server -> RESULT_BATCH(request_id=42, batch_seq=1, ...)
+server -> RESULT_END(request_id=42, ...)
+```
+
+If the schema cache is also over cap, the server emits a single
+`CACHE_RESET(reset_mask=0x03)`; the client clears both caches in one hop.
+
 ## 12. Schema and Symbol Dictionary Scope
 
 ### Schema registry (per connection)
@@ -432,6 +520,13 @@ subsequent batches with the same column set reference it in mode `0x01`.
 A query whose column set differs from a prior registration receives a fresh
 `schema_id`. The server may garbage-collect schema entries that no longer
 correspond to any active query, but is not required to.
+
+Connections that accumulate many distinct column shapes may cross the
+server-side schema soft cap. When that happens the server emits
+`CACHE_RESET` with `RESET_MASK_SCHEMAS` (§11.7) at a query boundary and
+clears the registry on both sides. `schema_id` values after the reset may
+collide with previously-used ones; clients MUST treat the pre-reset and
+post-reset id spaces as independent.
 
 On disconnect, both sides reset the registry.
 
@@ -460,10 +555,14 @@ client accumulates delta entries for the lifetime of the connection. On
 disconnect, both sides reset the dictionary.
 
 Per-connection scope pays off for repeated queries (BI dashboards refreshing
-the same SELECTs) at the cost of unbounded growth on long-lived connections
-that surface high-cardinality symbols. The server enforces the
-symbol-dictionary limit (§16) by failing queries that would push the
-connection's dictionary past the cap.
+the same SELECTs) at the cost of growth on long-lived connections that
+surface high-cardinality symbols. The server enforces soft caps on both
+the entry count and the heap bytes held in the dictionary (§16). When
+either cap is crossed, the server emits `CACHE_RESET` with
+`RESET_MASK_DICT` (§11.7) at a query boundary and both sides clear the
+dictionary; the next `RESULT_BATCH` delta section starts at
+`deltaStart = 0` and re-transmits any symbols the subsequent queries
+reference.
 
 ## 13. Cursor Lifecycle
 
@@ -503,6 +602,21 @@ A connection-level error (parse failure on the message frame itself,
 authentication failure, malformed header) closes the WebSocket. The
 server's last frame before close should be a `QUERY_ERROR` with
 `request_id = -1` if the failure is not attributable to a specific request.
+
+### Cache reset at query boundary
+
+The server may interpose a `CACHE_RESET` frame (§11.7) between the
+terminator of one query and the first frame of the next when a
+connection-scoped cache has crossed a soft cap. The client MUST process
+`CACHE_RESET` before assuming continuity of the delta dict or schema
+registry across the boundary.
+
+```
+   client  <----------------- RESULT_END ------------- (query N)
+   client  <----------------- CACHE_RESET ------------ (optional)
+   client  ----------------- QUERY_REQUEST ----------> (query N+1)
+   client  <---------------- RESULT_BATCH(seq=0) -----  deltaStart=0 after reset
+```
 
 ## 14. Flow Control
 
@@ -571,8 +685,14 @@ additions and changes:
 | Max SQL text length            | 1 MiB         | UTF-8 bytes                      |
 | Max bind parameters            | 1,024         | Per QUERY_REQUEST                |
 | Max RESULT_BATCH wire size     | 16 MiB        | Same as ingress batch ceiling    |
-| Max symbol dictionary entries  | 1,000,000     | Per connection                   |
+| Symbol dict soft cap — entries | 100,000       | Per connection. Exceeding triggers `CACHE_RESET(RESET_MASK_DICT)` at the next query boundary (§11.7). |
+| Symbol dict soft cap — heap    | 8 MiB         | Per connection, UTF-8 bytes. Exceeding triggers `CACHE_RESET(RESET_MASK_DICT)`. |
+| Schema registry soft cap       | 4,096         | Per connection. Exceeding triggers `CACHE_RESET(RESET_MASK_SCHEMAS)` at the next query boundary. |
 | Min initial credit             | 0             | 0 means unbounded                |
+
+Soft caps are implementation-defined and may be configured or tuned by the
+server operator. Clients MUST tolerate any cap policy and MUST be prepared
+to receive `CACHE_RESET` at any query boundary.
 
 ## 17. Examples
 

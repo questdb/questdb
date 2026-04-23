@@ -30,6 +30,15 @@ package io.questdb.cutlass.qwp.codec;
  * {@code docs/QWP_EGRESS_EXTENSION.md} sec 5 for the authoritative list.
  */
 public final class QwpEgressMsgKind {
+    /**
+     * Server-to-client connection-cache reset. Body:
+     * {@code reset_mask:u8} with bit 0 = SYMBOL dict, bit 1 = schema cache.
+     * Sent between result boundaries when a cache reaches its configured
+     * soft cap. Recipient clears the indicated caches; subsequent RESULT_BATCH
+     * and schema-reference frames assume a fresh starting state. See
+     * {@code docs/QWP_EGRESS_EXTENSION.md} sec 12.
+     */
+    public static final byte CACHE_RESET = 0x17;
     public static final byte CANCEL = 0x14;
     public static final byte CREDIT = 0x15;
     /**
@@ -44,9 +53,20 @@ public final class QwpEgressMsgKind {
     public static final byte RESULT_BATCH = 0x11;
     public static final byte RESULT_END = 0x12;
 
-    // Egress-specific status codes (extend ingress QwpConstants.STATUS_* namespace).
-    public static final byte STATUS_CANCELLED = 0x0A;
-    public static final byte STATUS_LIMIT_EXCEEDED = 0x0B;
+    /**
+     * Reset mask bit: clear the connection-scoped SYMBOL dict.
+     * After receiving, the peer's dict size returns to 0 and the next
+     * {@code RESULT_BATCH} delta section starts at {@code deltaStart=0}.
+     */
+    public static final byte RESET_MASK_DICT = 0x01;
+
+    /**
+     * Reset mask bit: clear the connection-scoped schema-id cache.
+     * After receiving, the peer discards every previously assigned schema
+     * id; the next {@code RESULT_BATCH} ships the schema in full mode
+     * (not reference mode) with a fresh id.
+     */
+    public static final byte RESET_MASK_SCHEMAS = 0x02;
 
     private QwpEgressMsgKind() {
     }

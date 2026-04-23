@@ -51,11 +51,16 @@ import io.questdb.std.str.Utf8s;
 public class QwpEgressRequestDecoder {
 
     public final StringSink sql = new StringSink();
+    /**
+     * Reusable sink passed to {@link BindVariableService#setStr}. The
+     * implementation copies the value out, so we can safely reuse this
+     * flyweight across binds.
+     */
     private final StringSink stringBindScratch = new StringSink();
     /**
-     * Reusable view passed to {@link BindVariableService#setVarchar} and the
-     * scratch StringSink passed to {@link BindVariableService#setStr}. Both
-     * implementations copy the value out, so we can safely reuse these flyweights.
+     * Reusable view passed to {@link BindVariableService#setVarchar}. The
+     * implementation copies the value out, so we can safely reuse this
+     * flyweight across binds.
      */
     private final DirectUtf8String varcharBindView = new DirectUtf8String();
     /**
@@ -68,9 +73,8 @@ public class QwpEgressRequestDecoder {
     public long initialCredit;
     public long requestId;
     /**
-     * Reusable scratch fields for {@link #decodeBind}: the per-bind position cursor
-     * and the parsed null flag that {@link #readNullFlag} returns into. Holding them
-     * as instance fields removes the {@code long[1]} allocation per bind.
+     * Reusable scratch for the parsed null flag that {@link #readNullFlag} writes
+     * into. Holding it as a field removes the {@code boolean[1]} allocation per bind.
      */
     private boolean bindIsNull;
 

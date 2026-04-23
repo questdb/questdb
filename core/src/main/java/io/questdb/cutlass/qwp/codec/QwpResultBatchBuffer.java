@@ -428,6 +428,23 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
+     * Undoes any dict entries committed by the current batch. Called from the
+     * server's error path before {@code endStreaming}: a batch that called
+     * {@link QwpEgressConnSymbolDict#addEntry} but never shipped its
+     * {@code RESULT_BATCH} frame must not leave orphan entries in the connection
+     * dict, because a subsequent query could hit the dedup map on the same bytes,
+     * receive the orphan id back, and emit row payload referencing an id the
+     * client has never been taught.
+     * <p>
+     * Idempotent: safe to call when no batch is in flight (no-op).
+     */
+    public void rollbackCurrentBatch() {
+        if (connDict != null) {
+            connDict.rollbackTo(batchDeltaStart);
+        }
+    }
+
+    /**
      * Serialises an array into {@code scratch.arrayHeapAddr} without allocating a {@code byte[]}.
      * Format: {@code [nDims u8] [dim lengths: nDims x i32 LE] [values: product(dims) x 8 bytes LE]}.
      * Throws if the element-count product overflows; the buffer state is unchanged in that case.
@@ -695,8 +712,13 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Copies the null flag + bitmap (if any) for this column to the wire. Also
-     * memcpys the dense value bytes for the simple cases (BOOLEAN, fixed-width).
+     * Writes one column to the wire buffer starting at {@code p}. Layout:
+     * null flag + optional bitmap, then the type-specific payload (bit-packed
+     * BOOLEAN; VARCHAR / BINARY offsets + bytes; SYMBOL ids; GEOHASH precision +
+     * values; DOUBLE / LONG arrays; DECIMAL scale + values; TIMESTAMP family
+     * with Gorilla or raw; generic fixed-width memcpy for BYTE / SHORT / INT /
+     * CHAR / LONG / FLOAT / DOUBLE / UUID / LONG256). Returns the write pointer
+     * past the column, or {@code -1} if {@code wireLimit} would be exceeded.
      */
     private long emitColumn(QwpColumnScratch scratch, long p, long wireLimit) {
         // 1. Null flag + optional bitmap
