@@ -117,6 +117,49 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColdPathSkipDisabledForUnboundedWindowFunctions() throws Exception {
+        // row_number() reports an unbounded lookback (its implicit frame spans the whole
+        // partition up to the current row). The live view refresh job must therefore leave
+        // the cold-path skip disabled: late-row correctness for any-unbounded views needs
+        // the disk-read replay path, which is scheduled for V1 but not yet implemented.
+        // Pinning coldRowSkipCount at 0 catches the regression where a future change would
+        // accidentally enable skipping for these views, which would silently drop rows that
+        // still belong in the accumulator on the intended replay path.
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_cold LAG 1s RETENTION 10s AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:00:05.000000Z')," +
+                " ('AAPL', 102.0, '2024-01-01T00:00:10.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // Insert a row whose ts is four years before the current published horizon.
+        // For an unbounded view, this reaches the merge buffer and flows through
+        // the warm-path replay (pendingLateCount increments in MergeBuffer.addRow).
+        execute("INSERT INTO trades VALUES ('AAPL', 1.0, '2020-01-01T00:00:00.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_cold");
+        Assert.assertEquals(
+                "unbounded view must never trigger cold-path skip",
+                0,
+                instance.getColdRowSkipCount()
+        );
+        // Late-row accounting still fires as usual: the row reached the merge buffer.
+        Assert.assertTrue(instance.getMergeBuffer().getLateRowCount() > 0);
+
+        execute("DROP LIVE VIEW live_cold");
+    }
+
+    @Test
     public void testLateRowWithinRetentionTriggersWarmPathReplay() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");

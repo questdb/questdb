@@ -195,6 +195,27 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * @return the maximum number of microseconds the function needs to look back from
+     * the current row. Used by live view cold-path classification: a late row arriving
+     * with {@code ts < oldest_visible_ts - max(lookback)} across all functions cannot
+     * affect any visible output and may be skipped.
+     * <p>
+     * Returns {@code -1} (the default) when the lookback is not expressible as a
+     * timestamp delta, i.e.:
+     * <ul>
+     *     <li>UNBOUNDED PRECEDING frame (accumulator depends on all prior rows),</li>
+     *     <li>ROWS N PRECEDING frame (lookback is row-count, not time-based),</li>
+     *     <li>ranking/numbering functions whose implicit frame spans the whole
+     *         partition up to the current row.</li>
+     * </ul>
+     * RANGE-bounded frames override this to return {@code abs(rowsLo)} micros.
+     * The default is conservative — unknown = must not skip.
+     */
+    default long getMaxLookbackMicros() {
+        return -1;
+    }
+
+    /**
      * @return pass1 scan direction.
      * Some {@link #ONE_PASS} and {@link #TWO_PASS} window functions may be more efficient when using a backward scan.
      */

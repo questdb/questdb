@@ -274,6 +274,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Computes the ts below which an incoming WAL row is cold relative to the
+     * live view's currently-published output. Returns {@code Long.MIN_VALUE} to
+     * disable skipping when:
+     * <ul>
+     *     <li>any window function reports an unbounded (or ts-inexpressible)
+     *         lookback — a cold row would pollute the accumulator and the
+     *         V1 refresh cannot recover without a disk-read replay;</li>
+     *     <li>the published buffer is empty — no visible rows to protect, so
+     *         the row must flow through the normal hot/warm path;</li>
+     *     <li>the subtraction would underflow a signed long.</li>
+     * </ul>
+     */
+    private long computeColdCutoff(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+        long lookback = windowFactory.getMaxLookbackMicros();
+        if (lookback < 0) {
+            return Long.MIN_VALUE;
+        }
+        InMemoryTable published = instance.peekPublishedBuffer();
+        if (published == null || published.getRowCount() == 0) {
+            return Long.MIN_VALUE;
+        }
+        long oldestVisibleTs = published.getTimestampAt(0);
+        if (oldestVisibleTs == Long.MIN_VALUE || oldestVisibleTs < Long.MIN_VALUE + lookback) {
+            return Long.MIN_VALUE;
+        }
+        return oldestVisibleTs - lookback;
+    }
+
+    /**
      * Computes the drain watermark, drains the merge buffer, and feeds the drained rows
      * through the window cursor into the InMemoryTable. No-op when the buffer is empty.
      * When {@code forceDrain} is true, the watermark is the max observed timestamp so
@@ -438,6 +467,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         buildColumnMappings(baseMetadata, baseToken);
         MergeBuffer mergeBuffer = ensureMergeBuffer(instance, baseMetadata);
 
+        // Cold-path skip threshold: rows with ts below this cutoff cannot affect any
+        // visible output and are dropped before entering the merge buffer. The cutoff
+        // is {@code Long.MIN_VALUE} (skip disabled) when the view has any unbounded
+        // window function (max lookback < 0), when the published buffer is empty
+        // (nothing visible to protect), or when the subtraction would underflow.
+        // TODO(live-view): add a disk-read replay path for any-unbounded views so
+        //  late rows past retention produce correct output instead of polluting
+        //  window state.
+        final int baseTsIdx = baseMetadata.getTimestampIndex();
+        final long coldCutoff = computeColdCutoff(instance, windowFactory);
+        long skippedColdRows = 0;
+
         WalSegmentPageFrameCursor frameCursor = new WalSegmentPageFrameCursor(
                 engine.getConfiguration(), columnIndexes, columnSizeShifts
         );
@@ -494,12 +535,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
                     Record record = source.getRecord();
                     while (source.hasNext()) {
+                        if (coldCutoff != Long.MIN_VALUE && record.getTimestamp(baseTsIdx) < coldCutoff) {
+                            skippedColdRows++;
+                            continue;
+                        }
                         mergeBuffer.addRow(record);
                     }
                 }
             }
         } finally {
             Misc.free(frameCursor);
+        }
+
+        if (skippedColdRows > 0) {
+            instance.addColdRowSkips(skippedColdRows);
+            LOG.info().$("live view cold-path skipped rows [view=").$(instance.getDefinition().getViewName())
+                    .$(", count=").$(skippedColdRows)
+                    .$(", coldCutoffMicros=").$(coldCutoff).I$();
         }
 
         drainAndCommit(instance, windowFactory, mergeBuffer, forceDrain);

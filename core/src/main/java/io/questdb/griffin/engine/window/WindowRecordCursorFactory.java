@@ -110,6 +110,27 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
+     * Conservative max ts lookback across all window functions, in micros. Returns
+     * {@code -1} if any function reports an unbounded or ts-inexpressible lookback
+     * (the live view's cold-path skip must then be disabled). Otherwise returns
+     * the largest {@link WindowFunction#getMaxLookbackMicros()} across the factory's
+     * functions — the horizon a late row must clear to be guaranteed cold.
+     */
+    public long getMaxLookbackMicros() {
+        long max = 0;
+        for (int i = 0; i < windowFunctionsCount; i++) {
+            long lb = windowFunctions.getQuick(i).getMaxLookbackMicros();
+            if (lb < 0) {
+                return -1;
+            }
+            if (lb > max) {
+                max = lb;
+            }
+        }
+        return max;
+    }
+
+    /**
      * Returns a cursor wrapping the given base cursor that drives window functions
      * incrementally — without resetting their accumulated state from prior refreshes.
      * Non-window functions are re-initialized to bind to the new cursor's symbol source.

@@ -59,6 +59,10 @@ public class LiveViewInstance implements QuietCloseable {
     private final DoubleBufferedTable bufferedTable = new DoubleBufferedTable();
     private final LiveViewDefinition definition;
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
+    // Cumulative count of WAL rows the live view refresh job skipped because they were
+    // cold relative to the published buffer's oldest visible row and the compiled window
+    // functions' lookback horizon. Accessed only while the refresh latch is held.
+    private long coldRowSkipCount;
     // Cached factory from the bootstrap compile. Window functions carry state across rows
     // (e.g., row_number() counter), so incremental refresh must reuse the same function
     // instances — reset on every refresh would restart the counters. Accessed only while
@@ -125,6 +129,20 @@ public class LiveViewInstance implements QuietCloseable {
             compiledFactory = Misc.free(compiledFactory);
             mergeBuffer = Misc.free(mergeBuffer);
         }
+    }
+
+    /**
+     * Increments the cumulative count of WAL rows skipped by the cold-path classifier.
+     * Called by the refresh job when a row arrives with {@code ts < oldest_visible_ts -
+     * max(frameLookback)} and the view's window functions are all bounded in the ts
+     * dimension — the row cannot affect any visible output.
+     */
+    public void addColdRowSkips(long count) {
+        coldRowSkipCount += count;
+    }
+
+    public long getColdRowSkipCount() {
+        return coldRowSkipCount;
     }
 
     public RecordCursorFactory getCompiledFactory() {
