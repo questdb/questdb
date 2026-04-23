@@ -287,7 +287,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                                 partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, sealTxn)));
                 assertTrue(".pc0 must exist after seal with covering",
                         ff.exists(PostingIndexUtils.coverDataFileName(
-                                partitionPath.trimTo(pLen), col, 0, COLUMN_NAME_TXN_NONE, sealTxn)));
+                                partitionPath.trimTo(pLen), col, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, sealTxn)));
 
                 publishPurgeTask(tok, col, sealTxn, 1L);
                 runPurgeJob(job, 3);
@@ -297,7 +297,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                                 partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, sealTxn)));
                 assertFalse(".pc0 must be purged together with .pv",
                         ff.exists(PostingIndexUtils.coverDataFileName(
-                                partitionPath.trimTo(pLen), col, 0, COLUMN_NAME_TXN_NONE, sealTxn)));
+                                partitionPath.trimTo(pLen), col, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, sealTxn)));
             }
         });
     }

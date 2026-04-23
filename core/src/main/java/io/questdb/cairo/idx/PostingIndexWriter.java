@@ -180,38 +180,6 @@ public class PostingIndexWriter implements IndexWriter {
         initKeyMemory(keyMem, blockCapacity, 0L);
     }
 
-    public static void initKeyMemory(MemoryMA keyMem, int blockCapacity, long valueFileTxn) {
-        keyMem.jumpTo(0);
-        keyMem.truncate();
-
-        // Zero-fill both 4KB pages (8192 bytes total)
-        for (int i = 0; i < KEY_FILE_RESERVED / Long.BYTES; i++) {
-            keyMem.putLong(0L);
-        }
-
-        // Overwrite Page A fields via direct memory access (the region is already mapped)
-        long baseAddr = keyMem.addressOf(PostingIndexUtils.PAGE_A_OFFSET);
-        // sequence_start = 1
-        Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 1L);
-        Unsafe.getUnsafe().storeFence();
-        // valueMemSize = 0 (already zeroed)
-        // blockCapacity
-        Unsafe.getUnsafe().putInt(baseAddr + PostingIndexUtils.PAGE_OFFSET_BLOCK_CAPACITY, blockCapacity);
-        // keyCount = 0 (already zeroed)
-        // maxValue = -1
-        Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, -1L);
-        // genCount = 0 (already zeroed)
-        // formatVersion
-        Unsafe.getUnsafe().putInt(baseAddr + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION, FORMAT_VERSION);
-        // sealTxn counter — 0 means pre-seal initial state, N means after N seals.
-        Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN, valueFileTxn);
-        // sequence_end = 1
-        Unsafe.getUnsafe().storeFence();
-        Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 1L);
-
-        // Page B stays zeroed (seq=0), so Page A is the valid page.
-    }
-
     @Override
     public void add(int key, long value) {
         if (key < 0) {
@@ -925,7 +893,7 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
                 long covT = getCoveredColumnNameTxn(c);
-                LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, covT, columnNameTxn);
+                LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, sidecarTxn, covT, columnNameTxn);
                 if (ff.exists(pcFile)) {
                     long fileLen = ff.length(pcFile);
                     if (fileLen > 0) {
@@ -1152,6 +1120,30 @@ public class PostingIndexWriter implements IndexWriter {
                 yield 4 + (valueCount << shift);
             }
         };
+    }
+
+    private static void initKeyMemory(MemoryMA keyMem, int blockCapacity, long valueFileTxn) {
+        keyMem.jumpTo(0);
+        keyMem.truncate();
+        keyMem.putLong(1L);
+        keyMem.putLong(0L);
+        keyMem.putInt(blockCapacity);
+        keyMem.putInt(0);
+        keyMem.putLong(-1L);
+        keyMem.putInt(0);
+        keyMem.putInt(FORMAT_VERSION);
+        keyMem.putLong(valueFileTxn);
+        int padLongs = (PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END
+                - PostingIndexUtils.PAGE_OFFSET_SEAL_TXN - Long.BYTES) / Long.BYTES;
+        for (int i = 0; i < padLongs; i++) {
+            keyMem.putLong(0L);
+        }
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(1L);
+
+        for (int i = 0; i < PostingIndexUtils.PAGE_SIZE / Long.BYTES; i++) {
+            keyMem.putLong(0L);
+        }
     }
 
     private static void putFixedValue(MemoryMARW mem, long addr, int valueSize) {
@@ -2077,13 +2069,8 @@ public class PostingIndexWriter implements IndexWriter {
         final LongList seenSealTxns = new LongList();
         PostingIndexUtils.scanSealedFiles(ff, path, path.size(), name, new PostingIndexUtils.SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
-                // .pc<N> alone (no matching .pv at the same sealTxn) is rare
-                // but possible after a partial seal failure. Enqueue under
-                // this writer's postingColumnNameTxn — the operator's delete
-                // loop is keyed on sealTxn alone, so the file is removed
-                // regardless of which postingColumnNameTxn the task carries.
-                if (sealTxn != liveSealTxn) {
+            public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+                if (postingColumnNameTxn == thisInstanceTxn && sealTxn != liveSealTxn) {
                     rememberOrphan(seenSealTxns, sealTxn, thisInstanceTxn);
                 }
             }
@@ -2271,7 +2258,7 @@ public class PostingIndexWriter implements IndexWriter {
                 MemoryMARW mem = Vm.getCMARWInstance();
                 mem.of(
                         ff,
-                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, covT, sealTxn),
+                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, postingColumnNameTxn, covT, sealTxn),
                         configuration.getDataIndexValueAppendPageSize(),
                         0L,
                         MemoryTag.MMAP_INDEX_WRITER
@@ -2336,7 +2323,7 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
                 long covT = getCoveredColumnNameTxn(c);
-                LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, covT, sealTxn);
+                LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, postingColumnNameTxn, covT, sealTxn);
                 long fileLen = ff.exists(pcFile) ? ff.length(pcFile) : -1L;
                 long existingSize = fileLen > 0 ? fileLen : 0L;
                 MemoryMARW mem = Vm.getCMARWInstance();

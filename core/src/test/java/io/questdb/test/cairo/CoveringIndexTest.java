@@ -1063,17 +1063,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
             PostingIndexUtils.coverInfoFileName(path, name, COLUMN_NAME_TXN_NONE);
             assertTrue(path.toString().contains("sym.pci"));
 
-            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, 0);
-            assertTrue(path.toString().contains("sym.pc0.0"));
+            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 0);
+            assertTrue(path.toString().contains("sym.pc0.0.0"));
 
-            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, COLUMN_NAME_TXN_NONE, 0);
-            assertTrue(path.toString().contains("sym.pc1.0"));
+            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 0);
+            assertTrue(path.toString().contains("sym.pc1.0.0"));
 
             PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, 5);
             assertTrue(path.toString().contains("sym.pci.5"));
 
-            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, 5, 7);
-            assertTrue(path.toString().contains("sym.pc0.5.7"));
+            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, 5, 3, 7);
+            assertTrue(path.toString().contains("sym.pc0.5.3.7"));
         }
     }
 
@@ -8007,8 +8007,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
                             ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
                     assertTrue(liveSealTxn >= 0);
-                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, liveSealTxn)));
-                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, COLUMN_NAME_TXN_NONE, liveSealTxn)));
+                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, liveSealTxn)));
+                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, liveSealTxn)));
                 } finally {
                     Unsafe.free(colAddrDouble, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(colAddrInt, (long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -8370,7 +8370,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
                             ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
                     assertTrue(liveSealTxn >= 0);
-                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, liveSealTxn)));
+                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, liveSealTxn)));
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
@@ -8616,7 +8616,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
                             ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
                     LPSZ sidecarFile = PostingIndexUtils.coverDataFileName(
-                            path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, liveSealTxn);
+                            path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, liveSealTxn);
                     assertTrue("sidecar present before deletion", ff.exists(sidecarFile));
                     assertTrue("sidecar removed", ff.removeQuiet(sidecarFile));
 
@@ -8690,7 +8690,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Verify .pc0 at the first sealTxn is on disk.
                     assertTrue("first-seal sidecar .pc0 must exist",
                             ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
-                                    COLUMN_NAME_TXN_NONE, firstSealTxn)));
+                                    COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, firstSealTxn)));
 
                     // Second writer instance: reopen, write more data, force another seal.
                     long secondSealTxn;
@@ -8721,11 +8721,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // stays untouched until the background purge job collects it.
                     assertTrue("first-seal sidecar .pc0 must survive a subsequent seal",
                             ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
-                                    COLUMN_NAME_TXN_NONE, firstSealTxn)));
+                                    COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, firstSealTxn)));
                     // And the second seal's .pc0 at the new sealTxn must exist too.
                     assertTrue("second-seal sidecar .pc0 must exist at the new sealTxn",
                             ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
-                                    COLUMN_NAME_TXN_NONE, secondSealTxn)));
+                                    COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, secondSealTxn)));
 
                     // Reader at the latest sealTxn sees ALL committed data.
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(

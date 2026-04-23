@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -47,6 +48,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -105,24 +107,25 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
         // same as x but with different number of values in symbol maps
         TableModel model = new TableModel(configuration, "v", PartitionBy.NONE);
-        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16, rndIndexType(rnd))
                 .col("bid", ColumnType.DOUBLE)
                 .col("ask", ColumnType.DOUBLE)
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4, rndIndexType(rnd))
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestamp();
         AbstractCairoTest.create(model);
 
         model = new TableModel(configuration, "v_ns", PartitionBy.NONE);
-        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
+        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16, rndIndexType(rnd))
                 .col("bid", ColumnType.DOUBLE)
                 .col("ask", ColumnType.DOUBLE)
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4, rndIndexType(rnd))
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestampNs();
         AbstractCairoTest.create(model);
 
@@ -149,13 +152,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         AbstractCairoTest.create(model);
 
         model = new TableModel(configuration, "x", PartitionBy.NONE);
-        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
+        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16, rndIndexType(rnd))
                 .col("bid", ColumnType.DOUBLE)
                 .col("ask", ColumnType.DOUBLE)
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4, rndIndexType(rnd))
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestamp();
         AbstractCairoTest.create(model);
 
@@ -165,8 +168,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 .col("ask", ColumnType.DOUBLE)
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4, rndIndexType(rnd))
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestampNs();
         AbstractCairoTest.create(model);
 
@@ -176,8 +179,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 .col("ask", ColumnType.DOUBLE)
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4);
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4, rndIndexType(rnd))
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd));
         AbstractCairoTest.create(model);
 
         model = new TableModel(configuration, "z", PartitionBy.NONE);
@@ -187,7 +190,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
                 .col("mode", ColumnType.SYMBOL)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestamp();
         AbstractCairoTest.create(model);
 
@@ -198,7 +201,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
                 .col("mode", ColumnType.SYMBOL)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestampNs();
         AbstractCairoTest.create(model);
 
@@ -484,7 +487,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
-
     @Test
     public void testBadEpochInLess() {
         try {
@@ -682,7 +684,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             TestUtils.assertEquals("missing arguments", e.getFlyweightMessage());
         }
     }
-
 
     @Test
     public void testBetweenIntervalWithCaseStatementAsParam() throws SqlException {
@@ -4263,6 +4264,10 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());
         }
+    }
+
+    private static byte rndIndexType(Rnd rnd) {
+        return rnd.nextBoolean() ? IndexType.BITMAP : IndexType.POSTING;
     }
 
     private static void swap(String[] arr, int i, int j) {

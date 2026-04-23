@@ -3995,9 +3995,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Enumerate every .pc<N>.<C>.<S> belonging to this column instance (any sealTxn).
                             PostingIndexUtils.scanSealedFiles(ff, detachedPath, detachedPartitionRoot, columnName, new PostingIndexUtils.SealedFileVisitor() {
                                 @Override
-                                public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sTxn) {
+                                public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sTxn) {
+                                    if (postingColumnNameTxn != columnNameTxn) {
+                                        return;
+                                    }
                                     detachedPath.trimTo(detachedPartitionRoot);
-                                    removeFileOrLog(ff, PostingIndexUtils.coverDataFileName(detachedPath, columnName, includeIdx, coveredColumnNameTxn, sTxn));
+                                    removeFileOrLog(ff, PostingIndexUtils.coverDataFileName(detachedPath, columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sTxn));
                                 }
 
                                 @Override
@@ -6474,10 +6477,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         PostingIndexUtils.scanSealedFiles(ff, path, srcLen, columnName, new PostingIndexUtils.SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+            public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+                if (postingColumnNameTxn != columnNameTxn) {
+                    return;
+                }
                 linkFile(ff,
-                        PostingIndexUtils.coverDataFileName(path.trimTo(srcLen), columnName, includeIdx, coveredColumnNameTxn, sealTxn),
-                        PostingIndexUtils.coverDataFileName(other.trimTo(dstLen), columnName, includeIdx, coveredColumnNameTxn, sealTxn)
+                        PostingIndexUtils.coverDataFileName(path.trimTo(srcLen), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn),
+                        PostingIndexUtils.coverDataFileName(other.trimTo(dstLen), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn)
                 );
             }
 

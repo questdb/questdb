@@ -55,6 +55,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     private boolean scanAllCoversRemoved;
     private CharSequence scanColumnName;
     private int scanPartitionPathLen;
+    private long scanTargetPostingTxn;
     private long scanTargetSealTxn;
     private TxnScoreboard txnScoreboard;
 
@@ -79,12 +80,12 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     }
 
     @Override
-    public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
-        if (sealTxn != scanTargetSealTxn) {
+    public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+        if (postingColumnNameTxn != scanTargetPostingTxn || sealTxn != scanTargetSealTxn) {
             return;
         }
         LPSZ pc = PostingIndexUtils.coverDataFileName(path.trimTo(scanPartitionPathLen),
-                scanColumnName, includeIdx, coveredColumnNameTxn, sealTxn);
+                scanColumnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
         if (!ff.removeQuiet(pc)) {
             scanAllCoversRemoved = false;
         }
@@ -160,6 +161,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
 
         scanAllCoversRemoved = true;
         scanTargetSealTxn = task.getSealTxn();
+        scanTargetPostingTxn = task.getPostingColumnNameTxn();
         scanColumnName = task.getIndexColumnName();
         scanPartitionPathLen = pathPartitionLen;
         path.trimTo(pathPartitionLen);

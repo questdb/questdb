@@ -66,17 +66,10 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
-
-    private final String defaultIndexTypeName;
-
-    public PageFrameRecordCursorImplFactoryTest() {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        this.defaultIndexTypeName = rnd.nextBoolean() ? "BITMAP" : "POSTING";
-    }
-
     @Override
     public void setUp() {
-        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, defaultIndexTypeName);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
         super.setUp();
     }
 

@@ -209,6 +209,7 @@ public final class PostingIndexUtils {
     public static final int STRIDE_FLAT_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
     // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
     static final int EF_HEADER_SIZE = 17;
+    private static final long PARSE_FAIL = Long.MIN_VALUE;
 
     private PostingIndexUtils() {
     }
@@ -253,10 +254,12 @@ public final class PostingIndexUtils {
             Path path,
             CharSequence name,
             int includeIdx,
+            long postingColumnNameTxn,
             long coveredColumnNameTxn,
             long sealTxn
     ) {
         path.concat(name).put(".pc").put(includeIdx);
+        path.put('.').put(postingColumnNameTxn == COLUMN_NAME_TXN_NONE ? 0 : postingColumnNameTxn);
         if (coveredColumnNameTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(coveredColumnNameTxn);
         }
@@ -1055,8 +1058,11 @@ public final class PostingIndexUtils {
         path.trimTo(pathTrimTo);
         scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
-                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, coveredColumnNameTxn, sealTxn));
+            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+                if (filePostingColumnNameTxn != postingColumnNameTxn) {
+                    return;
+                }
+                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn));
                 path.trimTo(pathTrimTo);
             }
 
@@ -1096,13 +1102,16 @@ public final class PostingIndexUtils {
         path.trimTo(pathTrimTo);
         scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
-                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, coveredColumnNameTxn, sealTxn));
+            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+                if (filePostingColumnNameTxn != postingColumnNameTxn) {
+                    return;
+                }
+                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn));
                 path.trimTo(pathTrimTo);
             }
 
             @Override
-            public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+            public void onValueFile(long fileColumnNameTxn, long sealTxn) {
                 // Not removing .pv files here — caller controls .pv lifecycle.
             }
         });
@@ -1292,7 +1301,6 @@ public final class PostingIndexUtils {
         if (fileName.charAt(nameLen) != '.') {
             return;
         }
-        // After "<columnName>.", expect "pv." or "pc<int>."
         int pos = nameLen + 1;
         if (pos + 1 >= fileLen || fileName.charAt(pos) != 'p') {
             return;
@@ -1304,12 +1312,11 @@ public final class PostingIndexUtils {
         pos += 2;
         int includeIdx = -1;
         if (kind == 'c') {
-            // Parse <includeIdx>
             int idxStart = pos;
             while (pos < fileLen && fileName.charAt(pos) != '.') {
                 char ch = fileName.charAt(pos);
                 if (ch < '0' || ch > '9') {
-                    return; // ".pci..." or other non-numeric — ignore
+                    return;
                 }
                 pos++;
             }
@@ -1325,46 +1332,68 @@ public final class PostingIndexUtils {
         if (pos >= fileLen || fileName.charAt(pos) != '.') {
             return;
         }
-        pos++; // skip the dot before the first number
-
-        // Parse the first number
-        int firstStart = pos;
-        while (pos < fileLen && fileName.charAt(pos) != '.') {
-            pos++;
-        }
-        if (pos == firstStart) {
-            return;
-        }
-        long firstValue;
-        try {
-            firstValue = Numbers.parseLong(fileName, firstStart, pos);
-        } catch (NumericException e) {
-            return;
-        }
-
-        long columnNameTxn;
-        long sealTxn;
-        if (pos >= fileLen) {
-            columnNameTxn = COLUMN_NAME_TXN_NONE;
-            sealTxn = firstValue;
-        } else {
-            pos++; // skip the dot
-            int secondStart = pos;
-            if (secondStart >= fileLen) {
-                return;
-            }
-            try {
-                sealTxn = Numbers.parseLong(fileName, secondStart, fileLen);
-            } catch (NumericException e) {
-                return;
-            }
-            columnNameTxn = firstValue;
-        }
+        pos++;
 
         if (kind == 'v') {
+            int dot = nextDot(fileName, pos, fileLen);
+            long columnNameTxn;
+            long sealTxn;
+            if (dot < 0) {
+                columnNameTxn = COLUMN_NAME_TXN_NONE;
+                sealTxn = parseTxnSegment(fileName, pos, fileLen);
+            } else {
+                columnNameTxn = parseTxnSegment(fileName, pos, dot);
+                sealTxn = parseTxnSegment(fileName, dot + 1, fileLen);
+            }
+            if (columnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
+                return;
+            }
             visitor.onValueFile(columnNameTxn, sealTxn);
+            return;
+        }
+
+        int hostDot = nextDot(fileName, pos, fileLen);
+        if (hostDot < 0) {
+            return;
+        }
+        long rawHost = parseTxnSegment(fileName, pos, hostDot);
+        if (rawHost == PARSE_FAIL) {
+            return;
+        }
+        long postingColumnNameTxn = rawHost == 0 ? COLUMN_NAME_TXN_NONE : rawHost;
+        long coveredColumnNameTxn;
+        long sealTxn;
+        int secondDot = nextDot(fileName, hostDot + 1, fileLen);
+        if (secondDot < 0) {
+            coveredColumnNameTxn = COLUMN_NAME_TXN_NONE;
+            sealTxn = parseTxnSegment(fileName, hostDot + 1, fileLen);
         } else {
-            visitor.onCoverDataFile(includeIdx, columnNameTxn, sealTxn);
+            coveredColumnNameTxn = parseTxnSegment(fileName, hostDot + 1, secondDot);
+            sealTxn = parseTxnSegment(fileName, secondDot + 1, fileLen);
+        }
+        if (coveredColumnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
+            return;
+        }
+        visitor.onCoverDataFile(includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+    }
+
+    private static int nextDot(CharSequence s, int from, int end) {
+        for (int i = from; i < end; i++) {
+            if (s.charAt(i) == '.') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static long parseTxnSegment(CharSequence s, int from, int end) {
+        if (end <= from) {
+            return PARSE_FAIL;
+        }
+        try {
+            return Numbers.parseLong(s, from, end);
+        } catch (NumericException e) {
+            return PARSE_FAIL;
         }
     }
 
@@ -1431,9 +1460,9 @@ public final class PostingIndexUtils {
     public interface SealedFileVisitor {
 
         /**
-         * Called for each {@code .pc<includeIdx>.<coveredColumnNameTxn>.<sealTxn>} file.
+         * Called for each {@code .pc<includeIdx>.<postingColumnNameTxn>.<coveredColumnNameTxn>.<sealTxn>} file.
          */
-        void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn);
+        void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn);
 
         /**
          * Called for each {@code .pv.<postingColumnNameTxn>.<sealTxn>} file.

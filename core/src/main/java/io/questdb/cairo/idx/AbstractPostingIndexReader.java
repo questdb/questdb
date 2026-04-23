@@ -490,6 +490,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     sidecarBasePath.trimTo(pLen),
                     indexColumnName,
                     c,
+                    columnTxn,
                     sidecarCovTs.getQuick(c),
                     valueFileTxn
             );
