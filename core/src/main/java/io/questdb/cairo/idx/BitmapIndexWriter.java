@@ -282,10 +282,12 @@ public class BitmapIndexWriter implements IndexWriter {
         }
     }
 
+    @Override
     public final void of(Path path, CharSequence name, long columnNameTxn) {
         of(path, name, columnNameTxn, 0);
     }
 
+    @Override
     public final void of(Path path, CharSequence name, long columnNameTxn, int indexBlockCapacity) {
         close();
         final int plen = path.size();

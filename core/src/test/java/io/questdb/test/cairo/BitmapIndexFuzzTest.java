@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.PropertyKey;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjList;
@@ -33,7 +32,6 @@ import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzValidateSymbolFilterOperation;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class BitmapIndexFuzzTest extends AbstractFuzzTest {
@@ -55,20 +53,11 @@ public class BitmapIndexFuzzTest extends AbstractFuzzTest {
     private static final int MIN_TIME_DIFF_MINUTES = 1;
 
     private static final String TABLE_NAME = "trades";
-    private final Rnd rnd;
-
-    public BitmapIndexFuzzTest() {
-        this.rnd = TestUtils.generateRandom(LOG);
-    }
-
-    @Override
-    public void setUp() {
-        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
-        super.setUp();
-    }
 
     @Test
     public void testIndexAccess() throws Exception {
+        final Rnd rnd = generateRandom(LOG);
+
         final int testIterations = MIN_ITERATIONS + rnd.nextInt(MAX_ITERATIONS - MIN_ITERATIONS + 1);
         final int symbolCountMax = MIN_MAX_SYMBOL_ID + rnd.nextInt(MAX_MAX_SYMBOL_ID - MIN_MAX_SYMBOL_ID + 1);
         final int partitionCount = MIN_INITIAL_PARTITIONS + rnd.nextInt(MAX_INITIAL_PARTITIONS - MIN_INITIAL_PARTITIONS + 1);

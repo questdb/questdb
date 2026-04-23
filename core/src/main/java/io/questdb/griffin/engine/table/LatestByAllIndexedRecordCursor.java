@@ -222,7 +222,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             int frameIndex = 0;
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
-                final IndexReader indexReader = frame.getBitmapIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
+                final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
                 final long partitionLo = frame.getPartitionLo();
                 final long partitionHi = frame.getPartitionHi() - 1;
 

@@ -116,6 +116,16 @@ public interface IndexWriter extends Closeable, Mutable {
     boolean isOpen();
 
     /**
+     * Folds any tentative on-disk state produced by an fd-based O3 commit
+     * into this writer's view so the subsequent seal sees the full set of
+     * gens. Must be called after {@code of()} and before
+     * {@code seal()}/{@code rebuildSidecars()} on the seal path. No-op for
+     * index types that don't produce tentative state.
+     */
+    default void mergeTentativeIntoActiveIfAny() {
+    }
+
+    /**
      * Opens the index writer for the given column using file descriptors.
      * <p>
      * This method is only supported by BitmapIndexWriter. Other implementations
@@ -137,6 +147,10 @@ public interface IndexWriter extends Closeable, Mutable {
      * @param columnNameTxn column transaction number
      */
     void of(Path path, CharSequence name, long columnNameTxn);
+
+    default void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn) {
+        of(path, name, columnNameTxn);
+    }
 
     /**
      * Opens the index writer for the given column using file paths, optionally creating a new index.
@@ -170,8 +184,6 @@ public interface IndexWriter extends Closeable, Mutable {
     default void publishPendingPurges(
             MessageBus messageBus,
             TableToken tableToken,
-            long partitionTimestamp,
-            long partitionNameTxn,
             int partitionBy,
             int timestampType,
             long currentTableTxn
@@ -212,12 +224,6 @@ public interface IndexWriter extends Closeable, Mutable {
 
     void setMaxValue(long maxValue);
 
-    /**
-     * Announces the publish-table-txn for the next seal that may trigger
-     * during this commit cycle. POSTING uses it to bound the scoreboard
-     * window when scheduling a purge of the previous sealed files. Default
-     * no-op for index types without seal-versioned files (BITMAP).
-     */
     default void setPendingPublishTableTxn(long publishTableTxn) {
     }
 

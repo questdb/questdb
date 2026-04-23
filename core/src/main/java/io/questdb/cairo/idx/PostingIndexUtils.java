@@ -197,6 +197,7 @@ public final class PostingIndexUtils {
     // Double-buffered 4KB metadata pages (v2 format)
     public static final int PAGE_SIZE = 4096;
     public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 1144
+    public static final long SEAL_TXN_TENTATIVE = -1L;
     public static final byte SIGNATURE = (byte) 0xfb;
     public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;
     public static final int SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE = Integer.BYTES;

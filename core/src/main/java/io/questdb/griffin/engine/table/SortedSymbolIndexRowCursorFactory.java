@@ -181,7 +181,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
             while (index < symbolKeyLimit) {
                 Misc.free(current);
                 current = pageFrame
-                        .getBitmapIndexReader(columnIndex, indexDirection)
+                        .getIndexReader(columnIndex, indexDirection)
                         .getCursor(
                                 symbolKeys.getQuick(index++),
                                 pageFrame.getPartitionLo(),

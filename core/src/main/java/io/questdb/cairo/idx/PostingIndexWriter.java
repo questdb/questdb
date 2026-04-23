@@ -120,6 +120,10 @@ public class PostingIndexWriter implements IndexWriter {
     private long[] coveredColReadAddrs;
     private long[] coveredColReadSizes;
     private long currentPublishTableTxn = -1;
+    // When true, writeMetadataPage tags the inactive page with
+    // SEAL_TXN_TENTATIVE so fd-based O3 per-column commits stay invisible
+    // until the surrounding TableWriter transaction reaches seal.
+    private boolean deferMetadataPublish;
     private long flushHeaderBuf;
     private int flushHeaderBufCapacity;
     private long fsstBatchScratchAddr;
@@ -140,6 +144,8 @@ public class PostingIndexWriter implements IndexWriter {
     private int orphanScanPreLiveCount;
     private long packedResidualsAddr;
     private int packedResidualsCapacity;
+    private long partitionNameTxn = -1;
+    private long partitionTimestamp = Long.MIN_VALUE;
     private long pendingCountsAddr;
     // Publish-txn the next in-process seal should record. -1 means no
     // commit-supplied value (e.g., close-time seal); seal then uses a
@@ -157,6 +163,7 @@ public class PostingIndexWriter implements IndexWriter {
     private long spillKeyAddrsAddr;
     private long spillKeyCapacitiesAddr;
     private long spillKeyCountsAddr;
+    private long tentativeSlotOffset = -1L;
     private int timestampColumnIndex = -1;
     private long unpackBatchAddr;
     private int unpackBatchCapacity;
@@ -286,6 +293,8 @@ public class PostingIndexWriter implements IndexWriter {
                 pendingPublishTableTxn = -1;
                 currentPublishTableTxn = -1;
                 prevPublishTableTxn = -1;
+                deferMetadataPublish = false;
+                tentativeSlotOffset = -1L;
                 partitionPath.clear();
                 indexName.clear();
             }
@@ -316,6 +325,8 @@ public class PostingIndexWriter implements IndexWriter {
                     hasPendingData = false;
                     activeKeyCount = 0;
                     coverCount = 0;
+                    deferMetadataPublish = false;
+                    tentativeSlotOffset = -1L;
                 }
             }
         }
@@ -528,8 +539,53 @@ public class PostingIndexWriter implements IndexWriter {
         return keyMem.isOpen();
     }
 
+    /**
+     * Folds any tentative state left on the inactive metadata page by an
+     * fd-based O3 writer into this writer's in-memory view. Must be called
+     * after {@code of()} on the seal path and before {@code seal()} or
+     * {@code rebuildSidecars()}. No-op if the partition wasn't touched by
+     * the current O3. Leaves {@code sealTxn} at the committed value so seal
+     * derives the new sealTxn correctly.
+     */
+    public void mergeTentativeIntoActiveIfAny() {
+        if (!keyMem.isOpen()) {
+            return;
+        }
+        long inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
+                ? PostingIndexUtils.PAGE_B_OFFSET
+                : PostingIndexUtils.PAGE_A_OFFSET;
+        if (inactivePageOffset == PostingIndexUtils.PAGE_B_OFFSET
+                && keyMem.size() < PostingIndexUtils.KEY_FILE_RESERVED) {
+            return;
+        }
+        long inactiveSeqStart = keyMem.getLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        long inactiveSeqEnd = keyMem.getLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+        long inactiveSealTxn = keyMem.getLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
+        long activeSeq = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        if (inactiveSealTxn != PostingIndexUtils.SEAL_TXN_TENTATIVE
+                || inactiveSeqStart != inactiveSeqEnd
+                || inactiveSeqStart <= activeSeq) {
+            return;
+        }
+        activePageOffset = inactivePageOffset;
+        keyCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
+        genCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+        valueMemSize = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+        if (valueMem.isOpen() && valueMemSize > 0) {
+            valueMem.extend(valueMemSize);
+            valueMem.jumpTo(valueMemSize);
+        }
+    }
+
     @Override
     public void of(Path path, CharSequence name, long columnNameTxn) {
+        of(path, name, columnNameTxn, false);
+    }
+
+    @Override
+    public void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn) {
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionNameTxn = partitionNameTxn;
         of(path, name, columnNameTxn, false);
     }
 
@@ -542,6 +598,7 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
         close();
+        this.deferMetadataPublish = true;
         final FilesFacade ff = configuration.getFilesFacade();
         boolean kFdUnassigned = true;
         boolean vFdUnassigned = true;
@@ -634,6 +691,7 @@ public class PostingIndexWriter implements IndexWriter {
         // TableWriter path this is guaranteed by commit() in switchPartition
         // and syncColumns.
         close();
+        this.deferMetadataPublish = false;
         partitionPath.clear();
         partitionPath.put(path);
         indexName.clear();
@@ -737,8 +795,6 @@ public class PostingIndexWriter implements IndexWriter {
     public void publishPendingPurges(
             MessageBus messageBus,
             TableToken tableToken,
-            long partitionTimestamp,
-            long partitionNameTxn,
             int partitionBy,
             int timestampType,
             long currentTableTxn
@@ -751,6 +807,10 @@ public class PostingIndexWriter implements IndexWriter {
         int writePos = 0;
         for (int readPos = 0, n = pendingPurges.size(); readPos < n; readPos++) {
             PendingSealPurge entry = pendingPurges.getQuick(readPos);
+            if (entry.partitionTimestamp == Long.MIN_VALUE) {
+                pendingPurges.setQuick(writePos++, entry);
+                continue;
+            }
             long cursor = pubSeq.next();
             if (cursor < 0) {
                 // Queue full or contended — keep entry for retry on next commit.
@@ -765,8 +825,8 @@ public class PostingIndexWriter implements IndexWriter {
                         indexName,
                         entry.postingColumnNameTxn,
                         entry.sealTxn,
-                        partitionTimestamp,
-                        partitionNameTxn,
+                        entry.partitionTimestamp,
+                        entry.partitionNameTxn,
                         partitionBy,
                         timestampType,
                         entry.fromTableTxn,
@@ -775,7 +835,7 @@ public class PostingIndexWriter implements IndexWriter {
             } finally {
                 pubSeq.done(cursor);
             }
-            entry.of(0L, 0L, 0L, 0L);
+            entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
             pendingPurgePool.add(entry);
         }
         for (int i = pendingPurges.size() - 1; i >= writePos; i--) {
@@ -1408,13 +1468,17 @@ public class PostingIndexWriter implements IndexWriter {
                 ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
         long seqEndA = memSize >= PostingIndexUtils.PAGE_SIZE
                 ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END) : 0;
+        long sealTxnA = memSize >= PostingIndexUtils.PAGE_SIZE
+                ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN) : 0;
         long seqB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED
                 ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
         long seqEndB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED
                 ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END) : 0;
+        long sealTxnB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED
+                ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN) : 0;
 
-        long validA = (seqA == seqEndA) ? seqA : 0;
-        long validB = (seqB == seqEndB) ? seqB : 0;
+        long validA = (seqA == seqEndA && sealTxnA >= 0) ? seqA : 0;
+        long validB = (seqB == seqEndB && sealTxnB >= 0) ? seqB : 0;
         activePageOffset = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
     }
 
@@ -2378,7 +2442,7 @@ public class PostingIndexWriter implements IndexWriter {
         PendingSealPurge entry = pendingPurgePool.size() > 0
                 ? pendingPurgePool.popLast()
                 : new PendingSealPurge();
-        entry.of(postingColumnNameTxn, supersededSealTxn, fromTxn, toTxn);
+        entry.of(postingColumnNameTxn, supersededSealTxn, fromTxn, toTxn, partitionTimestamp, partitionNameTxn);
         pendingPurges.add(entry);
     }
 
@@ -2974,15 +3038,6 @@ public class PostingIndexWriter implements IndexWriter {
                     useFlat = flatSize < deltaSize;
                 }
 
-                LOG.debug().$("reencode stride [s=").$(s)
-                        .$(", deltaSize=").$(deltaSize)
-                        .$(", flatSize=").$(flatSize)
-                        .$(", natBW=").$(0)
-                        .$(", alnBW=").$(localBitWidth)
-                        .$(", totalVals=").$(totalStrideValuesL)
-                        .$(", useFlat=").$(useFlat)
-                        .$(']').$();
-
                 long strideOff = sealTarget.getAppendOffset() - sealOffset - siSize;
                 Unsafe.getUnsafe().putLong(strideIndexBuf + (long) s * Long.BYTES, strideOff);
 
@@ -3034,7 +3089,7 @@ public class PostingIndexWriter implements IndexWriter {
     private void releasePendingPurges() {
         for (int i = pendingPurges.size() - 1; i >= 0; i--) {
             PendingSealPurge entry = pendingPurges.getQuick(i);
-            entry.of(0L, 0L, 0L, 0L);
+            entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
             pendingPurgePool.add(entry);
         }
         pendingPurges.clear();
@@ -3060,7 +3115,7 @@ public class PostingIndexWriter implements IndexWriter {
         // Conservative scoreboard window: from column-instance creation to
         // forever. Operator runs this when the table has no readers in the
         // lifetime range. Best we can do without persisted publish-txn info.
-        entry.of(postingColumnNameTxn, sealTxn, postingColumnNameTxn, Long.MAX_VALUE);
+        entry.of(postingColumnNameTxn, sealTxn, postingColumnNameTxn, Long.MAX_VALUE, partitionTimestamp, partitionNameTxn);
         pendingPurges.add(entry);
         return true;
     }
@@ -3593,27 +3648,40 @@ public class PostingIndexWriter implements IndexWriter {
                                    int overrideGenIndex, long overrideFileOffset,
                                    long overrideSize, int overrideKeyCount,
                                    int overrideMinKey, int overrideMaxKey) {
-        // Compute inactive page offset
-        long inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
-                ? PostingIndexUtils.PAGE_B_OFFSET
-                : PostingIndexUtils.PAGE_A_OFFSET;
+        // Pick the slot to write. Tentative mode pins the slot for the whole
+        // fd-based session so repeated flushes don't clobber the committed
+        // page; non-tentative mode flips A/B as usual.
+        long inactivePageOffset;
+        if (deferMetadataPublish) {
+            if (tentativeSlotOffset == -1L) {
+                tentativeSlotOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
+                        ? PostingIndexUtils.PAGE_B_OFFSET
+                        : PostingIndexUtils.PAGE_A_OFFSET;
+            }
+            inactivePageOffset = tentativeSlotOffset;
+        } else {
+            inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
+                    ? PostingIndexUtils.PAGE_B_OFFSET
+                    : PostingIndexUtils.PAGE_A_OFFSET;
+        }
 
-        // Compute new sequence = current active seq + 1
         long currentSeq = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
         long newSeq = currentSeq + 1;
 
-        // Write sequence_start first
+        // Seqlock: write sequence_start first, then fields, then sequence_end.
         keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, newSeq);
         Unsafe.getUnsafe().storeFence();
 
-        // Write header fields
         keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE, valueMemSize);
         keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_BLOCK_CAPACITY, blockCapacity);
         keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT, keyCount);
         keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, maxValue);
         keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT, genCount);
         keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION, FORMAT_VERSION);
-        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN, sealTxn);
+        keyMem.putLong(
+                inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN,
+                deferMetadataPublish ? PostingIndexUtils.SEAL_TXN_TENTATIVE : sealTxn
+        );
 
         // Bulk copy gen dir entries that already exist on the active page, then
         // overwrite or append the new entry. The active page has (genCount - 1) valid
@@ -3635,11 +3703,9 @@ public class PostingIndexWriter implements IndexWriter {
             keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
         }
 
-        // Write sequence_end last
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, newSeq);
 
-        // Switch active page
         activePageOffset = inactivePageOffset;
     }
 
@@ -4341,15 +4407,26 @@ public class PostingIndexWriter implements IndexWriter {
      */
     static final class PendingSealPurge {
         long fromTableTxn;
+        long partitionNameTxn;
+        long partitionTimestamp;
         long postingColumnNameTxn;
         long sealTxn;
         long toTableTxn;
 
-        void of(long postingColumnNameTxn, long sealTxn, long fromTableTxn, long toTableTxn) {
+        void of(
+                long postingColumnNameTxn,
+                long sealTxn,
+                long fromTableTxn,
+                long toTableTxn,
+                long partitionTimestamp,
+                long partitionNameTxn
+        ) {
             this.postingColumnNameTxn = postingColumnNameTxn;
             this.sealTxn = sealTxn;
             this.fromTableTxn = fromTableTxn;
             this.toTableTxn = toTableTxn;
+            this.partitionTimestamp = partitionTimestamp;
+            this.partitionNameTxn = partitionNameTxn;
         }
     }
 

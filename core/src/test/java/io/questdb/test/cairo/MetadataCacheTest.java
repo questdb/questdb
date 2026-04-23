@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCache;
@@ -34,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.CharSequenceObjSortedHashMap;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -363,6 +365,13 @@ public class MetadataCacheTest extends AbstractCairoTest {
         });
     }
 
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "POSTING" : "POSTING");
+        super.setUp();
+    }
+
     @Test
     public void testAlterTableAddColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -436,8 +445,6 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Test
     public void testAlterTableColumnCacheNocache() throws Exception {
         assertMemoryLeak(() -> {
-
-
             execute("CREATE TABLE y ( ts TIMESTAMP, x SYMBOL ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
@@ -474,7 +481,9 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Test
     public void testAlterTableColumnDropIndex() throws Exception {
         assertMemoryLeak(() -> {
-
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            String indexType = rnd.nextBoolean() ? "BITMAP" : "POSTING";
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, indexType);
 
             execute("CREATE TABLE y (ts TIMESTAMP, foo SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
@@ -483,8 +492,8 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
                     \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, indexType=NONE, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
-                    \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, indexType=BITMAP, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
-                    """);
+                    \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, indexType=###INDEXTYPE, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
+                    """.replace("###INDEXTYPE", indexType));
 
             execute("ALTER TABLE y ALTER COLUMN foo DROP INDEX");
             drainWalQueue();
@@ -902,6 +911,42 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSnapshotSortedAlwaysAsNumberOfTablesGrow() throws Exception {
+        assertMemoryLeak(() -> {
+            CharSequenceObjSortedHashMap<CairoTable> sortedMap = new CharSequenceObjSortedHashMap<>();
+
+            for (int cu = 'Z'; cu > 'A' - 1; cu--) {
+                execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+            }
+
+            long version = assertTableNamesOrderedWith(sortedMap, "[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z]", -1);
+
+            for (int cu = 'Z'; cu > 'A' - 1; cu = cu - 2) {
+                execute("drop table " + new String(new char[]{(char) cu}));
+            }
+
+            for (int cu = 'z'; cu > 'a' - 1; cu = cu - 2) {
+                for (int cd = 0; cd < 2; cd++) {
+                    execute("CREATE TABLE " + new String(new char[]{(char) cu, (char) (cd + 48)}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+                }
+            }
+
+            assertTableNamesOrderedWith(sortedMap, "[A,C,E,G,I,K,M,O,Q,S,U,W,Y,b0,b1,d0,d1,f0,f1,h0,h1,j0,j1,l0,l1,n0,n1,p0,p1,r0,r1,t0,t1,v0,v1,x0,x1,z0,z1]", version);
+        });
+    }
+
+    @Test
+    public void testSnapshotSortedWithInitialListOfTables() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int cu = 'Z'; cu > 'A' - 1; cu--) {
+                execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+            }
+
+            assertTableNamesOrderedWith(new CharSequenceObjSortedHashMap<>(), "[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z]", -1);
+        });
+    }
+
+    @Test
     public void testTruncateTable() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -928,55 +973,6 @@ public class MetadataCacheTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testSnapshotSortedWithInitialListOfTables() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int cu = 'Z'; cu > 'A' - 1; cu--) {
-                execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
-            }
-
-            assertTableNamesOrderedWith(new CharSequenceObjSortedHashMap<>(), "[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z]", -1);
-        });
-    }
-
-    @Test
-    public void testSnapshotSortedAlwaysAsNumberOfTablesGrow() throws Exception {
-        assertMemoryLeak(() -> {
-            CharSequenceObjSortedHashMap<CairoTable> sortedMap = new CharSequenceObjSortedHashMap<>();
-
-            for (int cu = 'Z'; cu > 'A' - 1; cu--) {
-                execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
-            }
-
-            long version = assertTableNamesOrderedWith(sortedMap, "[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z]", -1);
-
-            for (int cu = 'Z'; cu > 'A' - 1; cu = cu - 2) {
-                execute("drop table " + new String(new char[]{(char) cu}));
-            }
-
-            for (int cu = 'z'; cu > 'a' - 1; cu = cu - 2) {
-                for (int cd = 0; cd < 2; cd++) {
-                    execute("CREATE TABLE " + new String(new char[]{(char) cu, (char) (cd + 48)}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
-                }
-            }
-
-            assertTableNamesOrderedWith(sortedMap, "[A,C,E,G,I,K,M,O,Q,S,U,W,Y,b0,b1,d0,d1,f0,f1,h0,h1,j0,j1,l0,l1,n0,n1,p0,p1,r0,r1,t0,t1,v0,v1,x0,x1,z0,z1]", version);
-        });
-    }
-
-    private static long assertTableNamesOrderedWith(CharSequenceObjSortedHashMap<CairoTable> sortedMap, String expected, long version) {
-        try (MetadataCacheReader metadataCacheReader = engine.getMetadataCache().readLock()) {
-            version = metadataCacheReader.snapshot(sortedMap, version);
-
-            sink.clear();
-            sortedMap.keys().toSink(sink);
-
-            TestUtils.assertEquals(expected, sink);
-
-            return version;
-        }
-    }
-
     private static void assertCairoMetadata(String expected) {
         try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
             sink.clear();
@@ -990,6 +986,19 @@ public class MetadataCacheTest extends AbstractCairoTest {
             sink.clear();
             ro.toSink(sink);
             TestUtils.assertEquals(expected, sink);
+        }
+    }
+
+    private static long assertTableNamesOrderedWith(CharSequenceObjSortedHashMap<CairoTable> sortedMap, String expected, long version) {
+        try (MetadataCacheReader metadataCacheReader = engine.getMetadataCache().readLock()) {
+            version = metadataCacheReader.snapshot(sortedMap, version);
+
+            sink.clear();
+            sortedMap.keys().toSink(sink);
+
+            TestUtils.assertEquals(expected, sink);
+
+            return version;
         }
     }
 

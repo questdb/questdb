@@ -520,7 +520,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         frameHi = frame.getPartitionHi();
 
                         // Re-fetch index cursor to correctly position it to frameNextRowId
-                        IndexReader symbolIndexReader = frame.getBitmapIndexReader(groupBySymbolColIndex, IndexReader.DIR_FORWARD);
+                        IndexReader symbolIndexReader = frame.getIndexReader(groupBySymbolColIndex, IndexReader.DIR_FORWARD);
                         indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, frameLo, frameHi);
 
                         // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;

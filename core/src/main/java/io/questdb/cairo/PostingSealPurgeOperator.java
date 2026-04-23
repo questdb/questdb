@@ -174,6 +174,8 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                     .$(", column=").$(scanColumnName)
                     .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
                     .$(", sealTxn=").$(task.getSealTxn())
+                    .$(", partitionTs=").$ts(task.getPartitionTimestamp())
+                    .$(", partitionNameTxn=").$(task.getPartitionNameTxn())
                     .I$();
         }
         scanColumnName = null;

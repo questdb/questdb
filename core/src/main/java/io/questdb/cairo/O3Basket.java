@@ -34,11 +34,11 @@ import io.questdb.std.ObjList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3Basket implements Mutable {
-    private final ObjList<IndexWriter> indexers = new ObjList<>();
     private final ByteList indexerTypes = new ByteList();
+    private final ObjList<IndexWriter> indexers = new ObjList<>();
     private final ObjList<AtomicInteger> partCounters = new ObjList<>();
-    private CairoConfiguration configuration;
     private int columnCount;
+    private CairoConfiguration configuration;
     private int indexCount;
     private int indexerPointer;
     private int partCounterPointer;
@@ -59,8 +59,8 @@ public class O3Basket implements Mutable {
 
     /**
      * Returns the next index writer, ensuring it matches the requested index type.
-     * If the existing writer at the current position has a different type, it will
-     * be recreated with the correct type.
+     * Writers are created lazily on first use; existing slots with a different
+     * type are freed and recreated to match.
      *
      * @param indexType the type of index writer required (from IndexType constants)
      * @return an IndexWriter of the requested type
@@ -70,9 +70,10 @@ public class O3Basket implements Mutable {
         byte currentType = indexerTypes.getQuick(pos);
         IndexWriter writer = indexers.getQuick(pos);
 
-        // If type doesn't match, recreate the writer with the correct type
-        if (currentType != indexType) {
-            Misc.free(writer);
+        if (writer == null || currentType != indexType) {
+            if (writer != null) {
+                Misc.free(writer);
+            }
             writer = IndexFactory.createWriter(indexType, configuration);
             indexers.setQuick(pos, writer);
             indexerTypes.setQuick(pos, indexType);
@@ -99,9 +100,8 @@ public class O3Basket implements Mutable {
 
         if (this.indexCount < indexCount) {
             for (int i = this.indexCount; i < indexCount; i++) {
-                // Initially create with default BITMAP type; nextIndexer() will recreate if needed
-                indexers.add(IndexFactory.createWriter(IndexType.BITMAP, configuration));
-                indexerTypes.add(IndexType.BITMAP);
+                indexers.add(null);
+                indexerTypes.add(IndexType.NONE);
             }
         } else {
             for (int i = indexCount; i < this.indexCount; i++) {

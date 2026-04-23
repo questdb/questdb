@@ -428,6 +428,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
                 if (seqStart == seqEnd && seqStart > 0
                         && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
+                    if (sealTxn < 0) {
+                        continue;
+                    }
                     if (pinnedSealTxn >= 0 && sealTxn != pinnedSealTxn) {
                         anyPinMismatch = true;
                         continue;

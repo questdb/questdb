@@ -500,11 +500,6 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public IndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return reader.getIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
-        }
-
-        @Override
         public int getColumnCount() {
             return columnCount;
         }
@@ -512,6 +507,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public byte getFormat() {
             return format;
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            return reader.getIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }
 
         @Override

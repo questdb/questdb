@@ -116,11 +116,13 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             CharSequence name,
             long columnNameTxn,
             MemoryMA columnMem,
-            long columnTop
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn
     ) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(path, name, columnNameTxn);
+            this.writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
             this.ff = columnMem.getFilesFacade();
             // we don't own the fd, it comes from column mem
             this.fd = columnMem.getFd();
@@ -131,10 +133,17 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public void configureWriter(Path path, CharSequence name, long columnNameTxn, long columnTop) {
+    public void configureWriter(
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
         this.columnTop = columnTop;
         try {
-            writer.of(path, name, columnNameTxn);
+            writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
         } catch (Throwable e) {
             this.close();
             throw e;
@@ -204,16 +213,19 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void mergeTentativeIntoActiveIfAny() {
+        writer.mergeTentativeIntoActiveIfAny();
+    }
+
+    @Override
     public void publishPendingPurges(
             MessageBus messageBus,
             TableToken tableToken,
-            long partitionTimestamp,
-            long partitionNameTxn,
             int partitionBy,
             int timestampType,
             long currentTableTxn
     ) {
-        writer.publishPendingPurges(messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy, timestampType, currentTableTxn);
+        writer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
     }
 
     @Override

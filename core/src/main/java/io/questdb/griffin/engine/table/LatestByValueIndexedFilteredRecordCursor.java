@@ -111,7 +111,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            final IndexReader indexReader = frame.getBitmapIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
+            final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
 

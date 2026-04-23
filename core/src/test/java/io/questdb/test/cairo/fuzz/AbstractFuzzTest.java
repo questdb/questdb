@@ -43,6 +43,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -54,6 +55,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
     protected final FuzzRunner fuzzer = new FuzzRunner();
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
+    private final Rnd setUpRnd = TestUtils.generateRandom(LOG);
 
     public static int getRndO3PartitionSplit(Rnd rnd) {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);
@@ -93,6 +95,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, setUpRnd.nextBoolean() ? "BITMAP" : "POSTING");
         super.setUp();
         fuzzer.withDb(engine, sqlExecutionContext);
         fuzzer.clearSeeds();

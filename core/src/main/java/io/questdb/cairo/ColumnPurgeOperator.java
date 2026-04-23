@@ -152,13 +152,32 @@ public class ColumnPurgeOperator implements Closeable {
         return false;
     }
 
+    private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
+        long updateTxn = task.getUpdateTxn();
+        try {
+            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
+        } catch (CairoException ex) {
+            // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
+            LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
+                    .$(task.getTableToken())
+                    .$(", txn=").$(updateTxn)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            return true;
+        }
+    }
+
+    private void closePurgeLogCompleteFile() {
+        if (ff.close(purgeLogPartitionFd)) {
+            LOG.info().$("closed purge log complete file [fd=").$(purgeLogPartitionFd).I$();
+            purgeLogPartitionFd = -1;
+        }
+    }
+
     private boolean couldNotRemoveIndexFiles(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
         if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
             if (IndexType.isPosting(indexType)) {
-                // Enumerate every sealed .pv / .pc<N> for this column
-                // instance across all on-disk sealTxn generations, before
-                // .pk is removed. removeAllSealedFiles tolerates missing
-                // files, so a partially-removed prior attempt is recoverable.
                 PostingIndexUtils.removeAllSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
                 path.trimTo(pathTrimToPartition);
                 if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
@@ -175,7 +194,6 @@ public class ColumnPurgeOperator implements Closeable {
                 }
             }
         }
-        // Always try legacy .k/.v (may remain after DROP INDEX or index type change)
         path.trimTo(pathTrimToPartition);
         if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
             return true;
@@ -213,29 +231,6 @@ public class ColumnPurgeOperator implements Closeable {
         }
         path.trimTo(pathTrimToPartition);
         return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
-    }
-
-    private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
-        long updateTxn = task.getUpdateTxn();
-        try {
-            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
-        } catch (CairoException ex) {
-            // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
-            LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
-                    .$(task.getTableToken())
-                    .$(", txn=").$(updateTxn)
-                    .$(", msg=").$safe(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno())
-                    .I$();
-            return true;
-        }
-    }
-
-    private void closePurgeLogCompleteFile() {
-        if (ff.close(purgeLogPartitionFd)) {
-            LOG.info().$("closed purge log complete file [fd=").$(purgeLogPartitionFd).I$();
-            purgeLogPartitionFd = -1;
-        }
     }
 
     private boolean openScoreboardAndTxn(ColumnPurgeTask task) {

@@ -51,7 +51,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             try (RowCursor indexReaderCursor = pageFrame
-                    .getBitmapIndexReader(columnIndex, IndexReader.DIR_BACKWARD)
+                    .getIndexReader(columnIndex, IndexReader.DIR_BACKWARD)
                     .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1)) {
                 if (indexReaderCursor.hasNext()) {
                     cursor.of(indexReaderCursor.next());

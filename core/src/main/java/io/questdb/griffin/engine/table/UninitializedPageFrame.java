@@ -55,11 +55,6 @@ class UninitializedPageFrame implements PageFrame {
     }
 
     @Override
-    public IndexReader getBitmapIndexReader(int columnIndex, int direction) {
-        return null;
-    }
-
-    @Override
     public int getColumnCount() {
         return 0;
     }
@@ -67,6 +62,11 @@ class UninitializedPageFrame implements PageFrame {
     @Override
     public byte getFormat() {
         return format;
+    }
+
+    @Override
+    public IndexReader getIndexReader(int columnIndex, int direction) {
+        return null;
     }
 
     @Override

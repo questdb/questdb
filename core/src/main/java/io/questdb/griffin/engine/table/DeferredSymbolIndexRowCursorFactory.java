@@ -61,7 +61,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
         }
 
         return pageFrame
-                .getBitmapIndexReader(columnIndex, indexDirection)
+                .getIndexReader(columnIndex, indexDirection)
                 .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
     }
 

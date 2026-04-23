@@ -59,6 +59,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1454,6 +1455,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testWalMultipleColumnConversions() throws Exception {
         assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
             execute("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("insert into abc values('aa', 'a', 'b', 'bb', '2022-02-24T01')");
             drainWalQueue();

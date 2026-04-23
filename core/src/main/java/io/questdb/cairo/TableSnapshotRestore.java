@@ -580,7 +580,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             TableUtils.dFile(path.trimTo(partitionPathLen), columnName, columnNameTxn);
             long columnDataFd = TableUtils.openRO(ff, path.$(), LOG);
             try {
-                indexer.configureWriter(path.trimTo(partitionPathLen), columnName, columnNameTxn, columnTop);
+                indexer.configureWriter(path.trimTo(partitionPathLen), columnName, columnNameTxn, columnTop, partitionTimestamp, partitionNameTxn);
                 indexer.index(ff, columnDataFd, columnTop, partitionRowCount);
             } catch (CairoException e) {
                 LOG.error().$("could not rebuild bitmap index [path=").$(path.trimTo(partitionPathLen))

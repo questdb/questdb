@@ -241,11 +241,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public IndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return null;
-        }
-
-        @Override
         public int getColumnCount() {
             return columnMapping.getColumnCount();
         }
@@ -253,6 +248,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         @Override
         public byte getFormat() {
             return PartitionFormat.PARQUET;
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            return null;
         }
 
         @Override

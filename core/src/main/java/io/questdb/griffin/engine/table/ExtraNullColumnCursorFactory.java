@@ -326,11 +326,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public IndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return columnIndex < columnSplit ? baseFrame.getBitmapIndexReader(columnIndex, direction) : null;
-        }
-
-        @Override
         public int getColumnCount() {
             return columnCount;
         }
@@ -338,6 +333,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public byte getFormat() {
             return baseFrame.getFormat();
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            return columnIndex < columnSplit ? baseFrame.getIndexReader(columnIndex, direction) : null;
         }
 
         @Override

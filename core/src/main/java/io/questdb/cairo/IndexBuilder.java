@@ -170,7 +170,7 @@ public class IndexBuilder extends RebuildColumnBase {
 
                         long columnDataFd = TableUtils.openRO(ff, TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
                         try {
-                            indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                            indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, partitionTimestamp, partitionNameTxn);
                             indexer.index(ff, columnDataFd, columnTop, partitionSize);
                             indexer.seal();
                         } finally {

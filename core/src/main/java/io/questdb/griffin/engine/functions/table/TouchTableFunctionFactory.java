@@ -175,7 +175,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                         dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
 
                         if (metadata.isColumnIndexed(columnIndex)) {
-                            final IndexReader indexReader = frame.getBitmapIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
+                            final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
 
                             final long keyBaseAddress = indexReader.getKeyBaseAddress();
                             final long keyMemorySize = indexReader.getKeyMemorySize();

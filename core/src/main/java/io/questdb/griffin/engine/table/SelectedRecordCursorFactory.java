@@ -381,11 +381,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public IndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return baseFrame.getBitmapIndexReader(columnCrossIndex.getQuick(columnIndex), direction);
-        }
-
-        @Override
         public int getColumnCount() {
             return columnCrossIndex.size();
         }
@@ -393,6 +388,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public byte getFormat() {
             return baseFrame.getFormat();
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            return baseFrame.getIndexReader(columnCrossIndex.getQuick(columnIndex), direction);
         }
 
         @Override

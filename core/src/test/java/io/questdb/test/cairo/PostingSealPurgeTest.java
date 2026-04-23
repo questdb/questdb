@@ -184,7 +184,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     reopen.publishPendingPurges(
                             engine.getMessageBus(),
                             engine.getTableTokenIfExists("__not_a_real_table__"),
-                            0L, 0L, 0, ColumnType.TIMESTAMP_MICRO, 0L
+                            0, ColumnType.TIMESTAMP_MICRO, 0L
                     );
                     // The above publish is a no-op because we deliberately pass
                     // a null/missing TableToken — we only want to verify the

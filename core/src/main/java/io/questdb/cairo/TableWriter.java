@@ -1293,7 +1293,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         && IndexType.isPosting(metadata.getColumnIndexType(columnIndex));
                 if (!skipForPosting && transientRowCount > 0 && lastPartitionIndex >= 0 && !txWriter.isPartitionParquet(lastPartitionIndex)) {
                     long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-                    setStateForTimestamp(path, partitionTimestamp);
+                    long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
                     int plen = path.size();
                     // column name txn for partition columns would not change
                     // we updated only symbol table version
@@ -1306,7 +1306,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ColumnIndexer indexer = indexers.get(columnIndex);
                         final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
                         assert indexer != null;
-                        indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
+                        indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, partitionNameTxn);
                         configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
                     }
                 }
@@ -6174,10 +6174,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true);
 
         final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
+        final long lastPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(lastPartitionTs);
         final long columnTop = columnVersionWriter.getColumnTopQuick(lastPartitionTs, columnIndex);
 
         // set indexer up to continue functioning as normal
-        indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
+        indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, lastPartitionTs, lastPartitionNameTxn);
         configureCoveringIfNeeded(indexer, columnIndex, lastPartitionTs);
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
 
@@ -6219,7 +6220,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (columnTop > -1 && partitionSize > columnTop) {
             long columnDataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
             try {
-                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
                 configureCoveringIfNeeded(indexer, columnIndex, timestamp);
                 indexer.index(ff, columnDataFd, columnTop, partitionSize);
                 indexer.seal();
@@ -6266,7 +6267,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
             if (columnTop > -1 && partitionSize > columnTop) {
-                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
 
                 parquetColumnIdsAndTypes.clear();
                 parquetColumnIdsAndTypes.add(parquetColumnIndex);
@@ -7484,7 +7485,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (indexed) {
                 ColumnIndexer indexer = indexers.getQuick(columnIndex);
                 assert indexer != null;
-                indexer.configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount());
+                indexer.configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount(), partitionTimestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp));
                 configureCoveringIfNeeded(indexer, columnIndex, txWriter.getLastPartitionTimestamp());
             }
 
@@ -7535,7 +7536,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (indexer != null) {
                         final long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
-                        indexer.configureFollowerAndWriter(path, name, columnNameTxn, getPrimaryColumn(i), columnTop);
+                        indexer.configureFollowerAndWriter(path, name, columnNameTxn, getPrimaryColumn(i), columnTop, lastOpenPartitionTs, lastOpenPartitionTxnName);
                         configureCoveringIfNeeded(indexer, i, lastOpenPartitionTs);
                     }
                 }
@@ -10574,6 +10575,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // affected partition's posting index, seal it (converting sparse gens to
         // dense, creating a versioned .pv.{txn}), and for covering indexes also
         // rebuild sidecar files.
+        boolean anyPartitionProcessed = false;
         if (o3PartitionUpdateSink == null) {
             return;
         }
@@ -10597,7 +10599,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
 
-            setStateForTimestamp(path, partitionTimestamp);
+            long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
             int plen = path.size();
             // For new partitions created during O3, the partition directory may
             // have a txn suffix that setStateForTimestamp doesn't resolve (the
@@ -10606,7 +10608,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // the current txn suffix.
             if (!ff.exists(path.slash().$()) && PartitionBy.isPartitioned(partitionBy)) {
                 path.trimTo(pathSize);
-                setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, txWriter.getTxn());
+                partitionNameTxn = txWriter.getTxn();
+                setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
                 plen = path.size();
             }
             try {
@@ -10623,6 +10626,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (indexer == null) {
                         continue;
                     }
+                    anyPartitionProcessed = true;
 
                     IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
                     boolean hasCovering = coveringCols != null && coveringCols.size() > 0;
@@ -10677,11 +10681,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (mapped) {
                                 indexer.configureFollowerAndWriter(
                                         path.trimTo(plen), colName, colNameTxn,
-                                        getPrimaryColumn(colIdx), columnTop
+                                        getPrimaryColumn(colIdx), columnTop,
+                                        partitionTimestamp, partitionNameTxn
                                 );
+                                // Fold the fd-based O3 tentative state into
+                                // the writer view before the reseal.
+                                indexer.mergeTentativeIntoActiveIfAny();
                                 indexer.configureCovering(o3SealAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount);
                                 indexer.setCoveredColumnNameTxns(o3SealNameTxns);
                                 indexer.rebuildSidecars();
+                                indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                             }
                         } finally {
                             for (int c = 0; c < coverCount; c++) {
@@ -10699,10 +10708,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     } else {
                         indexer.configureFollowerAndWriter(
                                 path.trimTo(plen), colName, colNameTxn,
-                                getPrimaryColumn(colIdx), columnTop
+                                getPrimaryColumn(colIdx), columnTop,
+                                partitionTimestamp, partitionNameTxn
                         );
+                        indexer.mergeTentativeIntoActiveIfAny();
                         indexer.seal();
+                        indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     }
+                }
+            } finally {
+                path.trimTo(pathSize);
+            }
+        }
+
+        if (anyPartitionProcessed && lastOpenPartitionTs != Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)) {
+            path.trimTo(pathSize);
+            setPathForNativePartition(path, timestampType, partitionBy, lastOpenPartitionTs, lastOpenPartitionTxnName);
+            int plen = path.size();
+            try {
+                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                    if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                            || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
+                        continue;
+                    }
+                    ColumnIndexer indexer = indexers.getQuick(colIdx);
+                    if (indexer == null) {
+                        continue;
+                    }
+                    CharSequence colName = metadata.getColumnName(colIdx);
+                    long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
+                    long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, colIdx);
+                    indexer.configureFollowerAndWriter(
+                            path.trimTo(plen), colName, colNameTxn,
+                            getPrimaryColumn(colIdx), columnTop,
+                            lastOpenPartitionTs, lastOpenPartitionTxnName
+                    );
+                    configureCoveringIfNeeded(indexer, colIdx, lastOpenPartitionTs);
                 }
             } finally {
                 path.trimTo(pathSize);
@@ -11131,10 +11172,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // while the MemoryMA still points to the correct file.
         final int sealThreshold = configuration.getPostingSealGenThreshold();
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
-            IndexWriter writer = denseIndexers.getQuick(i).getWriter();
+            ColumnIndexer indexer = denseIndexers.getQuick(i);
+            IndexWriter writer = indexer.getWriter();
             try {
                 writer.commit();
                 writer.sealIfMultiGen(sealThreshold);
+                indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
             } catch (CairoException e) {
                 throwDistressException(e);
             }
@@ -11173,13 +11216,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Forward each indexer's accumulated purge entries to the global
         // queue. The background PostingSealPurgeJob persists them and runs
         // the actual file deletion under the TxnScoreboard's supervision.
-        if (denseIndexers.size() > 0) {
-            long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-            long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
-            for (int i = 0, n = denseIndexers.size(); i < n; i++) {
-                denseIndexers.getQuick(i).publishPendingPurges(
-                        messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy, timestampType, txWriter.getTxn());
-            }
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            denseIndexers.getQuick(i).publishPendingPurges(
+                    messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
         }
     }
 

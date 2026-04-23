@@ -37,13 +37,12 @@ import io.questdb.std.str.Path;
 
 public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColumn {
     private final CairoConfiguration configuration;
-    private byte indexType = IndexType.BITMAP;
+    private byte indexType = IndexType.NONE;
     private IndexWriter indexWriter;
 
     public ContiguousFileIndexedFrameColumn(CairoConfiguration configuration) {
         super(configuration);
         this.configuration = configuration;
-        this.indexWriter = IndexFactory.createWriter(IndexType.BITMAP, configuration);
     }
 
     @Override
@@ -100,9 +99,10 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     ) {
         super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
         try {
-            // Recreate writer if index type has changed
-            if (this.indexType != indexType) {
-                Misc.free(indexWriter);
+            if (indexWriter == null || this.indexType != indexType) {
+                if (indexWriter != null) {
+                    Misc.free(indexWriter);
+                }
                 this.indexType = indexType;
                 this.indexWriter = IndexFactory.createWriter(indexType, configuration);
             }

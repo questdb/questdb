@@ -72,10 +72,19 @@ public interface ColumnIndexer extends QuietCloseable {
             CharSequence name,
             long columnNameTxn,
             MemoryMA columnMem,
-            long columnTop
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn
     );
 
-    void configureWriter(Path path, CharSequence name, long columnNameTxn, long columnTop);
+    void configureWriter(
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn
+    );
 
     default void discardAndClose() {
         close();
@@ -93,11 +102,15 @@ public interface ColumnIndexer extends QuietCloseable {
 
     boolean isDistressed();
 
+    /**
+     * See {@link IndexWriter#mergeTentativeIntoActiveIfAny()}.
+     */
+    default void mergeTentativeIntoActiveIfAny() {
+    }
+
     default void publishPendingPurges(
             MessageBus messageBus,
             TableToken tableToken,
-            long partitionTimestamp,
-            long partitionNameTxn,
             int partitionBy,
             int timestampType,
             long currentTableTxn

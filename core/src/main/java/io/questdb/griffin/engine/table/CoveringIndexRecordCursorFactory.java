@@ -839,11 +839,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public IndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return null;
-        }
-
-        @Override
         public int getColumnCount() {
             return columnCount;
         }
@@ -851,6 +846,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         public byte getFormat() {
             return PartitionFormat.NATIVE;
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            return null;
         }
 
         @Override
