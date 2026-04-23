@@ -33,8 +33,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -4662,6 +4662,32 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCteWithDoubleParensAndTimestampClauseSampleBy() throws SqlException {
+        assertQuery(
+                "select-group-by ts, sum(amount) sum from " +
+                        "(select-choose [ts, amount] ts, amount from " +
+                        "(select-choose [timestamp ts, amount] timestamp ts, amount from " +
+                        "(select-choose [timestamp, amount] timestamp, amount from " +
+                        "(select [timestamp, amount] from trades timestamp (timestamp) " +
+                        "where timestamp in '2024-03-08' or timestamp between ('2024-03-10T08:00:00Z', '2024-03-12'))" +
+                        ") timestamp (timestamp))) Test " +
+                        "sample by 1d align to calendar time zone 'America/New_York' with offset '00:00'",
+                "WITH Test AS ((" +
+                        " SELECT timestamp AS ts, amount" +
+                        " FROM (" +
+                        "  SELECT timestamp, amount FROM trades" +
+                        "  WHERE timestamp IN '2024-03-08'" +
+                        "  OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')" +
+                        " ) timestamp(timestamp))" +
+                        ") SELECT ts, sum(amount) FROM Test " +
+                        "SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                modelOf("trades")
+                        .timestamp("timestamp")
+                        .col("amount", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testCursorFromFuncAliasConfusing() throws SqlException {
         assertQuery(
                 "select-choose x1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
@@ -6430,46 +6456,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testHorizonJoinRangeBasic() throws SqlException {
-        assertQuery(
-                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0s to 2s step 1s as h) t",
-                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0s TO 2s STEP 1s AS h",
-                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
-                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
-        );
-    }
-
-    @Test
-    public void testHorizonJoinRangeNegativeFrom() throws SqlException {
-        assertQuery(
-                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from -1s to 1s step 1s as h) t",
-                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM -1s TO 1s STEP 1s AS h",
-                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
-                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
-        );
-    }
-
-    @Test
-    public void testHorizonJoinRangeUnitlessZero() throws SqlException {
-        assertQuery(
-                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0 to 2s step 1s as h) t",
-                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0 TO 2s STEP 1s AS h",
-                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
-                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
-        );
-    }
-
-    @Test
-    public void testHorizonJoinRangeVariousUnits() throws SqlException {
-        assertQuery(
-                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0s to 3d step 1h as h) t",
-                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0s TO 3d STEP 1h AS h",
-                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
-                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
-        );
-    }
-
-    @Test
     public void testHorizonJoinMultiNoRangeOrListOnAny() throws Exception {
         assertSyntaxError(
                 "SELECT avg(b.bid) FROM trades AS t HORIZON JOIN bids AS b ON (t.sym = b.sym) HORIZON JOIN asks AS a ON (t.sym = a.sym)",
@@ -6535,6 +6521,46 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
                 modelOf("bids").col("sym", ColumnType.SYMBOL).col("bid", ColumnType.DOUBLE).timestamp(),
                 modelOf("asks").col("sym", ColumnType.SYMBOL).col("ask", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeBasic() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0s to 2s step 1s as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0s TO 2s STEP 1s AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeNegativeFrom() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from -1s to 1s step 1s as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM -1s TO 1s STEP 1s AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeUnitlessZero() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0 to 2s step 1s as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0 TO 2s STEP 1s AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeVariousUnits() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0s to 3d step 1h as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0s TO 3d STEP 1h AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
         );
     }
 
@@ -13191,7 +13217,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             b.append('f').append(i);
         }
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            QueryModel st = (QueryModel) compiler.generateExecutionModel(b, sqlExecutionContext);
+            IQueryModel st = (IQueryModel) compiler.generateExecutionModel(b, sqlExecutionContext);
             Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
         }
     }
@@ -13538,11 +13564,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testUnnestEmptyExpression() throws Exception {
+    public void testUnnestColumnAliasMalformedSeparator() throws Exception {
         assertSyntaxError(
-                "SELECT val FROM t, UNNEST()",
-                26,
-                "expression expected",
+                "SELECT u.val FROM t, UNNEST(t.arr) u(val JUNK)",
+                41,
+                "',' or ')' expected",
                 modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
         );
     }
@@ -13553,16 +13579,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "SELECT u.val FROM t, UNNEST(t.arr) u(val, extra1, extra2)",
                 42,
                 "too many column aliases for UNNEST",
-                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
-        );
-    }
-
-    @Test
-    public void testUnnestColumnAliasMalformedSeparator() throws Exception {
-        assertSyntaxError(
-                "SELECT u.val FROM t, UNNEST(t.arr) u(val JUNK)",
-                41,
-                "',' or ')' expected",
                 modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
         );
     }
@@ -13594,6 +13610,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 50,
                 "unsupported type for JSON UNNEST",
                 modelOf("t").col("payload", ColumnType.VARCHAR)
+        );
+    }
+
+    @Test
+    public void testUnnestEmptyExpression() throws Exception {
+        assertSyntaxError(
+                "SELECT val FROM t, UNNEST()",
+                26,
+                "expression expected",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
         );
     }
 
@@ -14791,8 +14817,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             ((Sinkable) model).toSink(sink);
                             String expected = expectedTemplate.replace("#FRAME", frameType.trim());
                             TestUtils.assertEquals(expected, sink);
-                            if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
-                                validateTopDownColumns((QueryModel) model);
+                            if (model instanceof IQueryModel && model.getModelType() == ExecutionModel.QUERY) {
+                                validateTopDownColumns((IQueryModel) model);
                             }
                         }
                     }

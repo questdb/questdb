@@ -149,6 +149,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final int SECRET_FILE_MAX_SIZE = 65536; // 64KB max for secret files
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
+    protected final Metrics metrics;
     private final String acceptingWrites;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
@@ -161,6 +162,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double cairoAutoScaleSymbolCapacityThreshold;
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
+    private final int cairoGroupByBatchSize;
     private final int cairoGroupByMergeShardQueueCapacity;
     private final boolean cairoGroupByPresizeEnabled;
     private final long cairoGroupByPresizeMaxCapacity;
@@ -169,6 +171,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoGroupByTopKQueueCapacity;
     private final long cairoGroupByTopKThreshold;
     private final int cairoMaxCrashFiles;
+    private final boolean cairoMetadataCacheSnapshotOrdered;
     private final int cairoPageFrameReduceColumnListCapacity;
     private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoPageFrameReduceRowIdListCapacity;
@@ -183,7 +186,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
     private final boolean cairoSqlLegacyOperatorPrecedence;
-    private final boolean cairoMetadataCacheSnapshotOrdered;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
     private final int cairoUnorderedPageFrameReduceQueueCapacity;
@@ -349,7 +351,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxUncommittedRows;
     private final MemoryConfiguration memoryConfiguration;
     private final int metadataStringPoolCapacity;
-    private final Metrics metrics;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
     private final MicrosecondClock microsecondClock;
@@ -360,6 +361,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3LagCalculationWindowsSize;
     private final int o3LastPartitionMaxSplits;
     private final long o3MaxLagUs;
+    private final int o3MidPartitionMaxSplits;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
     private final boolean o3PartitionOverwriteControlEnabled;
@@ -407,9 +409,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
     private final long qwpUdpCommitInterval;
-    private final int qwpUdpMaxUncommittedDatagrams;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
+    private final int qwpUdpMaxUncommittedDatagrams;
     private final int qwpUdpMsgBufferSize;
     private final int qwpUdpMsgCount;
     private final boolean qwpUdpOwnThread;
@@ -1616,6 +1618,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
             this.sqlSmallPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
             this.sqlSmallPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+            // The batched GROUP BY probe packs the frame-relative row index into a
+            // 24-bit slot. Reject misconfigurations that would silently truncate.
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, this.sqlPageFrameMinRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, this.sqlPageFrameMaxRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, this.sqlSmallPageFrameMinRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, this.sqlSmallPageFrameMaxRows);
 
             this.sqlJitMode = getSqlJitMode(properties, env);
             this.sqlJitIRMemoryPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_IR_MEMORY_PAGE_SIZE, 8 * 1024);
@@ -1737,6 +1745,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
             this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
+            this.o3MidPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1));
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
             this.o3PartitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
 
@@ -2036,6 +2045,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             final int defaultReduceQueueCapacity = Math.min(4 * queryWorkers, 256);
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoGroupByBatchSize = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 2048);
+            validateGroupByBatchSize(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, this.cairoGroupByBatchSize);
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByTopKQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY, defaultReduceQueueCapacity));
@@ -2318,27 +2329,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         return poolConfiguration.sharedWorkerCount;
     }
 
-    private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
-        final int[] result = new int[workerCount];
-        String value = getString(properties, env, key, null);
-        if (value == null) {
-            Arrays.fill(result, -1);
-        } else {
-            String[] affinity = value.split(",");
-            if (affinity.length != workerCount) {
-                throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "wrong number of affinity values");
-            }
-            for (int i = 0; i < workerCount; i++) {
-                try {
-                    result[i] = Numbers.parseInt(affinity[i]);
-                } catch (NumericException e) {
-                    throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Invalid affinity value: " + affinity[i]);
-                }
-            }
-        }
-        return result;
-    }
-
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
         final String commitMode = getString(properties, env, key, "nosync");
 
@@ -2496,6 +2486,27 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
+        // A non-positive batch size would turn the reducer loop
+        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
+        // into an infinite loop. Cap at the same 24-bit row index bound as
+        // page frames since the batch cannot exceed a single page frame.
+        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxBatchSize) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
+        }
+    }
+
+    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
+        // Frame-relative row indexes are packed into the 24-bit slot of every
+        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
+        // rows. Reject misconfigurations that would silently truncate.
+        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxRows) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
+        }
+    }
+
     private void validateProperties(Properties properties, boolean configValidationStrict) throws ServerConfigurationException {
         ValidationResult validation = validator.validate(properties);
         if (validation != null) {
@@ -2509,6 +2520,27 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     protected String getAcceptingWrites() {
         return acceptingWrites;
+    }
+
+    protected int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
+        final int[] result = new int[workerCount];
+        String value = getString(properties, env, key, null);
+        if (value == null) {
+            Arrays.fill(result, -1);
+        } else {
+            String[] affinity = value.split(",");
+            if (affinity.length != workerCount) {
+                throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "wrong number of affinity values");
+            }
+            for (int i = 0; i < workerCount; i++) {
+                try {
+                    result[i] = Numbers.parseInt(affinity[i]);
+                } catch (NumericException e) {
+                    throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Invalid affinity value: " + affinity[i]);
+                }
+            }
+        }
+        return result;
     }
 
     protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
@@ -3645,6 +3677,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getGroupByBatchSize() {
+            return cairoGroupByBatchSize;
+        }
+
+        @Override
         public int getGroupByMapCapacity() {
             return sqlGroupByMapCapacity;
         }
@@ -3907,6 +3944,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3MemMaxPages() {
             return Integer.MAX_VALUE;
+        }
+
+        @Override
+        public int getO3MidPartitionMaxSplits() {
+            return o3MidPartitionMaxSplits;
         }
 
         @Override
@@ -4550,11 +4592,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isCairoMetadataCacheSnapshotOrdered() {
-            return cairoMetadataCacheSnapshotOrdered;
-        }
-
-        @Override
         public long getTableRegistryAutoReloadFrequency() {
             return cairoTableRegistryAutoReloadFrequency;
         }
@@ -4742,6 +4779,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
+        }
+
+        @Override
+        public boolean isCairoMetadataCacheSnapshotOrdered() {
+            return cairoMetadataCacheSnapshotOrdered;
         }
 
         @Override
@@ -6510,11 +6552,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getMaxUncommittedDatagrams() {
-            return qwpUdpMaxUncommittedDatagrams;
-        }
-
-        @Override
         public int getDefaultPartitionBy() {
             return PartitionBy.DAY;
         }
@@ -6532,6 +6569,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxTablesPerConnection() {
             return qwpMaxTablesPerConnection;
+        }
+
+        @Override
+        public int getMaxUncommittedDatagrams() {
+            return qwpUdpMaxUncommittedDatagrams;
         }
 
         @Override

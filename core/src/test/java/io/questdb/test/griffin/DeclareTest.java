@@ -799,6 +799,18 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareVariableAsSubQueryWithEmptyLimit() throws Exception {
+        assertException(
+                "declare @pair := (select symbol from fx_trades limit ), " +
+                        "with bids as (select symbol, bids[1,1] from market_data where symbol = @pair), " +
+                        "asks as (select symbol, asks[1,1] from market_data where symbol = @pair) " +
+                        "select symbol, * from bids",
+                53,
+                "limit expression expected"
+        );
+    }
+
+    @Test
     public void testDeclareVariableAsSubQueryWithNestedVariable() throws Exception {
         assertModel("select-choose y from (select-virtual [4 y] 4 y from (long_sequence(1)))",
                 "DECLARE @x := (DECLARE @y := 4 SELECT @y as y) SELECT * FROM @x", ExecutionModel.QUERY);

@@ -33,9 +33,12 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -108,11 +111,12 @@ public class OrderedMap implements Map, Reopenable {
     private final int maxResizes;
     private final MergeFunction mergeRef;
     private final OrderedMapRecord record;
-    private final OrderedMapValue value;
-    private final OrderedMapValue value2;
-    private final OrderedMapValue value3;
+    private final FlyweightPackedMapValue value;
+    private final FlyweightPackedMapValue value2;
+    private final FlyweightPackedMapValue value3;
     private final int valueColumnCount;
     private final long valueSize;
+    private long batchEmptyValueStart;
     private int free;
     private long heapAddr; // Heap memory start pointer.
     private long heapLimit; // Heap memory limit pointer.
@@ -181,6 +185,7 @@ public class OrderedMap implements Map, Reopenable {
             this.listMemoryTag = listMemoryTag;
             initialHeapSize = heapSize;
             this.loadFactor = loadFactor;
+            validateBatchAddressable(heapSize);
             heapAddr = kPos = Unsafe.malloc(heapSize, heapMemoryTag);
             this.heapSize = heapSize;
             heapLimit = heapAddr + heapSize;
@@ -233,9 +238,9 @@ public class OrderedMap implements Map, Reopenable {
             }
             this.valueSize = valueSize;
 
-            value = new OrderedMapValue(valueSize, valueOffsets);
-            value2 = new OrderedMapValue(valueSize, valueOffsets);
-            value3 = new OrderedMapValue(valueSize, valueOffsets);
+            value = new FlyweightPackedMapValue(valueSize, valueOffsets);
+            value2 = new FlyweightPackedMapValue(valueSize, valueOffsets);
+            value3 = new FlyweightPackedMapValue(valueSize, valueOffsets);
 
             if (keySize + valueSize >= heapLimit - heapAddr) {
                 throw CairoException.nonCritical()
@@ -285,6 +290,9 @@ public class OrderedMap implements Map, Reopenable {
             heapSize = 0;
             nResizes = 0;
         }
+        if (batchEmptyValueStart != 0) {
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, heapMemoryTag);
+        }
     }
 
     public long getAppendOffset() {
@@ -293,7 +301,7 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public MapRecordCursor getCursor() {
-        return cursor.init(heapAddr, heapLimit, size);
+        return cursor.init(heapAddr, size);
     }
 
     @Override
@@ -321,6 +329,11 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
+    public void initCursor(MapRecordCursor cursor) {
+        ((OrderedMapCursor) cursor).init(heapAddr, size);
+    }
+
+    @Override
     public boolean isOpen() {
         return heapAddr != 0;
     }
@@ -332,6 +345,48 @@ public class OrderedMap implements Map, Reopenable {
             return;
         }
         mergeRef.merge((OrderedMap) srcMap, mergeFunc);
+    }
+
+    @Override
+    public MapRecordCursor newCursor() {
+        OrderedMapCursor c;
+        if (keySize == -1) {
+            OrderedMapVarSizeRecord rec = ((OrderedMapVarSizeRecord) record).clone();
+            c = new OrderedMapVarSizeCursor(rec, this);
+        } else {
+            OrderedMapFixedSizeRecord rec = ((OrderedMapFixedSizeRecord) record).clone();
+            c = new OrderedMapFixedSizeCursor(rec, this);
+        }
+        return c.init(heapAddr, size);
+    }
+
+    @Override
+    public long probeBatch(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        if (keySize != -1) {
+            return probeBatchFixedSize(record, mapSink, batchStart, batchEnd, batchAddr);
+        }
+        return probeBatchVarSize(record, mapSink, batchStart, batchEnd, batchAddr);
+    }
+
+    @Override
+    public long probeBatchFiltered(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        if (keySize != -1) {
+            return probeBatchFilteredFixedSize(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
+        }
+        return probeBatchFilteredVarSize(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
     }
 
     @Override
@@ -366,6 +421,32 @@ public class OrderedMap implements Map, Reopenable {
                 close();
                 throw t;
             }
+        }
+    }
+
+    @Override
+    public void setBatchEmptyValue(GroupByFunctionsUpdater updater) {
+        if (batchEmptyValueStart != 0) {
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, heapMemoryTag);
+        }
+        if (updater == null || valueSize == 0) {
+            return;
+        }
+        // OrderedMap.clear() only resets kPos and the offsets array - it does NOT zero
+        // the heap. probeBatch therefore cannot rely on fresh slots being zeroed, so
+        // we always keep the scratch buffer and memcpy it into every new entry.
+        final long buf = Unsafe.malloc(valueSize, heapMemoryTag);
+        try {
+            Vect.memset(buf, valueSize, 0);
+            // Populate the empty value into the scratch buffer using value as a flyweight.
+            // updateEmpty() only writes through valueAddress, so the entry address is
+            // irrelevant here.
+            value.of(buf);
+            updater.updateEmpty(value);
+            batchEmptyValueStart = buf;
+        } catch (Throwable th) {
+            Unsafe.free(buf, valueSize, heapMemoryTag);
+            throw th;
         }
     }
 
@@ -405,7 +486,18 @@ public class OrderedMap implements Map, Reopenable {
         return ((long) rawOffset - 1) << 3;
     }
 
-    private OrderedMapValue asNew(Key keyWriter, int index, int hashCodeLo, OrderedMapValue value) {
+    private static void validateBatchAddressable(long sizeBytes) {
+        // A silent truncation here would feed corrupted offsets into every batched
+        // probe; fail loudly instead of producing wrong aggregation results.
+        if (sizeBytes > Map.BATCH_OFFSET_MASK) {
+            throw CairoException.nonCritical()
+                    .put("OrderedMap heap size exceeds batched probe addressable range [heapBytes=").put(sizeBytes)
+                    .put(", maxAddressable=").put(Map.BATCH_OFFSET_MASK)
+                    .put(']');
+        }
+    }
+
+    private FlyweightPackedMapValue asNew(Key keyWriter, int index, int hashCodeLo, FlyweightPackedMapValue value) {
         // Align current pointer to 8 bytes, so that we can store compressed offsets.
         kPos = Bytes.align8b(keyWriter.appendAddr + valueSize);
         long offsetAddr = offsetsAddr + ((long) index << 3);
@@ -462,7 +554,7 @@ public class OrderedMap implements Map, Reopenable {
             if (kPos + entrySize > heapLimit) {
                 resize(entrySize, kPos);
             }
-            Vect.memcpy(kPos, srcStartAddr, entrySize);
+            Unsafe.getUnsafe().copyMemory(srcStartAddr, kPos, entrySize);
             Unsafe.getUnsafe().putInt(destP, compressOffset(kPos - heapAddr));
             Unsafe.getUnsafe().putInt(destP + 4, hashCodeLo);
             kPos += alignedEntrySize;
@@ -517,7 +609,7 @@ public class OrderedMap implements Map, Reopenable {
             if (kPos + entrySize > heapLimit) {
                 resize(entrySize, kPos);
             }
-            Vect.memcpy(kPos, srcStartAddr, entrySize);
+            Unsafe.getUnsafe().copyMemory(srcStartAddr, kPos, entrySize);
             Unsafe.getUnsafe().putInt(destOffsetAddr, compressOffset(kPos - heapAddr));
             Unsafe.getUnsafe().putInt(destOffsetAddr + 4, hashCodeLo);
             kPos = Bytes.align8b(kPos + entrySize);
@@ -533,7 +625,7 @@ public class OrderedMap implements Map, Reopenable {
         }
     }
 
-    private OrderedMapValue probe0(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
+    private FlyweightPackedMapValue probe0(Key keyWriter, int index, int hashCodeLo, long keySize, FlyweightPackedMapValue value) {
         long offsetAddr = offsetsAddr + ((long) index << 3);
         // Read offset and hash as a single 64-bit value to reduce memory accesses.
         // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
@@ -556,7 +648,123 @@ public class OrderedMap implements Map, Reopenable {
         return asNew(keyWriter, index, hashCodeLo, value);
     }
 
-    private OrderedMapValue probeReadOnly(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
+    private long probeBatchFilteredFixedSize(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        final long alignedEntrySize = Bytes.align8b(keySize + valueSize);
+        final long requiredBytes = (batchEnd - batchStart) * alignedEntrySize;
+        if (kPos + requiredBytes > heapLimit) {
+            resize(requiredBytes, kPos);
+        }
+
+        final Key k = key;
+        for (long p = batchStart; p < batchEnd; p++) {
+            final long r = Unsafe.getUnsafe().getLong(rowIdsAddr + (p << 3));
+            record.setRowIndex(r);
+            k.startAddr = kPos;
+            k.appendAddr = kPos;
+            mapSink.copy(record, k);
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            long encoded = Map.encodeBatchEntry(r, v.getValueAddress() - heapAddr, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return heapAddr;
+    }
+
+    private long probeBatchFilteredVarSize(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        for (long p = batchStart; p < batchEnd; p++) {
+            final long r = Unsafe.getUnsafe().getLong(rowIdsAddr + (p << 3));
+            record.setRowIndex(r);
+            final MapKey k = withKey();
+            mapSink.copy(record, k);
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            long encoded = Map.encodeBatchEntry(r, v.getValueAddress() - heapAddr, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return heapAddr;
+    }
+
+    private long probeBatchFixedSize(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        // Reserve enough heap for the worst case (every row is a new entry) in a single
+        // shot so the hot loop below can skip the per-row checkCapacity inside Key.init().
+        // Entries are padded to 8 bytes by asNew(); mirror that here.
+        final long alignedEntrySize = Bytes.align8b(keySize + valueSize);
+        final long requiredBytes = (batchEnd - batchStart) * alignedEntrySize;
+        if (kPos + requiredBytes > heapLimit) {
+            resize(requiredBytes, kPos);
+        }
+
+        final Key k = key;
+        for (long r = batchStart; r < batchEnd; r++) {
+            record.setRowIndex(r);
+            // Inline Key.init(): reset startAddr/appendAddr, skip checkCapacity (pre-reserved above).
+            // keyOffset is 0 for fixed-size keys.
+            k.startAddr = kPos;
+            k.appendAddr = kPos;
+            mapSink.copy(record, k);
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            long encoded = Map.encodeBatchEntry(r, v.getValueAddress() - heapAddr, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return heapAddr;
+    }
+
+    private long probeBatchVarSize(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        for (long r = batchStart; r < batchEnd; r++) {
+            record.setRowIndex(r);
+            final MapKey k = withKey();
+            mapSink.copy(record, k);
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            // Heap may have been reallocated mid-loop; offsets are invariant under realloc
+            // because Unsafe.realloc preserves the relative layout, so we encode against
+            // the latest heapAddr and return it as entryBase at the end.
+            long encoded = Map.encodeBatchEntry(r, v.getValueAddress() - heapAddr, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return heapAddr;
+    }
+
+    private FlyweightPackedMapValue probeReadOnly(Key keyWriter, int index, int hashCodeLo, long keySize, FlyweightPackedMapValue value) {
         long offsetAddr = offsetsAddr + ((long) index << 3);
         // Read offset and hash as a single 64-bit value to reduce memory accesses.
         long slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
@@ -634,6 +842,7 @@ public class OrderedMap implements Map, Reopenable {
         if (kCapacity > MAX_HEAP_SIZE) {
             throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
         }
+        validateBatchAddressable(kCapacity);
         long kAddr = Unsafe.realloc(heapAddr, heapSize, kCapacity, heapMemoryTag);
 
         this.heapSize = kCapacity;
@@ -647,8 +856,8 @@ public class OrderedMap implements Map, Reopenable {
         return delta;
     }
 
-    private OrderedMapValue valueOf(long startAddr, long valueAddr, boolean newValue, OrderedMapValue value) {
-        return value.of(startAddr, valueAddr, heapLimit, newValue);
+    private FlyweightPackedMapValue valueOf(long startAddr, long valueAddr, boolean newValue, FlyweightPackedMapValue value) {
+        return value.of(startAddr, valueAddr, newValue);
     }
 
     long keySize() {
@@ -681,7 +890,7 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void copyFromRawKey(long srcPtr, long srcSize) {
             assert srcSize == keySize;
-            Vect.memcpy(appendAddr, srcPtr, srcSize);
+            Unsafe.getUnsafe().copyMemory(srcPtr, appendAddr, srcSize);
             appendAddr += srcSize;
         }
 
@@ -908,7 +1117,7 @@ public class OrderedMap implements Map, Reopenable {
             return probe0(this, index, hashCodeLo, keySize, value);
         }
 
-        private MapValue findValue(OrderedMapValue value) {
+        private MapValue findValue(FlyweightPackedMapValue value) {
             long keySize = commit();
             long hashCode = hash();
             int hashCodeLo = Numbers.decodeLowInt(hashCode);
@@ -949,7 +1158,7 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void copyFromRawKey(long srcPtr, long srcSize) {
             checkCapacity(srcSize);
-            Vect.memcpy(appendAddr, srcPtr, srcSize);
+            Unsafe.getUnsafe().copyMemory(srcPtr, appendAddr, srcSize);
             appendAddr += srcSize;
         }
 

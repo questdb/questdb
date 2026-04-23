@@ -51,6 +51,7 @@ public class TxReader implements Closeable, Mutable {
     public static final int PARTITION_SQUASH_COUNTER_MAX = 0xFFFF;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
+    protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
     protected static final int PARTITION_MASK_READ_ONLY_BIT_OFFSET = 62;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
@@ -59,15 +60,16 @@ public class TxReader implements Closeable, Mutable {
     protected static final long PARTITION_SQUASH_COUNTER_MASK = 0xFFFFL << PARTITION_SQUASH_COUNTER_BIT_OFFSET;
     // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
     //
-    // | reserved | read-only | parquet format | reserved | squash counter | partition size |
-    // +----------+-----------+----------------+----------+----------------+----------------+
-    // |  1 bit   |  1 bit    |  1 bit         |  1 bit   |   16 bit       |      44 bits   |
+    // | reserved | read-only | parquet format | parquet generated | squash counter | partition size |
+    // +----------+-----------+----------------+-------------------+----------------+----------------+
+    // |  1 bit   |  1 bit    |  1 bit         |  1 bit            |   16 bit       |      44 bits   |
     //
     // when read-only bit is set, the partition is read only.
     // we reserve the highest bit to allow negative values to
     // have meaning (in future). For instance the table reader uses
     // a negative size value to mean that the partition is not open.
-    // parquet format bit is used to indicate that partition was converted to parquet format
+    // the parquet format bit indicates that the partition has been converted to parquet format
+    // the parquet generated bit indicates that a parquet file has been generated for the partition
     // The last long in partition is the parquet file size.
     protected static final int PARTITION_TS_OFFSET = 0;
     protected final LongList attachedPartitions = new LongList();
@@ -200,6 +202,24 @@ public class TxReader implements Closeable, Mutable {
 
     public long getDataVersion() {
         return dataVersion;
+    }
+
+    public int getFirstNativePartitionIndex() {
+        for (int i = 0, n = getPartitionCount(); i < n; i++) {
+            if (!isPartitionParquet(i)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public int getFirstNativePartitionWithoutParquetGenerated() {
+        for (int i = 0, n = getPartitionCount(); i < n; i++) {
+            if (!isPartitionParquetGenerated(i) && !isPartitionParquet(i)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     public long getFixedRowCount() {
@@ -448,6 +468,10 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isPartitionParquetByRawIndex(int indexRaw) {
         return checkPartitionOptionBit(indexRaw, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
+    }
+
+    public boolean isPartitionParquetGenerated(int i) {
+        return isPartitionParquetGeneratedByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     public boolean isPartitionReadOnly(int i) {
@@ -700,6 +724,10 @@ public class TxReader implements Closeable, Mutable {
 
     private long getPartitionParquetFileSizeByRawIndex(int partitionRawIndex) {
         return attachedPartitions.getQuick(partitionRawIndex + PARTITION_PARQUET_FILE_SIZE_OFFSET);
+    }
+
+    private boolean isPartitionParquetGeneratedByRawIndex(int indexRaw) {
+        return checkPartitionOptionBit(indexRaw, PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET);
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {

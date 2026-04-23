@@ -28,7 +28,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -66,7 +66,7 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
     }
 
     @Override
-    public QueryModel getQueryModel() {
+    public IQueryModel getQueryModel() {
         return createTableOperationBuilder.getQueryModel();
     }
 

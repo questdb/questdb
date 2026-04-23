@@ -38,6 +38,7 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class WalLockerFuzzTest {
@@ -92,15 +93,17 @@ public class WalLockerFuzzTest {
         final CountDownLatch startLatch = new CountDownLatch(1);
         final CountDownLatch doneLatch = new CountDownLatch(numThreads);
         final AtomicReference<Throwable> error = new AtomicReference<>();
+        final AtomicBoolean isStopRequested = new AtomicBoolean(false);
+        final Thread[] workers = new Thread[numThreads];
 
         for (int threadIdx = 0; threadIdx < numThreads; threadIdx++) {
             final int threadId = threadIdx;
-            new Thread(() -> {
+            Thread worker = new Thread(() -> {
                 try {
                     startLatch.await();
                     Rnd threadRnd = new Rnd(threadSeeds[threadId][0], threadSeeds[threadId][1]);
 
-                    for (int op = 0; op < operationsPerThread && error.get() == null; op++) {
+                    for (int op = 0; op < operationsPerThread && error.get() == null && !isStopRequested.get(); op++) {
                         int tableIdx = threadRnd.nextInt(numTables);
                         int walId = threadRnd.nextInt(numWalsPerTable);
                         TableToken table = tables[tableIdx];
@@ -190,14 +193,25 @@ public class WalLockerFuzzTest {
                 } finally {
                     doneLatch.countDown();
                 }
-            }, "FuzzThread-" + threadIdx).start();
+            }, "FuzzThread-" + threadIdx);
+            workers[threadIdx] = worker;
+            worker.start();
         }
 
         // Start all threads
         startLatch.countDown();
 
-        // Wait for completion
-        Assert.assertTrue("Fuzz test timed out", doneLatch.await(30, TimeUnit.SECONDS));
+        // Wait for completion. On timeout, signal workers to stop and join them before
+        // tearDown() frees the native WalLock; otherwise surviving threads would make
+        // JNI calls against a freed pointer and crash the JVM.
+        final boolean isCompleted = doneLatch.await(30, TimeUnit.SECONDS);
+        if (!isCompleted) {
+            isStopRequested.set(true);
+            for (Thread worker : workers) {
+                worker.join();
+            }
+        }
+        Assert.assertTrue("Fuzz test timed out", isCompleted);
 
         if (error.get() != null) {
             error.get().printStackTrace();
@@ -292,8 +306,17 @@ public class WalLockerFuzzTest {
             writer.start();
             purge.start();
 
-            Assert.assertTrue("Iteration " + iter + " threads didn't start", ready.await(5, TimeUnit.SECONDS));
-            Assert.assertTrue("Iteration " + iter + " timed out", done.await(5, TimeUnit.SECONDS));
+            // On timeout, join the workers before tearDown() frees the native WalLock;
+            // otherwise a surviving thread would make JNI calls against a freed pointer
+            // and crash the JVM.
+            final boolean isReady = ready.await(5, TimeUnit.SECONDS);
+            final boolean isDone = isReady && done.await(5, TimeUnit.SECONDS);
+            if (!isDone) {
+                writer.join();
+                purge.join();
+            }
+            Assert.assertTrue("Iteration " + iter + " threads didn't start", isReady);
+            Assert.assertTrue("Iteration " + iter + " timed out", isDone);
 
             if (error.get() != null) {
                 error.get().printStackTrace();

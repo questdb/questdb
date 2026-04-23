@@ -288,6 +288,29 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testAutoCreateVarcharColumn() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_auto_varchar";
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .stringColumn("msg", "hello")
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT msg FROM " + table, "msg\nhello\n");
+            // stringColumn() must send the VARCHAR wire type (0x0F), so the
+            // auto-created column type must be VARCHAR, not STRING.
+            assertSql(
+                    "SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" = 'msg'",
+                    "column\ttype\nmsg\tVARCHAR\n"
+            );
+        });
+    }
+
+    @Test
     public void testBoolean() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_boolean";

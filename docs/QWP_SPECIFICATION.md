@@ -16,7 +16,7 @@ intended to enable alternative implementations to interoperate with QuestDB.
 8. [Table Block Structure](#8-table-block-structure)
 9. [Schema Definition](#9-schema-definition)
 10. [Column Types](#10-column-types)
-11. [Null Bitmap](#11-null-bitmap)
+11. [Null Handling](#11-null-handling)
 12. [Column Data Encoding](#12-column-data-encoding)
 13. [Response Format](#13-response-format)
 14. [Protocol Limits](#14-protocol-limits)
@@ -24,8 +24,6 @@ intended to enable alternative implementations to interoperate with QuestDB.
 16. [Examples](#16-examples)
 17. [Reference Implementation](#17-reference-implementation)
 18. [Version History](#18-version-history)
-
----
 
 ## 1. Overview
 
@@ -45,26 +43,23 @@ Every QWP message begins with a 4-byte magic value identifying the protocol.
 |--------|----------------|-----------------------|
 | `QWP1` | `0x31505751`   | Standard data message |
 
-Version negotiation is handled entirely via HTTP upgrade headers (see §3),
-not via binary magics.
-
----
+Version negotiation is handled entirely via HTTP upgrade headers (see §3), not
+via binary magics.
 
 ## 2. Transport
 
 ### WebSocket
 
 QWP uses RFC 6455 WebSocket binary frames. The client initiates an HTTP GET
-request to `/write/v4` with standard WebSocket upgrade headers. After the 101
-Switching Protocols handshake, all communication uses binary frames.
+request to either `/write/v4` or `/api/v4/write` with standard WebSocket upgrade
+headers. After the 101 Switching Protocols handshake, all communication uses
+binary frames.
 
 ### UDP
 
 UDP has no HTTP upgrade handshake. Each datagram is self-describing: the server
 inspects the version byte in the message header and processes or drops the
 datagram accordingly.
-
----
 
 ## 3. Version Negotiation
 
@@ -95,14 +90,10 @@ byte (offset 4) of the message header. The server validates every incoming
 message against the negotiated version and rejects any message whose version
 byte does not match with a parse error.
 
----
-
 ## 4. Byte Ordering
 
 All multi-byte numeric values are **little-endian**. Variable-length integers
 use unsigned LEB128 (see §5).
-
----
 
 ## 5. Variable-Length Integer Encoding (Varint)
 
@@ -151,8 +142,6 @@ return result
 | 300   | `0xAC 0x02`        |
 | 16384 | `0x80 0x80 0x01`   |
 
----
-
 ## 6. ZigZag Encoding
 
 Used to map signed integers to unsigned for efficient varint encoding:
@@ -167,8 +156,6 @@ decode(n) = (n >>> 1) ^ -(n & 1)
 -2 →  3
  2 →  4
 ```
-
----
 
 ## 7. Message Structure
 
@@ -188,12 +175,12 @@ Offset  Size  Type    Field           Description
 
 ### Flags Byte
 
-| Bit | Mask   | Name                     | Description                                          |
-|-----|--------|--------------------------|------------------------------------------------------|
-| 0-1 |        |                          | Reserved (must be 0)                                 |
+| Bit | Mask   | Name                     | Description                                           |
+|-----|--------|--------------------------|-------------------------------------------------------|
+| 0-1 |        |                          | Reserved (must be 0)                                  |
 | 2   | `0x04` | `FLAG_GORILLA`           | Gorilla delta-of-delta encoding for timestamp columns |
-| 3   | `0x08` | `FLAG_DELTA_SYMBOL_DICT` | Delta symbol dictionary mode enabled                 |
-| 4-7 |        |                          | Reserved (must be 0)                                 |
+| 3   | `0x08` | `FLAG_DELTA_SYMBOL_DICT` | Delta symbol dictionary mode enabled                  |
+| 4-7 |        |                          | Reserved (must be 0)                                  |
 
 ### Complete Message Layout
 
@@ -205,7 +192,7 @@ Offset  Size  Type    Field           Description
 │   ├─ [Delta Symbol Dictionary] (if 0x08)│
 │   ├─ Table Block 0                      │
 │   ├─ Table Block 1                      │
-│   └─ ... Table Block N-1               │
+│   └─ ... Table Block N-1                │
 └─────────────────────────────────────────┘
 ```
 
@@ -227,10 +214,8 @@ of the payload, before any table blocks.
 The client maintains a global symbol dictionary mapping symbol strings to
 sequential integer IDs (starting from 0). On each batch, only newly added
 symbols (the "delta") are transmitted. The server accumulates these entries
-across batches for the lifetime of the connection. Symbol columns in delta
-mode contain varint-encoded global IDs instead of per-column dictionaries.
-
----
+across batches for the lifetime of the connection. Symbol columns in delta mode
+contain varint-encoded global IDs instead of per-column dictionaries.
 
 ## 8. Table Block Structure
 
@@ -257,8 +242,6 @@ Each table block contains data for a single table.
 | name         | UTF-8  | Table name (max 127 bytes)    |
 | row_count    | varint | Number of rows in this block  |
 | column_count | varint | Number of columns             |
-
----
 
 ## 9. Schema Definition
 
@@ -289,10 +272,10 @@ column set changes.
 └─────────────────────────────────────────┘
 ```
 
-Schema IDs are non-negative integers assigned by the client and scoped to
-the lifetime of a single connection. They are global across all tables on
-the connection (not per-table). Clients typically assign them sequentially
-starting at 0, but the server does not require any particular ordering.
+Schema IDs are non-negative integers assigned by the client and scoped to the
+lifetime of a single connection. They are global across all tables on the
+connection (not per-table). Clients typically assign them sequentially starting
+at 0, but the server does not require any particular ordering.
 
 The `type_code` byte contains the column type (0x01 through 0x16).
 
@@ -311,12 +294,9 @@ Used for subsequent batches when the server has already registered the schema.
 └─────────────────────────────────────────┘
 ```
 
-The server looks up the schema by its ID in the per-connection schema
-registry. Full-mode schemas may arrive in any order and may re-register
-an existing ID; the server accepts any ID within the per-connection
-schema-ID limit.
-
----
+The server looks up the schema by its ID in the per-connection schema registry.
+Full-mode schemas may arrive in any order and may re-register an existing ID;
+the server accepts any ID within the per-connection schema-ID limit.
 
 ## 10. Column Types
 
@@ -331,7 +311,6 @@ schema-ID limit.
 | 5    | `0x05` | LONG            | 8       | Signed 64-bit integer              |
 | 6    | `0x06` | FLOAT           | 4       | IEEE 754 single precision          |
 | 7    | `0x07` | DOUBLE          | 8       | IEEE 754 double precision          |
-| 8    | `0x08` | STRING          | var     | Length-prefixed UTF-8              |
 | 9    | `0x09` | SYMBOL          | var     | Dictionary-encoded string          |
 | 10   | `0x0A` | TIMESTAMP       | 8       | Microseconds since epoch           |
 | 11   | `0x0B` | DATE            | 8       | Milliseconds since epoch           |
@@ -347,17 +326,34 @@ schema-ID limit.
 | 21   | `0x15` | DECIMAL256      | 32      | Decimal (77 digits precision)      |
 | 22   | `0x16` | CHAR            | 2       | Single UTF-16 code unit            |
 
+Code `0x08` is unassigned. It was previously STRING, which has been removed;
+senders should use VARCHAR (`0x0F`) for text columns.
+
 TIMESTAMP and TIMESTAMP_NANOS may use Gorilla encoding when `FLAG_GORILLA` is
 set (see [Column Data Encoding](#12-column-data-encoding)).
 
----
+## 11. Null Handling
 
-## 11. Null Bitmap
+Each column's data section begins with a 1-byte **null flag**. The flag tells
+the decoder how to interpret what follows:
 
-Each column's data section begins with a 1-byte **null flag**:
+- `0x00` -- no bitmap follows. The column data contains one value per row
+  (`row_count` values total). If the column has null rows, they are represented
+  by a type-specific sentinel encoded in place.
+- Any nonzero value -- a null bitmap follows immediately after the flag byte,
+  and the column data contains only `value_count = row_count - null_count`
+  non-null values, densely packed. The bitmap identifies which row indices are
+  null.
 
-- `0x00` -- no null values; no bitmap follows.
-- Any nonzero value -- a null bitmap follows immediately after the flag byte.
+The choice between these two strategies is made **per column** by the encoder,
+and the decoder must support both. Sentinel mode avoids the per-row bitmap
+overhead, and bitmap mode avoids writing any data for null rows. The wider the
+column element, the more likely it is to get a more compact encoding using the
+null bitmap.
+
+Sentinel mode requires the type to have a dedicated null representation
+available; it is not applicable to types whose full value range is meaningful
+payload (e.g. VARCHAR, SYMBOL).
 
 ### Bitmap Format
 
@@ -393,17 +389,46 @@ is_null = (bitmap[byte_index] & (1 << bit_index)) != 0
 ### Column Data Layout (all types)
 
 ```
-┌───────────────────────────────────────────────────────┐
-│ null_flag:     uint8     0=no nulls, nonzero=bitmap   │
-│ [null bitmap:  ceil(row_count/8) bytes if flag != 0]  │
-│ [type-specific encoded values for non-null rows]      │
-└───────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ null_flag:     uint8     0 = no bitmap, nonzero = bitmap     │
+│ [null bitmap:  ceil(row_count/8) bytes if flag != 0]         │
+│ Column values:                                               │
+│   - flag == 0 : row_count entries (null rows = sentinel)     │
+│   - flag != 0 : value_count non-null entries, densely packed │
+│                 (value_count = row_count - null_count)       │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-Non-null values are stored densely in the column data section. The decoder uses
-the bitmap to expand sparse non-null values into dense storage.
+### Reference Implementation Null Strategy
 
----
+The reference Java WebSocket client and the Go client make the same per-column
+choice:
+
+| Strategy | Types                               |
+|----------|-------------------------------------|
+| Sentinel | BOOLEAN, BYTE, SHORT, CHAR, GEOHASH |
+| Bitmap   | INT, LONG, FLOAT, DOUBLE, VARCHAR, SYMBOL, TIMESTAMP, TIMESTAMP_NANOS, DATE, UUID, LONG256, DECIMAL64, DECIMAL128, DECIMAL256, DOUBLE_ARRAY, LONG_ARRAY |
+
+The reference Java UDP client additionally uses sentinel mode for LONG and
+DOUBLE (encoding null rows as `Long.MIN_VALUE` and `NaN` respectively).
+
+Alternative implementations are free to make different per-column choices, as
+long as the `null_flag` value accurately describes the data that follows. A
+column with no null rows produces identical output under either strategy
+(`null_flag = 0`, `row_count` values).
+
+#### Reference Sentinel Values
+
+When the reference implementations emit sentinel mode (`null_flag = 0`), null
+rows are encoded as:
+
+| Type    | Sentinel                                                                                                        |
+|---------|-----------------------------------------------------------------------------------------------------------------|
+| BOOLEAN | bit `0` (false)                                                                                                 |
+| BYTE    | `0x00`                                                                                                          |
+| SHORT   | `0x0000`                                                                                                        |
+| CHAR    | `0x0000`                                                                                                        |
+| GEOHASH | all-ones: int64 `-1` (`0xFFFF…FFFF`), truncated to the column's per-value byte width `ceil(precision_bits / 8)` |
 
 ## 12. Column Data Encoding
 
@@ -413,40 +438,48 @@ For BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, CHAR: values are written as
 contiguous arrays of their respective sizes.
 
 ```
-┌─────────────────────────────────────────┐
-│ [Null flag + bitmap (see §11)]          │
-├─────────────────────────────────────────┤
-│ Values (only non-null rows)             │
-│   value[0], value[1], ... value[N-1]    │
-│   where N = row_count - null_count      │
-└─────────────────────────────────────────┘
+┌────────────────────────────────────────────────────┐
+│ [Null flag + bitmap (see §11)]                     │
+├────────────────────────────────────────────────────┤
+│ Values:                                            │
+│   value[0], value[1], ... value[N-1]               │
+│   where N = row_count                if flag == 0  │
+│        or N = row_count - null_count if flag != 0  │
+└────────────────────────────────────────────────────┘
 ```
 
-**Important**: Only non-null values are stored. The null bitmap indicates which
-row indices are null.
+The number of values depends on the null strategy chosen for the column (see
+§11). In sentinel mode (`null_flag == 0`) all `row_count` values are written,
+with the type's sentinel marking null rows. In bitmap mode (`null_flag != 0`)
+only the non-null values are written, densely packed.
+
+The reference implementation uses sentinel mode for BYTE, SHORT, and CHAR, and
+bitmap mode for INT, LONG, FLOAT, DOUBLE, and DATE.
 
 ### Boolean Type (`0x01`)
 
-Values are bit-packed, 8 per byte, LSB-first. For `N` non-null values,
-`ceil(N/8)` bytes are written.
+Values are bit-packed, 8 per byte, LSB-first. `ceil(N/8)` bytes are written,
+where `N = row_count` in sentinel mode (`null_flag == 0`) or
+`N = row_count - null_count` in bitmap mode. The reference implementation uses
+sentinel mode for BOOLEAN: null rows appear as bit `0` (false).
 
 ```
 Byte layout for values [true, false, true, true, false, false, false, true]:
   0b10001101 = 0x8D
 ```
 
-### String / VARCHAR Type (`0x08`, `0x0F`)
+### VARCHAR Type (`0x0F`)
 
 ```
-┌─────────────────────────────────────────┐
-│ [Null flag + bitmap (see §11)]          │
-├─────────────────────────────────────────┤
+┌──────────────────────────────────────────┐
+│ [Null flag + bitmap (see §11)]           │
+├──────────────────────────────────────────┤
 │ Offset array: (value_count + 1) x 4 bytes│
-│   offset[0] = 0                         │
-│   offset[i+1] = end of string[i]        │
-├─────────────────────────────────────────┤
-│ String data: concatenated UTF-8 bytes   │
-└─────────────────────────────────────────┘
+│   offset[0] = 0                          │
+│   offset[i+1] = end of string[i]         │
+├──────────────────────────────────────────┤
+│ String data: concatenated UTF-8 bytes    │
+└──────────────────────────────────────────┘
 ```
 
 - `value_count = row_count - null_count`
@@ -585,37 +618,42 @@ the 32-bit signed integer range, the encoder falls back to uncompressed mode.
 ### GeoHash Type (`0x0E`)
 
 ```
-┌─────────────────────────────────────────┐
-│ [Null flag + bitmap (see §11)]          │
-├─────────────────────────────────────────┤
-│ precision_bits: varint (1-60)           │
-├─────────────────────────────────────────┤
-│ Packed geohash values (non-null only):  │
-│   bytes_per_value = ceil(precision/8)   │
-│   total = bytes_per_value x value_count │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│ [Null flag + bitmap (see §11)]                   │
+├──────────────────────────────────────────────────┤
+│ precision_bits: varint (1-60)                    │
+├──────────────────────────────────────────────────┤
+│ Packed geohash values:                           │
+│   bytes_per_value = ceil(precision/8)            │
+│   total = bytes_per_value x N                    │
+│     where N = row_count              if flag == 0│
+│          or N = row_count - null_count if flag != 0│
+└──────────────────────────────────────────────────┘
 ```
+
+The reference implementation uses sentinel mode for GEOHASH: null rows are
+encoded as all-ones (int64 `-1`) truncated to `bytes_per_value`.
 
 ### Array Types (`0x11`, `0x12`)
 
 N-dimensional arrays of DOUBLE or LONG, row-major order:
 
 ```
-┌─────────────────────────────────────────┐
-│ For each row:                           │
+┌────────────────────────────────────────--------------─┐
+│ For each row:                                         │
 │   n_dims:      uint8          Number of dimensions    │
 │   dim_lengths: n_dims x int32      Length per dim     │
 │   values:      product(dims) x element                │
-│                (float64 for DOUBLE_ARRAY,              │
-│                 int64 for LONG_ARRAY)                  │
-└─────────────────────────────────────────┘
+│                (float64 for DOUBLE_ARRAY,             │
+│                 int64 for LONG_ARRAY)                 │
+└───────────────────────────────────────--------------──┘
 ```
 
 ### Decimal Types (`0x13`, `0x14`, `0x15`)
 
-Decimal values are stored as two's complement integers. The scale
-(number of decimal places) is a 1-byte prefix in the column data section,
-shared by all values in the column.
+Decimal values are stored as two's complement integers. The scale (number of
+decimal places) is a 1-byte prefix in the column data section, shared by all
+values in the column.
 
 ```
 ┌─────────────────────────────────────────┐
@@ -636,19 +674,17 @@ shared by all values in the column.
 | DECIMAL128  | 16 bytes   | 38 digits  |
 | DECIMAL256  | 32 bytes   | 77 digits  |
 
----
-
 ## 13. Response Format
 
-Every response includes a 1-byte status code and an 8-byte sequence number
-that correlates the response with the original request.
+Every response includes a 1-byte status code and an 8-byte sequence number that
+correlates the response with the original request.
 
 ### OK Response (9 bytes)
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ status:    uint8   (0x00)                             │
-│ sequence:  int64          Request sequence number     │
+│ status:    uint8   (0x00)                            │
+│ sequence:  int64          Request sequence number    │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -656,10 +692,10 @@ that correlates the response with the original request.
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ status:    uint8          Status code                 │
-│ sequence:  int64          Request sequence number     │
-│ msg_len:   uint16         Error message length        │
-│ msg_bytes: bytes          UTF-8 error message         │
+│ status:    uint8          Status code                │
+│ sequence:  int64          Request sequence number    │
+│ msg_len:   uint16         Error message length       │
+│ msg_bytes: bytes          UTF-8 error message        │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -674,8 +710,6 @@ that correlates the response with the original request.
 | 8    | `0x08` | SECURITY_ERROR  | Authorization failure                                |
 | 9    | `0x09` | WRITE_ERROR     | Write failure (e.g., table not accepting writes)     |
 
----
-
 ## 14. Protocol Limits
 
 | Limit                         | Default Value |
@@ -689,16 +723,14 @@ that correlates the response with the original request.
 | Max in-flight batches         | 128           |
 | Max symbol dictionary entries | 1,000,000     |
 
-The header's `table_count` field is a uint16, so the protocol ceiling for
-tables per message is 65,535 regardless of the configured limit. Individual
-string values have no dedicated length limit; they are bounded only by the
-max batch size.
+The header's `table_count` field is a uint16, so the protocol ceiling for tables
+per message is 65,535 regardless of the configured limit. Individual string
+values have no dedicated length limit; they are bounded only by the max batch
+size.
 
-The symbol dictionary limit applies per column in Per-Table Dictionary Mode
-and per connection in Global Delta Dictionary Mode (see §12). Exceeding it
-causes the server to reject the message with `PARSE_ERROR`.
-
----
+The symbol dictionary limit applies per column in Per-Table Dictionary Mode and
+per connection in Global Delta Dictionary Mode (see §12). Exceeding it causes
+the server to reject the message with `PARSE_ERROR`.
 
 ## 15. Client Operation
 
@@ -710,7 +742,8 @@ The client uses double-buffered microbatches:
 2. When a buffer reaches its threshold (row count, byte size, or age), the
    client seals it and enqueues it for sending.
 3. A dedicated I/O thread sends batches over the WebSocket.
-4. The client swaps to the other buffer so writing can continue without blocking.
+4. The client swaps to the other buffer so writing can continue without
+   blocking.
 
 ### Auto-Flush Triggers
 
@@ -723,20 +756,23 @@ The client uses double-buffered microbatches:
 ### Schema Registry
 
 - First batch for a given table: full schema mode (0x00) with a new schema ID.
-- Subsequent batches with an unchanged column set: schema reference mode (0x01) with the same ID.
-- When a table gains a column, the client assigns a new schema ID and sends it in full mode.
-- Schema IDs are global per connection, not per table; the server registers them in a per-connection registry.
-- On reconnect both sides reset: the client reassigns IDs from 0 and the server clears its registry.
+- Subsequent batches with an unchanged column set: schema reference mode (0x01)
+  with the same ID.
+- When a table gains a column, the client assigns a new schema ID and sends it
+  in full mode.
+- Schema IDs are global per connection, not per table; the server registers them
+  in a per-connection registry.
+- On reconnect both sides reset: the client reassigns IDs from 0 and the server
+  clears its registry.
 
 ### Symbol Dictionary Lifecycle
 
 - The client maintains a global symbol dictionary across all tables/columns.
 - Symbol IDs are assigned sequentially starting from 0.
-- Each batch sends only the **delta** (newly added symbols since the last batch).
+- Each batch sends only the **delta** (newly added symbols since the last
+  batch).
 - The server accumulates these deltas for the lifetime of the connection.
 - Upon connection loss, both sides reset the dictionary.
-
----
 
 ## 16. Examples
 
@@ -794,9 +830,9 @@ CD CC CC CC CC CC F4 3F  # value=1.3
 80 1A 06 00 00 00 00 00  # ts=400000 microseconds
 ```
 
-### Example 2: Nullable STRING Column
+### Example 2: Nullable VARCHAR Column
 
-Table with nullable STRING column, 4 rows where row 1 is null:
+Table with nullable VARCHAR column, 4 rows where row 1 is null:
 
 ```
 # Null flag + bitmap for 4 rows where row 1 is null
@@ -888,16 +924,12 @@ Payload:
       [8 bytes: t1]
 ```
 
----
-
 ## 17. Reference Implementation
 
 The authoritative implementation lives in QuestDB's Java codebase under
-`core/src/main/java/io/questdb/cutlass/qwp/protocol/`. That directory
-contains the header and varint parsers, the schema registry, the message
-and table-block cursors, and the type-specific column decoders.
-
----
+`core/src/main/java/io/questdb/cutlass/qwp/protocol/`. That directory contains
+the header and varint parsers, the schema registry, the message and table-block
+cursors, and the type-specific column decoders.
 
 ## 18. Version History
 
