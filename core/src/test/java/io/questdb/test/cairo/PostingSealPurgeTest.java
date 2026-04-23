@@ -167,10 +167,10 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 // After writer.close() no scoreboard txn covers the column,
                 // so the previous-sealTxn .pv must be on disk pending purge,
                 // and the live one must also be on disk.
-                LPSZ firstPv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, firstSealTxn);
-                LPSZ livePv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, secondSealTxn);
-                assertTrue("first-seal .pv survives until purge", ff.exists(firstPv));
-                assertTrue("live .pv at the latest sealTxn must exist", ff.exists(livePv));
+                assertTrue("first-seal .pv survives until purge", ff.exists(PostingIndexUtils.valueFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, firstSealTxn)));
+                assertTrue("live .pv at the latest sealTxn must exist", ff.exists(PostingIndexUtils.valueFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, secondSealTxn)));
 
                 // The writer's close() returns its outbox without publishing,
                 // so the job sees no queued tasks. We instead drive the orphan
@@ -207,7 +207,9 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 }
 
                 // Live .pv must always still be on disk.
-                assertTrue("live .pv must remain after purge runs", ff.exists(livePv));
+                assertTrue("live .pv must remain after purge runs",
+                        ff.exists(PostingIndexUtils.valueFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, secondSealTxn)));
                 // The first-seal .pv may or may not be gone yet depending on
                 // backoff timing; both states are valid for this minimal
                 // smoke test (a longer-running test would loop until the
@@ -261,6 +263,74 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
 
                 runPurgeJob(job, 3);
                 assertFalse(".pv must be purged once the range clears", ff.exists(pv));
+            }
+        });
+    }
+
+    @Test
+    public void testPostLiveOrphanDeletedInline() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "ps_purge_post_live";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                long liveSealTxn;
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < 8; i++) {
+                        writer.add(i % BATCH_KEYS, i);
+                    }
+                    writer.setMaxValue(7);
+                    writer.commit();
+                    writer.seal();
+                    liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(ff,
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                }
+                assertTrue("seal must produce a positive sealTxn", liveSealTxn > 0);
+
+                assertTrue("live .pv must exist after seal",
+                        ff.exists(PostingIndexUtils.valueFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, liveSealTxn)));
+
+                final long orphanSealTxn = liveSealTxn + 1;
+                touchFile(ff, PostingIndexUtils.valueFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, orphanSealTxn));
+                touchFile(ff, PostingIndexUtils.coverDataFileName(
+                        path.trimTo(plen), name, 0,
+                        COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, orphanSealTxn));
+                assertTrue("fabricated post-live .pv must exist before reopen",
+                        ff.exists(PostingIndexUtils.valueFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, orphanSealTxn)));
+                assertTrue("fabricated post-live .pc must exist before reopen",
+                        ff.exists(PostingIndexUtils.coverDataFileName(
+                                path.trimTo(plen), name, 0,
+                                COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, orphanSealTxn)));
+
+                try (PostingIndexWriter reopen = new PostingIndexWriter(configuration)) {
+                    reopen.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    assertTrue("live .pv must survive orphan scan", ff.exists(PostingIndexUtils.valueFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, liveSealTxn)));
+                    assertFalse("post-live .pv must be unlinked inline", ff.exists(PostingIndexUtils.valueFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, orphanSealTxn)));
+                    assertFalse("post-live .pc must be unlinked inline", ff.exists(PostingIndexUtils.coverDataFileName(
+                            path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, orphanSealTxn)));
+
+                    for (int i = 8; i < 16; i++) {
+                        reopen.add(i % BATCH_KEYS, i);
+                    }
+                    reopen.setMaxValue(15);
+                    reopen.commit();
+                    reopen.seal();
+
+                    long newSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(ff,
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    assertEquals("next seal must reuse the post-live sealTxn slot",
+                            orphanSealTxn, newSealTxn);
+                    assertTrue("new sealed .pv must exist at the reused sealTxn",
+                            ff.exists(PostingIndexUtils.valueFileName(
+                                    path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, newSealTxn)));
+                }
             }
         });
     }
@@ -575,6 +645,12 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
             setCurrentMicros(currentMicros + 100L * iteration++);
             job.run(0);
         }
+    }
+
+    private void touchFile(FilesFacade ff, LPSZ file) {
+        long fd = ff.openRW(file, configuration.getWriterFileOpenOpts());
+        assertTrue("must be able to create fabricated file " + file, fd >= 0);
+        ff.close(fd);
     }
 
     private long writeAndSeal(Path partitionPath, String colName) {

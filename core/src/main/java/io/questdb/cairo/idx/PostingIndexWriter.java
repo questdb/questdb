@@ -136,6 +136,8 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean hasSpillData;
     private int keyCapacity;
     private int keyCount;
+    private int orphanScanPostLiveCount;
+    private int orphanScanPreLiveCount;
     private long packedResidualsAddr;
     private int packedResidualsCapacity;
     private long pendingCountsAddr;
@@ -2034,30 +2036,59 @@ public class PostingIndexWriter implements IndexWriter {
     private void logOrphanSealedFiles(Path path, CharSequence name) {
         final long liveSealTxn = this.sealTxn;
         final long thisInstanceTxn = this.postingColumnNameTxn;
-        final int initialPendingCount = pendingPurges.size();
+        final int scanPathLen = path.size();
         orphanSealTxns.clear();
-        PostingIndexUtils.scanSealedFiles(ff, path, path.size(), name, new PostingIndexUtils.SealedFileVisitor() {
+        orphanScanPreLiveCount = 0;
+        orphanScanPostLiveCount = 0;
+        PostingIndexUtils.scanSealedFiles(ff, path, scanPathLen, name, new PostingIndexUtils.SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (postingColumnNameTxn == thisInstanceTxn && sealTxn != liveSealTxn) {
-                    rememberOrphan(sealTxn, thisInstanceTxn);
+                if (postingColumnNameTxn != thisInstanceTxn || sealTxn == liveSealTxn) {
+                    return;
+                }
+                if (sealTxn > liveSealTxn) {
+                    LPSZ pc = PostingIndexUtils.coverDataFileName(path.trimTo(scanPathLen), name,
+                            includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+                    ff.removeQuiet(pc);
+                    path.trimTo(scanPathLen);
+                    orphanScanPostLiveCount++;
+                } else if (rememberOrphan(sealTxn, thisInstanceTxn)) {
+                    orphanScanPreLiveCount++;
                 }
             }
 
             @Override
             public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-                if (postingColumnNameTxn == thisInstanceTxn && sealTxn != liveSealTxn) {
-                    rememberOrphan(sealTxn, thisInstanceTxn);
+                if (postingColumnNameTxn != thisInstanceTxn || sealTxn == liveSealTxn) {
+                    return;
+                }
+                if (sealTxn > liveSealTxn) {
+                    LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(scanPathLen),
+                            name, postingColumnNameTxn, sealTxn);
+                    ff.removeQuiet(pv);
+                    path.trimTo(scanPathLen);
+                    orphanScanPostLiveCount++;
+                } else if (rememberOrphan(sealTxn, thisInstanceTxn)) {
+                    orphanScanPreLiveCount++;
                 }
             }
         });
-        int orphanCount = pendingPurges.size() - initialPendingCount;
-        if (orphanCount > 0) {
-            LOG.advisory().$("orphan sealed POSTING files detected on writer open, scheduled for purge ")
+        if (orphanScanPostLiveCount > 0) {
+            LOG.advisory().$("post-live POSTING files detected on writer open, deleted inline ")
                     .$("[partition=").$(path)
                     .$(", column=").$(name)
+                    .$(", postingColumnNameTxn=").$(thisInstanceTxn)
                     .$(", liveSealTxn=").$(liveSealTxn)
-                    .$(", orphanSealTxnCount=").$(orphanCount)
+                    .$(", postLiveFilesDeleted=").$(orphanScanPostLiveCount)
+                    .$(", preLivePurgeScheduled=").$(orphanScanPreLiveCount)
+                    .I$();
+        } else if (orphanScanPreLiveCount > 0) {
+            LOG.info().$("pre-live POSTING orphans scheduled for async purge ")
+                    .$("[partition=").$(path)
+                    .$(", column=").$(name)
+                    .$(", postingColumnNameTxn=").$(thisInstanceTxn)
+                    .$(", liveSealTxn=").$(liveSealTxn)
+                    .$(", preLivePurgeScheduled=").$(orphanScanPreLiveCount)
                     .I$();
         }
     }
@@ -3010,15 +3041,16 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Adds a fresh {@link PendingSealPurge} for the given orphan
-     * {@code sealTxn} unless one is already enqueued. The dedup is O(N) over
-     * {@link #orphanSealTxns}, which is fine — N is the number of unrelated
-     * orphan generations on disk, typically &lt; 10.
+     * Schedules a {@link PendingSealPurge} for the pre-live orphan
+     * {@code sealTxn} unless one is already enqueued. Returns {@code true} if
+     * a fresh entry was added, {@code false} if the sealTxn was already known.
+     * The dedup is O(N) over {@link #orphanSealTxns}, which is fine — N is the
+     * number of distinct orphan generations on disk, typically &lt; 10.
      */
-    private void rememberOrphan(long sealTxn, long postingColumnNameTxn) {
+    private boolean rememberOrphan(long sealTxn, long postingColumnNameTxn) {
         for (int i = 0, n = orphanSealTxns.size(); i < n; i++) {
             if (orphanSealTxns.getQuick(i) == sealTxn) {
-                return;
+                return false;
             }
         }
         orphanSealTxns.add(sealTxn);
@@ -3030,6 +3062,7 @@ public class PostingIndexWriter implements IndexWriter {
         // lifetime range. Best we can do without persisted publish-txn info.
         entry.of(postingColumnNameTxn, sealTxn, postingColumnNameTxn, Long.MAX_VALUE);
         pendingPurges.add(entry);
+        return true;
     }
 
     private void resetSpill() {

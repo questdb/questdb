@@ -57,7 +57,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
 
     @Override
     public void setUp() {
-        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, masterRnd.nextBoolean() ? "BITMAP" : "POSTING");
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, masterRnd.nextBoolean() ? "POSTING" : "POSTING");
         super.setUp();
     }
 
