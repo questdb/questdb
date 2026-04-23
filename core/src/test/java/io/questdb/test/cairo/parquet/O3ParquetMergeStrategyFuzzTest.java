@@ -206,6 +206,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             }
 
             assertRowGroupSizes(walTable, rowGroupSize);
+            assertParquetMetaInvariants(walTable);
         });
     }
 
@@ -386,6 +387,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             }
 
             assertRowGroupSizes(walTable, rowGroupSize);
+            assertParquetMetaInvariants(walTable);
         });
     }
 
@@ -511,6 +513,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             }
 
             assertRowGroupSizes(walTable, rowGroupSize, true);
+            assertParquetMetaInvariants(walTable);
         });
     }
 
@@ -667,6 +670,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             }
 
             assertRowGroupSizes(walTable, rowGroupSize);
+            assertParquetMetaInvariants(walTable);
         });
     }
 
@@ -825,6 +829,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             }
 
             assertRowGroupSizes(walTable, rowGroupSize);
+            assertParquetMetaInvariants(walTable);
         });
     }
 
@@ -840,6 +845,63 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             case "zstd" -> 1 + rnd.nextInt(22);   // 1-22
             default -> 0;
         };
+    }
+
+    private void assertParquetMetaInvariants(String tableName) {
+        try (TableReader reader = engine.getReader(tableName)) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+                reader.openPartition(i);
+                ParquetMetaFileReader parquetMeta = reader.getAndInitParquetMetaPartitionDecoder(i).metadata();
+
+                // The _pm footer's parquet file size must equal the size committed in _txn
+                // field 3 (the MVCC version token). Any divergence means the committed
+                // _txn snapshot no longer resolves to a footer and stale readers break.
+                long txParquetFileSize = reader.getTxFile().getPartitionParquetFileSize(i);
+                long parquetMetaParquetFileSize = parquetMeta.getParquetFileSize();
+                Assert.assertEquals(
+                        "partition " + i + ": _pm parquet file size " + parquetMetaParquetFileSize
+                                + " != _txn parquet file size " + txParquetFileSize,
+                        txParquetFileSize,
+                        parquetMetaParquetFileSize
+                );
+
+                // Sum of row group sizes recorded in _pm must equal the partition row count
+                // recorded in _txn. Divergence indicates the partition and its metadata
+                // drifted out of sync during an O3 merge.
+                int rgCount = parquetMeta.getRowGroupCount();
+                long parquetMetaRowSum = 0;
+                for (int rg = 0; rg < rgCount; rg++) {
+                    parquetMetaRowSum += parquetMeta.getRowGroupSize(rg);
+                }
+                long partitionRowCount = reader.getPartitionRowCountFromMetadata(i);
+                Assert.assertEquals(
+                        "partition " + i + ": _pm row group sum " + parquetMetaRowSum
+                                + " != _txn partition row count " + partitionRowCount,
+                        partitionRowCount,
+                        parquetMetaRowSum
+                );
+
+                // _pm must have at least one column.
+                Assert.assertTrue(
+                        "partition " + i + ": _pm has 0 columns",
+                        parquetMeta.getColumnCount() > 0
+                );
+
+                // Every column id in _pm must be a non-negative writer index.
+                int parquetMetaColumnCount = parquetMeta.getColumnCount();
+                for (int c = 0; c < parquetMetaColumnCount; c++) {
+                    int columnId = parquetMeta.getColumnId(c);
+                    Assert.assertTrue(
+                            "partition " + i + ", _pm column " + c + ": column id "
+                                    + columnId + " must be non-negative",
+                            columnId >= 0
+                    );
+                }
+            }
+        }
     }
 
     private void assertRowGroupSizes(String tableName, int rowGroupSize) {
