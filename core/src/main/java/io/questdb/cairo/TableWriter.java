@@ -1056,6 +1056,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public void bumpPartitionTableVersion() {
+        txWriter.bumpPartitionTableVersion();
+        txWriter.commit(denseSymbolMapWriters);
+    }
+
     @Override
     public void changeCacheFlag(int columnIndex, boolean cache) {
         checkDistressed();
@@ -1954,56 +1959,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    public void dropLocalPartitionData(long partitionTimestamp) {
-        assert metadata.getTimestampIndex() > -1;
-        assert PartitionBy.isPartitioned(partitionBy);
-
-        if (inTransaction()) {
-            assert !tableToken.isWal();
-            commit();
-        }
-
-        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
-            return;
-        }
-
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0) {
-            return;
-        }
-
-        if (!txWriter.isPartitionParquet(partitionIndex)) {
-            throw CairoException.nonCritical()
-                    .put("cannot drop local parquet for non-parquet partition [table=")
-                    .put(tableToken.getTableName())
-                    .put(", partition=").put(partitionTimestamp)
-                    .put(']');
-        }
-
-        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        try {
-            setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            if (ff.exists(path.$())) {
-                // Bump version and commit BEFORE removing the file. The reader's cold-storage
-                // path tolerates a missing local file, so even if a reader observes the new
-                // txn before the file is gone, the subsequent mmap fallback is safe. If the
-                // delete then fails, the on-disk state is "version bumped, file still present"
-                // (readers continue to use the local file), which is safer than the inverse.
-                txWriter.bumpPartitionTableVersion();
-                txWriter.commit(denseSymbolMapWriters);
-                if (!ff.removeQuiet(path.$())) {
-                    throw CairoException.critical(ff.errno())
-                            .put("could not remove local parquet file [path=").put(path).put(']');
-                }
-                LOG.info().$("dropped local parquet [path=")
-                        .$substr(pathRootSize, path).I$();
-            }
-        } finally {
-            path.trimTo(pathSize);
-        }
-    }
-
     @Override
     public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
         assert txWriter.getLagRowCount() == 0;
@@ -2199,6 +2154,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public FilesFacade getFilesFacade() {
         return ff;
+    }
+
+    public long getLogicalPartitionTimestamp(long timestamp) {
+        return txWriter.getLogicalPartitionTimestamp(timestamp);
     }
 
     public long getMaxTimestamp() {
@@ -2423,6 +2382,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isOpen() {
         return tempMem16b != 0;
+    }
+
+    public boolean isPartitionParquet(int partitionIndex) {
+        return txWriter.isPartitionParquet(partitionIndex);
     }
 
     public boolean isPartitionReadOnly(int partitionIndex) {
