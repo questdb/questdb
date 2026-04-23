@@ -40,9 +40,6 @@ import io.questdb.std.Unsafe;
  * decode engine that receives explicit parameters per decode call. This is the
  * table partition path — the {@code read_parquet()} SQL function uses the
  * separate {@link PartitionDecoder} which parses the parquet footer.
- * <p>
- * For cold storage (future), only the {@code _pm} file is available locally.
- * Column chunks are lazily downloaded by byte range. The same decode API works.
  */
 public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseable {
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
