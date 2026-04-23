@@ -49,10 +49,20 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
     private static final int MAX_ID = 100;
+    private final Rnd masterRnd;
+
+    public BitmapIndexConcurrentFuzzTest() {
+        masterRnd = TestUtils.generateRandom(LOG);
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, masterRnd.nextBoolean() ? "POSTING" : "POSTING");
+        super.setUp();
+    }
 
     @Test
     public void testConcurrentBitmapIndexAccess() throws Exception {
-        final Rnd masterRnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -140,14 +150,14 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
                                 if (rnd.nextInt(10) == 0) {
                                     Os.sleep(rnd.nextInt(10));
                                 }
-                            } catch (Exception e) {
+                            } catch (Throwable e) {
                                 errorCount.incrementAndGet();
                                 firstError.compareAndSet(null, e);
                                 e.printStackTrace();
                             }
                         } while (!stopFlag.get() && errorCount.get() == 0);
                     }
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     errorCount.incrementAndGet();
                     firstError.compareAndSet(null, e);
                     e.printStackTrace();
@@ -186,14 +196,14 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
 
                                 // UPDATE is slow, we cannot do it too frequently
                                 Os.sleep(rnd.nextInt(100) + 1);
-                            } catch (Exception e) {
+                            } catch (Throwable e) {
                                 errorCount.incrementAndGet();
                                 firstError.compareAndSet(null, e);
                                 e.printStackTrace();
                             }
                         } while (!stopFlag.get() && errorCount.get() == 0);
                     }
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     errorCount.incrementAndGet();
                     firstError.compareAndSet(null, e);
                     e.printStackTrace();
@@ -252,14 +262,14 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
                                 }
 
                                 Os.sleep(rnd.nextInt(5) + 1);
-                            } catch (Exception e) {
+                            } catch (Throwable e) {
                                 errorCount.incrementAndGet();
                                 firstError.compareAndSet(null, e);
                                 e.printStackTrace();
                             }
                         } while (!stopFlag.get() && errorCount.get() == 0);
                     }
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     errorCount.incrementAndGet();
                     firstError.compareAndSet(null, e);
                     e.printStackTrace();
