@@ -869,8 +869,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     // beginStreaming{,PageFrame} they'd be owned by state, but the
                     // exception fires BEFORE that (on getCursor / getPageFrameCursor),
                     // so we still own them here.
-                    pageFrameCursor = Misc.free(pageFrameCursor);
-                    cursor = Misc.free(cursor);
                     factory = Misc.free(factory);
                     if (attempts >= 2) {
                         // Fresh compile also raced with a DDL -- unusual, propagate.
