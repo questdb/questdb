@@ -116,6 +116,66 @@ public class MergeBufferTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPendingLateCountClearsAfterDrain() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MergeBuffer buffer = new MergeBuffer(longTsMetadata())) {
+                buffer.addRow(row(1, 1_000_000L));
+                buffer.addRow(row(2, 2_000_000L));
+                try (RecordCursor c = buffer.drain(2_000_000L)) {
+                    while (c.hasNext()) ;
+                }
+                assertEquals(0, buffer.getPendingLateCount());
+
+                // Two late rows: pendingLateCount == 2 before the next drain.
+                buffer.addRow(row(3, 1_500_000L));
+                buffer.addRow(row(4, 500_000L));
+                assertEquals(2, buffer.getPendingLateCount());
+
+                try (RecordCursor c = buffer.replay(2_500_000L)) {
+                    while (c.hasNext()) ;
+                }
+                // replay() consumed the pending batch; count resets.
+                assertEquals(0, buffer.getPendingLateCount());
+                // lateRowCount is cumulative across the lifetime of the buffer.
+                assertEquals(2, buffer.getLateRowCount());
+            }
+        });
+    }
+
+    @Test
+    public void testReplayReemitsRetainedRowsInSortedOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MergeBuffer buffer = new MergeBuffer(longTsMetadata())) {
+                buffer.addRow(row(1, 1_000_000L));
+                buffer.addRow(row(2, 2_000_000L));
+                buffer.addRow(row(3, 3_000_000L));
+                try (RecordCursor c = buffer.drain(3_000_000L)) {
+                    while (c.hasNext()) ;
+                }
+
+                // Late row lands between the already-drained row 1 and row 2.
+                buffer.addRow(row(4, 1_500_000L));
+
+                // replay re-iterates every retained row up to the watermark, in sort order.
+                try (RecordCursor c = buffer.replay(3_000_000L)) {
+                    Record r = c.getRecord();
+                    assertTrue(c.hasNext());
+                    assertEquals(1, r.getLong(0));
+                    assertTrue(c.hasNext());
+                    assertEquals(4, r.getLong(0));
+                    assertTrue(c.hasNext());
+                    assertEquals(2, r.getLong(0));
+                    assertTrue(c.hasNext());
+                    assertEquals(3, r.getLong(0));
+                    assertFalse(c.hasNext());
+                }
+                // After replay, a subsequent incremental drain has nothing new to emit.
+                assertTrue(buffer.isEmpty());
+            }
+        });
+    }
+
+    @Test
     public void testResetClearsBuffer() throws Exception {
         assertMemoryLeak(() -> {
             try (MergeBuffer buffer = new MergeBuffer(longTsMetadata())) {
@@ -130,6 +190,34 @@ public class MergeBufferTest extends AbstractCairoTest {
                 assertTrue(buffer.isEmpty());
                 assertEquals(Long.MIN_VALUE, buffer.getLastDrainedWatermark());
                 assertEquals(0, buffer.getLateRowCount());
+            }
+        });
+    }
+
+    @Test
+    public void testRetentionAndCompactReclaimPrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MergeBuffer buffer = new MergeBuffer(longTsMetadata())) {
+                buffer.addRow(row(1, 1_000_000L));
+                buffer.addRow(row(2, 2_000_000L));
+                buffer.addRow(row(3, 3_000_000L));
+                buffer.addRow(row(4, 4_000_000L));
+                try (RecordCursor c = buffer.drain(4_000_000L)) {
+                    while (c.hasNext()) ;
+                }
+                // All four rows drained. Retention of 1s evicts rows at ts 1s, 2s, 3s;
+                // only row at 4s survives (cutoff = maxTs - 1s = 3s; ts > 3s).
+                buffer.applyRetention(1_000_000L);
+                assertTrue(buffer.needsCompact());
+                buffer.compact();
+
+                // After compact, a replay of the retained range emits only row 4.
+                try (RecordCursor c = buffer.replay(4_000_000L)) {
+                    Record r = c.getRecord();
+                    assertTrue(c.hasNext());
+                    assertEquals(4, r.getLong(0));
+                    assertFalse(c.hasNext());
+                }
             }
         });
     }

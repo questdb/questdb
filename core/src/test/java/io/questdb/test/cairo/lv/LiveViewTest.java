@@ -117,6 +117,151 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLateRowWithinRetentionTriggersWarmPathReplay() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_late LAG 1s RETENTION 1h AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+
+        // First batch: three AAPL rows in order. Expected rn=1,2,3.
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:00:02.000000Z')," +
+                " ('AAPL', 102.0, '2024-01-01T00:00:04.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:02.000000Z\t2\n" +
+                        "AAPL\t102.0\t2024-01-01T00:00:04.000000Z\t3\n",
+                "SELECT * FROM live_late",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // Second batch: a late row at ts=1s (within retention, outside LAG). It must be
+        // inserted between the ts=0 and ts=2 rows in sort order, and row_number must
+        // restart from 1 on replay so that downstream rn values renumber.
+        execute("INSERT INTO trades VALUES ('AAPL', 150.0, '2024-01-01T00:00:01.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:01.000000Z\t2\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:02.000000Z\t3\n" +
+                        "AAPL\t102.0\t2024-01-01T00:00:04.000000Z\t4\n",
+                "SELECT * FROM live_late",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_late");
+        Assert.assertEquals(1, instance.getMergeBuffer().getLateRowCount());
+
+        execute("DROP LIVE VIEW live_late");
+    }
+
+    @Test
+    public void testMultipleLateRowsInOneBatchReplayOnce() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_multi LAG 1s RETENTION 1h AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:00:05.000000Z')," +
+                " ('AAPL', 102.0, '2024-01-01T00:00:10.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // Two late rows in a single WAL batch: 2s and 7s. Both are within retention
+        // but before existing drained rows at 5s and 10s. A single warm-path replay
+        // renumbers all rows in one pass; pendingLateCount resets after the drain.
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 150.0, '2024-01-01T00:00:02.000000Z')," +
+                " ('AAPL', 151.0, '2024-01-01T00:00:07.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:02.000000Z\t2\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:05.000000Z\t3\n" +
+                        "AAPL\t151.0\t2024-01-01T00:00:07.000000Z\t4\n" +
+                        "AAPL\t102.0\t2024-01-01T00:00:10.000000Z\t5\n",
+                "SELECT * FROM live_multi",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_multi");
+        Assert.assertEquals(2, instance.getMergeBuffer().getLateRowCount());
+        Assert.assertEquals(0, instance.getMergeBuffer().getPendingLateCount());
+
+        execute("DROP LIVE VIEW live_multi");
+    }
+
+    @Test
+    public void testLateRowAcrossPartitionsReplaysIndependentCounters() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_part LAG 1s RETENTION 1h AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
+
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('GOOG', 2000.0, '2024-01-01T00:00:02.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:00:04.000000Z')," +
+                " ('GOOG', 2001.0, '2024-01-01T00:00:06.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // Late row lands between GOOG's two rows (ts=2s and ts=6s). GOOG's counter must
+        // renumber; AAPL's counter must also renumber because row_number replays from the
+        // retention horizon across all partitions.
+        execute("INSERT INTO trades VALUES ('GOOG', 2500.0, '2024-01-01T00:00:05.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t2000.0\t2024-01-01T00:00:02.000000Z\t1\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:04.000000Z\t2\n" +
+                        "GOOG\t2500.0\t2024-01-01T00:00:05.000000Z\t2\n" +
+                        "GOOG\t2001.0\t2024-01-01T00:00:06.000000Z\t3\n",
+                "SELECT * FROM live_part",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_part");
+    }
+
+    @Test
     public void testIncrementalRefreshResolvesPerTxnSymbolKeys() throws Exception {
         // Regression for the SYMBOL key collision: the WAL writer assigns symbol
         // keys as `initialSymCount + localId`, with `localId` reset between commits.

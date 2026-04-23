@@ -41,24 +41,41 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 /**
- * Sorted native-memory staging buffer that holds live view rows until they are
- * old enough to publish past the view's LAG window.
+ * Retention-bounded native-memory store of base-table rows feeding the live view.
+ * Acts as both the LAG staging buffer (via the drain watermark) and the input-column
+ * replay buffer for warm-path rollback (via {@link #replay}): one sorted store sized
+ * to the RETENTION window, with the drain boundary expressed as a watermark rather
+ * than an index position so a late-row re-sort cannot move the already-emitted region.
  * <p>
- * Rows are stored in a columnar {@link InMemoryTable} in arrival order, with a parallel
- * native index of 16-byte {@code (timestamp, localRowId)} pairs matching the layout
- * {@link Vect#radixSortLongIndexAscInPlace} operates on. On each {@link #drain(long)}:
+ * Storage layout:
  * <ul>
- *     <li>The index is radix-sorted in place.</li>
- *     <li>A binary search splits it at the watermark; rows with {@code ts <= watermark}
- *         are emitted in timestamp-ascending order via the returned cursor.</li>
- *     <li>On cursor close, retained rows (ts > watermark) are compacted into a
- *         secondary {@link InMemoryTable}; the two buffers then swap so subsequent
- *         appends keep writing dense, zero-based row ids.</li>
+ *     <li>{@link #rows} — columnar {@link InMemoryTable} in arrival order.</li>
+ *     <li>{@link #sortIndex} — native vector of 16-byte {@code (timestamp, physicalRowId)}
+ *         pairs, one per row in {@link #rows}. Matches the layout
+ *         {@link Vect#radixSortLongIndexAscInPlace} operates on.</li>
+ *     <li>{@link #sortStart} — first live entry in the sort index; entries below it
+ *         refer to physical rows evicted by {@link #applyRetention}, kept alive until
+ *         {@link #compact} reclaims them.</li>
+ *     <li>{@link #lastDrainedWatermark} — high water mark of the most recent
+ *         successful drain. Rows with {@code ts <= lastDrainedWatermark} have
+ *         already been emitted; rows at or below this watermark that arrive
+ *         afterwards are counted as late via {@link #pendingLateCount}.</li>
  * </ul>
- * After a drain, the watermark is recorded so that any subsequently-arriving row
- * with {@code ts <= lastDrainedWatermark} can be counted as "late" via
- * {@link #getLateRowCount()} — the window function has already emitted state for
- * that timestamp range.
+ * On each {@link #drain(long)}:
+ * <ul>
+ *     <li>If new rows arrived since the last drain, the live range
+ *         {@code sortIndex[sortStart..count)} is radix-sorted in place.</li>
+ *     <li>Binary search locates the first entry with {@code ts > lastDrainedWatermark}
+ *         (drain floor) and the first entry with {@code ts > watermark} (drain
+ *         ceiling); rows in between are emitted in timestamp-ascending order via the
+ *         returned cursor.</li>
+ *     <li>On cursor close (after a fully consumed iteration), {@code lastDrainedWatermark}
+ *         advances to the drain's watermark. An aborted iteration leaves it untouched
+ *         so the next drain re-emits the same range.</li>
+ * </ul>
+ * The ring-buffer semantic is driven by the caller: {@link #applyRetention} advances
+ * {@link #sortStart} (logical eviction; no memmoves), and {@link #compact} periodically
+ * rebuilds {@link #rows} and the sort index to reclaim the evicted prefix.
  */
 public class MergeBuffer implements QuietCloseable {
     private static final int INDEX_ENTRY_BYTES = 2 * Long.BYTES;
@@ -68,29 +85,62 @@ public class MergeBuffer implements QuietCloseable {
     private final LiveViewRecord record;
     private final MemoryCARW sortIndex;
     private final MemoryCARW sortScratch;
-    // One StaticSymbolTable per SYMBOL column, dereferencing the current {@code pending}
+    // One StaticSymbolTable per SYMBOL column, dereferencing the current {@code rows}
     // buffer's interned strings. Entry is null for non-SYMBOL columns. Survives the
-    // pending/retained swap because lookups go through {@link #pending} at call time.
-    private final ObjList<PendingSymbolTable> symbolTables;
+    // rows/compactScratch swap because lookups go through {@link #rows} at call time.
+    private final ObjList<ActiveSymbolTable> symbolTables;
     private final int timestampColumnIndex;
+    // Compaction scratch: takes the place of {@link #rows} during {@link #compact}.
+    // Shares symbol dictionaries with {@link #rows} so SYMBOL keys are stable across
+    // the post-compaction swap.
+    private InMemoryTable compactScratch = new InMemoryTable();
+    // Total entries currently written into the sort index. Grows monotonically
+    // between compactions. Entries [sortStart, count) are live; [0, sortStart) refer
+    // to physical rows that {@link #applyRetention} has logically evicted.
+    private long count;
+    // Watermark of the most recent successful drain; {@code Long.MIN_VALUE} before
+    // the first drain. Rows with {@code ts <= lastDrainedWatermark} have been emitted
+    // by a prior drain and must not be re-emitted on a subsequent hot-path drain.
+    // Advanced only on drain cursor close after a fully-consumed iteration.
     private long lastDrainedWatermark = Long.MIN_VALUE;
+    // Cumulative count of rows ever observed with {@code ts <= lastDrainedWatermark}
+    // at append time. Reported via catalog introspection; never reset.
     private long lateRowCount;
+    // Max timestamp observed across all rows ever added. Drives the caller-computed
+    // LAG watermark; retained across drains.
     private long maxTsSeen = Long.MIN_VALUE;
-    private InMemoryTable pending = new InMemoryTable();
-    private InMemoryTable retained = new InMemoryTable();
+    // Per-drain late count: rows added since the previous {@link #drain}/{@link #replay}
+    // call whose ts triggered the "late" branch. Zeroed on drain cursor close. Callers
+    // use this to decide between the hot path and warm-path replay before committing.
+    private long pendingLateCount;
+    // Primary row store, base-table schema. Grows append-only between compactions.
+    private InMemoryTable rows = new InMemoryTable();
+    // True when the live sort range has entries out of ts order relative to the
+    // sorted prefix. Reset by {@link #sortLiveRange} / {@link #compact}; set by
+    // {@link #addRow} when a new row's ts is lower than the previous tail. Skipping
+    // the radix sort in the monotonic-arrival steady state avoids O(liveCount) work
+    // per drain.
+    private boolean sortDirty;
+    // First live entry in the sort index. Advances on {@link #applyRetention}; reset
+    // to 0 by {@link #compact} after the evicted prefix is physically reclaimed.
+    private long sortStart;
+    // Timestamp of the most recent row appended via {@link #addRow}; used to detect
+    // out-of-order arrivals that flip {@link #sortDirty}. Reset on {@link #reset} and
+    // to the last sort-index entry's ts on {@link #compact}.
+    private long tailTs = Long.MIN_VALUE;
 
     public MergeBuffer(RecordMetadata metadata) {
         this.timestampColumnIndex = metadata.getTimestampIndex();
         if (timestampColumnIndex < 0) {
             throw new IllegalArgumentException("live view requires a designated timestamp column");
         }
-        pending.init(metadata);
-        retained.init(metadata);
-        // Share symbol dictionaries so that the pending/retained swap during drain
-        // compaction does not reassign symbol keys for already-buffered rows; the
-        // window function's partition state would otherwise be invalidated.
-        retained.shareSymbolTablesWith(pending);
-        this.record = new LiveViewRecord(pending);
+        rows.init(metadata);
+        compactScratch.init(metadata);
+        // Share symbol dictionaries so the compact-time swap does not reassign symbol
+        // keys for already-buffered rows; the window function's partition state would
+        // otherwise be invalidated.
+        compactScratch.shareSymbolTablesWith(rows);
+        this.record = new LiveViewRecord(rows);
         this.sortIndex = Vm.getCARWInstance(INDEX_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         this.sortScratch = Vm.getCARWInstance(INDEX_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
 
@@ -98,7 +148,7 @@ public class MergeBuffer implements QuietCloseable {
         this.symbolTables = new ObjList<>(columnCount);
         for (int i = 0; i < columnCount; i++) {
             if (ColumnType.tagOf(metadata.getColumnType(i)) == ColumnType.SYMBOL) {
-                symbolTables.extendAndSet(i, new PendingSymbolTable(i));
+                symbolTables.extendAndSet(i, new ActiveSymbolTable(i));
             } else {
                 symbolTables.extendAndSet(i, null);
             }
@@ -108,55 +158,151 @@ public class MergeBuffer implements QuietCloseable {
     /**
      * Appends a row from the cursor's current record. Returns {@code true} if the
      * row arrived "late" — i.e. its timestamp falls at or below the watermark of
-     * the most recent drain, meaning the window function has already processed
-     * that time range.
+     * the most recent drain, meaning the window function has already emitted state
+     * for that time range and the caller must take the warm-path replay branch on
+     * the next drain.
      */
     public boolean addRow(Record record) {
         long ts = record.getTimestamp(timestampColumnIndex);
-        long rowId = pending.getRowCount();
-        pending.appendRow(record);
+        long rowId = rows.getPhysicalRowCount();
+        rows.appendRow(record);
         long addr = sortIndex.appendAddressFor(INDEX_ENTRY_BYTES);
         Unsafe.getUnsafe().putLong(addr, ts);
         Unsafe.getUnsafe().putLong(addr + Long.BYTES, rowId);
+        count++;
         if (ts > maxTsSeen) {
             maxTsSeen = ts;
         }
+        if (ts < tailTs) {
+            sortDirty = true;
+        }
+        tailTs = ts;
         if (ts <= lastDrainedWatermark) {
             lateRowCount++;
+            pendingLateCount++;
             return true;
         }
         return false;
     }
 
+    /**
+     * Evicts the prefix of the live sort range whose ts falls at or below
+     * {@code maxTsSeen - retentionMicros}. Advances {@link #sortStart} only; the
+     * physical rows stay allocated in {@link #rows} until {@link #compact} runs.
+     * Safe to call after either {@link #drain} or {@link #replay}: both ensure the
+     * live sort range is fully sorted by ts.
+     */
+    public void applyRetention(long retentionMicros) {
+        if (retentionMicros <= 0 || count == sortStart || maxTsSeen == Long.MIN_VALUE) {
+            return;
+        }
+        long cutoff = maxTsSeen - retentionMicros;
+        long indexAddr = sortIndex.getPageAddress(0);
+        long lo = sortStart;
+        long hi = count;
+        while (lo < hi) {
+            long mid = (lo + hi) >>> 1;
+            long ts = Unsafe.getUnsafe().getLong(indexAddr + mid * INDEX_ENTRY_BYTES);
+            if (ts <= cutoff) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if (lo > sortStart) {
+            sortStart = lo;
+        }
+    }
+
     @Override
     public void close() {
-        pending = Misc.free(pending);
-        retained = Misc.free(retained);
+        rows = Misc.free(rows);
+        compactScratch = Misc.free(compactScratch);
         Misc.free(sortIndex);
         Misc.free(sortScratch);
     }
 
     /**
-     * Sorts the index and returns a single-use cursor over rows with
-     * {@code ts <= watermark} in timestamp-ascending order. Call {@link RecordCursor#close()}
-     * to trigger compaction of retained rows before the next {@link #addRow} or
-     * {@link #drain} call.
+     * Rebuilds {@link #rows} and the sort index in timestamp-ascending order,
+     * reclaiming the prefix that {@link #applyRetention} marked evicted. Physical
+     * row ids change: the sort index is rewritten so that row id matches the
+     * sorted position in the new {@link #rows}. SYMBOL keys are preserved because
+     * the dictionaries are shared with {@link #compactScratch}.
+     * <p>
+     * Caller is responsible for driving this — {@link #needsCompact} reports when
+     * the eviction wastage is high enough to be worth reclaiming. Must not be
+     * called while a drain cursor is open.
+     */
+    public void compact() {
+        long liveCount = count - sortStart;
+        compactScratch.clearRows();
+        long indexAddr = sortIndex.getPageAddress(0);
+        long maxTs = Long.MIN_VALUE;
+        // TODO(live-view): per-row appendRow dispatches a type switch for every column
+        //  on every compaction. For wide base tables this dominates compact cost.
+        //  A columnar "copy rows in sort-index order" helper on InMemoryTable would
+        //  iterate columns outer and rows inner, making the dispatch per-column.
+        for (long i = sortStart; i < count; i++) {
+            long rowId = Unsafe.getUnsafe().getLong(indexAddr + i * INDEX_ENTRY_BYTES + Long.BYTES);
+            record.setRow(rowId);
+            compactScratch.appendRow(record);
+        }
+        // Rewrite sort index to match the new physical layout: row {@code i} in the
+        // compacted {@code rows} holds the entry formerly at sortStart + i, so the
+        // new (ts, rowId) entry is (ts, i). Read positions are ahead of write
+        // positions, so the forward in-place rewrite is safe.
+        for (long i = 0; i < liveCount; i++) {
+            long src = indexAddr + (sortStart + i) * INDEX_ENTRY_BYTES;
+            long dst = indexAddr + i * INDEX_ENTRY_BYTES;
+            long ts = Unsafe.getUnsafe().getLong(src);
+            Unsafe.getUnsafe().putLong(dst, ts);
+            Unsafe.getUnsafe().putLong(dst + Long.BYTES, i);
+            if (ts > maxTs) {
+                maxTs = ts;
+            }
+        }
+        sortIndex.jumpTo(liveCount * INDEX_ENTRY_BYTES);
+        // Swap rows <-> compactScratch. The shared LiveViewRecord must track the new rows.
+        InMemoryTable tmp = rows;
+        rows = compactScratch;
+        compactScratch = tmp;
+        record.setTable(rows);
+        compactScratch.clearRows();
+
+        count = liveCount;
+        sortStart = 0;
+        // Post-compact layout is dense and sorted; subsequent drains can skip the sort
+        // until a later out-of-order addRow flips sortDirty again.
+        sortDirty = false;
+        tailTs = liveCount == 0 ? Long.MIN_VALUE : maxTs;
+    }
+
+    /**
+     * Convenience: triggers {@link #compact} when {@link #needsCompact} reports that
+     * the evicted prefix is large enough to reclaim. Callers drive compaction on
+     * their own cadence (typically at the end of a refresh cycle), so invoking this
+     * after {@link #applyRetention} is the usual pattern.
+     */
+    public void compactIfNeeded() {
+        if (needsCompact()) {
+            compact();
+        }
+    }
+
+    /**
+     * Sorts the live range and returns a single-use cursor over rows with ts in
+     * {@code (lastDrainedWatermark, watermark]} — new rows since the previous drain
+     * — in timestamp-ascending order. The lower bound is derived by binary-searching
+     * the post-sort index, so a late-row insertion that rearranges the sort order
+     * does not cause previously-emitted rows to re-emit. Call
+     * {@link RecordCursor#close} after fully consuming to advance
+     * {@code lastDrainedWatermark}.
      */
     public RecordCursor drain(long watermark) {
-        long count = pending.getRowCount();
-        if (count > 0) {
-            sortScratch.jumpTo(count * INDEX_ENTRY_BYTES);
-            Vect.radixSortLongIndexAscInPlace(
-                    sortIndex.getPageAddress(0),
-                    count,
-                    sortScratch.addressOf(0)
-            );
-        }
-        long split = findUpperBound(count, watermark);
-        if (watermark > lastDrainedWatermark) {
-            lastDrainedWatermark = watermark;
-        }
-        drainCursor.of(split, count);
+        sortLiveRange();
+        long from = Math.max(sortStart, findUpperBound(lastDrainedWatermark));
+        long to = findUpperBound(watermark);
+        drainCursor.of(from, to, watermark);
         return drainCursor;
     }
 
@@ -172,75 +318,96 @@ public class MergeBuffer implements QuietCloseable {
         return maxTsSeen;
     }
 
+    /**
+     * Returns the number of rows added since the previous drain cursor close whose
+     * ts triggered the "late" branch in {@link #addRow}. Callers inspect this before
+     * calling {@link #drain} to decide between the hot path and the warm-path
+     * {@link #replay}: a non-zero count means the window functions must reset and
+     * re-iterate all retained rows instead of appending only the delta.
+     */
+    public long getPendingLateCount() {
+        return pendingLateCount;
+    }
+
+    /**
+     * Returns {@code true} when there are no rows waiting to be emitted past the
+     * current {@link #lastDrainedWatermark}. Drained-but-retained rows that exist
+     * only to serve warm-path replay still report empty — an idle flush has nothing
+     * new to publish.
+     */
     public boolean isEmpty() {
-        return pending.getRowCount() == 0;
+        // maxTsSeen tracks the high water mark of every row added since reset.
+        // If it hasn't advanced past lastDrainedWatermark, every live row has been
+        // emitted. Late-row arrivals are caught by pendingLateCount — those rows
+        // have ts <= lastDrainedWatermark but still need a warm-path replay.
+        return pendingLateCount == 0 && maxTsSeen <= lastDrainedWatermark;
+    }
+
+    /**
+     * Returns {@code true} when the evicted prefix is large enough relative to the
+     * live range that {@link #compact} would meaningfully shrink memory usage.
+     * Threshold is 50%: compaction amortizes to one rewrite per 2x growth of the
+     * retention window.
+     */
+    public boolean needsCompact() {
+        return count > 0 && sortStart * 2 >= count;
+    }
+
+    /**
+     * Sorts the live range and returns a single-use cursor over rows in
+     * {@code [sortStart, split)} — every retained row with ts at or below
+     * {@code watermark}, including rows already emitted by prior drains — in
+     * timestamp-ascending order. Used by the warm-path rollback branch: the
+     * caller resets window function state before consuming the cursor, so
+     * re-iterating drained rows rebuilds the accumulator from scratch.
+     */
+    public RecordCursor replay(long watermark) {
+        sortLiveRange();
+        long to = findUpperBound(watermark);
+        drainCursor.of(sortStart, to, watermark);
+        return drainCursor;
     }
 
     /**
      * Clears all buffered state, including symbol dictionaries. The next
-     * {@link #addRow} starts a fresh LAG cycle with no history.
+     * {@link #addRow} starts a fresh retention cycle with no history.
      */
     public void reset() {
-        // pending.clear() drops the shared symbol dictionaries; clear retained's rows only
-        // so we don't free the same ObjList twice.
-        pending.clear();
-        retained.clearRows();
+        // rows.clear() drops the shared symbol dictionaries; clear compactScratch's
+        // rows only and re-establish the sharing so SYMBOL keys stay consistent
+        // across the next compact-swap.
+        rows.clear();
+        compactScratch.clearRows();
+        compactScratch.shareSymbolTablesWith(rows);
         sortIndex.jumpTo(0);
         maxTsSeen = Long.MIN_VALUE;
         lastDrainedWatermark = Long.MIN_VALUE;
         lateRowCount = 0;
-    }
-
-    public long size() {
-        return pending.getRowCount();
+        pendingLateCount = 0;
+        sortStart = 0;
+        count = 0;
+        sortDirty = false;
+        tailTs = Long.MIN_VALUE;
     }
 
     /**
-     * Compacts retained rows (sorted indices [from, to)) into the secondary buffer
-     * and swaps it with {@code pending}, then rewrites the sort index to cover the
-     * retained rows only. The index entries produced here are already in
-     * timestamp-ascending order — they are a prefix of the freshly-sorted index —
-     * so no re-sort is needed until new rows are appended.
+     * Returns the number of rows waiting to be emitted by the next drain. Reported
+     * via the {@code live_views} catalog as {@code buffered_row_count}. The result
+     * assumes the live range is sorted, which {@link #drain} / {@link #replay}
+     * ensure; calling between an {@link #addRow} and the next drain reports a value
+     * computed against the pre-sort index and can be slightly off for out-of-order
+     * arrivals.
      */
-    private void compactRetained(long from, long to) {
-        if (from >= to) {
-            pending.clearRows();
-            sortIndex.jumpTo(0);
-            return;
+    public long size() {
+        if (count == sortStart) {
+            return 0;
         }
-        if (from == 0) {
-            // Nothing drained.
-            return;
-        }
-        retained.clearRows();
-        long indexAddr = sortIndex.getPageAddress(0);
-        for (long i = from; i < to; i++) {
-            long rowId = Unsafe.getUnsafe().getLong(indexAddr + i * INDEX_ENTRY_BYTES + Long.BYTES);
-            record.setRow(rowId);
-            retained.appendRow(record);
-        }
-        // Swap pending <-> retained. The shared LiveViewRecord must track the new pending.
-        InMemoryTable tmp = pending;
-        pending = retained;
-        retained = tmp;
-        record.setTable(pending);
-
-        // Rewrite sortIndex to (ts, newRowId) for the retained rows in sorted order.
-        // Read positions are ahead of write positions, so a forward in-place rewrite is safe.
-        long retainedCount = to - from;
-        for (long i = 0; i < retainedCount; i++) {
-            long src = indexAddr + (from + i) * INDEX_ENTRY_BYTES;
-            long dst = indexAddr + i * INDEX_ENTRY_BYTES;
-            long ts = Unsafe.getUnsafe().getLong(src);
-            Unsafe.getUnsafe().putLong(dst, ts);
-            Unsafe.getUnsafe().putLong(dst + Long.BYTES, i);
-        }
-        sortIndex.jumpTo(retainedCount * INDEX_ENTRY_BYTES);
+        return count - Math.max(sortStart, findUpperBound(lastDrainedWatermark));
     }
 
-    private long findUpperBound(long count, long watermark) {
-        // Returns the first index i in [0, count) with ts(i) > watermark.
-        long lo = 0;
+    private long findUpperBound(long watermark) {
+        // Returns the first index i in [sortStart, count) with ts(i) > watermark.
+        long lo = sortStart;
         long hi = count;
         long addr = sortIndex.getPageAddress(0);
         while (lo < hi) {
@@ -255,16 +422,30 @@ public class MergeBuffer implements QuietCloseable {
         return lo;
     }
 
+    private void sortLiveRange() {
+        long liveCount = count - sortStart;
+        if (liveCount <= 1 || !sortDirty) {
+            return;
+        }
+        sortScratch.jumpTo(liveCount * INDEX_ENTRY_BYTES);
+        Vect.radixSortLongIndexAscInPlace(
+                sortIndex.getPageAddress(0) + sortStart * INDEX_ENTRY_BYTES,
+                liveCount,
+                sortScratch.addressOf(0)
+        );
+        sortDirty = false;
+    }
+
     /**
-     * Static symbol table over the MergeBuffer's currently active {@code pending} buffer.
+     * Static symbol table over the MergeBuffer's currently active {@link #rows} buffer.
      * Symbol values are interned into the buffer's {@link ObjList} by {@link InMemoryTable#putSymbol};
-     * keys are positions within that list. Resolves through the live {@code pending}
-     * reference so that lookups stay valid after the drain-time pending/retained swap.
+     * keys are positions within that list. Resolves through the live {@code rows}
+     * reference so that lookups stay valid after the compact-time rows/compactScratch swap.
      */
-    private class PendingSymbolTable implements StaticSymbolTable {
+    private class ActiveSymbolTable implements StaticSymbolTable {
         private final int columnIndex;
 
-        PendingSymbolTable(int columnIndex) {
+        ActiveSymbolTable(int columnIndex) {
             this.columnIndex = columnIndex;
         }
 
@@ -275,7 +456,7 @@ public class MergeBuffer implements QuietCloseable {
 
         @Override
         public int getSymbolCount() {
-            ObjList<String> entries = pending.getSymbolTable(columnIndex);
+            ObjList<String> entries = rows.getSymbolTable(columnIndex);
             return entries != null ? entries.size() : 0;
         }
 
@@ -284,7 +465,7 @@ public class MergeBuffer implements QuietCloseable {
             if (value == null) {
                 return SymbolTable.VALUE_IS_NULL;
             }
-            ObjList<String> entries = pending.getSymbolTable(columnIndex);
+            ObjList<String> entries = rows.getSymbolTable(columnIndex);
             if (entries == null) {
                 return SymbolTable.VALUE_NOT_FOUND;
             }
@@ -306,7 +487,7 @@ public class MergeBuffer implements QuietCloseable {
             if (key < 0) {
                 return null;
             }
-            ObjList<String> entries = pending.getSymbolTable(columnIndex);
+            ObjList<String> entries = rows.getSymbolTable(columnIndex);
             if (entries == null || key >= entries.size()) {
                 return null;
             }
@@ -316,21 +497,32 @@ public class MergeBuffer implements QuietCloseable {
 
     private class DrainCursor implements RecordCursor {
         private long cursor;
-        private long drainCount;
-        private long totalCount;
+        private long emitEnd;
+        private long emitStart;
+        private long pendingWatermark;
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            counter.add(drainCount - cursor);
-            cursor = drainCount;
+            counter.add(emitEnd - cursor);
+            cursor = emitEnd;
         }
 
         @Override
         public void close() {
-            compactRetained(drainCount, totalCount);
+            // Advance watermark and clear pendingLateCount only on a fully-consumed
+            // iteration. An aborted iteration leaves the buffer's drain state intact
+            // so the next refresh re-attempts the same emit range (hot path) or
+            // warm-path replay.
+            if (cursor == emitEnd) {
+                if (pendingWatermark > lastDrainedWatermark) {
+                    lastDrainedWatermark = pendingWatermark;
+                }
+                pendingLateCount = 0;
+            }
             cursor = 0;
-            drainCount = 0;
-            totalCount = 0;
+            emitStart = 0;
+            emitEnd = 0;
+            pendingWatermark = 0;
         }
 
         @Override
@@ -350,7 +542,7 @@ public class MergeBuffer implements QuietCloseable {
 
         @Override
         public boolean hasNext() {
-            if (cursor < drainCount) {
+            if (cursor < emitEnd) {
                 long rowId = Unsafe.getUnsafe().getLong(
                         sortIndex.getPageAddress(0) + cursor * INDEX_ENTRY_BYTES + Long.BYTES
                 );
@@ -368,7 +560,7 @@ public class MergeBuffer implements QuietCloseable {
 
         @Override
         public long preComputedStateSize() {
-            return totalCount;
+            return emitEnd - cursor;
         }
 
         @Override
@@ -378,18 +570,19 @@ public class MergeBuffer implements QuietCloseable {
 
         @Override
         public long size() {
-            return drainCount;
+            return emitEnd - cursor;
         }
 
         @Override
         public void toTop() {
-            cursor = 0;
+            cursor = emitStart;
         }
 
-        void of(long drainCount, long totalCount) {
-            this.drainCount = drainCount;
-            this.totalCount = totalCount;
-            this.cursor = 0;
+        void of(long emitStart, long emitEnd, long pendingWatermark) {
+            this.emitStart = emitStart;
+            this.cursor = emitStart;
+            this.emitEnd = emitEnd;
+            this.pendingWatermark = pendingWatermark;
         }
     }
 }

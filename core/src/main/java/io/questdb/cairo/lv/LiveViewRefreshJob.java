@@ -221,7 +221,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 Misc.free(drainCursor);
                 throw t;
             }
-            writeBuffer.applyRetention(instance.getDefinition().getRetentionMicros());
+            writeBuffer.applyRetention(retentionMicros);
+            mergeBuffer.applyRetention(retentionMicros);
+            mergeBuffer.compactIfNeeded();
             instance.publishWriteBuffer();
             // Advance the high watermark even when the inbound notification carried
             // seqTxn=-1 (initial flush triggered by forceFlushAllViews). Without this,
@@ -276,6 +278,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * through the window cursor into the InMemoryTable. No-op when the buffer is empty.
      * When {@code forceDrain} is true, the watermark is the max observed timestamp so
      * every buffered row is emitted — used for idle-timer flushes.
+     * <p>
+     * Hot path ({@code pendingLateCount == 0}): copy the published snapshot into the
+     * write buffer and append the delta rows on top, reusing accumulated window state.
+     * <p>
+     * Warm path ({@code pendingLateCount > 0}): a row added since the last drain has
+     * {@code ts <= lastDrainedWatermark}, so the window functions have already emitted
+     * state for that time range out of order. Reset window state, clear the write
+     * buffer, and re-emit every retained row in sort order through
+     * {@link MergeBuffer#replay} so the accumulator rebuilds from the retained horizon.
      */
     private void drainAndCommit(
             LiveViewInstance instance,
@@ -286,9 +297,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (mergeBuffer.isEmpty()) {
             return;
         }
-        // Acquire the write buffer before draining — drain is destructive on the merge
-        // buffer (rows with ts <= watermark are dropped on cursor close). A late failure
-        // to acquire would lose rows with no rollback path.
         InMemoryTable writeBuffer = instance.tryAcquireWriteBuffer();
         if (writeBuffer == null) {
             LOG.debug().$("live view incremental refresh deferred, write buffer pinned by readers [view=")
@@ -297,28 +305,51 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         try {
-            // Sync the write buffer from the currently-published state; appending the
-            // delta on top yields the next publishable snapshot.
-            writeBuffer.copyFrom(instance.peekPublishedBuffer());
-
             long lagMicros = instance.getDefinition().getLagMicros();
-            long watermark = forceDrain ? mergeBuffer.getMaxTsSeen() : mergeBuffer.getMaxTsSeen() - lagMicros;
-            RecordCursor drainCursor = mergeBuffer.drain(watermark);
+            long retentionMicros = instance.getDefinition().getRetentionMicros();
+            long maxTsSeen = mergeBuffer.getMaxTsSeen();
+            long hotWatermark = forceDrain ? maxTsSeen : maxTsSeen - lagMicros;
+            boolean isWarmPath = mergeBuffer.getPendingLateCount() > 0;
+            // Warm path rebuilds the write buffer from scratch; it must emit at least
+            // every row previously emitted (up to lastDrainedWatermark) so that rows
+            // that slipped past LAG on an earlier force-flush still appear. Otherwise
+            // the rebuild would silently drop them.
+            long watermark = isWarmPath
+                    ? Math.max(hotWatermark, mergeBuffer.getLastDrainedWatermark())
+                    : hotWatermark;
+
+            RecordCursor drainCursor;
+            if (isWarmPath) {
+                windowFactory.resetWindowFunctions();
+                writeBuffer.clear();
+                drainCursor = mergeBuffer.replay(watermark);
+            } else {
+                // Sync the write buffer from the currently-published state; appending the
+                // delta on top yields the next publishable snapshot.
+                writeBuffer.copyFrom(instance.peekPublishedBuffer());
+                drainCursor = mergeBuffer.drain(watermark);
+            }
+            RecordCursor windowCursor;
             try {
-                RecordCursor windowCursor = windowFactory.getIncrementalCursor(drainCursor, executionContext);
-                try {
-                    Record record = windowCursor.getRecord();
-                    while (windowCursor.hasNext()) {
-                        writeBuffer.appendRow(record);
-                    }
-                } finally {
-                    windowCursor.close();
-                }
+                windowCursor = isWarmPath
+                        ? windowFactory.getBootstrapCursor(drainCursor, executionContext)
+                        : windowFactory.getIncrementalCursor(drainCursor, executionContext);
             } catch (Throwable t) {
                 Misc.free(drainCursor);
                 throw t;
             }
-            writeBuffer.applyRetention(instance.getDefinition().getRetentionMicros());
+            try {
+                Record record = windowCursor.getRecord();
+                while (windowCursor.hasNext()) {
+                    writeBuffer.appendRow(record);
+                }
+            } finally {
+                windowCursor.close();
+            }
+
+            writeBuffer.applyRetention(retentionMicros);
+            mergeBuffer.applyRetention(retentionMicros);
+            mergeBuffer.compactIfNeeded();
             instance.publishWriteBuffer();
         } catch (Throwable t) {
             instance.abortWriteBuffer(writeBuffer);
