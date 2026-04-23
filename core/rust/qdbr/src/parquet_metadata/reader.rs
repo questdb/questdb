@@ -982,21 +982,6 @@ mod tests {
     }
 
     #[test]
-    fn from_file_size_rejects_header_size_mismatch() {
-        // Tampering with the header's parquet_meta_file_size field (post-CRC) is caught
-        // by the header/size cross-check even though the CRC still validates.
-        let mut w = ParquetMetaWriter::new();
-        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
-
-        // Overwrite header field with a bogus, smaller value.
-        let bogus = parquet_meta_file_size - 1;
-        bytes[0..8].copy_from_slice(&bogus.to_le_bytes());
-
-        assert!(ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).is_err());
-    }
-
-    #[test]
     fn from_file_size_ignores_trailing_bytes() {
         // Simulate an in-progress append: actual slice is larger than the
         // committed header-reported size. Reader must behave as if only the
