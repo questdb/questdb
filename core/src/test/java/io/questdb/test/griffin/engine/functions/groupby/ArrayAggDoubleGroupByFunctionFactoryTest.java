@@ -397,28 +397,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
-    public void testUnorderedFlag() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (val DOUBLE)");
-            execute("""
-                    INSERT INTO tab VALUES
-                    (1.0),
-                    (2.0),
-                    (3.0)
-                    """);
-            assertQueryNoLeakCheck(
-                    "arr\n" +
-                            "[1.0,2.0,3.0]\n",
-                    "SELECT array_agg(val, false) arr FROM tab",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testUnorderedParallel() throws Exception {
+    public void testParallelCounts() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
             StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
@@ -429,7 +408,6 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                 sb.append("('g").append(i % 10).append("', ").append(i).append(".0)");
             }
             execute(sb.toString());
-            // verify element counts and value sums (order may vary with parallelism)
             assertQueryNoLeakCheck(
                     "grp\tcnt\ttotal\n" +
                             "g0\t1000\t4995000.0\n" +
@@ -442,7 +420,43 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                             "g7\t1000\t5002000.0\n" +
                             "g8\t1000\t5003000.0\n" +
                             "g9\t1000\t5004000.0\n",
-                    "SELECT grp, array_count(array_agg(val, false)) cnt, array_sum(array_agg(val, false)) total FROM tab ORDER BY grp",
+                    "SELECT grp, array_count(array_agg(val)) cnt, array_sum(array_agg(val)) total FROM tab ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testParallelOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
+            // 10 groups x 1000 rows. Row i goes to group g(i%10) with value i.0.
+            // Group gN receives values N, N+10, N+20, ..., N+9990 in insertion order.
+            StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+            for (int i = 0; i < 10_000; i++) {
+                if (i > 0) {
+                    sb.append(",\n");
+                }
+                sb.append("('g").append(i % 10).append("', ").append(i).append(".0)");
+            }
+            execute(sb.toString());
+            // Build expected: each group gN has elements N, N+10, ..., N+9990.
+            StringBuilder expected = new StringBuilder("grp\tarr\n");
+            for (int g = 0; g < 10; g++) {
+                expected.append('g').append(g).append('\t').append('[');
+                for (int j = 0; j < 1000; j++) {
+                    if (j > 0) {
+                        expected.append(',');
+                    }
+                    expected.append(g + j * 10).append(".0");
+                }
+                expected.append("]\n");
+            }
+            assertQueryNoLeakCheck(
+                    expected.toString(),
+                    "SELECT grp, array_agg(val) arr FROM tab ORDER BY grp",
                     null,
                     true,
                     true

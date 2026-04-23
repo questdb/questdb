@@ -212,7 +212,7 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnorderedCountsMatch() throws Exception {
+    public void testParallelCountsMatch() throws Exception {
         assertMemoryLeak(() -> {
             for (int iter = 0; iter < ITERATIONS; iter++) {
                 int numGroups = rnd.nextInt(5) + 1;
@@ -235,7 +235,6 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                 }
                 execute(insert.toString());
 
-                // Verify element counts match for unordered mode
                 StringBuilder expected = new StringBuilder("grp\tcnt\n");
                 for (int g = 0; g < numGroups; g++) {
                     expected.append(g).append("\t").append(rowsPerGroup).append("\n");
@@ -243,7 +242,7 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
 
                 assertQueryNoLeakCheck(
                         expected.toString(),
-                        "SELECT grp, array_count(array_agg(val, false)) cnt FROM t ORDER BY grp",
+                        "SELECT grp, array_count(array_agg(val)) cnt FROM t ORDER BY grp",
                         null,
                         true,
                         true

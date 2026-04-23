@@ -361,7 +361,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
-    public void testUnorderedParallel() throws Exception {
+    public void testParallelCounts() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])");
             StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
@@ -372,7 +372,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                 sb.append("('g").append(i % 5).append("', ARRAY[").append(i).append(".0, ").append(i + 1).append(".0])");
             }
             execute(sb.toString());
-            // verify element counts and value sums: 200 arrays * 2 elements each = 400 per group
+            // 200 arrays * 2 elements each = 400 elements per group
             assertQueryNoLeakCheck(
                     "grp\tcnt\ttotal\n" +
                             "g0\t400\t199200.0\n" +
@@ -380,7 +380,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                             "g2\t400\t200000.0\n" +
                             "g3\t400\t200400.0\n" +
                             "g4\t400\t200800.0\n",
-                    "SELECT grp, array_count(array_agg(arr, false)) cnt, array_sum(array_agg(arr, false)) total FROM tab ORDER BY grp",
+                    "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab ORDER BY grp",
                     null,
                     true,
                     true

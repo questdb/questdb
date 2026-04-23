@@ -52,6 +52,6 @@ public class ArrayAggDoubleArrayGroupByFunctionFactory implements FunctionFactor
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new ArrayAggDoubleArrayGroupByFunction(args.getQuick(0), true, configuration.maxArrayElementCount());
+        return new ArrayAggDoubleArrayGroupByFunction(args.getQuick(0), configuration.maxArrayElementCount());
     }
 }
