@@ -104,20 +104,40 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             args.setQuick(i, CaseCommon.getCastFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
         }
 
+        // Short-circuit: if any prefix of the argument list is NOT NULL, every
+        // subsequent argument is unreachable. Truncate the args so the
+        // coalesce function never examines a row beyond the guaranteed
+        // non-null value, and the stored sentinel on a NOT NULL column is
+        // returned as real data rather than treated as NULL.
+        int firstNotNull = -1;
+        for (int i = 0; i < argsSize; i++) {
+            if (args.getQuick(i).isNotNull()) {
+                firstNotNull = i;
+                break;
+            }
+        }
+        if (firstNotNull == 0) {
+            return args.getQuick(0);
+        }
+        if (firstNotNull > 0) {
+            args.setPos(firstNotNull + 1);
+        }
+        final int effectiveArgsSize = args.size();
+
         return switch (tagOf(returnType)) {
             case DOUBLE ->
-                    argsSize == 2 ? new TwoDoubleCoalesceFunction(args) : new DoubleCoalesceFunction(args, argsSize);
-            case DATE -> argsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, argsSize);
+                    effectiveArgsSize == 2 ? new TwoDoubleCoalesceFunction(args) : new DoubleCoalesceFunction(args, effectiveArgsSize);
+            case DATE -> effectiveArgsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, effectiveArgsSize);
             case TIMESTAMP ->
-                    argsSize == 2 ? new TwoTimestampCoalesceFunction(args, returnType) : new TimestampCoalesceFunction(args, returnType);
-            case LONG -> argsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, argsSize);
-            case LONG256 -> argsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
-            case INT -> argsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, argsSize);
-            case IPv4 -> argsSize == 2 ? new TwoIPv4CoalesceFunction(args) : new IPv4CoalesceFunction(args, argsSize);
+                    effectiveArgsSize == 2 ? new TwoTimestampCoalesceFunction(args, returnType) : new TimestampCoalesceFunction(args, returnType);
+            case LONG -> effectiveArgsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, effectiveArgsSize);
+            case LONG256 -> effectiveArgsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
+            case INT -> effectiveArgsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, effectiveArgsSize);
+            case IPv4 -> effectiveArgsSize == 2 ? new TwoIPv4CoalesceFunction(args) : new IPv4CoalesceFunction(args, effectiveArgsSize);
             case FLOAT ->
-                    argsSize == 2 ? new TwoFloatCoalesceFunction(args) : new FloatCoalesceFunction(args, argsSize);
+                    effectiveArgsSize == 2 ? new TwoFloatCoalesceFunction(args) : new FloatCoalesceFunction(args, effectiveArgsSize);
             case STRING, SYMBOL -> {
-                if (argsSize == 2) {
+                if (effectiveArgsSize == 2) {
                     final int type0 = tagOf(args.getQuick(0).getType());
                     if (type0 != tagOf(args.getQuick(1).getType())) {
                         yield new TwoSymStrCoalesceFunction(args);
@@ -127,26 +147,26 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                         yield new TwoStrCoalesceFunction(args);
                     }
                 }
-                yield new SymStrCoalesceFunction(args, argsSize);
+                yield new SymStrCoalesceFunction(args, effectiveArgsSize);
             }
             case VARCHAR ->
-                    argsSize == 2 ? new TwoVarcharCoalesceFunction(args) : new VarcharCoalesceFunction(args, argsSize);
-            case UUID -> argsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, argsSize);
+                    effectiveArgsSize == 2 ? new TwoVarcharCoalesceFunction(args) : new VarcharCoalesceFunction(args, effectiveArgsSize);
+            case UUID -> effectiveArgsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, effectiveArgsSize);
             case BOOLEAN, SHORT, BYTE, CHAR ->
                 // Null on these data types not supported
                     args.getQuick(0);
             case DECIMAL8 ->
-                    argsSize == 2 ? new TwoDecimal8CoalesceFunction(returnType, args) : new Decimal8CoalesceFunction(returnType, args, argsSize);
+                    effectiveArgsSize == 2 ? new TwoDecimal8CoalesceFunction(returnType, args) : new Decimal8CoalesceFunction(returnType, args, effectiveArgsSize);
             case DECIMAL16 ->
-                    argsSize == 2 ? new TwoDecimal16CoalesceFunction(returnType, args) : new Decimal16CoalesceFunction(returnType, args, argsSize);
+                    effectiveArgsSize == 2 ? new TwoDecimal16CoalesceFunction(returnType, args) : new Decimal16CoalesceFunction(returnType, args, effectiveArgsSize);
             case DECIMAL32 ->
-                    argsSize == 2 ? new TwoDecimal32CoalesceFunction(returnType, args) : new Decimal32CoalesceFunction(returnType, args, argsSize);
+                    effectiveArgsSize == 2 ? new TwoDecimal32CoalesceFunction(returnType, args) : new Decimal32CoalesceFunction(returnType, args, effectiveArgsSize);
             case DECIMAL64 ->
-                    argsSize == 2 ? new TwoDecimal64CoalesceFunction(returnType, args) : new Decimal64CoalesceFunction(returnType, args, argsSize);
+                    effectiveArgsSize == 2 ? new TwoDecimal64CoalesceFunction(returnType, args) : new Decimal64CoalesceFunction(returnType, args, effectiveArgsSize);
             case DECIMAL128 ->
-                    argsSize == 2 ? new TwoDecimal128CoalesceFunction(returnType, args) : new Decimal128CoalesceFunction(returnType, args, argsSize);
+                    effectiveArgsSize == 2 ? new TwoDecimal128CoalesceFunction(returnType, args) : new Decimal128CoalesceFunction(returnType, args, effectiveArgsSize);
             case DECIMAL256 ->
-                    argsSize == 2 ? new TwoDecimal256CoalesceFunction(returnType, args) : new Decimal256CoalesceFunction(returnType, args, argsSize);
+                    effectiveArgsSize == 2 ? new TwoDecimal256CoalesceFunction(returnType, args) : new Decimal256CoalesceFunction(returnType, args, effectiveArgsSize);
             default -> throw SqlException.$(position, "coalesce cannot be used with ")
                     .put(nameOf(returnType))
                     .put(" data type");

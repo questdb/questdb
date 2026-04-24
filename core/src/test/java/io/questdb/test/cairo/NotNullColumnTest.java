@@ -1501,6 +1501,45 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoalesceShortCircuitsOnNotNullArg() throws Exception {
+        assertMemoryLeak(() -> {
+            // COALESCE used to walk every argument and compare against the
+            // type null sentinel. On a NOT NULL column the stored sentinel is
+            // real data; the coalesce factory now short-circuits to the first
+            // NOT NULL argument and returns it verbatim.
+            execute("CREATE TABLE t (x LONG NOT NULL, y LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        (CAST(-9223372036854775807 AS LONG) - 1, 10, '2024-01-01'),
+                        (42, NULL, '2024-01-02')
+                    """);
+
+            // COALESCE(x, y): x is NOT NULL so y is unreachable; the sentinel
+            // bit pattern from row 1 renders as "null" (nullable result type)
+            // but is distinct from the y fallback.
+            assertSql(
+                    """
+                            c
+                            null
+                            42
+                            """,
+                    "SELECT coalesce(x, y) c FROM t ORDER BY ts"
+            );
+
+            // COALESCE(y, x): y is nullable, so the first-non-null walk still
+            // happens. When y is NULL the row falls back to x.
+            assertSql(
+                    """
+                            c
+                            10
+                            42
+                            """,
+                    "SELECT coalesce(y, x) c FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testCountOnNotNullColumnCountsSentinelValues() throws Exception {
         assertMemoryLeak(() -> {
             // Regression: count(x) on a NOT NULL column used to skip rows whose
