@@ -3420,6 +3420,60 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillReExecutionKeyed() throws Exception {
+        // Re-execute the same keyed FILL factory twice and assert the second
+        // cursor produces identical output. Exercises SampleByFillCursor.toTop()
+        // and the getCursor() path: every state field reset in toTop() (keysMap
+        // clear, hasSimplePrev, simplePrevRowId, hasPendingRow,
+        // isBaseCursorExhausted, hasExplicitTo, hasDataForCurrentBucket,
+        // isEmittingFills, isInitialized) must be restored so pass-1 runs cleanly
+        // against the already-built SortedRecordCursor chain. A regression that
+        // forgets to reset one of these fields would only surface here.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')");
+            final String expected = "ts\tk\tsum\n" +
+                    "2024-01-01T00:00:00.000000Z\tA\t1.0\n" +
+                    "2024-01-01T00:00:00.000000Z\tB\t2.0\n" +
+                    "2024-01-01T01:00:00.000000Z\tA\t1.0\n" +
+                    "2024-01-01T01:00:00.000000Z\tB\t2.0\n" +
+                    "2024-01-01T02:00:00.000000Z\tA\t3.0\n" +
+                    "2024-01-01T02:00:00.000000Z\tB\t2.0\n";
+            try (RecordCursorFactory factory = select(
+                    "SELECT * FROM (SELECT ts, k, sum(val) FROM t " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR) ORDER BY ts, k")) {
+                assertCursor(expected, factory, true, false, false, sqlExecutionContext);
+                assertCursor(expected, factory, true, false, false, sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
+    public void testFillReExecutionNonKeyed() throws Exception {
+        // Non-keyed sibling of testFillReExecutionKeyed. No keysMap, so
+        // toTop() only needs to reset the non-keyed state fields. Regression
+        // guard for simplePrevRowId / hasSimplePrev leakage between runs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            final String expected = "ts\tfv\n" +
+                    "2024-01-01T00:00:00.000000Z\t1.0\n" +
+                    "2024-01-01T01:00:00.000000Z\t1.0\n" +
+                    "2024-01-01T02:00:00.000000Z\t3.0\n";
+            try (RecordCursorFactory factory = select(
+                    "SELECT ts, first(val) fv FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")) {
+                assertCursor(expected, factory, false, false, false, sqlExecutionContext);
+                assertCursor(expected, factory, false, false, false, sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
     public void testFillSubDayTimezoneFromDense() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
