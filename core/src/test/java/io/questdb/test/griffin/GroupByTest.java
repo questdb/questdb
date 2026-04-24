@@ -1199,6 +1199,33 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByNullLiteralKey() throws Exception {
+        // Regression: a bare `null` literal in the SELECT list referenced from GROUP BY
+        // used to blow up the map key sink codegen with
+        //     IllegalArgumentException: Unexpected function type: NULL
+        // The NULL-typed key is now stored as a zero-width column (no bytes reserved),
+        // so all rows collapse into a single group as expected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT) ");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            assertSql(
+                    "e0\ta0\n" +
+                            "null\t2.0\n",
+                    "SELECT null AS e0, avg(v) AS a0 FROM t GROUP BY 1"
+            );
+            // A real key alongside the constant NULL still grouped per real-key value.
+            execute("CREATE TABLE t2 (k INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, 20), (2, 30)");
+            assertSql(
+                    "e0\tk\ta\n" +
+                            "null\t1\t15.0\n" +
+                            "null\t2\t30.0\n",
+                    "SELECT null AS e0, k, avg(v) AS a FROM t2 GROUP BY 1, k ORDER BY k"
+            );
+        });
+    }
+
+    @Test
     public void testGroupByNonPartitioned() throws Exception {
         assertQuery(
                 """
