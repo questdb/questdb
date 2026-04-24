@@ -1739,7 +1739,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         while (cursor.hasNext()) {
                             assertEquals((segmentId % numOfSegments) * maxRowCount + n, record.getInt(0));
                             assertEquals(n, record.getInt(1)); // New symbol value every row
-                            assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSymA(1));
+                            TestUtils.assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSymA(1));
                             assertEquals(n, record.getRowId());
                             n++;
                         }
@@ -2614,8 +2614,8 @@ public class WalWriterTest extends AbstractCairoTest {
                         TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getStrA(22));
                         TestUtils.assertEquals("abcdefghijklmnopqrstuvwxyz".substring(0, i % 26 + 1), record.getStrA(23));
 
-                        assertEquals(String.valueOf(i), record.getSymA(24));
-                        assertEquals(String.valueOf((char) (65 + i % 26)), record.getSymA(25));
+                        TestUtils.assertEquals(String.valueOf(i), record.getSymA(24));
+                        TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getSymA(25));
 
                         TestUtils.assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getSymA(26));
                         TestUtils.assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getStrA(27));
@@ -3139,8 +3139,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(12, record.getInt(0));
-                assertEquals("symb", record.getSymA(1));
-                assertEquals("symc", record.getSymA(2));
+                TestUtils.assertEquals("symb", record.getSymA(1));
+                TestUtils.assertEquals("symc", record.getSymA(2));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -3195,7 +3195,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(133, record.getInt(0));
-                assertEquals("Таке-Сяке", record.getSymA(2));
+                TestUtils.assertEquals("Таке-Сяке", record.getSymA(2));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -4373,14 +4373,14 @@ public class WalWriterTest extends AbstractCairoTest {
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSymA(1));
+                    TestUtils.assertEquals("sym" + i, record.getSymA(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
                     assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSymA(2));
+                    TestUtils.assertEquals("s" + i % 2, record.getSymA(2));
                     assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
                     assertEquals(i % 2, record.getInt(3));
-                    assertEquals("symbol" + i % 2, record.getSymA(3));
-                    assertEquals(record.getSymB(3), record.getSymA(3));
+                    TestUtils.assertEquals("symbol" + i % 2, record.getSymA(3));
+                    TestUtils.assertEquals(record.getSymB(3), record.getSymA(3));
                     assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
                     i++;
                 }
@@ -4400,12 +4400,12 @@ public class WalWriterTest extends AbstractCairoTest {
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSymA(1));
+                    TestUtils.assertEquals("sym" + i, record.getSymA(1));
                     assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSymA(2));
+                    TestUtils.assertEquals("s" + i % 2, record.getSymA(2));
                     assertEquals(i % 3, record.getInt(3));
-                    assertEquals("symbol" + i % 3, record.getSymA(3));
-                    assertEquals(record.getSymB(3), record.getSymA(3));
+                    TestUtils.assertEquals("symbol" + i % 3, record.getSymA(3));
+                    TestUtils.assertEquals(record.getSymB(3), record.getSymA(3));
                     i++;
                 }
                 assertEquals(i, reader.size());

@@ -52,6 +52,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -204,12 +205,14 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             @Nullable SymbolMapDiffCursor txnDiffs
     ) {
         assert rowLo >= 0 && rowHi >= rowLo && rowHi <= segmentRowCount;
-        reader = Misc.free(reader);
-        // The WalReader constructor opens the segment via dataCursor.of(this) and
-        // mmaps all column files. A second openSegment() call here would mis-resolve
-        // them, because openSegment's finally trims path back to the WAL directory and
-        // the constructor's segment-id append is gone.
-        reader = new WalReader(configuration, tableToken, walName, segmentId, segmentRowCount);
+        // Lazily allocate the WalReader once and rebind per segment. Each of() call opens the
+        // segment via dataCursor.of(this) and mmaps the column files; openSegment's finally
+        // trims path back to the WAL directory after that, which is also why we don't call it
+        // again here.
+        if (reader == null) {
+            reader = new WalReader(configuration);
+        }
+        reader.of(tableToken, walName, segmentId, segmentRowCount);
         this.rowLo = rowLo;
         this.rowHi = rowHi;
         buildTxnSymbolDiffs(txnDiffs);
@@ -363,6 +366,8 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     }
 
     private static final class WalSymbolTable implements StaticSymbolTable {
+        private final DirectString viewA = new DirectString();
+        private final DirectString viewB = new DirectString();
         // Per-transaction overlay (key -> symbol) built from the current txn's
         // SymbolMapDiff. Null when the txn has no diff entries for this column;
         // resolution falls straight through to the reader.
@@ -397,24 +402,27 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
 
         @Override
         public CharSequence valueBOf(int key) {
-            return valueOf(key);
+            return resolve(key, viewB);
         }
 
         @Override
         public CharSequence valueOf(int key) {
-            // Check the per-txn overlay first. The reader's cumulative symbol map
-            // can have stale entries for colliding local ids across transactions,
-            // so we cannot trust it for keys that belong to this transaction's diff.
-            // For keys < cleanSymbolCount (loaded from the table's clean symbol
-            // files), the overlay does not have them and the reader resolves them
-            // correctly.
+            return resolve(key, viewA);
+        }
+
+        // Check the per-txn overlay first. The reader's cumulative symbol map can have stale
+        // entries for colliding local ids across transactions, so we cannot trust it for keys
+        // that belong to this transaction's diff. For keys < cleanSymbolCount (loaded from the
+        // table's clean symbol files), the overlay does not have them and the reader resolves
+        // them correctly.
+        private CharSequence resolve(int key, DirectString view) {
             if (txnDiff != null) {
-                CharSequence value = txnDiff.valueOf(key);
+                CharSequence value = txnDiff.valueOf(key, view);
                 if (value != null) {
                     return value;
                 }
             }
-            return reader.getSymbolValue(walColumnIndex, key);
+            return reader.getSymbolValue(walColumnIndex, key, view);
         }
     }
 

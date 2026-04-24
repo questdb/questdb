@@ -1139,7 +1139,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                         assertEquals((long) row * 1000, record.getLong(1));
                         assertEquals(row * 1.5, record.getDouble(2), 0.0001);
                         TestUtils.assertEquals(varcharValues[row], record.getVarcharA(3));
-                        assertEquals(symbolValues[row], record.getSymA(4));
+                        TestUtils.assertEquals(symbolValues[row], record.getSymA(4));
                         assertEquals(boolValues[row], record.getBool(5));
                         assertEquals(timestamps[row], record.getTimestamp(6));
                         row++;
@@ -7191,7 +7191,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 int row = 0;
                 while (cursor.hasNext()) {
-                    assertEquals(values[row], record.getSymA(0));
+                    TestUtils.assertEquals(values[row], record.getSymA(0));
                     row++;
                 }
                 assertEquals(rowCount, row);
@@ -7236,7 +7236,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 int row = 0;
                 while (cursor.hasNext()) {
-                    assertEquals(values[row], record.getSymA(0));
+                    TestUtils.assertEquals(values[row], record.getSymA(0));
                     row++;
                 }
                 assertEquals(rowCount, row);
@@ -7347,13 +7347,13 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
 
                 assertTrue(cursor.hasNext());
-                assertEquals("A", record.getSymA(0));
+                TestUtils.assertEquals("A", record.getSymA(0));
 
                 assertTrue(cursor.hasNext());
                 assertNull(record.getSymA(0));
 
                 assertTrue(cursor.hasNext());
-                assertEquals("B", record.getSymA(0));
+                TestUtils.assertEquals("B", record.getSymA(0));
 
                 assertTrue(cursor.hasNext());
                 assertNull(record.getSymA(0));
