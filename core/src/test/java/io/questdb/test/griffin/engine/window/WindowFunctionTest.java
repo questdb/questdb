@@ -12991,7 +12991,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowFunctionAsArgumentToAggregateWithBaseColumnAndGroupBy() throws Exception {
         // Base column mixed with window function inside aggregate argument with GROUP BY.
         // max(x - avg(x) OVER (...)) computes max deviation from the moving average per category.
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         category\tmax_dev
                         A\t0.5
@@ -13007,14 +13007,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        );
+        ));
     }
 
     @Test
     public void testWindowFunctionAsArgumentToAggregateWithBaseColumnImplicitGroupBy() throws Exception {
         // Base column mixed with window function inside aggregate, no GROUP BY clause.
         // sum triggers implicit grouping; x needs pass-through in the inner window model.
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         result
                         20.0
@@ -13028,12 +13028,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 false,
                 true
-        );
+        ));
     }
 
     @Test
     public void testWindowFunctionAsArgumentToAggregateWithBasicGroupBy() throws Exception {
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         category\tresult
                         A\t5.0
@@ -13048,7 +13048,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        );
+        ));
     }
 
     @Test
@@ -13056,7 +13056,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Window function inside aggregate argument with explicit GROUP BY.
         // max(avg(x) OVER (PARTITION BY cat ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW))
         // computes a 3-row moving average per category, then picks the peak per category.
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         category\tpeak_ma
                         A\t1.5
@@ -13072,7 +13072,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        );
+        ));
     }
 
     @Test
@@ -13081,7 +13081,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // avg(x) OVER () computes over non-null values: (1+2+3+4)/4 = 2.5
         // Row 5 has x=NULL, category=B; avg(x) OVER () still returns 2.5 for that row.
         // sum per category: A(2 rows)=5.0, B(3 rows)=7.5
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         category\tresult
                         A\t5.0
@@ -13097,7 +13097,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        );
+        ));
     }
 
     @Test
@@ -13105,7 +13105,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // GROUP BY on a non-aggregate expression (upper(cat)) combined with a nested
         // window inside an aggregate. The inner window model must expose the underlying
         // literal (cat), not the GROUP BY alias (upper_cat).
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         upper_cat\tresult
                         A\t5.0
@@ -13121,7 +13121,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        );
+        ));
     }
 
     @Test
@@ -13130,7 +13130,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Extraction creates two inner window models (one per nested window). Pass-through of
         // one window's alias must only reach outer models that have the owning model in their
         // nested chain, not the deeper one (which would produce an unresolvable column).
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         category\tmax_avg\tmin_sum
                         A\t1.5\t3.0
@@ -13148,14 +13148,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        );
+        ));
     }
 
     @Test
     public void testWindowFunctionAsArgumentToAggregateWithMultipleGroupByKeys() throws Exception {
         // Multiple GROUP BY keys must all get pass-through columns in the inner window model.
         // avg(x) OVER () = (1+2+3+4)/4 = 2.5, each (cat1, cat2) group has 1 row → sum(2.5) = 2.5
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         cat1\tcat2\tresult
                         A\tX\t2.5
@@ -13174,7 +13174,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        );
+        ));
     }
 
     @Test
@@ -13182,7 +13182,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Three aggregates, each with a distinct nested window, stressing the chain when
         // nInner > 2: pass-through must reach intermediate models without leaking window
         // aliases into models that can't resolve them.
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         category\tmax_avg\tmin_sum\tavg_cnt
                         A\t1.5\t3.0\t2.0
@@ -13201,14 +13201,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        );
+        ));
     }
 
     @Test
     public void testWindowFunctionAsArgumentToAggregateWithPartitionByNotInGroupBy() throws Exception {
         // Window PARTITION BY uses a column (cat2) that is NOT a GROUP BY key (cat1).
         // Inner window model must expose both columns so the chain resolves them.
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         cat1\tpeak
                         A\t3.0
@@ -13226,7 +13226,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        );
+        ));
     }
 
     @Test
@@ -13234,7 +13234,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Reproduces the shape from issue #6954: the original bug report used a SYMBOL
         // column as the GROUP BY key. SYMBOL resolution goes through a distinct code path
         // from STRING, so this guards against a regression specific to that type.
-        assertQuery(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         category\tresult
                         A\t5.0
@@ -13250,7 +13250,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        );
+        ));
     }
 
     @Test
