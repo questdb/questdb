@@ -4097,25 +4097,35 @@ public class SqlOptimiser implements Mutable {
         return 0;
     }
 
-    // Walks the AST of a SELECT column and returns the position of the first
-    // window function that is NOT wrapped inside an aggregate function.
-    // Returns -1 if no such window function exists.
-    //
-    // Window functions inside aggregates (e.g. max(avg(x) OVER (...))) are
-    // handled by the inner window model propagation pipeline and must not be
-    // flagged here. Window functions outside aggregates mixed with aggregates
-    // or GROUP BY (e.g. avg(x) - avg(x) OVER ()) have no valid execution plan
-    // and must be rejected by the caller.
+    /**
+     * Walks the AST of a SELECT column and returns the position of the first
+     * window function that is NOT wrapped inside an aggregate function.
+     * Returns -1 if no such window function exists.
+     * <p>
+     * A window function here means either a function node carrying an OVER
+     * clause ({@code windowExpression != null}) or a pure window function name
+     * (e.g. {@code row_number}, {@code rank}) that cannot be an aggregate.
+     * Functions that also exist as aggregates ({@code sum}, {@code avg}, ...)
+     * only qualify when they carry an OVER clause.
+     * <p>
+     * Window functions inside aggregates (e.g. {@code max(avg(x) OVER (...))})
+     * are handled by the inner window model propagation pipeline and must not
+     * be flagged here. Window functions outside aggregates mixed with
+     * aggregates or GROUP BY (e.g. {@code avg(x) - avg(x) OVER ()}) have no
+     * valid execution plan and must be rejected by the caller.
+     */
     private int findWindowFunctionOutsideAggregatePos(ExpressionNode node) {
         sqlNodeStack.clear();
         final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
         while (node != null) {
-            if (node.windowExpression != null) {
+            if (node.windowExpression != null
+                    || (node.type == FUNCTION && cache.isPureWindowFunction(node.token))) {
                 return node.position;
             }
-            // Skip subtrees rooted at an aggregate function.
-            // An aggregate never has windowExpression set (checkForChildAggregates
-            // enforces this invariant), so the order of checks is safe.
+            // Skip subtrees rooted at an aggregate function. The parser never
+            // attaches windowExpression to a plain aggregate, and the check
+            // above has already returned for any window function node, so any
+            // isGroupBy FUNCTION reaching this point is a genuine aggregate.
             if (node.type == FUNCTION && cache.isGroupBy(node.token)) {
                 node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
                 continue;
@@ -9377,8 +9387,10 @@ public class SqlOptimiser implements Mutable {
             // wrong results. Walk the AST, skipping aggregate subtrees, and reject the
             // query when such a window function appears.
             //
-            // Skip top-level window columns: they are already caught below by the
-            // REWRITE_STATUS_USE_WINDOW_MODEL + REWRITE_STATUS_USE_GROUP_BY_MODEL check.
+            // Skip top-level window columns: a column whose AST is itself a window
+            // expression sets REWRITE_STATUS_USE_WINDOW_MODEL and is caught by the
+            // REWRITE_STATUS_USE_WINDOW_MODEL + REWRITE_STATUS_USE_GROUP_BY_MODEL check
+            // below.
             if ((explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) && !qc.isWindowExpression()) {
                 int windowFnPos = findWindowFunctionOutsideAggregatePos(qc.getAst());
                 if (windowFnPos >= 0) {

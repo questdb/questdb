@@ -9602,7 +9602,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNestedWindowFunctionInGroupByContextFails() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x DOUBLE, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES (1, 'A', 1000000), (2, 'A', 2000000), (3, 'B', 3000000)");
+            execute("INSERT INTO t VALUES (1, 'A', 1_000_000), (2, 'A', 2_000_000), (3, 'B', 3_000_000)");
 
             // Window function nested inside arithmetic expression combined with GROUP BY
             assertExceptionNoLeakCheck(
@@ -9636,6 +9636,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "SELECT sum(x) + avg(x) OVER () FROM t",
                     16,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Pure window function name (row_number has no aggregate form) used without OVER
+            // alongside an aggregate. Previously fell through to "empty window context" at
+            // runtime; now rejected cleanly at compile time.
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) + row_number() FROM t",
+                    16,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // ORDER BY with a nested window function under GROUP BY: moveOrderByFunctionsIntoOuterSelect
+            // lifts the ORDER BY expression into the bottom-up column list, so the SELECT-list guard
+            // catches it with the same message and a precise position. Previously the outer validation
+            // would have reported "window function is not allowed in ORDER BY clause".
+            assertExceptionNoLeakCheck(
+                    "SELECT category, avg(x) FROM t GROUP BY category ORDER BY avg(x) - avg(x) OVER ()",
+                    67,
                     "Window function is not allowed in context of aggregation. Use sub-query."
             );
 
