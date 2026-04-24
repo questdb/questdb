@@ -2705,6 +2705,32 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevMultiUnitStride() throws Exception {
+        // Existing FILL tests only exercise 1-unit strides (1h, 1d, 1m, 1s).
+        // A non-unit stride like 3h pushes TimestampSampler.nextTimestamp
+        // through a multi-hour advance and catches arithmetic bugs that
+        // wouldn't surface at stride=1. Data at 00:00 and 09:00 -- two buckets
+        // of data, two 3h gaps in between (03:00 and 06:00).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(4.0, '2024-01-01T09:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tfv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T03:00:00.000000Z\t1.0
+                            2024-01-01T06:00:00.000000Z\t1.0
+                            2024-01-01T09:00:00.000000Z\t4.0
+                            """,
+                    "SELECT ts, first(val) fv FROM t SAMPLE BY 3h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevMixedWithSymbolKeyed() throws Exception {
         assertMemoryLeak(() -> {
             // Same as testFillPrevMixedWithSymbol but with a key column.
