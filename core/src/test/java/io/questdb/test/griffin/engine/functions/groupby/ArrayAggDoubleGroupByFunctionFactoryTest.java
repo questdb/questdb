@@ -427,6 +427,9 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testParallelCounts() throws Exception {
+        // Shrink the page frame so the 10_000-row insert spans many frames,
+        // forcing multi-worker dispatch and exercising the parallel merge path.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
             StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
@@ -459,6 +462,9 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testParallelOrdering() throws Exception {
+        // Shrink the page frame so the 10_000-row insert spans many frames,
+        // forcing multi-worker dispatch and exercising the merge-sort in merge().
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
             // 10 groups x 1000 rows. Row i goes to group g(i%10) with value i.0.
@@ -512,10 +518,11 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testMergeTimeCardinalityExceeded() throws Exception {
-        // Feed enough rows to trigger parallel execution so that per-worker counts stay
-        // below the limit while the merged count crosses it, exercising the capacity
-        // check inside merge(). Sequential execution still hits the identical check in
-        // computeNext.
+        // Shrink the page frame so per-worker counts stay below the 9_999-element
+        // limit while the merged count crosses it, exercising the capacity check
+        // inside merge(). Without this, the 10_000-row insert fits in a single
+        // page frame and only the computeNext check runs.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
         setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 9_999);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (val DOUBLE)");
