@@ -849,9 +849,9 @@ io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.NtileFunctionFactory
 io.questdb.griffin.engine.functions.window.CumeDistFunctionFactory
 io.questdb.griffin.engine.functions.window.NthValueDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.NtileFunctionFactory
 
 # Bitwise operators
 io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory

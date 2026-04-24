@@ -324,9 +324,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void reopen() {
-            if (map != null) {
-                map.reopen();
-            }
+            map.reopen();
         }
 
         @Override

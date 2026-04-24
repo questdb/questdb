@@ -54,7 +54,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-// Returns the value evaluated at the n-th row of the window frame (1-based).
+/**
+ * nth_value(expr, n) window function.
+ * Returns the value of {@code expr} evaluated at the n-th row (1-based) of the window frame,
+ * or NaN when {@code n} exceeds the current frame size.
+ */
 public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     public static final String NAME = "nth_value";
@@ -478,8 +482,9 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
-            double val = value != null ? value.getDouble(0) : Double.NaN;
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
+            // pass1 creates an entry for every partition key encountered, and pass2 sees the
+            // same record stream, so the lookup always hits.
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value.getDouble(0));
         }
 
         @Override
