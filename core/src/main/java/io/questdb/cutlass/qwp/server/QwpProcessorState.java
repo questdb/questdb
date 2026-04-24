@@ -154,7 +154,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             return;
         }
         ensureCapacity((int) required);
-        Unsafe.getUnsafe().copyMemory(lo, bufferAddress + bufferPosition, len);
+        Unsafe.copyMemory(lo, bufferAddress + bufferPosition, len);
         bufferPosition += len;
     }
 
@@ -484,7 +484,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         try {
             // Verify the message version matches what was negotiated during the upgrade
             if (bufferPosition >= QwpConstants.HEADER_SIZE) {
-                byte messageVersion = Unsafe.getUnsafe().getByte(bufferAddress + QwpConstants.HEADER_OFFSET_VERSION);
+                byte messageVersion = Unsafe.getByte(bufferAddress + QwpConstants.HEADER_OFFSET_VERSION);
                 if (messageVersion != negotiatedVersion) {
                     rejectMsg.clear();
                     rejectMsg.put("message version ").put(messageVersion)

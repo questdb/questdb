@@ -454,7 +454,7 @@ public class QwpTableHeaderTest {
     private static long copyToDirectMemory(byte[] buf, int length) {
         long address = Unsafe.malloc(length, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < length; i++) {
-            Unsafe.getUnsafe().putByte(address + i, buf[i]);
+            Unsafe.putByte(address + i, buf[i]);
         }
         return address;
     }

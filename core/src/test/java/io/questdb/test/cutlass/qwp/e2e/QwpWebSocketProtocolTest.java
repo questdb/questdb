@@ -419,14 +419,14 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
 
         long ptr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(ptr, statusByte);
-            Unsafe.getUnsafe().putLong(ptr + 1, 1L); // sequence = 1
+            Unsafe.putByte(ptr, statusByte);
+            Unsafe.putLong(ptr + 1, 1L); // sequence = 1
             if (statusByte == QwpConstants.STATUS_OK) {
-                Unsafe.getUnsafe().putShort(ptr + 9, (short) 0); // tableCount = 0
+                Unsafe.putShort(ptr + 9, (short) 0); // tableCount = 0
             } else {
-                Unsafe.getUnsafe().putShort(ptr + 9, (short) errorMsg.length);
+                Unsafe.putShort(ptr + 9, (short) errorMsg.length);
                 for (int i = 0; i < errorMsg.length; i++) {
-                    Unsafe.getUnsafe().putByte(ptr + 11 + i, errorMsg[i]);
+                    Unsafe.putByte(ptr + 11 + i, errorMsg[i]);
                 }
             }
 

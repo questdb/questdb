@@ -1272,7 +1272,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
             long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             allocatedMemory.add(ptr);
             allocatedMemory.add((long) bytes.length);
@@ -1320,7 +1320,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             int available = data.length - pos;
             int n = Math.min(bufferLen, Math.min(available, maxBytesPerRecv));
             for (int i = 0; i < n; i++) {
-                Unsafe.getUnsafe().putByte(buffer + i, data[pos++]);
+                Unsafe.putByte(buffer + i, data[pos++]);
             }
             return n;
         }
@@ -1403,7 +1403,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 long recvBuffer,
                 int recvBufferSize
         ) {
-            super(config, (nf, log) -> new PlainSocket(mockNf, log));
+            super(config, (_, log) -> new PlainSocket(mockNf, log));
             this.rawSocket = rawSocket;
             this.requestHeader = requestHeader;
             this.testRecvBuffer = recvBuffer;

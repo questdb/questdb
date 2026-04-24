@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
-import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -36,6 +35,7 @@ import java.util.concurrent.atomic.LongAdder;
 
 import static io.questdb.std.MemoryTag.NATIVE_DEFAULT;
 
+@SuppressWarnings("removal")
 public final class Unsafe {
     // The various _ADDR fields are `long` in Java, but they are `* mut usize` in Rust, or `size_t*` in C.
     // These are off-heap allocated atomic counters for memory usage tracking.
@@ -52,7 +52,6 @@ public final class Unsafe {
     private static final long[] NATIVE_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
     private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
     private static final long NON_RSS_MEM_USED_ADDR;
-    private static final long OVERRIDE;
     private static final long REALLOC_COUNT_ADDR;
     private static final long RSS_MEM_LIMIT_ADDR;
     private static final long RSS_MEM_USED_ADDR;
@@ -62,14 +61,26 @@ public final class Unsafe {
     private Unsafe() {
     }
 
+    public static long allocateMemory(long size) {
+        return UNSAFE.allocateMemory(size);
+    }
+
+    public static int arrayBaseOffset(Class<?> arrayClass) {
+        return UNSAFE.arrayBaseOffset(arrayClass);
+    }
+
     public static long arrayGetVolatile(long[] array, int index) {
         assert index > -1 && index < array.length;
-        return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + ((long) index << LONG_SCALE));
+        return UNSAFE.getLongVolatile(array, LONG_OFFSET + ((long) index << LONG_SCALE));
     }
 
     public static int arrayGetVolatile(int[] array, int index) {
         assert index > -1 && index < array.length;
-        return Unsafe.getUnsafe().getIntVolatile(array, INT_OFFSET + ((long) index << INT_SCALE));
+        return UNSAFE.getIntVolatile(array, INT_OFFSET + ((long) index << INT_SCALE));
+    }
+
+    public static int arrayIndexScale(Class<?> arrayClass) {
+        return UNSAFE.arrayIndexScale(arrayClass);
     }
 
     /**
@@ -81,7 +92,7 @@ public final class Unsafe {
      */
     public static void arrayPutOrdered(long[] array, int index, long value) {
         assert index > -1 && index < array.length;
-        Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + ((long) index << LONG_SCALE), value);
+        UNSAFE.putOrderedLong(array, LONG_OFFSET + ((long) index << LONG_SCALE), value);
     }
 
     /**
@@ -93,22 +104,22 @@ public final class Unsafe {
      */
     public static void arrayPutOrdered(int[] array, int index, int value) {
         assert index > -1 && index < array.length;
-        Unsafe.getUnsafe().putOrderedInt(array, INT_OFFSET + ((long) index << INT_SCALE), value);
+        UNSAFE.putOrderedInt(array, INT_OFFSET + ((long) index << INT_SCALE), value);
     }
 
     public static int byteArrayGetInt(byte[] array, int index) {
         assert index > -1 && index < array.length - 3;
-        return Unsafe.getUnsafe().getInt(array, BYTE_OFFSET + index);
+        return UNSAFE.getInt(array, BYTE_OFFSET + index);
     }
 
     public static long byteArrayGetLong(byte[] array, int index) {
         assert index > -1 && index < array.length - 7;
-        return Unsafe.getUnsafe().getLong(array, BYTE_OFFSET + index);
+        return UNSAFE.getLong(array, BYTE_OFFSET + index);
     }
 
     public static short byteArrayGetShort(byte[] array, int index) {
         assert index > -1 && index < array.length - 1;
-        return Unsafe.getUnsafe().getShort(array, BYTE_OFFSET + index);
+        return UNSAFE.getShort(array, BYTE_OFFSET + index);
     }
 
     public static long calloc(long size, int memoryTag) {
@@ -125,9 +136,21 @@ public final class Unsafe {
         return UNSAFE.compareAndSwapInt(o, offset, expected, value);
     }
 
+    public static boolean cas(Object o, long offset, Object expected, Object value) {
+        return UNSAFE.compareAndSwapObject(o, offset, expected, value);
+    }
+
     public static boolean cas(long[] array, int index, long expected, long value) {
         assert index > -1 && index < array.length;
         return Unsafe.cas(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);
+    }
+
+    public static void copyMemory(long srcAddress, long destAddress, long bytes) {
+        UNSAFE.copyMemory(srcAddress, destAddress, bytes);
+    }
+
+    public static void copyMemory(Object srcBase, long srcOffset, Object destBase, long destOffset, long bytes) {
+        UNSAFE.copyMemory(srcBase, srcOffset, destBase, destOffset, bytes);
     }
 
     /**
@@ -147,15 +170,43 @@ public final class Unsafe {
 
     public static long free(long ptr, long size, int memoryTag) {
         if (ptr != 0) {
-            Unsafe.getUnsafe().freeMemory(ptr);
+            UNSAFE.freeMemory(ptr);
             incrFreeCount();
             recordMemAlloc(-size, memoryTag);
         }
         return 0;
     }
 
+    public static void freeMemory(long ptr) {
+        UNSAFE.freeMemory(ptr);
+    }
+
+    public static int getAndAddInt(Object o, long offset, int delta) {
+        return UNSAFE.getAndAddInt(o, offset, delta);
+    }
+
+    public static long getAndAddLong(Object o, long offset, long delta) {
+        return UNSAFE.getAndAddLong(o, offset, delta);
+    }
+
     public static boolean getBool(long address) {
         return UNSAFE.getByte(address) == 1;
+    }
+
+    public static boolean getBoolean(Object o, long offset) {
+        return UNSAFE.getBoolean(o, offset);
+    }
+
+    public static byte getByte(long address) {
+        return UNSAFE.getByte(address);
+    }
+
+    public static char getChar(long address) {
+        return UNSAFE.getChar(address);
+    }
+
+    public static double getDouble(long address) {
+        return UNSAFE.getDouble(address);
     }
 
     public static long getFieldOffset(Class<?> clazz, String name) {
@@ -166,8 +217,36 @@ public final class Unsafe {
         }
     }
 
+    public static float getFloat(long address) {
+        return UNSAFE.getFloat(address);
+    }
+
     public static long getFreeCount() {
         return UNSAFE.getLongVolatile(null, FREE_COUNT_ADDR);
+    }
+
+    public static int getInt(long address) {
+        return UNSAFE.getInt(address);
+    }
+
+    public static int getInt(Object o, long offset) {
+        return UNSAFE.getInt(o, offset);
+    }
+
+    public static int getIntVolatile(Object o, long offset) {
+        return UNSAFE.getIntVolatile(o, offset);
+    }
+
+    public static long getLong(long address) {
+        return UNSAFE.getLong(address);
+    }
+
+    public static long getLong(Object o, long offset) {
+        return UNSAFE.getLong(o, offset);
+    }
+
+    public static long getLongVolatile(long address) {
+        return UNSAFE.getLongVolatile(null, address);
     }
 
     public static long getMallocCount() {
@@ -195,6 +274,14 @@ public final class Unsafe {
         return NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
     }
 
+    public static Object getObject(Object o, long offset) {
+        return UNSAFE.getObject(o, offset);
+    }
+
+    public static Object getObjectVolatile(Object o, long offset) {
+        return UNSAFE.getObjectVolatile(o, offset);
+    }
+
     public static long getReallocCount() {
         return UNSAFE.getLongVolatile(null, REALLOC_COUNT_ADDR);
     }
@@ -205,6 +292,10 @@ public final class Unsafe {
 
     public static long getRssMemUsed() {
         return UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR);
+    }
+
+    public static short getShort(long address) {
+        return UNSAFE.getShort(address);
     }
 
     public static sun.misc.Unsafe getUnsafe() {
@@ -223,21 +314,15 @@ public final class Unsafe {
         UNSAFE.getAndAddLong(null, REALLOC_COUNT_ADDR, 1);
     }
 
-    /**
-     * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
-     * it does not produce an illegal access error or warning.
-     *
-     * @param accessibleObject the instance to make accessible
-     */
-    public static void makeAccessible(AccessibleObject accessibleObject) {
-        UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
+    public static void loadFence() {
+        UNSAFE.loadFence();
     }
 
     public static long malloc(long size, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(size, memoryTag);
-            long ptr = Unsafe.getUnsafe().allocateMemory(size);
+            long ptr = UNSAFE.allocateMemory(size);
             recordMemAlloc(size, memoryTag);
             incrMallocCount();
             return ptr;
@@ -255,11 +340,75 @@ public final class Unsafe {
         }
     }
 
+    public static long objectFieldOffset(Field f) {
+        return UNSAFE.objectFieldOffset(f);
+    }
+
+    public static void putBoolean(Object o, long offset, boolean value) {
+        UNSAFE.putBoolean(o, offset, value);
+    }
+
+    public static void putByte(long address, byte value) {
+        UNSAFE.putByte(address, value);
+    }
+
+    public static void putChar(long address, char value) {
+        UNSAFE.putChar(address, value);
+    }
+
+    public static void putDouble(long address, double value) {
+        UNSAFE.putDouble(address, value);
+    }
+
+    public static void putFloat(long address, float value) {
+        UNSAFE.putFloat(address, value);
+    }
+
+    public static void putInt(long address, int value) {
+        UNSAFE.putInt(address, value);
+    }
+
+    public static void putInt(Object o, long offset, int value) {
+        UNSAFE.putInt(o, offset, value);
+    }
+
+    public static void putLong(long address, long value) {
+        UNSAFE.putLong(address, value);
+    }
+
+    public static void putLong(Object o, long offset, long value) {
+        UNSAFE.putLong(o, offset, value);
+    }
+
+    public static void putLongVolatile(long address, long value) {
+        UNSAFE.putLongVolatile(null, address, value);
+    }
+
+    public static void putObject(Object o, long offset, Object value) {
+        UNSAFE.putObject(o, offset, value);
+    }
+
+    public static void putObjectVolatile(Object o, long offset, Object value) {
+        UNSAFE.putObjectVolatile(o, offset, value);
+    }
+
+    public static void putOrderedInt(Object o, long offset, int value) {
+        UNSAFE.putOrderedInt(o, offset, value);
+    }
+
+    public static void putOrderedLong(Object o, long offset, long value) {
+        UNSAFE.putOrderedLong(o, offset, value);
+    }
+
+    public static void putShort(long address, short value) {
+        UNSAFE.putShort(address, value);
+    }
+
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(-oldSize + newSize, memoryTag);
-            long ptr = Unsafe.getUnsafe().reallocateMemory(address, newSize);
+            long ptr = UNSAFE.reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             incrReallocCount();
             return ptr;
@@ -291,23 +440,16 @@ public final class Unsafe {
         }
     }
 
+    public static void setMemory(long address, long bytes, byte value) {
+        UNSAFE.setMemory(address, bytes, value);
+    }
+
     public static void setRssMemLimit(long limit) {
         UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
     }
 
-    private static long AccessibleObject_override_fieldOffset() {
-        if (isJava8Or11()) {
-            return getFieldOffset(AccessibleObject.class, "override");
-        }
-        // From Java 12 onwards, AccessibleObject#override is protected and cannot be accessed reflectively.
-        boolean is32BitJVM = is32BitJVM();
-        if (is32BitJVM) {
-            return 8L;
-        }
-        if (getOrdinaryObjectPointersCompressionStatus(is32BitJVM)) {
-            return 12L;
-        }
-        return 16L;
+    public static void storeFence() {
+        UNSAFE.storeFence();
     }
 
     private static void checkAllocLimit(long size, int memoryTag) {
@@ -343,39 +485,6 @@ public final class Unsafe {
         UNSAFE.putLong(addr + 8, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
         UNSAFE.putInt(addr + 16, memoryTag);
         return addr;
-    }
-
-    private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
-        class Probe {
-            @SuppressWarnings("unused")
-            private int intField; // Accessed through reflection
-
-            boolean probe() {
-                long offset = getFieldOffset(Probe.class, "intField");
-                if (offset == 8L) {
-                    assert is32BitJVM;
-                    return false;
-                }
-                if (offset == 12L) {
-                    return true;
-                }
-                if (offset == 16L) {
-                    return false;
-                }
-                throw new AssertionError(offset);
-            }
-        }
-        return new Probe().probe();
-    }
-
-    private static boolean is32BitJVM() {
-        String sunArchDataModel = System.getProperty("sun.arch.data.model");
-        return sunArchDataModel.equals("32");
-    }
-
-    private static boolean isJava8Or11() {
-        String javaVersion = System.getProperty("java.version");
-        return javaVersion.startsWith("11") || javaVersion.startsWith("1.8");
     }
 
     // most significant bit
@@ -475,16 +584,14 @@ public final class Unsafe {
             theUnsafe.setAccessible(true);
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
 
-            BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);
-            BYTE_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(byte[].class));
+            BYTE_OFFSET = UNSAFE.arrayBaseOffset(byte[].class);
+            BYTE_SCALE = msb(UNSAFE.arrayIndexScale(byte[].class));
 
-            INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
-            INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));
+            INT_OFFSET = UNSAFE.arrayBaseOffset(int[].class);
+            INT_SCALE = msb(UNSAFE.arrayIndexScale(int[].class));
 
-            LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
-            LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
-
-            OVERRIDE = AccessibleObject_override_fieldOffset();
+            LONG_OFFSET = UNSAFE.arrayBaseOffset(long[].class);
+            LONG_SCALE = msb(UNSAFE.arrayIndexScale(long[].class));
 
             AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();
             if (classDefiner == null) {

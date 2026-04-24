@@ -1211,8 +1211,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             try (QwpTudCache cache = new QwpTudCache(
                     engine, true, true, defaultColumnTypes, PartitionBy.DAY)
             ) {
-                Unsafe.getUnsafe().putByte(addr, (byte) 1);
-                Unsafe.getUnsafe().putByte(addr + 1, (byte) 0x01);
+                Unsafe.putByte(addr, (byte) 1);
+                Unsafe.putByte(addr + 1, (byte) 0x01);
 
                 final QwpTableBlockCursor cursor = getQwpTableBlockCursor(addr);
 
@@ -2020,7 +2020,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         long ptr = Unsafe.malloc(data.length, MemoryTag.NATIVE_HTTP_CONN);
         try {
             for (int i = 0; i < data.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, data[i]);
+                Unsafe.putByte(ptr + i, data[i]);
             }
             state.addData(ptr, ptr + data.length);
         } finally {

@@ -144,18 +144,18 @@ public class DirectByteSinkTest {
             try (NativeByteSink directSink = sink.borrowDirectByteSink()) {
                 final long impl = directSink.ptr();
                 Assert.assertNotEquals(ptr, impl);
-                final long implPtr = Unsafe.getUnsafe().getLong(impl);
-                Unsafe.getUnsafe().putByte(implPtr, (byte) 'd');
-                Unsafe.getUnsafe().putLong(impl, implPtr + 1);
+                final long implPtr = Unsafe.getLong(impl);
+                Unsafe.putByte(implPtr, (byte) 'd');
+                Unsafe.putLong(impl, implPtr + 1);
                 Assert.assertEquals(4, sink.size());
                 Assert.assertEquals(32, sink.allocatedCapacity());
                 final long newImplPtr = DirectByteSink.implBook(impl, 400);
                 final long newImplPtr2 = DirectByteSink.implBook(impl, 400);  // idempotent
                 Assert.assertEquals(newImplPtr, newImplPtr2);
-                Assert.assertEquals(newImplPtr, Unsafe.getUnsafe().getLong(impl));
+                Assert.assertEquals(newImplPtr, Unsafe.getLong(impl));
                 Assert.assertEquals(512, sink.allocatedCapacity());
-                final long implLo = Unsafe.getUnsafe().getLong(impl + 8);
-                final long implHi = Unsafe.getUnsafe().getLong(impl + 16);
+                final long implLo = Unsafe.getLong(impl + 8);
+                final long implHi = Unsafe.getLong(impl + 16);
                 Assert.assertEquals(512, implHi - implLo);
             }
 

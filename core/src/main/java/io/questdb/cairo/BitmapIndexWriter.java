@@ -76,11 +76,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         keyMem.truncate();
         keyMem.putByte(BitmapIndexUtils.SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putLong(0); // VALUE MEM SIZE
         keyMem.putInt(blockValueCount); // BLOCK VALUE COUNT
         keyMem.putLong(0); // KEY COUNT
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putLong(1); // SEQUENCE CHECK
         assert keyMem.getAppendOffset() == MAX_VALUE_OFFSET;
         keyMem.putLong(-1); // maxRow. It's inclusive, -1 means no rows
@@ -391,9 +391,9 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                     keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, seekValueCount);
 
                     if (blockOffset != seekValueBlockOffset) {
-                        Unsafe.getUnsafe().storeFence();
+                        Unsafe.storeFence();
                         keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET, seekValueBlockOffset);
-                        Unsafe.getUnsafe().storeFence();
+                        Unsafe.storeFence();
                     }
                     keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, seekValueCount);
                 }
@@ -440,9 +440,9 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         // update count and last value block offset for the key
         // in atomic fashion
         // we make sure count is always written _after_ new value block is added
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putLong(offset, valueCount + 1);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
 
         // don't set first block offset here
         // it would have been done when this key was first created
@@ -450,11 +450,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         // write last block offset because it changed in this scenario
         assert newValueBlockOffset < valueMemSize;
         keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET, newValueBlockOffset);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
 
         // write count check
         keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, valueCount + 1);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
 
         // we are done adding value to new block of values
     }
@@ -480,7 +480,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private void appendValue(long offset, long valueBlockOffset, long valueCount, int valueCellIndex, long value) {
         // first set value
         valueMem.putLong(valueBlockOffset + valueCellIndex * 8L, value);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         // update count and last value block offset for the key
         // in atomic fashion
         keyMem.putLong(offset, valueCount + 1);
@@ -497,18 +497,18 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         // now update key entry in atomic fashion
         // update count and last value block offset for the key
         // in atomic fashion
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putLong(offset, 1);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
 
         // first and last blocks are the same
         keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET, newValueBlockOffset);
         keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET, newValueBlockOffset);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
 
         // write count check
         keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 1);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
     }
 
     private long keyMemSize() {
@@ -523,9 +523,9 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private void updateValueMemSize() {
         long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }
 
@@ -535,9 +535,9 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         // also write key count to header of key memory
         long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }
 

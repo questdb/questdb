@@ -103,8 +103,8 @@ public class ZipTest {
                             } while (ret != 1);
 
                             // write trailer
-                            Unsafe.getUnsafe().putInt(out, crc);
-                            Unsafe.getUnsafe().putInt(out + 4, (int) pIn);
+                            Unsafe.putInt(out, crc);
+                            Unsafe.putInt(out + 4, (int) pIn);
                             Files.write(fdOut, out, 8, pOut);
                         } finally {
                             Files.close(fdOut);

@@ -125,22 +125,22 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         // Write prefix
         for (byte b : BAD_REQUEST_PREFIX) {
-            Unsafe.getUnsafe().putByte(buffer + offset++, b);
+            Unsafe.putByte(buffer + offset++, b);
         }
 
         // Write content length
         for (byte b : contentLengthBytes) {
-            Unsafe.getUnsafe().putByte(buffer + offset++, b);
+            Unsafe.putByte(buffer + offset++, b);
         }
 
         // Write header end
         for (byte b : HTTP_HEADER_END) {
-            Unsafe.getUnsafe().putByte(buffer + offset++, b);
+            Unsafe.putByte(buffer + offset++, b);
         }
 
         // Write body
         for (byte b : reasonBytes) {
-            Unsafe.getUnsafe().putByte(buffer + offset++, b);
+            Unsafe.putByte(buffer + offset++, b);
         }
 
         return offset;
@@ -178,7 +178,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
 
         for (int i = 0; i < UPGRADE_REQUIRED_RESPONSE.length; i++) {
-            Unsafe.getUnsafe().putByte(buffer + i, UPGRADE_REQUIRED_RESPONSE[i]);
+            Unsafe.putByte(buffer + i, UPGRADE_REQUIRED_RESPONSE[i]);
         }
 
         return UPGRADE_REQUIRED_RESPONSE.length;
@@ -585,8 +585,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     private void handleClose(HttpConnectionContext context, QwpProcessorState state, long payload, int length) {
         int closeCode = -1;
         if (length >= 2) {
-            int high = Unsafe.getUnsafe().getByte(payload) & 0xFF;
-            int low = Unsafe.getUnsafe().getByte(payload + 1) & 0xFF;
+            int high = Unsafe.getByte(payload) & 0xFF;
+            int low = Unsafe.getByte(payload + 1) & 0xFF;
             closeCode = (high << 8) | low;
         }
         LOG.info().$("WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
@@ -809,7 +809,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             // (e.g. PeerIsSlowToReadException from trySendAck after a committed frame).
             int remaining = (int) (bufferEnd - pos);
             if (remaining > 0 && pos > buffer) {
-                Unsafe.getUnsafe().copyMemory(pos, buffer, remaining);
+                Unsafe.copyMemory(pos, buffer, remaining);
             }
             state.setRecvBufferLen(remaining);
         }
@@ -919,15 +919,15 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 int offset = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
 
                 // Write status
-                Unsafe.getUnsafe().putByte(bufferAddr + offset, status);
+                Unsafe.putByte(bufferAddr + offset, status);
                 offset += 1;
 
                 // Write sequence (little-endian)
-                Unsafe.getUnsafe().putLong(bufferAddr + offset, sequence);
+                Unsafe.putLong(bufferAddr + offset, sequence);
                 offset += 8;
 
                 // Write message length (little-endian)
-                Unsafe.getUnsafe().putShort(bufferAddr + offset, (short) msgLen);
+                Unsafe.putShort(bufferAddr + offset, (short) msgLen);
                 offset += 2;
 
                 // Write message (UTF-16 to UTF-8 directly to native memory, no byte[] allocation)
@@ -991,8 +991,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         long sequence = state.getHighestProcessedSequence();
         int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
         long writeAddr = bufferAddr + headerLen;
-        Unsafe.getUnsafe().putByte(writeAddr, STATUS_OK);
-        Unsafe.getUnsafe().putLong(writeAddr + 1, sequence);
+        Unsafe.putByte(writeAddr, STATUS_OK);
+        Unsafe.putLong(writeAddr + 1, sequence);
         QwpProcessorState.writeTableSeqTxnEntries(writeAddr + 9, state.getPendingAckSeqTxns());
 
         try {
@@ -1033,7 +1033,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
         long writeAddr = bufferAddr + headerLen;
-        Unsafe.getUnsafe().putByte(writeAddr, STATUS_DURABLE_ACK);
+        Unsafe.putByte(writeAddr, STATUS_DURABLE_ACK);
         QwpProcessorState.writeTableSeqTxnEntries(writeAddr + 1, progress);
 
         try {
