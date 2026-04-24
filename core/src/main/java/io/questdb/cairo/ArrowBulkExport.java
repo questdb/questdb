@@ -31,12 +31,16 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8Sequence;
+
+import java.nio.charset.StandardCharsets;
 
 /**
  * Bulk reader from a {@link RecordCursorFactory} into Arrow-shaped native
@@ -93,9 +97,11 @@ public final class ArrowBulkExport implements QuietCloseable {
     // Per-column buffers for the current in-flight batch. When nextBatch()
     // is called again, the previous batch's buffers move onto the
     // openBatches chain (only if the caller hasn't already released them).
-    private MemoryCARWImpl[] dataBufs;     // per-column data
+    private MemoryCARWImpl[] dataBufs;     // fixed-width data OR var-width aux bytes
+    private MemoryCARWImpl[] offsetBufs;   // int32 offsets for var-width (null for fixed)
     private MemoryCARWImpl[] validityBufs; // per-column validity bitmap
     private int[] nullCounts;
+    private int[] varBytesWritten;         // running byte count for var-width cols
     private int currentBatchRows;
     // First unreleased batch in the chain (oldest). May be null.
     private BatchLink openBatchesHead;
@@ -128,6 +134,7 @@ public final class ArrowBulkExport implements QuietCloseable {
             this.columnSizes[i] = arrowElementSize(tag);
         }
         this.nullCounts = new int[columnCount];
+        this.varBytesWritten = new int[columnCount];
     }
 
     public static ArrowBulkExport of(
@@ -180,6 +187,9 @@ public final class ArrowBulkExport implements QuietCloseable {
 
     public long getDataSize(int col) {
         requireBatch();
+        if (isVarWidth(columnTags[col])) {
+            return varBytesWritten[col];
+        }
         return (long) currentBatchRows * columnSizes[col];
     }
 
@@ -209,21 +219,24 @@ public final class ArrowBulkExport implements QuietCloseable {
         return nullCounts[col];
     }
 
-    // Variable-width column accessors — stubbed until Phase 2.
-    public long getAuxPtr(int col) {
-        throw new UnsupportedOperationException("Phase 1: no aux buffers");
-    }
-
-    public long getAuxSize(int col) {
-        throw new UnsupportedOperationException("Phase 1: no aux buffers");
-    }
-
+    /**
+     * @return int32 offsets buffer pointer for a var-width column, or
+     *         0 for a fixed-width column. Size is (rows + 1) * 4 bytes.
+     */
     public long getOffsetsPtr(int col) {
-        throw new UnsupportedOperationException("Phase 1: no offsets");
+        requireBatch();
+        MemoryCARWImpl b = offsetBufs[col];
+        return b == null ? 0L : b.getAddress();
+    }
+
+    public long getOffsetsSize(int col) {
+        requireBatch();
+        if (offsetBufs[col] == null) return 0L;
+        return (long) (currentBatchRows + 1) * 4;
     }
 
     public long getDictIdRef(int col) {
-        throw new UnsupportedOperationException("Phase 1: no SYMBOL dict");
+        throw new UnsupportedOperationException("Phase 3: no SYMBOL dict yet");
     }
 
     /**
@@ -235,10 +248,10 @@ public final class ArrowBulkExport implements QuietCloseable {
     public void releaseBatch() {
         BatchLink head = openBatchesHead;
         if (head == null) {
-            // Release the current batch if no chain exists.
             if (dataBufs != null) {
-                closeColumnBuffers(dataBufs, validityBufs);
+                closeColumnBuffers(dataBufs, offsetBufs, validityBufs);
                 dataBufs = null;
+                offsetBufs = null;
                 validityBufs = null;
                 currentBatchRows = 0;
             }
@@ -248,7 +261,7 @@ public final class ArrowBulkExport implements QuietCloseable {
         if (openBatchesHead == null) {
             openBatchesTail = null;
         }
-        closeColumnBuffers(head.dataBufs, head.validityBufs);
+        closeColumnBuffers(head.dataBufs, head.offsetBufs, head.validityBufs);
     }
 
     @Override
@@ -257,17 +270,17 @@ public final class ArrowBulkExport implements QuietCloseable {
             return;
         }
         closed = true;
-        // Close every open batch in the chain plus the current batch.
         BatchLink link = openBatchesHead;
         while (link != null) {
-            closeColumnBuffers(link.dataBufs, link.validityBufs);
+            closeColumnBuffers(link.dataBufs, link.offsetBufs, link.validityBufs);
             link = link.next;
         }
         openBatchesHead = null;
         openBatchesTail = null;
         if (dataBufs != null) {
-            closeColumnBuffers(dataBufs, validityBufs);
+            closeColumnBuffers(dataBufs, offsetBufs, validityBufs);
             dataBufs = null;
+            offsetBufs = null;
             validityBufs = null;
         }
         if (cursor != null) {
@@ -282,27 +295,36 @@ public final class ArrowBulkExport implements QuietCloseable {
 
     private void allocateBatchBuffers() {
         dataBufs = new MemoryCARWImpl[columnCount];
+        offsetBufs = new MemoryCARWImpl[columnCount];
         validityBufs = new MemoryCARWImpl[columnCount];
         for (int c = 0; c < columnCount; c++) {
             int size = columnSizes[c];
-            if (size < 0) {
-                // Variable-width / unsupported in Phase 1.
+            int tag = columnTags[c];
+            if (size < 0 && !isVarWidth(tag)) {
                 throw new UnsupportedOperationException(
                         "ArrowBulkExport: column " + c + " has type "
                                 + ColumnType.nameOf(columnTypes[c])
-                                + " which is not supported in Phase 1 "
-                                + "(fixed-width types only)");
+                                + " which is not supported yet");
             }
-            long dataBytes = (long) batchSize * size;
             MemoryCARWImpl data = new MemoryCARWImpl(DEFAULT_PAGE_SIZE, MAX_PAGES, MEM_TAG);
-            data.extend(dataBytes);
+            if (size > 0) {
+                // Fixed-width: preallocate batchSize * size.
+                data.extend((long) batchSize * size);
+            } else {
+                // Var-width: start with one page; grow as bytes are appended.
+                data.extend(DEFAULT_PAGE_SIZE);
+                MemoryCARWImpl offsets = new MemoryCARWImpl(DEFAULT_PAGE_SIZE, MAX_PAGES, MEM_TAG);
+                offsets.extend((long) (batchSize + 1) * 4);
+                // offsets[0] = 0; subsequent entries written per row.
+                offsets.putInt(0, 0);
+                offsetBufs[c] = offsets;
+                varBytesWritten[c] = 0;
+            }
             dataBufs[c] = data;
 
             long validityBytes = (batchSize + 7) / 8;
             MemoryCARWImpl validity = new MemoryCARWImpl(DEFAULT_PAGE_SIZE, MAX_PAGES, MEM_TAG);
             validity.extend(validityBytes);
-            // Initialise to all-valid (0xFF) so per-row null writes only
-            // need to clear bits.
             long addr = validity.getAddress();
             for (long i = 0; i < validityBytes; i++) {
                 Unsafe.getUnsafe().putByte(addr + i, (byte) 0xFF);
@@ -312,9 +334,21 @@ public final class ArrowBulkExport implements QuietCloseable {
         }
     }
 
+    private static boolean isVarWidth(int tag) {
+        return tag == ColumnType.STRING
+                || tag == ColumnType.VARCHAR
+                || tag == ColumnType.BINARY
+                || tag == ColumnType.CHAR
+                || tag == ColumnType.IPv4
+                || tag == ColumnType.UUID;
+        // LONG256 lands in a follow-up phase — needs a CharSink thread
+        // through Numbers.appendLong256 to avoid per-row StringBuilder.
+    }
+
     private void parkCurrentBatch() {
         BatchLink link = new BatchLink();
         link.dataBufs = dataBufs;
+        link.offsetBufs = offsetBufs;
         link.validityBufs = validityBufs;
         link.rowCount = currentBatchRows;
         if (openBatchesTail == null) {
@@ -324,6 +358,7 @@ public final class ArrowBulkExport implements QuietCloseable {
         }
         openBatchesTail = link;
         dataBufs = null;
+        offsetBufs = null;
         validityBufs = null;
         currentBatchRows = 0;
     }
@@ -335,9 +370,18 @@ public final class ArrowBulkExport implements QuietCloseable {
         }
     }
 
-    private static void closeColumnBuffers(MemoryCARWImpl[] data, MemoryCARWImpl[] validity) {
+    private static void closeColumnBuffers(
+            MemoryCARWImpl[] data,
+            MemoryCARWImpl[] offsets,
+            MemoryCARWImpl[] validity
+    ) {
         if (data != null) {
             for (MemoryCARWImpl b : data) {
+                if (b != null) b.close();
+            }
+        }
+        if (offsets != null) {
+            for (MemoryCARWImpl b : offsets) {
                 if (b != null) b.close();
             }
         }
@@ -349,25 +393,22 @@ public final class ArrowBulkExport implements QuietCloseable {
     }
 
     private static int arrowElementSize(int tag) {
-        // The element size the Arrow data buffer uses for each type. Must
-        // match the pyarrow DataType in _arrow_bulk.py's wrappers.
-        if (tag == ColumnType.BOOLEAN) return 1; // emitted as 1-byte per row, bit-packed on the Python side
+        // Fixed-width element size in the Arrow data buffer. Returns -1
+        // for variable-width and unsupported types.
+        if (tag == ColumnType.BOOLEAN) return 1; // byte-per-row; Python casts to bool_()
         if (tag == ColumnType.BYTE) return 1;
         if (tag == ColumnType.SHORT) return 2;
-        if (tag == ColumnType.CHAR) return 2;
         if (tag == ColumnType.INT) return 4;
         if (tag == ColumnType.LONG) return 8;
         if (tag == ColumnType.DATE) return 8;
         if (tag == ColumnType.TIMESTAMP) return 8;
         if (tag == ColumnType.FLOAT) return 4;
         if (tag == ColumnType.DOUBLE) return 8;
-        if (tag == ColumnType.IPv4) return 4;
-        if (tag == ColumnType.UUID) return 16;
         if (tag == ColumnType.DECIMAL8 || tag == ColumnType.DECIMAL16
                 || tag == ColumnType.DECIMAL32 || tag == ColumnType.DECIMAL64
                 || tag == ColumnType.DECIMAL128) return DEC128_BYTES;
         if (tag == ColumnType.DECIMAL256) return DEC256_BYTES;
-        return -1; // variable-width / unsupported
+        return -1;
     }
 
     // -------------------------------------------------------------------
@@ -382,6 +423,10 @@ public final class ArrowBulkExport implements QuietCloseable {
 
     private void writeCell(int col, int rowIdx) {
         int tag = columnTags[col];
+        if (isVarWidth(tag)) {
+            writeVarWidthCell(col, rowIdx, tag);
+            return;
+        }
         MemoryCARWImpl data = dataBufs[col];
         if (tag == ColumnType.BOOLEAN) {
             data.putByte(rowIdx, (byte) (record.getBool(col) ? 1 : 0));
@@ -393,10 +438,6 @@ public final class ArrowBulkExport implements QuietCloseable {
         }
         if (tag == ColumnType.SHORT) {
             data.putShort((long) rowIdx * 2, record.getShort(col));
-            return;
-        }
-        if (tag == ColumnType.CHAR) {
-            data.putChar((long) rowIdx * 2, record.getChar(col));
             return;
         }
         if (tag == ColumnType.INT) {
@@ -433,24 +474,6 @@ public final class ArrowBulkExport implements QuietCloseable {
             double v = record.getDouble(col);
             data.putDouble((long) rowIdx * 8, v);
             if (Double.isNaN(v)) clearValidityBit(col, rowIdx);
-            return;
-        }
-        if (tag == ColumnType.IPv4) {
-            int v = record.getIPv4(col);
-            data.putInt((long) rowIdx * 4, v);
-            // 0 is QuestDB's IPv4 null sentinel.
-            if (v == 0) clearValidityBit(col, rowIdx);
-            return;
-        }
-        if (tag == ColumnType.UUID) {
-            long lo = record.getLong128Lo(col);
-            long hi = record.getLong128Hi(col);
-            long base = (long) rowIdx * 16;
-            data.putLong(base, lo);
-            data.putLong(base + 8, hi);
-            if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
-                clearValidityBit(col, rowIdx);
-            }
             return;
         }
         if (tag == ColumnType.DECIMAL8) {
@@ -519,6 +542,129 @@ public final class ArrowBulkExport implements QuietCloseable {
         data.putLong(base + 8, hi);
     }
 
+    // -------------------------------------------------------------------
+    // Var-width cells
+    // -------------------------------------------------------------------
+
+    private void writeVarWidthCell(int col, int rowIdx, int tag) {
+        if (tag == ColumnType.VARCHAR) {
+            Utf8Sequence utf8 = record.getVarcharA(col);
+            if (utf8 == null) {
+                writeVarBytesNull(col, rowIdx);
+            } else {
+                // VARCHAR is already UTF-8 on the storage side. Materialise
+                // to byte[] to avoid per-row Utf8Sequence indirection;
+                // cheap relative to the surrounding cursor iteration.
+                byte[] bytes = utf8.toString().getBytes(StandardCharsets.UTF_8);
+                writeVarBytes(col, rowIdx, bytes);
+            }
+            return;
+        }
+        if (tag == ColumnType.STRING) {
+            CharSequence s = record.getStrA(col);
+            if (s == null) {
+                writeVarBytesNull(col, rowIdx);
+            } else {
+                writeVarBytes(col, rowIdx, s.toString().getBytes(StandardCharsets.UTF_8));
+            }
+            return;
+        }
+        if (tag == ColumnType.BINARY) {
+            BinarySequence bin = record.getBin(col);
+            if (bin == null) {
+                writeVarBytesNull(col, rowIdx);
+            } else {
+                int len = (int) bin.length();
+                byte[] bytes = new byte[len];
+                for (int i = 0; i < len; i++) {
+                    bytes[i] = bin.byteAt(i);
+                }
+                writeVarBytes(col, rowIdx, bytes);
+            }
+            return;
+        }
+        if (tag == ColumnType.CHAR) {
+            char c = record.getChar(col);
+            if (c == 0) {
+                writeVarBytesNull(col, rowIdx);
+            } else {
+                writeVarBytes(col, rowIdx, String.valueOf(c).getBytes(StandardCharsets.UTF_8));
+            }
+            return;
+        }
+        if (tag == ColumnType.IPv4) {
+            int v = record.getIPv4(col);
+            if (v == 0) {
+                writeVarBytesNull(col, rowIdx);
+            } else {
+                String s = ((v >>> 24) & 0xFF) + "." + ((v >>> 16) & 0xFF) + "."
+                        + ((v >>> 8) & 0xFF) + "." + (v & 0xFF);
+                writeVarBytes(col, rowIdx, s.getBytes(StandardCharsets.US_ASCII));
+            }
+            return;
+        }
+        if (tag == ColumnType.UUID) {
+            long lo = record.getLong128Lo(col);
+            long hi = record.getLong128Hi(col);
+            if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
+                writeVarBytesNull(col, rowIdx);
+            } else {
+                // Canonical lowercase hex with dashes: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX.
+                StringBuilder sb = new StringBuilder(36);
+                appendHex8(sb, (hi >>> 32) & 0xFFFFFFFFL);
+                sb.append('-');
+                appendHex4(sb, (hi >>> 16) & 0xFFFFL);
+                sb.append('-');
+                appendHex4(sb, hi & 0xFFFFL);
+                sb.append('-');
+                appendHex4(sb, (lo >>> 48) & 0xFFFFL);
+                sb.append('-');
+                appendHex12(sb, lo & 0xFFFFFFFFFFFFL);
+                writeVarBytes(col, rowIdx, sb.toString().getBytes(StandardCharsets.US_ASCII));
+            }
+            return;
+        }
+        throw new UnsupportedOperationException(
+                "ArrowBulkExport: var-width tag " + ColumnType.nameOf(columnTypes[col])
+                        + " not yet implemented");
+    }
+
+    private void writeVarBytes(int col, int rowIdx, byte[] bytes) {
+        MemoryCARWImpl data = dataBufs[col];
+        int current = varBytesWritten[col];
+        int newEnd = current + bytes.length;
+        // Grow the data buffer if needed. MemoryCARWImpl.extend(size)
+        // extends the underlying allocation so pageAddress + size stays
+        // valid; appendAddressFor+putByte loop would be slower.
+        data.extend(newEnd);
+        long dst = data.getAddress() + current;
+        for (int i = 0; i < bytes.length; i++) {
+            Unsafe.getUnsafe().putByte(dst + i, bytes[i]);
+        }
+        varBytesWritten[col] = newEnd;
+        offsetBufs[col].putInt((long) (rowIdx + 1) * 4, newEnd);
+    }
+
+    private void writeVarBytesNull(int col, int rowIdx) {
+        // Null row: empty slice — next offset == previous offset.
+        offsetBufs[col].putInt((long) (rowIdx + 1) * 4, varBytesWritten[col]);
+        clearValidityBit(col, rowIdx);
+    }
+
+    private static final char[] HEX = "0123456789abcdef".toCharArray();
+
+    private static void appendHex8(StringBuilder sb, long v) {
+        for (int i = 28; i >= 0; i -= 4) sb.append(HEX[(int) ((v >> i) & 0xF)]);
+    }
+
+    private static void appendHex4(StringBuilder sb, long v) {
+        for (int i = 12; i >= 0; i -= 4) sb.append(HEX[(int) ((v >> i) & 0xF)]);
+    }
+
+    private static void appendHex12(StringBuilder sb, long v) {
+        for (int i = 44; i >= 0; i -= 4) sb.append(HEX[(int) ((v >> i) & 0xF)]);
+    }
+
     private void clearValidityBit(int col, int rowIdx) {
         MemoryCARWImpl v = validityBufs[col];
         long byteOffset = rowIdx >>> 3;
@@ -533,6 +679,7 @@ public final class ArrowBulkExport implements QuietCloseable {
     // ObjList import for what is always a short chain.
     private static final class BatchLink {
         MemoryCARWImpl[] dataBufs;
+        MemoryCARWImpl[] offsetBufs;
         MemoryCARWImpl[] validityBufs;
         int rowCount;
         BatchLink next;
