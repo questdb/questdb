@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
@@ -88,7 +89,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (!windowContext.isDefaultFrame()) {
-            throw SqlException.$(position, "ntile() does not support framing; remove the frame clause");
+            throw SqlException.$(windowContext.getRowsLoKindPos(), "ntile() does not support framing; remove the frame clause");
         }
 
         Function bucketCountFunc = args.get(0);
@@ -96,6 +97,9 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
             throw SqlException.$(argPositions.getQuick(0), "bucket count must be a constant");
         }
         long bucketCountLong = bucketCountFunc.getLong(null);
+        if (bucketCountLong == Numbers.LONG_NULL) {
+            throw SqlException.$(argPositions.getQuick(0), "bucket count cannot be NULL");
+        }
         if (bucketCountLong <= 0 || bucketCountLong > Integer.MAX_VALUE) {
             throw SqlException.$(argPositions.getQuick(0), "bucket count must be a positive integer");
         }
@@ -199,6 +203,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void reopen() {
             count = 1;
+            totalRows = 0;
         }
 
         @Override
@@ -237,10 +242,10 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
     static class NtileOverPartitionFunction extends LongFunction implements Function, WindowFunction, Reopenable {
 
         private final int bucketCount;
+        private final Map map;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
         private int columnIndex;
-        private final Map map;
         private ObjList<ExpressionNode> orderBy;
 
         public NtileOverPartitionFunction(
@@ -324,7 +329,9 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void reopen() {
-            map.reopen();
+            if (map != null) {
+                map.reopen();
+            }
         }
 
         @Override

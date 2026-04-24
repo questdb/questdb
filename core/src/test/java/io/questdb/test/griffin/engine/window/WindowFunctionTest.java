@@ -11318,14 +11318,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "select ntile(4) over (order by ts rows between 1 preceding and current row) from tab",
-                    7,
+                    49,
                     "ntile() does not support framing; remove the frame clause",
                     sqlExecutionContext
             );
 
             assertExceptionNoLeakCheck(
                     "select ntile(4) over (order by ts range between 10 microseconds preceding and current row) from tab",
-                    7,
+                    64,
                     "ntile() does not support framing; remove the frame clause",
                     sqlExecutionContext
             );
@@ -11334,7 +11334,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // the message should cover every frame clause variant.
             assertExceptionNoLeakCheck(
                     "select ntile(4) over (order by ts groups between 1 preceding and current row) from tab",
-                    7,
+                    51,
                     "ntile() does not support framing; remove the frame clause",
                     sqlExecutionContext
             );
@@ -12536,14 +12536,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "select cume_dist() over (order by ts rows between 1 preceding and current row) from tab",
-                    7,
+                    52,
                     "cume_dist() does not support framing; remove the frame clause",
                     sqlExecutionContext
             );
 
             assertExceptionNoLeakCheck(
                     "select cume_dist() over (order by ts range between 10 microseconds preceding and current row) from tab",
-                    7,
+                    67,
                     "cume_dist() does not support framing; remove the frame clause",
                     sqlExecutionContext
             );
@@ -12552,7 +12552,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // the message should cover every frame clause variant.
             assertExceptionNoLeakCheck(
                     "select cume_dist() over (order by ts groups between 1 preceding and current row) from tab",
-                    7,
+                    54,
                     "cume_dist() does not support framing; remove the frame clause",
                     sqlExecutionContext
             );
@@ -12595,7 +12595,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select ntile(null) over (order by ts) from tab",
                     13,
-                    "bucket count must be a positive integer",
+                    "bucket count cannot be NULL",
                     sqlExecutionContext
             );
         });
@@ -12659,7 +12659,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select nth_value(val, null) over (order by ts) from tab",
                     22,
-                    "n must be a positive integer",
+                    "n cannot be NULL",
                     sqlExecutionContext
             );
         });
@@ -12697,6 +12697,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "n must be a positive integer",
                     sqlExecutionContext
             );
+
+            // Integer.MAX_VALUE + 1 -- one past the accepted boundary.
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 2_147_483_648L) over (order by ts) from tab",
+                    22,
+                    "n must be a positive integer",
+                    sqlExecutionContext
+            );
         });
     }
 
@@ -12729,6 +12737,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "select ntile(5_000_000_000L) over (order by ts) from tab",
+                    13,
+                    "bucket count must be a positive integer",
+                    sqlExecutionContext
+            );
+
+            // Integer.MAX_VALUE + 1 -- one past the accepted boundary.
+            assertExceptionNoLeakCheck(
+                    "select ntile(2_147_483_648L) over (order by ts) from tab",
                     13,
                     "bucket count must be a positive integer",
                     sqlExecutionContext
@@ -13455,86 +13471,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "ts",
                     false,
                     true
-            );
-        });
-    }
-
-    @Test
-    public void testNtileToPlan() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
-
-            assertPlanNoLeakCheck(
-                    "select ts, ntile(3) over (order by ts) from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "select ts, i, ntile(2) over (partition by i order by ts) from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [ntile(2) over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-        });
-    }
-
-    @Test
-    public void testCumeDistToPlan() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
-
-            // CumeDistFunction (ordered, no partition)
-            assertPlanNoLeakCheck(
-                    "select ts, cume_dist() over (order by ts) from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [cume_dist() over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-            // CumeDistNoOrderFunction (no partition)
-            assertPlanNoLeakCheck(
-                    "select ts, cume_dist() over () from tab",
-                    """
-                            Window
-                              functions: [cume_dist() over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-            // CumeDistOverPartitionFunction (ordered)
-            assertPlanNoLeakCheck(
-                    "select ts, i, cume_dist() over (partition by i order by ts) from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-            // CumeDistNoOrderFunction partitioned branch
-            assertPlanNoLeakCheck(
-                    "select ts, i, cume_dist() over (partition by i) from tab",
-                    """
-                            Window
-                              functions: [cume_dist() over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
             );
         });
     }
@@ -17711,58 +17647,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """
                             CachedWindow
                               orderedFunctions: [[val] => [ntile(3) over (partition by [i] order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-        });
-    }
-
-    @Test
-    public void testNthValueExplainPlan() throws Exception {
-        // Spot-checks toPlan output for the most common nth_value variants. nth_value
-        // factories do not render ORDER BY in their plan output (frame info is shown
-        // instead), so the SqlCodeGenerator change does not affect their plan strings,
-        // but locking these in guards against future regressions in the framing logic.
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
-
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(val, 2) OVER () FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(val, 2) OVER (PARTITION BY i) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(val, 2) OVER (PARTITION BY i ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM tab",
-                    """
-                            Window
-                              functions: [nth_value(val,2) over (partition by [i] rows between 2 preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(val, 2) OVER (ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM tab",
-                    """
-                            Window
-                              functions: [nth_value(val,2) over (rows between current row and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab

@@ -100,7 +100,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (!windowContext.isDefaultFrame()) {
-            throw SqlException.$(position, "cume_dist() does not support framing; remove the frame clause");
+            throw SqlException.$(windowContext.getRowsLoKindPos(), "cume_dist() does not support framing; remove the frame clause");
         }
 
         if (windowContext.isOrdered()) {
@@ -249,6 +249,8 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void reopen() {
             count = 1;
+            totalRows = 0;
+            prevRank = 0;
             deferredSize = 0;
         }
 

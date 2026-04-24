@@ -50,6 +50,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -88,6 +89,9 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             throw SqlException.$(argPositions.getQuick(1), "n must be a constant");
         }
         long nLong = nFunc.getLong(null);
+        if (nLong == Numbers.LONG_NULL) {
+            throw SqlException.$(argPositions.getQuick(1), "n cannot be NULL");
+        }
         if (nLong <= 0 || nLong > Integer.MAX_VALUE) {
             throw SqlException.$(argPositions.getQuick(1), "n must be a positive integer");
         }
