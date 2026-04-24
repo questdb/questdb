@@ -528,6 +528,65 @@ mod tests {
     }
 
     #[test]
+    fn test_truncated_payload_errors_on_first_consume() {
+        // The lazy-decode change shifts the error for a truncated payload
+        // from `try_new` to the first consumer call. This test pins that
+        // contract: a positive `bits_per_key` with no hybrid-RLE body
+        // constructs successfully but errors the moment the caller tries
+        // to read a value.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let dict_strings: &[&[u8]] = &[b"aaa", b"bbb", b"ccc"];
+        let dict_buf = build_dict_page_buffer(dict_strings);
+        let dict_page = make_dict_page(&dict_buf, dict_strings.len());
+
+        // push(): single-value consumer path.
+        {
+            let mut buffers = create_test_buffers(&allocator);
+            let buffer: Vec<u8> = vec![6];
+            let mut decoder =
+                RleDictVarcharSliceDecoder::try_new(&buffer, &dict_page, &mut buffers, true)
+                    .unwrap();
+            decoder.reserve(1).unwrap();
+            let err = decoder.push().unwrap_err();
+            assert!(
+                err.to_string().contains("Unexpected end of rle iterator"),
+                "unexpected error: {err}"
+            );
+        }
+
+        // push_slice(): bulk consumer path.
+        {
+            let mut buffers = create_test_buffers(&allocator);
+            let buffer: Vec<u8> = vec![6];
+            let mut decoder =
+                RleDictVarcharSliceDecoder::try_new(&buffer, &dict_page, &mut buffers, true)
+                    .unwrap();
+            decoder.reserve(1).unwrap();
+            let err = decoder.push_slice(1).unwrap_err();
+            assert!(
+                err.to_string().contains("Unexpected end of rle iterator"),
+                "unexpected error: {err}"
+            );
+        }
+
+        // skip(): skip consumer path.
+        {
+            let mut buffers = create_test_buffers(&allocator);
+            let buffer: Vec<u8> = vec![6];
+            let mut decoder =
+                RleDictVarcharSliceDecoder::try_new(&buffer, &dict_page, &mut buffers, true)
+                    .unwrap();
+            let err = decoder.skip(1).unwrap_err();
+            assert!(
+                err.to_string().contains("Unexpected end of rle iterator"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn test_push_single_values() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();

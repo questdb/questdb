@@ -425,6 +425,66 @@ fn test_rle_dictionary_slicer_zero_values_positive_bit_width() {
 }
 
 #[test]
+fn test_rle_dictionary_slicer_truncated_payload_errors_on_first_consume() {
+    // The lazy-decode change shifts the error for a truncated payload
+    // from `try_new` to the first consumer call. This test pins that
+    // contract: a positive `bits_per_key` with no hybrid-RLE body
+    // constructs successfully but errors the moment the caller tries
+    // to read a value.
+    let buffer: Vec<u8> = vec![6];
+
+    // next(): single-value consumer path.
+    {
+        let dict = TestDictDecoder::new(vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+        let mut slicer = RleDictionarySlicer::try_new(&buffer, dict, 1, 1).unwrap();
+        let err = slicer.next().unwrap_err();
+        assert!(
+            err.to_string().contains("Unexpected end of rle iterator"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // next_into(): sink-based consumer path.
+    {
+        let dict = TestDictDecoder::new(vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+        let mut slicer = RleDictionarySlicer::try_new(&buffer, dict, 1, 1).unwrap();
+        let mut sink = TestSink::new();
+        let err = slicer.next_into(&mut sink).unwrap_err();
+        assert!(
+            err.to_string().contains("Unexpected end of rle iterator"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // skip(): skip consumer path.
+    {
+        let dict = TestDictDecoder::new(vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+        let mut slicer = RleDictionarySlicer::try_new(&buffer, dict, 1, 1).unwrap();
+        let err = slicer.skip(1).unwrap_err();
+        assert!(
+            err.to_string().contains("Unexpected end of rle iterator"),
+            "unexpected error: {err}"
+        );
+    }
+}
+
+#[test]
+fn test_rle_dictionary_slicer_empty_buffer_errors_on_construction() {
+    // `try_new` must reject an empty buffer (no bit_width byte) with a
+    // clear layout error rather than panicking.
+    let dict = TestDictDecoder::new(vec![b"a".to_vec()]);
+    let err = match RleDictionarySlicer::try_new(&[], dict, 0, 0) {
+        Ok(_) => panic!("try_new must reject an empty buffer"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string()
+            .contains("RLE dictionary page is missing the initial byte with bit width"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn test_rle_dictionary_slicer_zero_bit_width() {
     let dict = TestDictDecoder::new(vec![b"only_value".to_vec()]);
     let buffer: Vec<u8> = vec![0];
