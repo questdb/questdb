@@ -143,7 +143,7 @@ impl<'a, T: VarDictDecoder> RleDictionarySlicer<'a, T> {
         if num_bits > 0 {
             buffer = &buffer[1..];
             let decoder = Decoder::new(buffer, num_bits as usize);
-            // We musn't eagerly decode here, a page may have zero non-null values.
+            // We mustn't eagerly decode here, a page may have zero non-null values.
             Ok(Self {
                 dict,
                 inner: SlicerInner::new(

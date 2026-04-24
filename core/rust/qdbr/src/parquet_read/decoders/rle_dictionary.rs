@@ -287,7 +287,7 @@ where
         if num_bits > 0 {
             buffer = &buffer[1..];
             let decoder = Decoder::new(buffer, num_bits as usize);
-            // We musn't eagerly decode here, a page may have zero non-null values.
+            // We mustn't eagerly decode here, a page may have zero non-null values.
             Ok(Self {
                 dict,
                 inner: Slicer::new(Some(decoder), RleIterator::Rle(RepeatN::new(0, 0))),
@@ -425,14 +425,16 @@ mod tests {
         let buffer = encode_rle_data(&[], 6);
         assert_eq!(buffer, vec![6, 0x01]);
 
-        let mut decoder =
-            RleDictionaryDecoder::try_new(&buffer, dict, 0, I32_NULL, &mut buffers)
-                .expect("try_new must not fail on a valid zero-values stream");
+        let mut decoder = RleDictionaryDecoder::try_new(&buffer, dict, 0, I32_NULL, &mut buffers)
+            .expect("try_new must not fail on a valid zero-values stream");
         // Caller only feeds nulls for this page; push_nulls must not touch
         // the RLE stream.
         decoder.reserve(3).unwrap();
         decoder.push_nulls(3).unwrap();
-        assert_eq!(read_i32_results(&buffers), vec![I32_NULL, I32_NULL, I32_NULL]);
+        assert_eq!(
+            read_i32_results(&buffers),
+            vec![I32_NULL, I32_NULL, I32_NULL]
+        );
     }
 
     #[test]
