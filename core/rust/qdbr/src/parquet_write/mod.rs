@@ -788,7 +788,7 @@ mod tests {
             column_structure_version: -1,
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition1, false).unwrap();
+        let (schema, additional_meta) = to_parquet_schema(&partition1, false, -1).unwrap();
         let encodings = to_encodings(&partition1);
 
         let mut chunked = ParquetWriter::new(&mut buf)
@@ -2555,7 +2555,7 @@ mod tests {
             columns: vec![col2],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition1, false).unwrap();
+        let (schema, additional_meta) = to_parquet_schema(&partition1, false, -1).unwrap();
         let encodings = to_encodings(&partition1);
         // Encoding should be RleDictionary since we requested it
         assert_eq!(encodings[0], parquet2::encoding::Encoding::RleDictionary);
@@ -2709,7 +2709,7 @@ mod tests {
             columns: vec![col1_b, col2_b],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition_a, false).unwrap();
+        let (schema, additional_meta) = to_parquet_schema(&partition_a, false, -1).unwrap();
         let encodings = to_encodings(&partition_a);
         let compressions = to_compressions(&partition_a);
 

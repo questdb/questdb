@@ -278,6 +278,8 @@ public interface CairoConfiguration {
 
     long getGroupByAllocatorMaxChunkSize();
 
+    int getGroupByBatchSize();
+
     int getGroupByMapCapacity();
 
     int getGroupByMergeShardQueueCapacity();
@@ -420,6 +422,8 @@ public interface CairoConfiguration {
 
     int getO3MemMaxPages();
 
+    int getO3MidPartitionMaxSplits();
+
     long getO3MinLag();
 
     int getO3OpenColumnQueueCapacity();
@@ -464,13 +468,13 @@ public interface CairoConfiguration {
 
     double getPartitionEncoderParquetBloomFilterFpp();
 
-    double getPartitionEncoderParquetMinCompressionRatio();
-
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();
 
     int getPartitionEncoderParquetDataPageSize();
+
+    double getPartitionEncoderParquetMinCompressionRatio();
 
     long getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
 
@@ -725,8 +729,6 @@ public interface CairoConfiguration {
 
     long getSystemWalEventAppendPageSize();
 
-    boolean isCairoMetadataCacheSnapshotOrdered();
-
     long getTableRegistryAutoReloadFrequency();
 
     int getTableRegistryCompactionThreshold();
@@ -819,6 +821,8 @@ public interface CairoConfiguration {
     int getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
+
+    boolean isCairoMetadataCacheSnapshotOrdered();
 
     /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.

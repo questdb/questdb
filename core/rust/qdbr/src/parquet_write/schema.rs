@@ -431,6 +431,7 @@ pub struct Partition {
 pub fn to_parquet_schema(
     partition: &Partition,
     raw_array_encoding: bool,
+    squash_tracker: i64,
 ) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let parquet_types = partition
         .columns
@@ -479,6 +480,8 @@ pub fn to_parquet_schema(
             ascii,
         });
     }
+
+    qdb_meta.squash_tracker = squash_tracker;
 
     qdb_meta.column_structure_version = partition.column_structure_version;
 

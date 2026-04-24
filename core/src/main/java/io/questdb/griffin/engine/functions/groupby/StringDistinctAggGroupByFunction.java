@@ -44,7 +44,8 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
     private final char delimiter;
     private final int setInitialCapacity;
     private final double setLoadFactor;
-    private final ObjList<CharSequenceHashSet> sets = new ObjList<>();
+    private boolean isShared;
+    private ObjList<CharSequenceHashSet> sets = new ObjList<>();
     private final DirectUtf16Sink sinkA;
     private final DirectUtf16Sink sinkB;
     private int setIndex = 0;
@@ -66,6 +67,7 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
 
     @Override
     public void clear() {
+        if (isShared) return;
         sets.clear();
         sinkA.resetCapacity();
         sinkB.resetCapacity();
@@ -122,6 +124,13 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        this.valueIndex = primary.getValueIndex();
+        this.sets = ((StringDistinctAggGroupByFunction) primary).sets;
+        this.isShared = true;
     }
 
     @Override

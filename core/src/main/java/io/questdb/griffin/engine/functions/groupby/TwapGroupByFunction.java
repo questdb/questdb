@@ -58,9 +58,11 @@ import org.jetbrains.annotations.NotNull;
  * Instead, each worker records all (timestamp, price) observations in a native
  * buffer. Within a single worker, observations arrive in timestamp order
  * (page frames are dispatched chronologically). During the merge phase, the
- * two sorted per-worker buffers are combined with a merge-sort merge step.
- * The final TWAP is computed from the fully sorted buffer in
- * {@link #getDouble(Record)}.
+ * two sorted per-worker buffers are combined with a merge-sort merge step
+ * into a fresh buffer in the destination's allocator - either the owner's
+ * allocator on the non-sharded merge path or a per-worker allocator on the
+ * sharded merge path. The final TWAP is computed from the fully sorted
+ * buffer in {@link #getDouble(Record)}.
  * <p>
  * <b>MapValue layout</b> (3 slots):
  * <pre>
@@ -251,15 +253,17 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     /**
-     * Merges a source worker's observation buffer into the destination (owner)
-     * buffer. Both buffers are sorted by timestamp within their respective
-     * workers. The merge produces a single sorted buffer using a classic
-     * merge-sort merge step, allocated in the owner's allocator.
+     * Merges a source worker's observation buffer into the destination buffer.
+     * Both buffers are sorted by timestamp within their respective workers.
+     * The merge produces a single sorted buffer using a classic merge-sort
+     * merge step, allocated in the destination's allocator - either the
+     * owner's allocator on the non-sharded merge path or a per-worker
+     * allocator on the sharded merge path.
      * <p>
      * When the destination is empty, the source buffer is copied into a fresh
-     * allocation in the owner's allocator rather than copying the raw pointer,
-     * because the source buffer lives in a worker allocator that will be
-     * reclaimed independently.
+     * allocation in the destination's allocator rather than copying the raw
+     * pointer, because the source buffer lives in a separate allocator that
+     * will be reclaimed independently.
      */
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {

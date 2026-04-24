@@ -14,6 +14,8 @@ steps:
     displayName: "Install IntelliJ"
   - bash: /opt/intellij/idea/bin/idea.sh format -s .idea/codeStyles/Project.xml -m "*.java" -r .
     displayName: "Applying formatting"
+  - bash: git submodule foreach --quiet 'git checkout -- . 2>/dev/null; git clean -fd 2>/dev/null' || true
+    displayName: "Reset submodules after formatting"
   - bash: git status -s
     displayName: "List of affected files"
   - bash: git diff --exit-code

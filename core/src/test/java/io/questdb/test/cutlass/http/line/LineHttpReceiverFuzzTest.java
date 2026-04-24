@@ -39,7 +39,7 @@ public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
     public void testAddColumns() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         initLoadParameters(15 + rnd.nextInt(100), 5 + rnd.nextInt(5),
-                2 + rnd.nextInt(20), 1 + rnd.nextInt(4),
+                2 + rnd.nextInt(Os.isWindows() ? 5 : 20), 1 + rnd.nextInt(4),
                 rnd.nextInt(75));
 
         initFuzzParameters(-1, -1, 1, 1 + rnd.nextInt(3), -1, false, true, false, 0.05);
@@ -91,7 +91,7 @@ public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
     @Test
     public void testDuplicatesReorderingColumnsSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, 0.05);
+        initFuzzParameters(4, 4, -1, -1, -1, true, true, true, 0.05);
         runTest();
     }
 

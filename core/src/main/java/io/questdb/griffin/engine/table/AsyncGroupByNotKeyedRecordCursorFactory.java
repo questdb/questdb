@@ -49,6 +49,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
@@ -72,8 +73,10 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private final AsyncGroupByNotKeyedRecordCursor cursor;
     private final UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private final ObjList<GroupByFunction> groupByFunctions;
+    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final boolean vectorized;
     private final int workerCount;
+    private ObjList<AsyncGroupByNotKeyedSharedCursor> sharedCursors;
 
     public AsyncGroupByNotKeyedRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -91,12 +94,14 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @Nullable Function filter,
             @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
-            int workerCount
+            int workerCount,
+            @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
     ) {
         super(groupByMetadata);
         try {
             this.base = base;
             this.groupByFunctions = groupByFunctions;
+            this.sharedRecordFunctions = sharedRecordFunctions;
 
             // Compute batch eligibility for each group by function.
             final RecordMetadata baseMetadata = base.getMetadata();
@@ -170,8 +175,30 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     }
 
     @Override
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        if (sharedCursors == null) {
+            sharedCursors = new ObjList<>();
+        }
+        int idx = sharedId - 1;
+        AsyncGroupByNotKeyedSharedCursor shared = sharedCursors.getQuiet(idx);
+        if (shared == null) {
+            assert sharedRecordFunctions != null;
+            assert idx < sharedRecordFunctions.size();
+            shared = new AsyncGroupByNotKeyedSharedCursor(cursor, sharedRecordFunctions.getQuick(idx), frameSequence.getAtom().getOwnerMapValue());
+            sharedCursors.extendAndSet(idx, shared);
+        }
+        shared.of(executionContext, frameSequence);
+        return shared;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public boolean supportsSharedCursors() {
+        return true;
     }
 
     @Override
@@ -455,5 +482,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         Misc.free(cursor);
         Misc.free(frameSequence);
         Misc.freeObjList(groupByFunctions);
+        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        // Shared cursors hold no native memory; primary state freed above covers it.
+        Misc.clear(sharedCursors);
     }
 }

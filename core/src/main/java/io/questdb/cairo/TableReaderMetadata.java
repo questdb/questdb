@@ -37,14 +37,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.validationException;
 
-public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
+public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata {
     protected final CairoConfiguration configuration;
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
@@ -230,6 +229,21 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return walEnabled;
     }
 
+    public void loadFrom(TableReaderMetadata srcMeta) {
+        assert tableToken.equals(srcMeta.tableToken);
+        // Copy src meta memory.
+        copyMemFrom(srcMeta);
+        // Now, read it.
+        try {
+            isCopy = true;
+            Misc.free(metaMem);
+            readFromMem(metaCopyMem);
+        } catch (Throwable e) {
+            clear();
+            throw e;
+        }
+    }
+
     public void loadMetadata(LPSZ path) {
         try {
             isCopy = false;
@@ -264,21 +278,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 existenceChecked = true;
                 TableUtils.handleMetadataLoadException(tableToken, deadline, ex, millisecondClock, spinLockTimeout);
             }
-        }
-    }
-
-    public void loadFrom(TableReaderMetadata srcMeta) {
-        assert tableToken.equals(srcMeta.tableToken);
-        // Copy src meta memory.
-        copyMemFrom(srcMeta);
-        // Now, read it.
-        try {
-            isCopy = true;
-            Misc.free(metaMem);
-            readFromMem(metaCopyMem);
-        } catch (Throwable e) {
-            clear();
-            throw e;
         }
     }
 

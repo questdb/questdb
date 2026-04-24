@@ -69,12 +69,12 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         lastRunMs = millisecondClock.getTicks();
     }
 
-    public void checkMissingWalTransactions() {
+    private void checkMissingWalTransactions() {
         threadLocalPath = Path.PATH.get().of(dbRoot);
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWalRef);
     }
 
-    public void checkNotifyOutstandingTxnInWal(@NotNull TableToken tableToken, long seqTxn) {
+    protected void checkNotifyOutstandingTxnInWal(@NotNull TableToken tableToken, long seqTxn) {
         if (notificationQueueIsFull) {
             return;
         }

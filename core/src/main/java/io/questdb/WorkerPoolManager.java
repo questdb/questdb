@@ -60,16 +60,16 @@ public abstract class WorkerPoolManager implements Target {
         config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getSharedPoolNetwork(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
-        return getWorkerPool(config, requester, sharedPoolNetwork);
+    public WorkerPool getSharedPoolNetwork(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName) {
+        return getWorkerPool(config, requesterName, sharedPoolNetwork);
     }
 
     public WorkerPool getSharedPoolNetwork() {
         return sharedPoolNetwork;
     }
 
-    public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
-        return getWorkerPool(config, requester, sharedPoolWrite);
+    public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName) {
+        return getWorkerPool(config, requesterName, sharedPoolWrite);
     }
 
     public int getSharedQueryWorkerCount() {
@@ -77,13 +77,13 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     @NotNull
-    public WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester, WorkerPool sharedPool) {
+    public WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName, WorkerPool sharedPool) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
 
         if (config.getWorkerCount() < 1) {
-            LOG.info().$("default thread pool [requester=").$(requester)
+            LOG.info().$("default thread pool [requester=").$(requesterName)
                     .$(", workers=").$(sharedPool.getWorkerCount())
                     .$(", pool=").$(sharedPool.getPoolName())
                     .I$();
@@ -97,7 +97,7 @@ public abstract class WorkerPoolManager implements Target {
             dedicatedPools.put(poolName, pool);
         }
         LOG.info().$("custom thread pool [name=").$(poolName)
-                .$(", requester=").$(requester)
+                .$(", requester=").$(requesterName)
                 .$(", workers=").$(pool.getWorkerCount())
                 .$(", priority=").$(config.workerPoolPriority())
                 .I$();
@@ -180,7 +180,11 @@ public abstract class WorkerPoolManager implements Target {
             final WorkerPool sharedPoolWrite
     );
 
-    public enum Requester {
+    public interface RequesterName {
+        String toString();
+    }
+
+    public enum Requester implements RequesterName {
 
         HTTP_SERVER("http"),
         HTTP_MIN_SERVER("min-http"),

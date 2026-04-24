@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -1878,7 +1878,7 @@ public class UnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Tests for keyword validation in column aliases ----
+    // Tests for keyword validation in column aliases
 
     @Test
     public void testWithOrdinalityMultipleBaseRows() throws Exception {
@@ -1926,7 +1926,7 @@ public class UnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Test for double-offset fix (chained 2D->scalar) ----
+    // Test for double-offset fix (chained 2D->scalar)
 
     @Test
     public void testWithUnionAll() throws Exception {
@@ -1950,7 +1950,7 @@ public class UnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Test for invalid post-UNNEST filter (compileBooleanFilter) ----
+    // Test for invalid post-UNNEST filter (compileBooleanFilter)
 
     @Test
     public void testWithWhereOnBaseColumn() throws Exception {
@@ -1967,7 +1967,7 @@ public class UnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Test for metadata separation (multiple UNNEST expressions) ----
+    // Test for metadata separation (multiple UNNEST expressions)
 
     @Test
     public void testWithWhereOnUnnestedColumn() throws Exception {

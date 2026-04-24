@@ -34,6 +34,9 @@ package io.questdb.cairo;
  */
 public interface DdlListener {
 
+    default void clear() {
+    }
+
     /**
      * Called when a column is added to a table. The enterprise implementation grants
      * owner permissions on the new column to the principal that created it.
@@ -76,17 +79,15 @@ public interface DdlListener {
     void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind);
 
     /**
-     * Called when a table, view or materialized view is dropped. This method takes
-     * {@code tableName} as a {@link String} instead of a {@link TableToken} because it is
-     * called after the table has been dropped, at which point the token is no longer valid.
+     * Called when a table, view or materialized view is dropped.
      * <p>
      * {@code DROP ALL} also calls this method once per successfully dropped entity, skipping
      * system tables and tables that could not be locked. Tables that fail to drop are collected
      * and reported in a single {@code CairoException} after the loop completes.
      *
-     * @param tableName the name of the dropped table, view or materialized view
+     * @param tableToken table token of the dropped table, view or materialized view
      */
-    void onTableOrViewOrMatViewDropped(String tableName);
+    void onTableOrViewOrMatViewDropped(TableToken tableToken);
 
     /**
      * Called when a table is renamed. The enterprise implementation transfers all existing
