@@ -2670,6 +2670,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (timestamp) {
             metadata.clearTimestampIndex();
         }
+        invalidateEnforceableNotNullCache();
         rewriteAndSwapMetadata(metadata);
 
         boolean committed = false;
