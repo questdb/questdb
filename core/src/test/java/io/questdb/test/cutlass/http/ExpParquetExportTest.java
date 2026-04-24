@@ -689,19 +689,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 103571, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 103579, params, "test_table");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 107387, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 107467, params, "test_table");
                     params.put("row_group_size", "500");
-                    testHttpClient.assertGetParquet("/exp", 113839, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 113997, params, "test_table");
                     params.put("row_group_size", "999");
-                    testHttpClient.assertGetParquet("/exp", 109831, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 109919, params, "test_table");
                     params.put("row_group_size", "201");
-                    testHttpClient.assertGetParquet("/exp", 135156, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 135550, params, "test_table");
                     params.put("row_group_size", "2001");
-                    testHttpClient.assertGetParquet("/exp", 106096, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 106136, params, "test_table");
                     params.put("row_group_size", "10000");
-                    testHttpClient.assertGetParquet("/exp", 103571, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 103579, params, "test_table");
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{"test_table"}, 10, 10091);
                 });
     }
@@ -2117,7 +2117,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
 
-                    testHttpClient.assertGetParquet("/exp", 1968, tableName);
+                    testHttpClient.assertGetParquet("/exp", 1974, tableName);
                 });
     }
 
