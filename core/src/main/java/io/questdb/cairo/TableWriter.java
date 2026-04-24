@@ -10599,6 +10599,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
 
+            // A replace-range commit may have fully removed this partition
+            // (srcDataNewPartitionSize == 0 → removeAttachedPartitions). The
+            // directory is queued for async deletion and there is no index to
+            // seal, so skip it.
+            if (PartitionBy.isPartitioned(partitionBy)
+                    && txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, Long.MIN_VALUE) == Long.MIN_VALUE) {
+                continue;
+            }
+
             long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
             int plen = path.size();
             // For new partitions created during O3, the partition directory may
@@ -10722,6 +10731,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (anyPartitionProcessed && lastOpenPartitionTs != Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)) {
+            // An O3 replace commit may have rewritten the last open partition
+            // with a new partition name txn, or dropped it entirely. The cached
+            // lastOpenPartitionTxnName is stale in both cases, so refresh it
+            // from txWriter before touching the partition directory.
+            long refreshedTxnName = txWriter.getPartitionNameTxnByPartitionTimestamp(lastOpenPartitionTs, Long.MIN_VALUE);
+            if (refreshedTxnName == Long.MIN_VALUE) {
+                lastOpenPartitionTs = Long.MIN_VALUE;
+                lastOpenPartitionTxnName = -1;
+                return;
+            }
+            lastOpenPartitionTxnName = refreshedTxnName;
             path.trimTo(pathSize);
             setPathForNativePartition(path, timestampType, partitionBy, lastOpenPartitionTs, lastOpenPartitionTxnName);
             int plen = path.size();
