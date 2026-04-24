@@ -38,6 +38,7 @@ import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -104,6 +105,10 @@ public class PostingIndexWriter implements IndexWriter {
     private final byte rowIdEncoding;
     private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
     private final ObjList<MemoryMARW> sidecarMems = new ObjList<>();
+    // Staging for switchToSealedValueFile: new .pv is mapped here first, then
+    // swapped into valueMem. On mmap failure valueMem keeps its old mapping so
+    // rollback can still decode existing gens.
+    private final MemoryMARW stagingValueMem = Vm.getCMARWInstance();
     private final int[] strideBpKeySizes = new int[PostingIndexUtils.DENSE_STRIDE];
     private final int[] strideKeyCounts = new int[PostingIndexUtils.DENSE_STRIDE];
     private final long[] strideKeyOffsets = new long[PostingIndexUtils.DENSE_STRIDE];
@@ -276,6 +281,7 @@ public class PostingIndexWriter implements IndexWriter {
         } finally {
             try {
                 Misc.free(sealValueMem);
+                Misc.free(stagingValueMem);
                 if (valueMem.isOpen()) {
                     valueMem.close(false, (byte) 0);
                 }
@@ -313,6 +319,7 @@ public class PostingIndexWriter implements IndexWriter {
             } finally {
                 try {
                     Misc.free(sealValueMem);
+                    Misc.free(stagingValueMem);
                     if (valueMem.isOpen()) {
                         valueMem.close(false);
                     }
@@ -590,10 +597,11 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * FD-based open — used by O3CopyJob and O3PartitionJob. These callers never
-     * call configureCovering(), so coverCount stays 0 and sidecar operations are
-     * skipped. The postingColumnNameTxn field is not set here (stays 0) which is safe
-     * because no sidecar code path runs without coverCount > 0.
+     * FD-based open — used by O3CopyJob. The caller never calls configureCovering(),
+     * so coverCount stays 0 and sidecar operations are skipped. The postingColumnNameTxn
+     * field is not set here (stays 0) which is safe because no sidecar code path runs
+     * without coverCount &gt; 0. Writes after this open are tagged SEAL_TXN_TENTATIVE and
+     * must be promoted by a later path-based seal via mergeTentativeIntoActiveIfAny.
      */
     @Override
     public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
@@ -883,9 +891,28 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void rollbackConditionally(long row) {
-        if (row == 0 && (genCount > 0 || hasPendingData)) {
-            truncate();
+        if (row < 0) {
+            return;
         }
+        if (row == 0) {
+            if (genCount > 0 || hasPendingData) {
+                truncate();
+            }
+            return;
+        }
+        // row > 0: caller is about to append at row, so any existing rowid >= row
+        // must be discarded. Mirrors BitmapIndexWriter.rollbackConditionally. An O3
+        // split can shrink a partition (rows move into a new split sub-partition)
+        // without resealing the parent's index, leaving rowids beyond the new size
+        // in the parent's posting index. The next append (usually from squash) must
+        // evict them before writing fresh entries at the same rowids.
+        if (genCount == 0 && !hasPendingData) {
+            return;
+        }
+        if (getMaxValue() < row) {
+            return;
+        }
+        rollbackValues(row - 1);
     }
 
     @Override
@@ -2854,7 +2881,6 @@ public class PostingIndexWriter implements IndexWriter {
                     Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
                 }
 
-                genCount = 1;
                 valueMemSize = sealTarget.getAppendOffset();
                 sealTarget = null;
 
@@ -2864,7 +2890,10 @@ public class PostingIndexWriter implements IndexWriter {
                 }
 
                 Unsafe.getUnsafe().storeFence();
-                writeMetadataPage(genCount, maxValue, sealOffset, valueMemSize - sealOffset, keyCount, keyCount - 1);
+                // genCount must publish after writeMetadataPage so a mid-seal failure
+                // leaves the in-memory view consistent with on-disk .pk.
+                writeMetadataPage(1, maxValue, sealOffset, valueMemSize - sealOffset, keyCount, keyCount - 1);
+                genCount = 1;
             } finally {
                 Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
             }
@@ -3068,7 +3097,6 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
         }
 
-        genCount = 1;
         sealValueMem.sync(false);
         switchToSealedValueFile(newSealTxn);
 
@@ -3077,8 +3105,11 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         Unsafe.getUnsafe().storeFence();
-        writeMetadataPage(genCount, maxValue,
+        // genCount must publish after writeMetadataPage so a mid-seal failure
+        // leaves the in-memory view consistent with on-disk .pk.
+        writeMetadataPage(1, maxValue,
                 sealOffset, valueMemSize - sealOffset, keyCount, keyCount - 1);
+        genCount = 1;
     }
 
     /**
@@ -3419,16 +3450,18 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
-            genCount = 1;
             // Sync sealed file, switch writer to it, then publish metadata.
             // sealTxn must be set BEFORE writeMetadataPage so the
             // SEAL_TXN field in the metadata page reflects the new sealed files.
             sealValueMem.sync(false);
             switchToSealedValueFile(newSealTxn);
             Unsafe.getUnsafe().storeFence();
-            writeMetadataPage(genCount,
+            // genCount must publish after writeMetadataPage so a mid-seal failure
+            // leaves the in-memory view consistent with on-disk .pk.
+            writeMetadataPage(1,
                     keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
                     sealOffset, valueMemSize - sealOffset, keyCount, keyCount - 1);
+            genCount = 1;
         } finally {
             if (copyBuf != 0) {
                 Unsafe.free(copyBuf, copyBufAllocSize, MemoryTag.NATIVE_INDEX_READER);
@@ -3496,19 +3529,27 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void switchToSealedValueFile(long newTxn) {
-        // Close old .pv (leave on disk for concurrent readers)
-        // Reopen valueMem on the new sealed .pv file
         long appendOffset = sealValueMem.getAppendOffset();
-        Misc.free(sealValueMem); // release the seal mapping
-        // Now reopen valueMem on the new file
         if (partitionPath.size() > 0) {
-            Misc.free(valueMem); // close old .pv mapping (left on disk for readers)
             Path p = Path.getThreadLocal(partitionPath);
             LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
-            valueMem.of(ff, fileName,
-                    configuration.getDataIndexValueAppendPageSize(), appendOffset,
-                    MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
-            valueMem.jumpTo(appendOffset);
+            long sealedFd = sealValueMem.detachFdClose();
+            try {
+                stagingValueMem.of(ff, sealedFd, false, fileName,
+                        configuration.getDataIndexValueAppendPageSize(),
+                        appendOffset, MemoryTag.MMAP_INDEX_WRITER);
+                stagingValueMem.jumpTo(appendOffset);
+            } catch (Throwable th) {
+                // sealedFd ownership has already transferred to stagingValueMem (or
+                // map0's internal close already released it). Misc.free handles both;
+                // do NOT close sealedFd here or FdCache trips a double-close assertion.
+                Misc.free(stagingValueMem);
+                throw th;
+            }
+            ((MemoryCMARWImpl) valueMem).swapState((MemoryCMARWImpl) stagingValueMem);
+            Misc.free(stagingValueMem);
+        } else {
+            Misc.free(sealValueMem);
         }
         sealTxn = newTxn;
     }

@@ -530,33 +530,39 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
                 int effectiveStart = startCount;
                 int effectiveCount = count;
-                if (minValue > 0 && bitWidth > 0 && count > 1) {
-                    int lo = startCount, hi = endCount;
-                    while (lo < hi) {
-                        int mid = (lo + hi) >>> 1;
-                        long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
-                        if (val < minValue) {
-                            lo = mid + 1;
-                        } else {
-                            hi = mid;
-                        }
+                if (bitWidth == 0) {
+                    if (baseValue < minValue || (maxValue < Long.MAX_VALUE && baseValue > maxValue)) {
+                        effectiveCount = 0;
                     }
-                    effectiveStart = lo;
-                    effectiveCount = endCount - effectiveStart;
-                }
+                } else {
+                    if (minValue > 0) {
+                        int lo = startCount, hi = endCount;
+                        while (lo < hi) {
+                            int mid = (lo + hi) >>> 1;
+                            long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
+                            if (val < minValue) {
+                                lo = mid + 1;
+                            } else {
+                                hi = mid;
+                            }
+                        }
+                        effectiveStart = lo;
+                        effectiveCount = endCount - effectiveStart;
+                    }
 
-                if (maxValue < Long.MAX_VALUE && effectiveCount > 1) {
-                    int lo = effectiveStart, hi = effectiveStart + effectiveCount;
-                    while (lo < hi) {
-                        int mid = (lo + hi) >>> 1;
-                        long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
-                        if (val > maxValue) {
-                            hi = mid;
-                        } else {
-                            lo = mid + 1;
+                    if (maxValue < Long.MAX_VALUE && effectiveCount > 0) {
+                        int lo = effectiveStart, hi = effectiveStart + effectiveCount;
+                        while (lo < hi) {
+                            int mid = (lo + hi) >>> 1;
+                            long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
+                            if (val > maxValue) {
+                                hi = mid;
+                            } else {
+                                lo = mid + 1;
+                            }
                         }
+                        effectiveCount = lo - effectiveStart;
                     }
-                    effectiveCount = lo - effectiveStart;
                 }
 
                 if (effectiveCount == 0) {
