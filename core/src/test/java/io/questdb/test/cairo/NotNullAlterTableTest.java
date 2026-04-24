@@ -143,13 +143,11 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
                 execute("ALTER TABLE t ADD COLUMN x INT NOT NULL DEFAULT 0");
                 fail("Expected parse error for unsupported DEFAULT clause");
             } catch (SqlException e) {
-                // The parser rejects the trailing DEFAULT token. Exact message
-                // is implementation-defined; just confirm we did not silently
-                // accept it.
-                assertTrue(
-                        "expected parser error mentioning the unexpected token, got: " + e.getFlyweightMessage(),
-                        e.getFlyweightMessage().length() > 0
-                );
+                // Parser rejects the trailing DEFAULT token with a "',' expected"
+                // message -- the ADD COLUMN syntax does not accept a DEFAULT
+                // clause. Pin the expected token so a regression that starts
+                // silently accepting DEFAULT breaks the test.
+                assertContains(e.getFlyweightMessage(), "',' expected");
             }
         });
     }
@@ -580,6 +578,70 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
                             """,
                     "SELECT * FROM t"
             );
+        });
+    }
+
+    @Test
+    public void testCreateTableLikePreservesNonTsNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // CREATE TABLE dst (LIKE src) used to propagate NOT NULL only for
+            // the designated timestamp. Pin that it now propagates for every
+            // NOT NULL column, not just ts.
+            execute("CREATE TABLE src (x INT NOT NULL, y DOUBLE, z LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE dst (LIKE src)");
+
+            assertTrue(getNotNull("dst", "x"));
+            assertFalse(getNotNull("dst", "y"));
+            assertTrue(getNotNull("dst", "z"));
+            assertTrue(getNotNull("dst", "ts"));
+
+            // Enforcement follows: omitting x must reject.
+            try {
+                execute("INSERT INTO dst (y, z, ts) VALUES (1.0, 10, '2024-01-01')");
+                fail("Expected NOT NULL violation on LIKE target");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterColumnSetNotParseErrorAtJunkToken() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("ALTER TABLE t ALTER COLUMN id SET NOT junk");
+                fail("Expected parse error for 'NOT junk'");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), "'null' expected");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterColumnSetParseErrorAtTruncatedClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("ALTER TABLE t ALTER COLUMN id SET");
+                fail("Expected parse error for truncated SET clause");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), "'not', 'null' or 'parquet'");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterColumnSetParseErrorOnUnknownKeyword() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("ALTER TABLE t ALTER COLUMN id SET bogus");
+                fail("Expected parse error for 'SET bogus'");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), "'not', 'null' or 'parquet'");
+            }
         });
     }
 
