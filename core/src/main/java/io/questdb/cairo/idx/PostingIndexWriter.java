@@ -730,7 +730,11 @@ public class PostingIndexWriter implements IndexWriter {
                             .put(", actual=").put(keyFileSize).put(']');
                 }
 
-                keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), -1L, MemoryTag.MMAP_INDEX_WRITER);
+                // Map the whole file so both metadata pages (A and B) are visible.
+                // Passing -1 would fall back to minMappedMemorySize (one PAGE_SIZE),
+                // which leaves page B unmapped and silently drops any tentative
+                // metadata an fd-based O3 writer parked on it.
+                keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), keyFileSize, MemoryTag.MMAP_INDEX_WRITER);
             }
             kFdUnassigned = false;
 
@@ -3034,7 +3038,7 @@ public class PostingIndexWriter implements IndexWriter {
                 boolean useFlat;
                 int localBitWidth = 0;
                 int flatDataSize = 0;
-                int flatSize = 0;
+                int flatSize;
                 int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
 
                 if (totalStrideValuesL > Integer.MAX_VALUE) {
