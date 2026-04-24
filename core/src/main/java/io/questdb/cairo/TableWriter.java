@@ -2877,6 +2877,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.nonCritical().put("cannot drop NOT NULL constraint on designated timestamp [table=")
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
         }
+        // ALTER ... SET NOT NULL on a populated column is a metadata flip;
+        // pre-existing rows containing the null sentinel are silently
+        // reclassified as real data under the NOT NULL contract. Operators
+        // migrating schemas need visibility, so log a warning when the
+        // toggled column is not the designated timestamp (which was already
+        // NOT NULL implicitly) and the table has rows.
+        if (isNotNull && columnIndex != metadata.getTimestampIndex() && txWriter.getRowCount() > 0) {
+            LOG.info()
+                    .$("SET NOT NULL on populated column, any pre-existing sentinel rows are now real data [table=")
+                    .$(tableToken).$(", column=").$safe(columnName)
+                    .$(", existingRowCount=").$(txWriter.getRowCount()).I$();
+        }
         commit();
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
         columnMetadata.setNotNullFlag(isNotNull);
