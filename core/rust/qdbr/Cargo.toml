@@ -33,7 +33,7 @@ parquet = "56.2.0"
 arrow = "56.2.0"
 bytes = "1.11.1"
 tempfile = "3.23.0"
-rand = "=0.9.3"
+rand = "0.10.1"
 criterion = "0.4"
 
 [profile.release]
@@ -51,4 +51,8 @@ harness = false
 
 [[bench]]
 name = "decode_rle"
+harness = false
+
+[[bench]]
+name = "bench_row_group"
 harness = false
