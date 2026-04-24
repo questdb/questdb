@@ -279,17 +279,24 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
     @Test
     public void testGetDoubleDispatchFillPrevSelf() throws Exception {
         // FILL_PREV_SELF branch -- 01:00 gap row reads from prevRecord.
+        // Uses assertQueryNoLeakCheck so supportsRandomAccess=false and
+        // expectSize=false are asserted against the fill cursor's factory
+        // properties -- a regression flipping recordCursorSupportsRandomAccess
+        // to true would be caught here. The rest of the per-getter tests
+        // remain on assertSql for brevity; locking these properties once is
+        // sufficient since every fill query routes through the same factory.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
                     "(3.0, '2024-01-01T02:00:00.000000Z')");
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tfv\n" +
                             "2024-01-01T00:00:00.000000Z\t1.0\n" +
                             "2024-01-01T01:00:00.000000Z\t1.0\n" +
                             "2024-01-01T02:00:00.000000Z\t3.0\n",
-                    "SELECT ts, first(v) fv FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR"
+                    "SELECT ts, first(v) fv FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
             );
         });
     }
