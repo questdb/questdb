@@ -64,6 +64,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.griffin.SqlKeywords;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -106,9 +107,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private final Decimal128 decimal128Buf = new Decimal128();
     private final Decimal256 decimal256Buf = new Decimal256();
     private final Decimal64 decimal64Buf = new Decimal64();
-    // Reusable sinks for lazy fixed→varchar conversion.
+    // Reusable sinks for lazy fixed->varchar conversion.
     private final StringSink stringSinkA = new StringSink();
     private final StringSink stringSinkB = new StringSink();
+    // Dedicated sink for UTF-8 -> UTF-16 decoding when reading a parquet VARCHAR value
+    // for a lazy var->fixed / var->decimal conversion. Kept separate from stringSinkA/B
+    // because those are used as the return buffer of getStrA/getStrB and must not be
+    // clobbered by the decode step inside readVarValueForConversion.
+    private final StringSink utf16DecodeSink = new StringSink();
     private final Utf8StringSink varcharSinkA = new Utf8StringSink();
     private final Utf8StringSink varcharSinkB = new Utf8StringSink();
     protected SymbolTableSource symbolTableSource;
@@ -1065,7 +1071,25 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private CharSequence readVarValueForConversion(int srcTag, int columnIndex) {
         if (srcTag == ColumnType.VARCHAR) {
             Utf8Sequence utf8 = getVarchar(columnIndex, utf8ViewA(columnIndex));
-            return utf8 != null ? utf8.asAsciiCharSequence() : null;
+            if (utf8 == null) {
+                return null;
+            }
+            // Fast path: when the VARCHAR aux entry flags the value as pure ASCII, each
+            // UTF-8 byte is a single code point and asAsciiCharSequence() is an
+            // allocation-free, correct view.
+            if (utf8.isAscii()) {
+                return utf8.asAsciiCharSequence();
+            }
+            // Slow path: decode UTF-8 to UTF-16 code points. The previous unconditional
+            // asAsciiCharSequence() exposed raw UTF-8 bytes as chars and corrupted any
+            // non-ASCII input (e.g. UTF-8 'e-acute' 0xC3 0xA9 surfaced as two Latin-1
+            // chars U+00C3 U+00A9 instead of the single U+00E9). Downstream callers
+            // (convertVarToChar, convertVarToStr, Numbers.parseXxx, Uuid.parseHi/Lo,
+            // timestamp parsers) rely on real UTF-16 code points to behave the same as
+            // the native conversion path.
+            utf16DecodeSink.clear();
+            Utf8s.utf8ToUtf16(utf8, utf16DecodeSink);
+            return utf16DecodeSink;
         } else {
             return getStr0(columnIndex, csViewA(columnIndex));
         }

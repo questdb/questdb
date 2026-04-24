@@ -217,6 +217,56 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Pre-existing bug in the native ALTER COLUMN TYPE path: VARCHAR to CHAR (and any
+     * other fixed target routed through {@code ColumnTypeConverter.convertFromVarcharToFixed})
+     * treated UTF-8 bytes as Latin-1 chars via {@code Utf8Sequence.asAsciiCharSequence()}.
+     * <p>
+     * For a CHAR destination the downstream converter reads {@code charAt(0)}, so the
+     * first raw UTF-8 byte became the CHAR value instead of the decoded code point. E.g.
+     * the value {@code 'e-acute'} (UTF-8 {@code 0xC3 0xA9}) was stored as CHAR
+     * {@code U+00C3} ('A-tilde') rather than {@code U+00E9} ('e-acute').
+     * <p>
+     * This test exercises only native partitions (no CONVERT PARTITION TO PARQUET) and
+     * asserts the stored CHAR matches the first UTF-16 code point of the source value.
+     * The peer fix lives in
+     * {@code ColumnTypeConverter.convertFromVarcharToFixed}; removing that fix reverts
+     * this test to a failure.
+     */
+    @Test
+    public void testChangeVarcharToCharPreservesNonAsciiCodepoint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 'a'),
+                    ('2024-05-14T16:00:01.000000Z', 'é'),
+                    ('2024-05-14T16:00:02.000000Z', '日')""", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE CHAR", sqlExecutionContext);
+            drainWalQueue();
+
+            // Expected: first UTF-16 code point of each stored value.
+            //   'a'  -> 'a'
+            //   'é'  -> 'é' (U+00E9)
+            //   '日' -> '日' (U+65E5)
+            // With the pre-fix code, non-ASCII rows stored the first UTF-8 byte as a char
+            // (e.g. 'é' -> 'A-tilde'), so the assertion below would fail.
+            assertSql(
+                    """
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\ta
+                            2024-05-14T16:00:01.000000Z\té
+                            2024-05-14T16:00:02.000000Z\t日
+                            """,
+                    "x"
+            );
+
+            execute("DROP TABLE x");
+        });
+    }
+
     @Test
     public void testChangeVarcharToDecimal() throws Exception {
         // VARCHAR -> DECIMAL8

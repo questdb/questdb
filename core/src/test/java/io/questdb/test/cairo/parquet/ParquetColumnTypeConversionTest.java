@@ -433,6 +433,101 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Asserts VARCHAR-&gt;CHAR conversion on a parquet partition against an absolute
+     * oracle. This is a lazy conversion path: the parquet decoder hands back a
+     * {@link io.questdb.std.str.Utf8Sequence} and Java takes the first char via
+     * io.questdb.cairo.sql.PageFrameMemoryRecord#convertVarToChar, which reads
+     * through {@code readVarValueForConversion -&gt; asAsciiCharSequence()}. The latter
+     * exposes each raw UTF-8 byte as a char, so a non-ASCII value like 'é'
+     * (UTF-8: 0xC3 0xA9) yields {@code charAt(0) == U+00C3} ('Ã') instead of the
+     * correct U+00E9. The differential assertion {@code nt==pt} does NOT catch this
+     * because io.questdb.cairo.ColumnTypeConverter#convertFromVarcharToFixed
+     * uses the same {@code asAsciiCharSequence()} call, so native and parquet produce
+     * the same mojibake. Fix: use a proper UTF-8-to-UTF-16 decoder.
+     */
+    @Test
+    public void testVarcharToCharPreservesNonAsciiCodepoint() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO pt VALUES
+                        ('a', '2024-01-01T00:00:01.000000Z'),
+                        ('é', '2024-01-01T00:00:02.000000Z'),
+                        ('日', '2024-01-01T00:00:03.000000Z')""");
+                drainWalQueue();
+
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE CHAR");
+                drainWalQueue();
+
+                // Expected: the first UTF-16 code unit of each stored value.
+                //   'a' -> 'a'
+                //   'é' -> 'é' (U+00E9)
+                //   '日' -> '日' (U+65E5)
+                // With the UTF-8-as-ASCII bug, non-ASCII rows produce the first UTF-8 byte
+                // as a char (e.g. 'é' -> 'Ã'), so this assertion fails while the bug is present.
+                assertSql(
+                        """
+                                val
+                                a
+                                é
+                                日
+                                """,
+                        "SELECT val FROM pt ORDER BY ts"
+                );
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
+    /**
+     * Same absolute-oracle approach for VARCHAR-&gt;VARCHAR/STRING paths that go through
+     * the lazy per-row Java conversion. The native path performs a proper UTF-8 decode,
+     * so this test pins the expected behaviour regardless of what the peer native path does.
+     */
+    @Test
+    public void testVarcharToStringPreservesNonAsciiUtf8() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO pt VALUES
+                        ('hello', '2024-01-01T00:00:01.000000Z'),
+                        ('café naïve', '2024-01-01T00:00:02.000000Z'),
+                        ('日本語', '2024-01-01T00:00:03.000000Z'),
+                        ('emoji 🦆', '2024-01-01T00:00:04.000000Z')""");
+                drainWalQueue();
+
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE STRING");
+                drainWalQueue();
+
+                // Expected: the stored UTF-8 bytes decoded as UTF-16 code points.
+                // With asAsciiCharSequence(), each UTF-8 byte becomes a char and the
+                // output is mojibake (e.g. 'é' -> 'Ã©').
+                assertSql(
+                        """
+                                val
+                                hello
+                                café naïve
+                                日本語
+                                emoji 🦆
+                                """,
+                        "SELECT val FROM pt ORDER BY ts"
+                );
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
     @Test
     public void testStringToDecimal() throws Exception {
         assertMemoryLeak(() -> {
@@ -547,11 +642,24 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     @Test
     public void testStringToVarchar() throws Exception {
+        // Covers the UTF-8/UTF-16 translation across the conversion boundary. Each width
+        // class exercises a distinct encoding path and each is a canonical mojibake source
+        // if the lazy path (readVarValueForConversion -> asAsciiCharSequence) is hit:
+        //   - 2-byte UTF-8 (e, n, u, a with diacritics): 0xC3 0xXX pairs would render as
+        //     two Latin-1 chars (e.g. UTF-8 'e-acute' 0xC3 0xA9 -> U+00C3 U+00A9 'A-tilde,
+        //     copyright')
+        //   - 3-byte UTF-8 (Cyrillic, CJK): 0xE0-0xEF 0x80-0xBF 0x80-0xBF triples
+        //   - 4-byte UTF-8 (supplementary plane, emoji): surrogate pair round-trip
+        //   - mixed ASCII + non-ASCII in one value, to catch partial-decode bugs
         assertMemoryLeak(() -> assertConversion("STRING", "VARCHAR", """
                 ('hello', '2024-01-01T00:00:01.000000Z'),
                 ('', '2024-01-01T00:00:02.000000Z'),
                 ('\u0442\u0435\u0441\u0442', '2024-01-01T00:00:03.000000Z'),
-                (NULL, '2024-01-01T00:00:04.000000Z')"""));
+                ('caf\u00e9 na\u00efve \u00fcber', '2024-01-01T00:00:04.000000Z'),
+                ('\u65e5\u672c\u8a9e \u4e2d\u6587 \ud55c\uae00', '2024-01-01T00:00:05.000000Z'),
+                ('emoji \ud83e\udd86 \ud83d\ude00 mixed', '2024-01-01T00:00:06.000000Z'),
+                ('ascii then \u00e9', '2024-01-01T00:00:07.000000Z'),
+                (NULL, '2024-01-01T00:00:08.000000Z')"""));
     }
 
     @Test
@@ -655,8 +763,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * via the package-private {@code init(...)} overload in {@link io.questdb.cairo.sql.PageFrameMemoryRecord}
      * (line 1499). When Record B is navigated via {@code recordAt} to a partition whose
      * parquet schema does NOT need conversion, the pool's {@code sourceColumnTypes} is
-     * rebuilt in place (see {@link io.questdb.cairo.sql.PageFrameMemoryPool#openParquet}
-     * at the {@code setAll(readParquetColumnCount, -1)} call). Record A, which is still
+     * rebuilt in place (see {@code PageFrameMemoryPool.openParquet} at the
+     * {@code setAll(readParquetColumnCount, -1)} call). Record A, which is still
      * anchored at a partition that DOES need INT-&gt;STRING lazy conversion, now reads the
      * overwritten mapping and silently skips the conversion, returning raw INT bytes
      * interpreted as native STRING storage -- garbage.
@@ -765,11 +873,26 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharToString() throws Exception {
+        // VARCHAR is stored as UTF-8 in parquet; STRING is UTF-16 in memory. Non-ASCII
+        // must survive the decode intact. If the lazy path (convertVarToStr ->
+        // readVarValueForConversion) is ever reached, asAsciiCharSequence() would expose
+        // each UTF-8 byte as a char (Latin-1), producing mojibake: e.g. UTF-8 'e-acute'
+        // 0xC3 0xA9 would become two UTF-16 code units U+00C3 U+00A9 ('A-tilde,
+        // copyright') instead of the single 'e-acute'. Each width class exercises a
+        // distinct UTF-8 decode path:
+        //   - 2-byte UTF-8: Latin-1 supplement diacritics and Cyrillic
+        //   - 3-byte UTF-8: CJK
+        //   - 4-byte UTF-8: supplementary plane / emoji (surrogate pairs)
+        //   - mixed ASCII + non-ASCII boundary within one value
         assertMemoryLeak(() -> assertConversion("VARCHAR", "STRING", """
                 ('hello', '2024-01-01T00:00:01.000000Z'),
                 ('', '2024-01-01T00:00:02.000000Z'),
                 ('\u0442\u0435\u0441\u0442', '2024-01-01T00:00:03.000000Z'),
-                (NULL, '2024-01-01T00:00:04.000000Z')"""));
+                ('caf\u00e9 na\u00efve \u00fcber', '2024-01-01T00:00:04.000000Z'),
+                ('\u65e5\u672c\u8a9e \u4e2d\u6587 \ud55c\uae00', '2024-01-01T00:00:05.000000Z'),
+                ('emoji \ud83e\udd86 \ud83d\ude00 mixed', '2024-01-01T00:00:06.000000Z'),
+                ('ascii then \u00e9', '2024-01-01T00:00:07.000000Z'),
+                (NULL, '2024-01-01T00:00:08.000000Z')"""));
     }
 
     /**

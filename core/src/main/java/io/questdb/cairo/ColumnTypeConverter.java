@@ -50,6 +50,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 public class ColumnTypeConverter {
@@ -554,6 +555,7 @@ public class ColumnTypeConverter {
             Var2FixedConverter<CharSequence> converter
     ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
+        StringSink sink = sinkUtf16TL.get();
         int dstTypeSize = ColumnType.sizeOf(dstColumnType);
 
         try {
@@ -561,7 +563,22 @@ public class ColumnTypeConverter {
             dstFixMem.jumpTo(0);
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
-                converter.convert(utf8 != null ? utf8.asAsciiCharSequence() : null, dstFixMem);
+                if (utf8 == null) {
+                    converter.convert(null, dstFixMem);
+                } else if (utf8.isAscii()) {
+                    // Fast path: when the VARCHAR aux entry flags the value as pure ASCII,
+                    // each UTF-8 byte is a single code point and asAsciiCharSequence() is
+                    // an allocation-free, correct view.
+                    converter.convert(utf8.asAsciiCharSequence(), dstFixMem);
+                } else {
+                    // Slow path: decode UTF-8 to UTF-16 so the downstream converter sees
+                    // real code points. The previous unconditional asAsciiCharSequence()
+                    // exposed raw bytes as chars, corrupting non-ASCII (e.g. UTF-8
+                    // 'e-acute' 0xC3 0xA9 yielded two Latin-1 chars instead of U+00E9).
+                    sink.clear();
+                    Utf8s.utf8ToUtf16(utf8, sink);
+                    converter.convert(sink, dstFixMem);
+                }
             }
             assert dstFixMem.getAppendOffset() == (rowHi - rowLo) * dstTypeSize;
             columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
