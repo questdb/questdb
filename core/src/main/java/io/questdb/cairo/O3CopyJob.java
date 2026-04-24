@@ -858,7 +858,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         w.rollbackConditionally(row + rowAdjust);
         final long count = dstFixSize / Integer.BYTES;
         for (; row < count; row++) {
-            w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
+            w.add(TableUtils.toIndexKey(Unsafe.getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }
         // The bitmap index header stores the inclusive(!) max row id.
         w.setMaxValue(row + rowAdjust - 1);
@@ -1018,13 +1018,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             final long o3SplitPartitionSize,
             boolean partitionMutates
     ) {
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, srcDataNewPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataOldPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // parquet partition file size
+        Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
+        Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, srcDataNewPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataOldPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
+        Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // parquet partition file size
 
         TimestampDriver driver = ColumnType.getTimestampDriver(tableWriter.getTimestampType());
         LOG.debug()

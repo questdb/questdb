@@ -203,11 +203,11 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
                 while (true) {
                     valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
-                    Unsafe.getUnsafe().loadFence();
+                    Unsafe.loadFence();
                     if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
                         valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET);
 
-                        Unsafe.getUnsafe().loadFence();
+                        Unsafe.loadFence();
                         if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
                             break;
                         }

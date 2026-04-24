@@ -392,7 +392,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src26",
                     src,
                     "dst26",
-                    dst -> {
+                    _ -> {
                     },
                     s -> writeToStrIndexFile(s, "2022-08-01", "str.i", 0L, 16L),
                     "Variable size column has invalid data address value"
@@ -412,7 +412,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src27",
                     src,
                     "dst27",
-                    dst -> {
+                    _ -> {
                     },
                     s -> writeToStrIndexFile(s, "2022-08-01", "str.i", Long.MAX_VALUE, 256L),
                     "dataAddress=" + Long.MAX_VALUE
@@ -422,7 +422,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src28",
                     src,
                     "dst28",
-                    dst -> {
+                    _ -> {
                     },
                     s -> writeToStrIndexFile(s, "2022-08-01", "str.i", -1L, 256L),
                     "dataAddress=" + -1L
@@ -442,7 +442,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src30",
                     src,
                     "dst30",
-                    dst -> {
+                    _ -> {
                     },
                     s -> {
                         engine.clear();
@@ -507,7 +507,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src32",
                     src,
                     "dst32",
-                    dst -> {
+                    _ -> {
                     },
                     s -> {
                         // .v file
@@ -1395,7 +1395,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     private String replaceTimestampSuffix(String expected) {
-        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
+        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replace("Z\t", "000Z\t").replace("Z\n", "000Z\n") : expected;
     }
 
     private void testAttachPartitionWrongFixedColumn(int columnType) throws Exception {
@@ -1409,7 +1409,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src34" + ColumnType.nameOf(columnType),
                     src,
                     "dst34" + ColumnType.nameOf(columnType),
-                    dst -> {
+                    _ -> {
                     },
                     s -> {
                         engine.clear();
@@ -1481,7 +1481,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             TableToken tableToken = engine.verifyTableName(src.getName());
             path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).concat(columnFileName).$();
             fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
-            Unsafe.getUnsafe().putLong(writeBuff, value);
+            Unsafe.putLong(writeBuff, value);
             ff.write(fd, writeBuff, Long.BYTES, offset);
         } finally {
             ff.close(fd);

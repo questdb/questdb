@@ -1527,7 +1527,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     boolean countedDown = false;
                     try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                         walId = walWriter.getWalId();
-                        final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
+                        final AtomicInteger counter = counters.computeIfAbsent(walId, _ -> new AtomicInteger());
                         counter.incrementAndGet();
 
                         addColumn(walWriter, colName, ColumnType.LONG);
@@ -1678,7 +1678,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     int walId = -1;
                     try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                         walId = walWriter.getWalId();
-                        final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
+                        final AtomicInteger counter = counters.computeIfAbsent(walId, _ -> new AtomicInteger());
                         assertEquals(counter.get() > 0 ? maxRowCount : 0, walWriter.getSegmentRowCount());
                         counter.incrementAndGet();
                         for (int n = 0; n < numOfRows; n++) {
@@ -5496,7 +5496,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
     static void prepareBinPayload(long pointer, int limit) {
         for (int offset = 0; offset < limit; offset++) {
-            Unsafe.getUnsafe().putByte(pointer + offset, (byte) limit);
+            Unsafe.putByte(pointer + offset, (byte) limit);
         }
     }
 

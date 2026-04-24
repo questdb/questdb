@@ -392,7 +392,7 @@ public final class TableUtils {
             if (addr < 1) {
                 throw CairoException.critical(ff.errno()).put("Could not allocate 1 byte");
             }
-            Unsafe.getUnsafe().putByte(addr, walFlag);
+            Unsafe.putByte(addr, walFlag);
             ff.write(fd, addr, Byte.BYTES, 0);
         } finally {
             if (addr > 0) {
@@ -764,7 +764,7 @@ public final class TableUtils {
         if (address == 0) {
             return;
         }
-        Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_TABLE_READER);
+        Unsafe.free(address, Unsafe.getInt(address), MemoryTag.NATIVE_TABLE_READER);
     }
 
     public static int getColumnCount(Utf8Sequence metaPath, MemoryMR metaMem, long offset) {
@@ -1939,7 +1939,7 @@ public final class TableUtils {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno()).put("Cannot read: ").put(path);
         }
-        return Unsafe.getUnsafe().getInt(tempMem8b);
+        return Unsafe.getInt(tempMem8b);
     }
 
     public static long readLongAtOffset(FilesFacade ff, LPSZ path, long tempMem8b, long offset) {
@@ -1958,7 +1958,7 @@ public final class TableUtils {
             }
             throw CairoException.critical(ff.errno()).put("could not read long [fd=").put(fd).put(", offset=").put(offset);
         }
-        return Unsafe.getUnsafe().getLong(tempMem8b);
+        return Unsafe.getLong(tempMem8b);
     }
 
     public static String readTableName(Path path, int rootLen, MemoryCMR mem, FilesFacade ff) {
@@ -2057,10 +2057,10 @@ public final class TableUtils {
         mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
         mem.jumpTo(0);
         mem.putLong(24, 0); // txn check
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         mem.putLong(8, 0); // hashLo
         mem.putLong(16, 0); // hashHi
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         mem.putLong(0, 0); // txn
         mem.putLong(32, 0); // count
         mem.jumpTo(40);
@@ -2432,7 +2432,7 @@ public final class TableUtils {
     }
 
     public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
-        Unsafe.getUnsafe().putInt(tempMem8b, value);
+        Unsafe.putInt(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno())
                     .put("could not write 8 bytes [path=").put(path)
@@ -2444,7 +2444,7 @@ public final class TableUtils {
     }
 
     public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
-        Unsafe.getUnsafe().putLong(tempMem8b, value);
+        Unsafe.putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             throw CairoException.critical(ff.errno())
                     .put("could not write 8 bytes [path=").put(path)
@@ -2544,7 +2544,7 @@ public final class TableUtils {
     static boolean assertTimestampInOrder(long srcTimestampAddr, long srcDataMax) {
         long prev = Long.MIN_VALUE;
         for (long i = 0; i < srcDataMax; i++) {
-            long newTs = Unsafe.getUnsafe().getLong(srcTimestampAddr + i * Long.BYTES);
+            long newTs = Unsafe.getLong(srcTimestampAddr + i * Long.BYTES);
             if (newTs < prev) {
                 return false;
             }

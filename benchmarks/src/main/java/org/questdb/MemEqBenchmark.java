@@ -59,8 +59,8 @@ public class MemEqBenchmark {
     public void reset() {
         Os.init();
         for (int i = 0; i < len; i += Integer.BYTES) {
-            Unsafe.getUnsafe().putInt(mem1 + i, i);
-            Unsafe.getUnsafe().putInt(mem2 + i, i);
+            Unsafe.putInt(mem1 + i, i);
+            Unsafe.putInt(mem2 + i, i);
         }
     }
 
@@ -77,18 +77,18 @@ public class MemEqBenchmark {
     private static boolean memeqVanilla(long a, long b, long len) {
         int i = 0;
         for (; i + 7 < len; i += 8) {
-            if (Unsafe.getUnsafe().getLong(a + i) != Unsafe.getUnsafe().getLong(b + i)) {
+            if (Unsafe.getLong(a + i) != Unsafe.getLong(b + i)) {
                 return false;
             }
         }
         if (i + 3 < len) {
-            if (Unsafe.getUnsafe().getInt(a + i) != Unsafe.getUnsafe().getInt(b + i)) {
+            if (Unsafe.getInt(a + i) != Unsafe.getInt(b + i)) {
                 return false;
             }
             i += 4;
         }
         for (; i < len; i++) {
-            if (Unsafe.getUnsafe().getByte(a + i) != Unsafe.getUnsafe().getByte(b + i)) {
+            if (Unsafe.getByte(a + i) != Unsafe.getByte(b + i)) {
                 return false;
             }
         }

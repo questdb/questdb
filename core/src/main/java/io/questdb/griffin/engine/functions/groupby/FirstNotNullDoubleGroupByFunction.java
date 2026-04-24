@@ -46,7 +46,7 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
             final long hi = dataAddr + rowCount * (long) Double.BYTES;
             long offset = 0;
             for (; dataAddr < hi; dataAddr += Double.BYTES) {
-                double value = Unsafe.getUnsafe().getDouble(dataAddr);
+                double value = Unsafe.getDouble(dataAddr);
                 if (!Numbers.isNull(value)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
@@ -80,24 +80,24 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final double value = Unsafe.getUnsafe().getDouble(argAddr + (rowIndex << 3));
+                final double value = Unsafe.getDouble(argAddr + (rowIndex << 3));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
                 if (!Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final double existingValue = Unsafe.getUnsafe().getDouble(entryBase + valueColumnOffset);
-                    if (Numbers.isNull(existingValue) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putDouble(entryBase + valueColumnOffset, value);
+                    final double existingValue = Unsafe.getDouble(entryBase + valueColumnOffset);
+                    if (Numbers.isNull(existingValue) || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putDouble(entryBase + valueColumnOffset, value);
                     }
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 record.setRowIndex(rowIndex);
                 final double value = arg.getDouble(record);
@@ -106,10 +106,10 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
                 if (!Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final double existingValue = Unsafe.getUnsafe().getDouble(entryBase + valueColumnOffset);
-                    if (Numbers.isNull(existingValue) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putDouble(entryBase + valueColumnOffset, value);
+                    final double existingValue = Unsafe.getDouble(entryBase + valueColumnOffset);
+                    if (Numbers.isNull(existingValue) || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putDouble(entryBase + valueColumnOffset, value);
                     }
                 }
             }

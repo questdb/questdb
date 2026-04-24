@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.groupby.FirstBooleanGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastBooleanGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -180,7 +179,7 @@ public class BooleanGroupByFunctionBatchTest {
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         long addr = lastAllocated;
         for (boolean value : values) {
-            Unsafe.getUnsafe().putByte(addr, value ? (byte) 1 : 0);
+            Unsafe.putByte(addr, value ? (byte) 1 : 0);
             addr++;
         }
         return lastAllocated;

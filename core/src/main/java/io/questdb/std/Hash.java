@@ -108,14 +108,14 @@ public final class Hash {
         long h = 0;
         long i = 0;
         for (; i + 7 < len; i += 8) {
-            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
+            h = h * M2 + Unsafe.getLong(p + i);
         }
         if (i + 3 < len) {
-            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
+            h = h * M2 + Unsafe.getInt(p + i);
             i += 4;
         }
         for (; i < len; i++) {
-            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
+            h = h * M2 + Unsafe.getByte(p + i);
         }
         return fmix64(h);
     }

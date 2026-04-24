@@ -407,8 +407,8 @@ public final class TestUtils {
 
                             for (int i = 0; i < reada; i++) {
                                 Assert.assertEquals(
-                                        Unsafe.getUnsafe().getByte(bufa + i),
-                                        Unsafe.getUnsafe().getByte(bufb + i)
+                                        Unsafe.getByte(bufa + i),
+                                        Unsafe.getByte(bufb + i)
                                 );
                             }
                         }
@@ -446,11 +446,11 @@ public final class TestUtils {
                         }
 
                         for (int i = 0; i < reada; i++) {
-                            byte b = Unsafe.getUnsafe().getByte(bufa + i);
+                            byte b = Unsafe.getByte(bufa + i);
                             if (b == 13) {
                                 continue;
                             }
-                            byte bb = Unsafe.getUnsafe().getByte(strp);
+                            byte bb = Unsafe.getByte(strp);
                             strp++;
                             if (b != bb) {
                                 Assert.fail("expected: '" + (char) (bb) + "'(" + bb + ")" + ", actual: '" + (char) (b)
@@ -1957,7 +1957,7 @@ public final class TestUtils {
         long p = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+                Unsafe.putByte(p + i, bytes[i]);
             }
             DirectUtf8String seq = new DirectUtf8String();
             seq.of(p, p + len);
@@ -2529,7 +2529,7 @@ public final class TestUtils {
         }
         String printed = sink.toString();
         map.compute(
-                printed, (s, i) -> {
+                printed, (_, i) -> {
                     if (i == null) {
                         return 1;
                     }

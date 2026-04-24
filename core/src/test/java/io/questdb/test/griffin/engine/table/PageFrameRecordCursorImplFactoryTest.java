@@ -861,13 +861,13 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                                 long dStrColAddr = frame.getPageAddress(3);
 
                                 for (long i = len - 1; i > -1; i--) {
-                                    Assert.assertEquals(rndInts[rowIndex], Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
-                                    Assert.assertEquals(ts -= increment, Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
+                                    Assert.assertEquals(rndInts[rowIndex], Unsafe.getInt(intColAddr + i * 4L));
+                                    Assert.assertEquals(ts -= increment, Unsafe.getLong(tsColAddr + i * 8L));
 
                                     if (startTopAt > 0 && rowIndex >= startTopAt) {
-                                        Assert.assertEquals(rndLongs[rowIndex], Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
-                                        final long strOffset = Unsafe.getUnsafe().getLong(iStrColAddr + i * 8);
-                                        dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getUnsafe().getLong(iStrColAddr + i * 8 + 8));
+                                        Assert.assertEquals(rndLongs[rowIndex], Unsafe.getLong(longColAddr + i * 8L));
+                                        final long strOffset = Unsafe.getLong(iStrColAddr + i * 8);
+                                        dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getLong(iStrColAddr + i * 8 + 8));
                                         TestUtils.assertEquals(rndStrs[rowIndex], dcs);
                                     }
                                     rowIndex--;
@@ -1249,13 +1249,13 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                                 long dStrColAddr = frame.getPageAddress(3);
 
                                 for (long i = 0; i < len; i++, rowIndex++) {
-                                    Assert.assertEquals(rnd.nextInt(), Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
-                                    Assert.assertEquals(ts += increment, Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
+                                    Assert.assertEquals(rnd.nextInt(), Unsafe.getInt(intColAddr + i * 4L));
+                                    Assert.assertEquals(ts += increment, Unsafe.getLong(tsColAddr + i * 8L));
 
                                     if (startTopAt > 0 && rowIndex >= startTopAt) {
-                                        Assert.assertEquals(rnd.nextLong(), Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
-                                        final long strOffset = Unsafe.getUnsafe().getLong(iStrColAddr + i * 8);
-                                        dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getUnsafe().getLong(iStrColAddr + i * 8 + 8));
+                                        Assert.assertEquals(rnd.nextLong(), Unsafe.getLong(longColAddr + i * 8L));
+                                        final long strOffset = Unsafe.getLong(iStrColAddr + i * 8);
+                                        dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getLong(iStrColAddr + i * 8 + 8));
                                         TestUtils.assertEquals(rnd.nextChars(32), dcs);
                                     }
                                 }

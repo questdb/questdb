@@ -70,8 +70,8 @@ public class ChunkedContentParser implements Mutable {
     }
 
     private static boolean isEol(long lo, long hi) {
-        return hi - lo > 1 && Unsafe.getUnsafe().getByte(lo) == '\r'
-                && Unsafe.getUnsafe().getByte(lo + 1) == '\n';
+        return hi - lo > 1 && Unsafe.getByte(lo) == '\r'
+                && Unsafe.getByte(lo + 1) == '\n';
     }
 
     private long parseChunkLength(long lo, long hi, boolean skipEol) {
@@ -87,7 +87,7 @@ public class ChunkedContentParser implements Mutable {
         }
 
         while (lo < hi) {
-            byte b = Unsafe.getUnsafe().getByte(lo++);
+            byte b = Unsafe.getByte(lo++);
             int digit = -1;
             if (b >= '0' && b <= '9') {
                 digit = b - '0';
