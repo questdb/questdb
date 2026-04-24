@@ -31,19 +31,41 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DivFloatFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "/(FF)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        // null / x and x / null always evaluate to null. Fold at construction time so the
+        // non-null operand is never read at all at runtime.
+        if (left.isConstant() && Numbers.isNull(left.getFloat(null))) {
+            Misc.free(right);
+            return FloatConstant.NULL;
+        }
+        if (right.isConstant() && Numbers.isNull(right.getFloat(null))) {
+            Misc.free(left);
+            return FloatConstant.NULL;
+        }
+        return new Func(left, right);
     }
 
     private static class Func extends FloatFunction implements ArithmeticBinaryFunction {

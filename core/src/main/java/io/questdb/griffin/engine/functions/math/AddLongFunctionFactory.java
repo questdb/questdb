@@ -31,24 +31,47 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class AddLongFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "+(LL)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new AddLongFunc(args.getQuick(0), args.getQuick(1));
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        // null + x and x + null always evaluate to null. Fold at construction time so the
+        // non-null operand (potentially a column reference) is never evaluated with a null
+        // record via FunctionParser.functionToConstant().
+        if (left.isConstant() && left.getLong(null) == Numbers.LONG_NULL) {
+            Misc.free(right);
+            return LongConstant.NULL;
+        }
+        if (right.isConstant() && right.getLong(null) == Numbers.LONG_NULL) {
+            Misc.free(left);
+            return LongConstant.NULL;
+        }
+        return new AddLongFunc(left, right);
     }
 
     private static class AddLongFunc extends LongFunction implements ArithmeticBinaryFunction {
-        final Function left;
-        final Function right;
+        private final Function left;
+        private final Function right;
 
         public AddLongFunc(Function left, Function right) {
             this.left = left;
