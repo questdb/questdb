@@ -59,8 +59,6 @@ import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.datetime.nanotime.NanosFormatUtils;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -1769,11 +1767,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // STRING aux starts with initial offset 0.
         Unsafe.getUnsafe().putLong(auxAddr, 0L);
 
+        // Resolve the per-type formatter once so the inner loop is a direct virtual
+        // call instead of a 12-way switch per row.
+        final ColumnTypeConverter.Fixed2VarConverter converter =
+                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.STRING);
+        final long elemSize = ColumnType.sizeOf(srcType);
+
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
-            boolean isNull = formatFixedValue(srcType, srcDataPtr, i, sink);
+            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink);
 
-            if (isNull) {
+            if (!hasValue) {
                 // Null: write -1 as length prefix.
                 Unsafe.getUnsafe().putInt(dataAddr + dataOffset, -1);
                 dataOffset += Integer.BYTES;
@@ -1800,9 +1804,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         Utf8StringSink sink = new Utf8StringSink();
         long dataOffset = 0;
 
+        // Resolve the per-type formatter once so the inner loop is a direct virtual
+        // call instead of a 12-way switch per row.
+        final ColumnTypeConverter.Fixed2VarConverter converter =
+                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.VARCHAR);
+        final long elemSize = ColumnType.sizeOf(srcType);
+
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
-            boolean isNull = formatFixedValue(srcType, srcDataPtr, i, sink);
+            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink);
+            boolean isNull = !hasValue;
             long auxEntryAddr = auxAddr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
 
             if (isNull) {
@@ -1882,99 +1893,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             default -> 40;
         };
         return (long) maxBytesPerRow * rowCount;
-    }
-
-    /**
-     * Formats a single fixed-type value into the sink.
-     *
-     * @return true if the value is null
-     */
-    private static <T extends CharSink<T>> boolean formatFixedValue(
-            int srcType,
-            long srcDataPtr,
-            int rowIndex,
-            CharSink<T> sink
-    ) {
-        switch (srcType) {
-            case ColumnType.BOOLEAN -> sink.put(Unsafe.getUnsafe().getByte(srcDataPtr + rowIndex) != 0);
-            case ColumnType.BYTE -> sink.put(Unsafe.getUnsafe().getByte(srcDataPtr + rowIndex));
-            case ColumnType.SHORT -> sink.put(Unsafe.getUnsafe().getShort(srcDataPtr + ((long) rowIndex << 1)));
-            case ColumnType.CHAR -> {
-                char val = Unsafe.getUnsafe().getChar(srcDataPtr + ((long) rowIndex << 1));
-                if (val == 0) {
-                    return true;
-                }
-                sink.put(val);
-            }
-            case ColumnType.INT -> {
-                int val = Unsafe.getUnsafe().getInt(srcDataPtr + ((long) rowIndex << 2));
-                if (val == Numbers.INT_NULL) {
-                    return true;
-                }
-                sink.put(val);
-            }
-            case ColumnType.LONG -> {
-                long val = Unsafe.getUnsafe().getLong(srcDataPtr + ((long) rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return true;
-                }
-                sink.put(val);
-            }
-            case ColumnType.FLOAT -> {
-                float val = Unsafe.getUnsafe().getFloat(srcDataPtr + ((long) rowIndex << 2));
-                if (Numbers.isNull(val)) {
-                    return true;
-                }
-                sink.put(val);
-            }
-            case ColumnType.DOUBLE -> {
-                double val = Unsafe.getUnsafe().getDouble(srcDataPtr + ((long) rowIndex << 3));
-                if (Numbers.isNull(val)) {
-                    return true;
-                }
-                sink.put(val);
-            }
-            case ColumnType.DATE -> {
-                long val = Unsafe.getUnsafe().getLong(srcDataPtr + ((long) rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return true;
-                }
-                DateFormatUtils.appendDateTime(sink, val);
-            }
-            case ColumnType.TIMESTAMP -> {
-                long val = Unsafe.getUnsafe().getLong(srcDataPtr + ((long) rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return true;
-                }
-                MicrosFormatUtils.appendDateTimeUSec(sink, val);
-            }
-            case ColumnType.TIMESTAMP_NANO -> {
-                long val = Unsafe.getUnsafe().getLong(srcDataPtr + ((long) rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return true;
-                }
-                NanosFormatUtils.appendDateTimeNSec(sink, val);
-            }
-            case ColumnType.IPv4 -> {
-                int val = Unsafe.getUnsafe().getInt(srcDataPtr + ((long) rowIndex << 2));
-                if (val == Numbers.IPv4_NULL) {
-                    return true;
-                }
-                Numbers.intToIPv4Sink(sink, val);
-            }
-            case ColumnType.UUID -> {
-                long lo = Unsafe.getUnsafe().getLong(srcDataPtr + ((long) rowIndex << 4));
-                long hi = Unsafe.getUnsafe().getLong(srcDataPtr + ((long) rowIndex << 4) + Long.BYTES);
-                if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
-                    return true;
-                }
-                Numbers.appendUuid(lo, hi, sink);
-            }
-            default -> {
-                return true;
-            }
-        }
-        return false;
     }
 
     static void convertVarColumnToFixed(

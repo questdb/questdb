@@ -1452,6 +1452,29 @@ public final class Utf8s {
     }
 
     /**
+     * Returns a CharSequence view of {@code seq} whose chars are real UTF-16 code
+     * points. If {@code seq.isAscii()} reports true, the raw bytes are already valid
+     * code points one-to-one and the zero-allocation {@link Utf8Sequence#asAsciiCharSequence()}
+     * view is returned. Otherwise the sequence is decoded into {@code decodeSink}
+     * (which is {@link StringSink#clear() cleared} first) and the sink is returned.
+     * <p>
+     * Callers must not mutate {@code decodeSink} until they finish reading the
+     * returned CharSequence, since the returned reference may alias it.
+     *
+     * @param seq        source UTF-8 sequence; must be non-null
+     * @param decodeSink scratch UTF-16 sink used only on the non-ASCII path
+     * @return a CharSequence exposing {@code seq} as UTF-16 code points
+     */
+    public static CharSequence utf8ToUtf16OrView(@NotNull Utf8Sequence seq, @NotNull StringSink decodeSink) {
+        if (seq.isAscii()) {
+            return seq.asAsciiCharSequence();
+        }
+        decodeSink.clear();
+        utf8ToUtf16(seq, decodeSink);
+        return decodeSink;
+    }
+
+    /**
      * Translates UTF8 sequence into UTF-16 sequence and returns number of bytes read from the input sequence.
      * It terminates transcoding when it encounters one of the following:
      * <ul>

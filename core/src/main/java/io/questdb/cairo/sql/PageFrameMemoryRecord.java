@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -56,7 +57,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.datetime.nanotime.NanosFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StableStringSource;
@@ -1071,25 +1071,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private CharSequence readVarValueForConversion(int srcTag, int columnIndex) {
         if (srcTag == ColumnType.VARCHAR) {
             Utf8Sequence utf8 = getVarchar(columnIndex, utf8ViewA(columnIndex));
-            if (utf8 == null) {
-                return null;
-            }
-            // Fast path: when the VARCHAR aux entry flags the value as pure ASCII, each
-            // UTF-8 byte is a single code point and asAsciiCharSequence() is an
-            // allocation-free, correct view.
-            if (utf8.isAscii()) {
-                return utf8.asAsciiCharSequence();
-            }
-            // Slow path: decode UTF-8 to UTF-16 code points. The previous unconditional
-            // asAsciiCharSequence() exposed raw UTF-8 bytes as chars and corrupted any
-            // non-ASCII input (e.g. UTF-8 'e-acute' 0xC3 0xA9 surfaced as two Latin-1
-            // chars U+00C3 U+00A9 instead of the single U+00E9). Downstream callers
-            // (convertVarToChar, convertVarToStr, Numbers.parseXxx, Uuid.parseHi/Lo,
-            // timestamp parsers) rely on real UTF-16 code points to behave the same as
-            // the native conversion path.
-            utf16DecodeSink.clear();
-            Utf8s.utf8ToUtf16(utf8, utf16DecodeSink);
-            return utf16DecodeSink;
+            // utf8ToUtf16OrView gives a zero-alloc view on the ASCII fast path and
+            // falls back to decoding into utf16DecodeSink for non-ASCII values.
+            // Downstream callers (convertVarToChar, convertVarToStr, Numbers.parseXxx,
+            // Uuid.parseHi/Lo, timestamp parsers) rely on real UTF-16 code points to
+            // behave the same as the native conversion path.
+            return utf8 != null ? Utf8s.utf8ToUtf16OrView(utf8, utf16DecodeSink) : null;
         } else {
             return getStr0(columnIndex, csViewA(columnIndex));
         }
@@ -1164,89 +1151,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return null; // column top
         }
         sink.clear();
-        switch (srcType) {
-            case ColumnType.BOOLEAN -> sink.put(Unsafe.getUnsafe().getByte(address + rowIndex) != 0);
-            case ColumnType.BYTE -> sink.put(Unsafe.getUnsafe().getByte(address + rowIndex));
-            case ColumnType.SHORT -> sink.put(Unsafe.getUnsafe().getShort(address + (rowIndex << 1)));
-            case ColumnType.CHAR -> {
-                char val = Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
-                if (val == 0) {
-                    return null;
-                }
-                sink.put(val);
-            }
-            case ColumnType.INT -> {
-                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
-                if (val == Numbers.INT_NULL) {
-                    return null;
-                }
-                sink.put(val);
-            }
-            case ColumnType.LONG -> {
-                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return null;
-                }
-                sink.put(val);
-            }
-            case ColumnType.FLOAT -> {
-                float val = Unsafe.getUnsafe().getFloat(address + (rowIndex << 2));
-                if (Numbers.isNull(val)) {
-                    return null;
-                }
-                sink.put(val);
-            }
-            case ColumnType.DOUBLE -> {
-                double val = Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
-                if (Numbers.isNull(val)) {
-                    return null;
-                }
-                sink.put(val);
-            }
-            case ColumnType.DATE -> {
-                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return null;
-                }
-                DateFormatUtils.appendDateTime(sink, val);
-            }
-            case ColumnType.TIMESTAMP -> {
-                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return null;
-                }
-                MicrosFormatUtils.appendDateTimeUSec(sink, val);
-            }
-            case ColumnType.TIMESTAMP_NANO -> {
-                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return null;
-                }
-                NanosFormatUtils.appendDateTimeNSec(sink, val);
-            }
-            case ColumnType.IPv4 -> {
-                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
-                if (val == Numbers.IPv4_NULL) {
-                    return null;
-                }
-                Numbers.intToIPv4Sink(sink, val);
-            }
-            case ColumnType.UUID -> {
-                long lo = Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
-                long hi = Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
-                if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
-                    return null;
-                }
-                Numbers.appendUuid(lo, hi, sink);
-            }
-            default -> {
-                if (ColumnType.isDecimal(srcType) && appendDecimalToSink(srcType, address, sink)) {
-                    return sink;
-                }
-                return null;
-            }
+        // Decimal has a distinct (precision, scale) format path that the shared
+        // Fixed2VarConverter doesn't cover.
+        if (ColumnType.isDecimal(srcType)) {
+            return appendDecimalToSink(srcType, address, sink) ? sink : null;
         }
-        return sink;
+        final ColumnTypeConverter.Fixed2VarConverter converter =
+                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.STRING);
+        return converter.convert(address + rowIndex * ColumnType.sizeOf(srcType), sink) ? sink : null;
     }
 
     /**
@@ -1259,89 +1171,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return null; // column top
         }
         sink.clear();
-        switch (srcType) {
-            case ColumnType.BOOLEAN -> sink.put(Unsafe.getUnsafe().getByte(address + rowIndex) != 0);
-            case ColumnType.BYTE -> sink.put((int) Unsafe.getUnsafe().getByte(address + rowIndex));
-            case ColumnType.SHORT -> sink.put(Unsafe.getUnsafe().getShort(address + (rowIndex << 1)));
-            case ColumnType.CHAR -> {
-                char val = Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
-                if (val == 0) {
-                    return null;
-                }
-                sink.put(val);
-            }
-            case ColumnType.INT -> {
-                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
-                if (val == Numbers.INT_NULL) {
-                    return null;
-                }
-                sink.put(val);
-            }
-            case ColumnType.LONG -> {
-                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return null;
-                }
-                sink.put(val);
-            }
-            case ColumnType.FLOAT -> {
-                float val = Unsafe.getUnsafe().getFloat(address + (rowIndex << 2));
-                if (Numbers.isNull(val)) {
-                    return null;
-                }
-                sink.put(val);
-            }
-            case ColumnType.DOUBLE -> {
-                double val = Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
-                if (Numbers.isNull(val)) {
-                    return null;
-                }
-                sink.put(val);
-            }
-            case ColumnType.DATE -> {
-                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return null;
-                }
-                DateFormatUtils.appendDateTime(sink, val);
-            }
-            case ColumnType.TIMESTAMP -> {
-                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return null;
-                }
-                MicrosFormatUtils.appendDateTimeUSec(sink, val);
-            }
-            case ColumnType.TIMESTAMP_NANO -> {
-                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
-                if (val == Numbers.LONG_NULL) {
-                    return null;
-                }
-                NanosFormatUtils.appendDateTimeNSec(sink, val);
-            }
-            case ColumnType.IPv4 -> {
-                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
-                if (val == Numbers.IPv4_NULL) {
-                    return null;
-                }
-                Numbers.intToIPv4Sink(sink, val);
-            }
-            case ColumnType.UUID -> {
-                long lo = Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
-                long hi = Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
-                if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
-                    return null;
-                }
-                Numbers.appendUuid(lo, hi, sink);
-            }
-            default -> {
-                if (ColumnType.isDecimal(srcType) && appendDecimalToSink(srcType, address, sink)) {
-                    return sink;
-                }
-                return null;
-            }
+        if (ColumnType.isDecimal(srcType)) {
+            return appendDecimalToSink(srcType, address, sink) ? sink : null;
         }
-        return sink;
+        final ColumnTypeConverter.Fixed2VarConverter converter =
+                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.VARCHAR);
+        return converter.convert(address + rowIndex * ColumnType.sizeOf(srcType), sink) ? sink : null;
     }
 
     protected @NotNull BorrowedArray borrowedArray(int columnIndex) {

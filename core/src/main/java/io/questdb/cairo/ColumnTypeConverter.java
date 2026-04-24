@@ -563,22 +563,12 @@ public class ColumnTypeConverter {
             dstFixMem.jumpTo(0);
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
-                if (utf8 == null) {
-                    converter.convert(null, dstFixMem);
-                } else if (utf8.isAscii()) {
-                    // Fast path: when the VARCHAR aux entry flags the value as pure ASCII,
-                    // each UTF-8 byte is a single code point and asAsciiCharSequence() is
-                    // an allocation-free, correct view.
-                    converter.convert(utf8.asAsciiCharSequence(), dstFixMem);
-                } else {
-                    // Slow path: decode UTF-8 to UTF-16 so the downstream converter sees
-                    // real code points. The previous unconditional asAsciiCharSequence()
-                    // exposed raw bytes as chars, corrupting non-ASCII (e.g. UTF-8
-                    // 'e-acute' 0xC3 0xA9 yielded two Latin-1 chars instead of U+00E9).
-                    sink.clear();
-                    Utf8s.utf8ToUtf16(utf8, sink);
-                    converter.convert(sink, dstFixMem);
-                }
+                // utf8ToUtf16OrView gives a zero-alloc view on the ASCII fast path and
+                // falls back to decoding into sink for non-ASCII values. The previous
+                // unconditional asAsciiCharSequence() exposed raw bytes as chars,
+                // corrupting non-ASCII (UTF-8 'e-acute' 0xC3 0xA9 became two Latin-1
+                // chars instead of U+00E9).
+                converter.convert(utf8 != null ? Utf8s.utf8ToUtf16OrView(utf8, sink) : null, dstFixMem);
             }
             assert dstFixMem.getAppendOffset() == (rowHi - rowLo) * dstTypeSize;
             columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
@@ -915,7 +905,22 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
+    /**
+     * Returns a per-source-type {@link Fixed2VarConverter} that reads a single fixed-size
+     * value from a raw native address and appends its text representation to the given
+     * sink, returning {@code true} when a value was written and {@code false} for a null
+     * sentinel.
+     * <p>
+     * Callers should resolve the converter once per column and reuse it in a tight
+     * per-row loop so that the type dispatch is paid once rather than once per row.
+     *
+     * @param srcColumnType source ColumnType; DECIMAL is <b>not</b> supported here
+     *                      (decimals carry precision/scale and go through
+     *                      {@code Decimals.appendNonNull} at the caller site instead)
+     * @param dstColumnType destination ColumnType (STRING, VARCHAR, or SYMBOL); used only
+     *                      for diagnostics when the source type is unsupported
+     */
+    public static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
         return switch (ColumnType.tagOf(srcColumnType)) {
             case ColumnType.INT -> converterFromInt2String;
             case ColumnType.UUID -> converterFromUuid2String;
