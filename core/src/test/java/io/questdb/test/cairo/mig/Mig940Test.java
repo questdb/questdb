@@ -338,7 +338,7 @@ public class Mig940Test extends AbstractCairoTest {
                     long fileSize = ff.length(fd);
                     long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                     try {
-                        Unsafe.getUnsafe().putLong(buf, 0xDEADBEEFDEADBEEFL);
+                        Unsafe.putLong(buf, 0xDEADBEEFDEADBEEFL);
                         ff.write(fd, buf, 8, fileSize - 8);
                     } finally {
                         Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);

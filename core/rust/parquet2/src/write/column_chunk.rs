@@ -82,7 +82,8 @@ where
         }
     };
 
-    let column_chunk = build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
+    let column_chunk =
+        build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
 
     // write metadata
     let mut protocol = TCompactOutputProtocol::new(writer);
@@ -170,7 +171,8 @@ where
     let bloom_filter_offset = None;
     let bloom_filter_length = None;
 
-    let column_chunk = build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
+    let column_chunk =
+        build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
 
     // write metadata
     let mut protocol = TCompactOutputStreamProtocol::new(writer);

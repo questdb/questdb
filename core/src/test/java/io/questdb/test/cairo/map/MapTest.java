@@ -264,7 +264,7 @@ public class MapTest extends AbstractCairoTest {
             try {
                 // keyCapacity = 2^29 with loadFactor 0.5 drives post-ceilPow2 keyCapacity to 2^30,
                 // the map's hard cap.
-                createMap(keyColumnType(ColumnType.INT), valueTypes, 1 << 29, 0.5, Integer.MAX_VALUE);
+                createMap(keyColumnType(ColumnType.INT), valueTypes, 1 << 29, 0.5, Integer.MAX_VALUE).close();
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "exceeds batched probe addressable range");
@@ -687,7 +687,7 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(4, map.size());
 
                 for (int i = 0; i < batchRows; i++) {
-                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    final long encoded = Unsafe.getLong(batch.getAddress() + ((long) i << 3));
                     Assert.assertEquals(i, Map.decodeBatchRowIndex(encoded));
                     Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
 
@@ -731,7 +731,7 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(3, map.size());
 
                 for (int i = 0; i < batchRows; i++) {
-                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    final long encoded = Unsafe.getLong(batch.getAddress() + ((long) i << 3));
                     // Encoded rowIndex is the frame-relative row id, not the position in the filter list.
                     Assert.assertEquals(selectedRowIds[i], Map.decodeBatchRowIndex(encoded));
                     Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
@@ -781,7 +781,7 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(3, map.size());
 
                 for (int i = 0; i < batchRows; i++) {
-                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    final long encoded = Unsafe.getLong(batch.getAddress() + ((long) i << 3));
                     Assert.assertEquals(selectedRowIds[i], Map.decodeBatchRowIndex(encoded));
                     Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
                     final long offset = Map.decodeBatchOffset(encoded);
@@ -832,7 +832,7 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(3, map.size());
 
                 for (int i = 0; i < batchRows; i++) {
-                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    final long encoded = Unsafe.getLong(batch.getAddress() + ((long) i << 3));
                     Assert.assertEquals(selectedRowIds[i], Map.decodeBatchRowIndex(encoded));
                     Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
                     final long offset = Map.decodeBatchOffset(encoded);
@@ -874,7 +874,7 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(4, map.size());
 
                 for (int i = 0; i < batchRows; i++) {
-                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    final long encoded = Unsafe.getLong(batch.getAddress() + ((long) i << 3));
                     Assert.assertEquals(i, Map.decodeBatchRowIndex(encoded));
                     Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
                     final long offset = Map.decodeBatchOffset(encoded);
@@ -919,7 +919,7 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(3, map.size());
 
                 for (int i = 0; i < batchRows; i++) {
-                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    final long encoded = Unsafe.getLong(batch.getAddress() + ((long) i << 3));
                     Assert.assertEquals(i, Map.decodeBatchRowIndex(encoded));
                     Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
                     final long offset = Map.decodeBatchOffset(encoded);
@@ -1107,7 +1107,7 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(prefill + batchRows, map.size());
 
                 for (int i = 0; i < batchRows; i++) {
-                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    final long encoded = Unsafe.getLong(batch.getAddress() + ((long) i << 3));
                     Assert.assertTrue(Map.isNewBatchEntry(encoded));
                     final long offset = Map.decodeBatchOffset(encoded);
                     Assert.assertNotNull(map.valueAt(entryBase + offset));
@@ -1227,13 +1227,13 @@ public class MapTest extends AbstractCairoTest {
 
                 Assert.assertEquals(3, map.size());
                 for (int i = 0; i < batchRows; i++) {
-                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    final long encoded = Unsafe.getLong(batch.getAddress() + ((long) i << 3));
                     Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
                     final long offset = Map.decodeBatchOffset(encoded);
                     // Newly inserted entries were prefilled with the sentinel via setBatchEmptyValue.
                     // Duplicates reference existing entries that were also created via the same path.
                     // batchAddr offsets now point at the start of the value region.
-                    Assert.assertEquals(sentinel, Unsafe.getUnsafe().getLong(entryBase + offset));
+                    Assert.assertEquals(sentinel, Unsafe.getLong(entryBase + offset));
                 }
 
                 // Clear the empty value pattern so subsequent tests don't leak the scratch buffer.
@@ -1264,10 +1264,10 @@ public class MapTest extends AbstractCairoTest {
 
                 Assert.assertEquals(3, map.size());
                 for (int i = 0; i < batchRows; i++) {
-                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    final long encoded = Unsafe.getLong(batch.getAddress() + ((long) i << 3));
                     Assert.assertTrue(Map.isNewBatchEntry(encoded));
                     final long offset = Map.decodeBatchOffset(encoded);
-                    Assert.assertEquals(0L, Unsafe.getUnsafe().getLong(entryBase + offset));
+                    Assert.assertEquals(0L, Unsafe.getLong(entryBase + offset));
                 }
 
                 // Clearing a null updater must be a no-op and idempotent.
@@ -1343,14 +1343,11 @@ public class MapTest extends AbstractCairoTest {
     }
 
     private int columnTypeForMapType() {
-        switch (mapType) {
-            case UNORDERED_8_MAP:
-                return ColumnType.LONG;
-            case UNORDERED_VARCHAR_MAP:
-                return ColumnType.VARCHAR;
-            default:
-                return ColumnType.INT;
-        }
+        return switch (mapType) {
+            case UNORDERED_8_MAP -> ColumnType.LONG;
+            case UNORDERED_VARCHAR_MAP -> ColumnType.VARCHAR;
+            default -> ColumnType.INT;
+        };
     }
 
     private Map createMap(ColumnTypes keyTypes, ColumnTypes valueTypes, int keyCapacity, double loadFactor, int maxResizes) {
@@ -1462,15 +1459,11 @@ public class MapTest extends AbstractCairoTest {
     // logical keys once and services both the direct-column fast path (via
     // getPageAddress) and the sink-based slow path (via getInt/getLong/getVarcharA).
     private static class TestPageFrameRecord extends PageFrameMemoryRecord {
-        private final int[] logicalKeys;
-        private final MapType mapType;
         private final ObjList<Utf8String> varcharKeys;
         private long bufferAddr;
         private long bufferSize;
 
         TestPageFrameRecord(MapType mapType, int[] logicalKeys) {
-            this.mapType = mapType;
-            this.logicalKeys = logicalKeys;
             if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
                 this.varcharKeys = new ObjList<>(logicalKeys.length);
                 for (int i = 0; i < logicalKeys.length; i++) {
@@ -1485,9 +1478,9 @@ public class MapTest extends AbstractCairoTest {
                 this.bufferAddr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
                 for (int i = 0; i < logicalKeys.length; i++) {
                     if (mapType == MapType.UNORDERED_8_MAP) {
-                        Unsafe.getUnsafe().putLong(bufferAddr + (long) i * Long.BYTES, logicalKeys[i]);
+                        Unsafe.putLong(bufferAddr + (long) i * Long.BYTES, logicalKeys[i]);
                     } else {
-                        Unsafe.getUnsafe().putInt(bufferAddr + (long) i * Integer.BYTES, logicalKeys[i]);
+                        Unsafe.putInt(bufferAddr + (long) i * Integer.BYTES, logicalKeys[i]);
                     }
                 }
             }
@@ -1503,12 +1496,12 @@ public class MapTest extends AbstractCairoTest {
 
         @Override
         public int getInt(int columnIndex) {
-            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * Integer.BYTES);
+            return Unsafe.getInt(bufferAddr + rowIndex * Integer.BYTES);
         }
 
         @Override
         public long getLong(int columnIndex) {
-            return Unsafe.getUnsafe().getLong(bufferAddr + rowIndex * Long.BYTES);
+            return Unsafe.getLong(bufferAddr + rowIndex * Long.BYTES);
         }
 
         @Override

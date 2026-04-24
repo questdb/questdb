@@ -86,7 +86,7 @@ public class HashTest {
             while ((line = br.readLine()) != null) {
                 byte[] bytes = line.getBytes(StandardCharsets.UTF_8);
                 for (int i = 0; i < bytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(address + i, bytes[i]);
+                    Unsafe.putByte(address + i, bytes[i]);
                 }
                 // Use only 32 LSBs for the unique value check since that's where we want entropy.
                 hashes.add((int) hashFunction.hash(address, bytes.length));

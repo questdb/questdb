@@ -7,7 +7,7 @@ jobs:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
     pool:
       vmImage: $(imageName)
       name: $(poolName)

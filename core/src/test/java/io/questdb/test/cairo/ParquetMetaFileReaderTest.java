@@ -243,7 +243,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             try (PmTestFile file = buildFile(1, 100)) {
                 // Corrupt columnCount to a huge value. Without the bounds check,
                 // accessing column descriptors would read past the mmap (SIGSEGV).
-                Unsafe.getUnsafe().putInt(file.dataPtr + 24, 1_000_000_000);
+                Unsafe.putInt(file.dataPtr + 24, 1_000_000_000);
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
@@ -262,12 +262,12 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 100)) {
                 // Compute footer address: trailer (last 4 bytes) holds footer length
-                int footerLength = Unsafe.getUnsafe().getInt(file.dataPtr + file.dataLen - 4);
+                int footerLength = Unsafe.getInt(file.dataPtr + file.dataLen - 4);
                 long footerAddr = file.dataPtr + file.dataLen - 4 - Integer.toUnsignedLong(footerLength);
 
                 // Corrupt rowGroupCount to a huge value. Without the validation-before-loop
                 // fix, this causes an out-of-bounds read (SIGSEGV) instead of a clean exception.
-                Unsafe.getUnsafe().putInt(footerAddr + 12, 1_000_000_000);
+                Unsafe.putInt(footerAddr + 12, 1_000_000_000);
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
@@ -286,7 +286,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 100)) {
                 // Corrupt the footer length trailer to point past the file
-                Unsafe.getUnsafe().putInt(file.dataPtr + file.dataLen - 4, (int) file.dataLen);
+                Unsafe.putInt(file.dataPtr + file.dataLen - 4, (int) file.dataLen);
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
@@ -353,8 +353,8 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             try (PmTestFile file = buildFile(1, 100)) {
                 // Inflate the footer length by 8 bytes while feature flags remain 0.
                 // This simulates a corrupt file with unexpected trailing bytes.
-                int footerLength = Unsafe.getUnsafe().getInt(file.dataPtr + file.dataLen - 4);
-                Unsafe.getUnsafe().putInt(file.dataPtr + file.dataLen - 4, footerLength + 8);
+                int footerLength = Unsafe.getInt(file.dataPtr + file.dataLen - 4);
+                Unsafe.putInt(file.dataPtr + file.dataLen - 4, footerLength + 8);
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
@@ -375,7 +375,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             // first 8 bytes. The reader must reject it as too small.
             long addr = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putLong(addr, 4L); // implausibly small
+                Unsafe.putLong(addr, 4L); // implausibly small
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
                     reader.of(addr, 4L);
@@ -406,27 +406,27 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     // testFooterChainWalkResolvesCorrectFooter, then overwrite
                     // prev_parquet_meta_file_size in the latest footer with
                     // the bad value.
-                    int rowGroupEntry = Unsafe.getUnsafe().getInt(
+                    int rowGroupEntry = Unsafe.getInt(
                             file.dataPtr + origLen - 4
-                                    - Integer.toUnsignedLong(Unsafe.getUnsafe().getInt(file.dataPtr + origLen - 4))
+                                    - Integer.toUnsignedLong(Unsafe.getInt(file.dataPtr + origLen - 4))
                                     + 40 // FOOTER_FIXED_SIZE
                     );
                     int newFooterBytes = 52;
                     long newTotalLen = origLen + newFooterBytes;
                     long newBuf = Unsafe.malloc(newTotalLen, MemoryTag.NATIVE_DEFAULT);
                     try {
-                        Unsafe.getUnsafe().copyMemory(file.dataPtr, newBuf, origLen);
+                        Unsafe.copyMemory(file.dataPtr, newBuf, origLen);
                         long fa = newBuf + origLen;
-                        Unsafe.getUnsafe().putLong(fa, 200L);              // parquet_footer_offset
-                        Unsafe.getUnsafe().putInt(fa + 8, 80);             // parquet_footer_length
-                        Unsafe.getUnsafe().putInt(fa + 12, 1);             // row_group_count
-                        Unsafe.getUnsafe().putLong(fa + 16, 0L);           // unused_bytes
-                        Unsafe.getUnsafe().putLong(fa + 24, badPrevSize);  // prev_parquet_meta_file_size (bad)
-                        Unsafe.getUnsafe().putLong(fa + 32, 0L);           // footer_feature_flags
-                        Unsafe.getUnsafe().putInt(fa + 40, rowGroupEntry); // row group entry
-                        Unsafe.getUnsafe().putInt(fa + 44, 0);             // CRC placeholder
-                        Unsafe.getUnsafe().putInt(fa + 48, 48);            // trailer: footer_length
-                        Unsafe.getUnsafe().putLong(newBuf, newTotalLen);   // header parquet_meta_file_size
+                        Unsafe.putLong(fa, 200L);              // parquet_footer_offset
+                        Unsafe.putInt(fa + 8, 80);             // parquet_footer_length
+                        Unsafe.putInt(fa + 12, 1);             // row_group_count
+                        Unsafe.putLong(fa + 16, 0L);           // unused_bytes
+                        Unsafe.putLong(fa + 24, badPrevSize);  // prev_parquet_meta_file_size (bad)
+                        Unsafe.putLong(fa + 32, 0L);           // footer_feature_flags
+                        Unsafe.putInt(fa + 40, rowGroupEntry); // row group entry
+                        Unsafe.putInt(fa + 44, 0);             // CRC placeholder
+                        Unsafe.putInt(fa + 48, 48);            // trailer: footer_length
+                        Unsafe.putLong(newBuf, newTotalLen);   // header parquet_meta_file_size
 
                         ParquetMetaFileReader reader = new ParquetMetaFileReader();
                         // Latest footer's derived parquet size is 288; request
@@ -451,9 +451,9 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             // to iterate twice when resolving the oldest parquet size.
             try (PmTestFile file = buildFile(1, 100, 50, 1000)) {
                 long origLen = file.dataLen;
-                int origFooterLength = Unsafe.getUnsafe().getInt(file.dataPtr + origLen - 4);
+                int origFooterLength = Unsafe.getInt(file.dataPtr + origLen - 4);
                 long origFooterOffset = origLen - 4 - Integer.toUnsignedLong(origFooterLength);
-                int rowGroupEntry = Unsafe.getUnsafe().getInt(file.dataPtr + origFooterOffset + 40);
+                int rowGroupEntry = Unsafe.getInt(file.dataPtr + origFooterOffset + 40);
 
                 // Layout per appended footer: fixed(40) + 1 rg entry(4) + CRC(4) + trailer(4) = 52.
                 int appendedFooterBytes = 52;
@@ -463,36 +463,36 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
                 long newBuf = Unsafe.malloc(newTotalLen, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    Unsafe.getUnsafe().copyMemory(file.dataPtr, newBuf, origLen);
+                    Unsafe.copyMemory(file.dataPtr, newBuf, origLen);
 
                     // Footer 2: parquetFooterOff=200, parquetFooterLen=80 -> derived size = 288.
                     // prev = origLen points back at the base snapshot's committed size.
                     long fa2 = newBuf + footer2Start;
-                    Unsafe.getUnsafe().putLong(fa2, 200L);
-                    Unsafe.getUnsafe().putInt(fa2 + 8, 80);
-                    Unsafe.getUnsafe().putInt(fa2 + 12, 1);
-                    Unsafe.getUnsafe().putLong(fa2 + 16, 0L);
-                    Unsafe.getUnsafe().putLong(fa2 + 24, origLen);
-                    Unsafe.getUnsafe().putLong(fa2 + 32, 0L);
-                    Unsafe.getUnsafe().putInt(fa2 + 40, rowGroupEntry);
-                    Unsafe.getUnsafe().putInt(fa2 + 44, 0);
-                    Unsafe.getUnsafe().putInt(fa2 + 48, 48);
+                    Unsafe.putLong(fa2, 200L);
+                    Unsafe.putInt(fa2 + 8, 80);
+                    Unsafe.putInt(fa2 + 12, 1);
+                    Unsafe.putLong(fa2 + 16, 0L);
+                    Unsafe.putLong(fa2 + 24, origLen);
+                    Unsafe.putLong(fa2 + 32, 0L);
+                    Unsafe.putInt(fa2 + 40, rowGroupEntry);
+                    Unsafe.putInt(fa2 + 44, 0);
+                    Unsafe.putInt(fa2 + 48, 48);
 
                     // Footer 3: parquetFooterOff=400, parquetFooterLen=80 -> derived size = 488.
                     // prev = footer3Start points back at footer 2's committed size.
                     long fa3 = newBuf + footer3Start;
-                    Unsafe.getUnsafe().putLong(fa3, 400L);
-                    Unsafe.getUnsafe().putInt(fa3 + 8, 80);
-                    Unsafe.getUnsafe().putInt(fa3 + 12, 1);
-                    Unsafe.getUnsafe().putLong(fa3 + 16, 0L);
-                    Unsafe.getUnsafe().putLong(fa3 + 24, footer3Start);
-                    Unsafe.getUnsafe().putLong(fa3 + 32, 0L);
-                    Unsafe.getUnsafe().putInt(fa3 + 40, rowGroupEntry);
-                    Unsafe.getUnsafe().putInt(fa3 + 44, 0);
-                    Unsafe.getUnsafe().putInt(fa3 + 48, 48);
+                    Unsafe.putLong(fa3, 400L);
+                    Unsafe.putInt(fa3 + 8, 80);
+                    Unsafe.putInt(fa3 + 12, 1);
+                    Unsafe.putLong(fa3 + 16, 0L);
+                    Unsafe.putLong(fa3 + 24, footer3Start);
+                    Unsafe.putLong(fa3 + 32, 0L);
+                    Unsafe.putInt(fa3 + 40, rowGroupEntry);
+                    Unsafe.putInt(fa3 + 44, 0);
+                    Unsafe.putInt(fa3 + 48, 48);
 
                     // Patch header parquet_meta_file_size to publish footer 3.
-                    Unsafe.getUnsafe().putLong(newBuf, newTotalLen);
+                    Unsafe.putLong(newBuf, newTotalLen);
 
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
 
@@ -535,11 +535,11 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             try (PmTestFile file = buildFile(1, 100, 50, 1000)) {
                 long origLen = file.dataLen;
                 // The original file's footer offset is derived from the trailer.
-                int origFooterLength = Unsafe.getUnsafe().getInt(file.dataPtr + origLen - 4);
+                int origFooterLength = Unsafe.getInt(file.dataPtr + origLen - 4);
                 long origFooterOffset = origLen - 4 - Integer.toUnsignedLong(origFooterLength);
 
                 // Read the row group entry from the original footer to reuse in footer2.
-                int rowGroupEntry = Unsafe.getUnsafe().getInt(
+                int rowGroupEntry = Unsafe.getInt(
                         file.dataPtr + origFooterOffset + 40 // FOOTER_FIXED_SIZE
                 );
 
@@ -550,7 +550,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 long newTotalLen = origLen + newFooterBytes;
                 long newBuf = Unsafe.malloc(newTotalLen, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    Unsafe.getUnsafe().copyMemory(file.dataPtr, newBuf, origLen);
+                    Unsafe.copyMemory(file.dataPtr, newBuf, origLen);
 
                     long newFooterOff = origLen;
                     long fa = newBuf + newFooterOff;
@@ -559,25 +559,25 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     // is the old committed size — the original file's length —
                     // which lets the reader walk back via the old trailer at
                     // origLen - 4.
-                    Unsafe.getUnsafe().putLong(fa, 200L);              // parquet_footer_offset
-                    Unsafe.getUnsafe().putInt(fa + 8, 80);             // parquet_footer_length
-                    Unsafe.getUnsafe().putInt(fa + 12, 1);             // row_group_count
-                    Unsafe.getUnsafe().putLong(fa + 16, 0L);           // unused_bytes
-                    Unsafe.getUnsafe().putLong(fa + 24, origLen);      // prev_parquet_meta_file_size
-                    Unsafe.getUnsafe().putLong(fa + 32, 0L);           // footer_feature_flags
+                    Unsafe.putLong(fa, 200L);              // parquet_footer_offset
+                    Unsafe.putInt(fa + 8, 80);             // parquet_footer_length
+                    Unsafe.putInt(fa + 12, 1);             // row_group_count
+                    Unsafe.putLong(fa + 16, 0L);           // unused_bytes
+                    Unsafe.putLong(fa + 24, origLen);      // prev_parquet_meta_file_size
+                    Unsafe.putLong(fa + 32, 0L);           // footer_feature_flags
 
                     // Row group entry (reuse the same block offset)
-                    Unsafe.getUnsafe().putInt(fa + 40, rowGroupEntry);
+                    Unsafe.putInt(fa + 40, rowGroupEntry);
 
                     // CRC placeholder (of() does not verify the CRC hash value)
-                    Unsafe.getUnsafe().putInt(fa + 44, 0);
+                    Unsafe.putInt(fa + 44, 0);
 
                     // Trailer: footer_length = fixed(40) + rg(4) + CRC(4) = 48
-                    Unsafe.getUnsafe().putInt(fa + 48, 48);
+                    Unsafe.putInt(fa + 48, 48);
 
                     // Patch header parquet_meta_file_size to publish the new snapshot —
                     // this is the MVCC commit signal the reader observes.
-                    Unsafe.getUnsafe().putLong(newBuf, newTotalLen);
+                    Unsafe.putLong(newBuf, newTotalLen);
 
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
 
@@ -991,8 +991,8 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 100)) {
                 // Set bit 32 (a required feature flag) in the header feature flags at offset 4.
-                long originalFlags = Unsafe.getUnsafe().getLong(file.dataPtr + 8);
-                Unsafe.getUnsafe().putLong(file.dataPtr + 8, originalFlags | (1L << 32));
+                long originalFlags = Unsafe.getLong(file.dataPtr + 8);
+                Unsafe.putLong(file.dataPtr + 8, originalFlags | (1L << 32));
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
@@ -1013,11 +1013,11 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 // Footer feature flags live at footerOffset + 32 (FOOTER_FEATURE_FLAGS_OFF).
                 // Derive the footer offset from the trailer, then set bit 32
                 // (a required footer feature flag) on the footer flags.
-                int footerLength = Unsafe.getUnsafe().getInt(file.dataPtr + file.parquetMetaFileSize - 4);
+                int footerLength = Unsafe.getInt(file.dataPtr + file.parquetMetaFileSize - 4);
                 long footerOffset = file.parquetMetaFileSize - 4 - Integer.toUnsignedLong(footerLength);
                 long footerFlagsAddr = file.dataPtr + footerOffset + 32;
-                long originalFlags = Unsafe.getUnsafe().getLong(footerFlagsAddr);
-                Unsafe.getUnsafe().putLong(footerFlagsAddr, originalFlags | (1L << 32));
+                long originalFlags = Unsafe.getLong(footerFlagsAddr);
+                Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 32));
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
@@ -1090,7 +1090,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 long bitsetAddr = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int b = 0; b < 32; b++) {
-                        Unsafe.getUnsafe().putByte(bitsetAddr + b, (byte) 0xFF);
+                        Unsafe.putByte(bitsetAddr + b, (byte) 0xFF);
                     }
                     ParquetMetaFileWriter.addBloomFilter(writerPtr, 0, bitsetAddr, 32);
                 } finally {

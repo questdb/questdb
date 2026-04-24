@@ -113,7 +113,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     public boolean lock(TableToken tableToken) {
         Entry<T> e = getEntry(tableToken);
-        final long thread = Thread.currentThread().getId();
+        final long thread = Thread.currentThread().threadId();
         if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || e.lockOwner == thread) {
             do {
                 for (int i = 0; i < segmentSize; i++) {
@@ -139,7 +139,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
                 // try to prevent new entries from being created
                 if (e.next == null) {
-                    if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
+                    if (Unsafe.cas(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
                         break;
                     } else if (e.nextStatus == NEXT_ALLOCATED) {
                         // now we must wait until another thread that executes a get() call
@@ -168,7 +168,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     public void notifyDropped(TableToken token, boolean fullDropped) {
         Entry<T> firstEntry = entries.get(token.getDirName());
-        long thread = Thread.currentThread().getId();
+        long thread = Thread.currentThread().threadId();
 
         if (firstEntry != null) {
             // Mark the entry as dropped. Any attempt to return to pool after this point
@@ -216,7 +216,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     public void unlock(TableToken tableToken, boolean quiet) {
         Entry<T> e = entries.get(tableToken.getDirName());
-        long thread = Thread.currentThread().getId();
+        long thread = Thread.currentThread().threadId();
         if (e == null) {
             if (!quiet) {
                 // This is OK, the table deletion holds lock and deletes the entry
@@ -266,7 +266,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         Entry<T> e = rootEntry;
 
         long lockOwner = e.lockOwner;
-        long thread = Thread.currentThread().getId();
+        long thread = Thread.currentThread().threadId();
 
         if (lockOwner != UNLOCKED) {
             LOG.info().$("table is locked [table=").$(tableToken)
@@ -352,7 +352,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             LOG.debug().$("Thread ").$(thread).$(" is moving to entry ").$(e.index + 1).$();
 
             // all allocated, create next entry if possible
-            if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
+            if (Unsafe.cas(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
                 e.next = new Entry<>(e.index + 1, clock.getTicks(), segmentSize);
             } else {
@@ -413,7 +413,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
 
         final TableToken tableToken = tenant.getTableToken();
-        final long thread = Thread.currentThread().getId();
+        final long thread = Thread.currentThread().threadId();
         final int index = tenant.getIndex();
         final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
 
@@ -457,7 +457,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     @Override
     protected boolean releaseAll(long deadline) {
-        long thread = Thread.currentThread().getId();
+        long thread = Thread.currentThread().threadId();
         boolean removed = false;
         int casFailures = 0;
         int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
@@ -522,7 +522,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
 
         final TableToken tableToken = tenant.getTableToken();
-        final long thread = Thread.currentThread().getId();
+        final long thread = Thread.currentThread().threadId();
         final int index = tenant.getIndex();
         final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
 

@@ -334,7 +334,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private long getStrAddr(int col) {
         long auxPtr = auxPtrs.get(col);
         long dataPtr = dataPtrs.get(col);
-        long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+        long dataOffset = Unsafe.getLong(auxPtr + currentRowInRowGroup * 8L);
         return dataPtr + dataOffset;
     }
 
@@ -414,8 +414,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public BinarySequence getBin(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            long len = Unsafe.getUnsafe().getLong(dataPtr + dataOffset);
+            long dataOffset = Unsafe.getLong(auxPtr + currentRowInRowGroup * 8L);
+            long len = Unsafe.getLong(dataPtr + dataOffset);
             if (len != TableUtils.NULL_LEN) {
                 return bsView(col).of(dataPtr + dataOffset + 8L, len);
             }
@@ -426,8 +426,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public long getBinLen(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            return Unsafe.getUnsafe().getLong(dataPtr + dataOffset);
+            long dataOffset = Unsafe.getLong(auxPtr + currentRowInRowGroup * 8L);
+            return Unsafe.getLong(dataPtr + dataOffset);
         }
 
         @Override
@@ -438,21 +438,21 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         @Override
         public byte getByte(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getByte(dataPtr + currentRowInRowGroup);
+            return Unsafe.getByte(dataPtr + currentRowInRowGroup);
         }
 
         @Override
         public char getChar(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getChar(dataPtr + currentRowInRowGroup * 2L);
+            return Unsafe.getChar(dataPtr + currentRowInRowGroup * 2L);
         }
 
         @Override
         public void getDecimal128(int col, Decimal128 sink) {
             long dataPtr = dataPtrs.get(col) + currentRowInRowGroup * 16L;
             sink.ofRaw(
-                    Unsafe.getUnsafe().getLong(dataPtr),
-                    Unsafe.getUnsafe().getLong(dataPtr + 8L)
+                    Unsafe.getLong(dataPtr),
+                    Unsafe.getLong(dataPtr + 8L)
             );
         }
 
@@ -465,10 +465,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public void getDecimal256(int col, Decimal256 sink) {
             long dataPtr = dataPtrs.get(col) + currentRowInRowGroup * 32L;
             sink.ofRaw(
-                    Unsafe.getUnsafe().getLong(dataPtr),
-                    Unsafe.getUnsafe().getLong(dataPtr + 8L),
-                    Unsafe.getUnsafe().getLong(dataPtr + 16L),
-                    Unsafe.getUnsafe().getLong(dataPtr + 24L)
+                    Unsafe.getLong(dataPtr),
+                    Unsafe.getLong(dataPtr + 8L),
+                    Unsafe.getLong(dataPtr + 16L),
+                    Unsafe.getLong(dataPtr + 24L)
             );
         }
 
@@ -490,13 +490,13 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         @Override
         public double getDouble(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getDouble(dataPtr + currentRowInRowGroup * 8L);
+            return Unsafe.getDouble(dataPtr + currentRowInRowGroup * 8L);
         }
 
         @Override
         public float getFloat(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getFloat(dataPtr + currentRowInRowGroup * 4L);
+            return Unsafe.getFloat(dataPtr + currentRowInRowGroup * 4L);
         }
 
         @Override
@@ -527,25 +527,25 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         @Override
         public int getInt(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getInt(dataPtr + currentRowInRowGroup * 4L);
+            return Unsafe.getInt(dataPtr + currentRowInRowGroup * 4L);
         }
 
         @Override
         public long getLong(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 8L);
+            return Unsafe.getLong(dataPtr + currentRowInRowGroup * 8L);
         }
 
         @Override
         public long getLong128Hi(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 16L + 8);
+            return Unsafe.getLong(dataPtr + currentRowInRowGroup * 16L + 8);
         }
 
         @Override
         public long getLong128Lo(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 16L);
+            return Unsafe.getLong(dataPtr + currentRowInRowGroup * 16L);
         }
 
         @Override
@@ -570,7 +570,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         @Override
         public short getShort(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getShort(dataPtr + currentRowInRowGroup * 2L);
+            return Unsafe.getShort(dataPtr + currentRowInRowGroup * 2L);
         }
 
         @Override
@@ -585,7 +585,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public int getStrLen(int col) {
-            return Unsafe.getUnsafe().getInt(getStrAddr(col));
+            return Unsafe.getInt(getStrAddr(col));
         }
 
         @Nullable
@@ -644,7 +644,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
         private DirectString getStr(long addr, DirectString view) {
             assert addr > 0;
-            final int len = Unsafe.getUnsafe().getInt(addr);
+            final int len = Unsafe.getInt(addr);
             if (len != TableUtils.NULL_LEN) {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }

@@ -236,26 +236,26 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert columnIndex >= 0 && columnIndex < columnCount;
         long chunkAddr = columnChunkAddr(rowGroupIndex, columnIndex);
-        assert (Unsafe.getUnsafe().getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED))
+        assert (Unsafe.getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED))
                 == (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED)
                 : "max_stat absent or not inlined for row group " + rowGroupIndex + ", column " + columnIndex;
-        return Unsafe.getUnsafe().getLong(chunkAddr + COLUMN_CHUNK_MAX_STAT_OFF);
+        return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MAX_STAT_OFF);
     }
 
     public long getChunkMinStat(int rowGroupIndex, int columnIndex) {
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert columnIndex >= 0 && columnIndex < columnCount;
         long chunkAddr = columnChunkAddr(rowGroupIndex, columnIndex);
-        assert (Unsafe.getUnsafe().getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED))
+        assert (Unsafe.getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED))
                 == (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED)
                 : "min_stat absent or not inlined for row group " + rowGroupIndex + ", column " + columnIndex;
-        return Unsafe.getUnsafe().getLong(chunkAddr + COLUMN_CHUNK_MIN_STAT_OFF);
+        return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MIN_STAT_OFF);
     }
 
     public int getChunkStatFlags(int rowGroupIndex, int columnIndex) {
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert columnIndex >= 0 && columnIndex < columnCount;
-        return Unsafe.getUnsafe().getByte(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_STAT_FLAGS_OFF) & 0xFF;
+        return Unsafe.getByte(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_STAT_FLAGS_OFF) & 0xFF;
     }
 
     public int getColumnCount() {
@@ -263,7 +263,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     }
 
     public int getColumnId(int columnIndex) {
-        return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_ID_OFF);
+        return Unsafe.getInt(columnDescriptorAddr(columnIndex) + COL_DESC_ID_OFF);
     }
 
     /**
@@ -285,21 +285,21 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      */
     public DirectUtf8String getColumnName(int columnIndex) {
         long descAddr = columnDescriptorAddr(columnIndex);
-        long nameOffset = Unsafe.getUnsafe().getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
-        int nameLength = Unsafe.getUnsafe().getInt(descAddr + COL_DESC_NAME_LENGTH_OFF);
+        long nameOffset = Unsafe.getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
+        int nameLength = Unsafe.getInt(descAddr + COL_DESC_NAME_LENGTH_OFF);
         long nameAddr = addr + nameOffset;
         return flyweightColName.of(nameAddr, nameAddr + nameLength, true);
     }
 
     public int getColumnType(int columnIndex) {
-        return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_COL_TYPE_OFF);
+        return Unsafe.getInt(columnDescriptorAddr(columnIndex) + COL_DESC_COL_TYPE_OFF);
     }
 
     /**
      * Returns the column index of the designated timestamp, or -1 if none.
      */
     public int getDesignatedTimestampColumnIndex() {
-        return Unsafe.getUnsafe().getInt(addr + HEADER_DESIGNATED_TS_OFF);
+        return Unsafe.getInt(addr + HEADER_DESIGNATED_TS_OFF);
     }
 
     public long getFileSize() {
@@ -325,8 +325,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      * (4B parquet footer length field + 4B PAR1 magic)
      */
     public long getParquetFileSize() {
-        long parquetFooterOffset = Unsafe.getUnsafe().getLong(footerAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
-        int parquetFooterLength = Unsafe.getUnsafe().getInt(footerAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
+        long parquetFooterOffset = Unsafe.getLong(footerAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
+        int parquetFooterLength = Unsafe.getInt(footerAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
         return parquetFooterOffset + Integer.toUnsignedLong(parquetFooterLength) + 8;
     }
 
@@ -338,7 +338,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     public long getPartitionRowCount() {
         long total = 0;
         for (int i = 0; i < rowGroupCount; i++) {
-            total += Unsafe.getUnsafe().getLong(rowGroupBlockAddr(i));
+            total += Unsafe.getLong(rowGroupBlockAddr(i));
         }
         return total;
     }
@@ -372,10 +372,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert timestampColumnIndex >= 0 && timestampColumnIndex < columnCount;
         long chunkAddr = columnChunkAddr(rowGroupIndex, timestampColumnIndex);
-        assert (Unsafe.getUnsafe().getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED))
+        assert (Unsafe.getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED))
                 == (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED)
                 : "max_stat absent or not inlined for row group " + rowGroupIndex + ", column " + timestampColumnIndex;
-        return Unsafe.getUnsafe().getLong(chunkAddr + COLUMN_CHUNK_MAX_STAT_OFF);
+        return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MAX_STAT_OFF);
     }
 
     /**
@@ -396,10 +396,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert timestampColumnIndex >= 0 && timestampColumnIndex < columnCount;
         long chunkAddr = columnChunkAddr(rowGroupIndex, timestampColumnIndex);
-        assert (Unsafe.getUnsafe().getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED))
+        assert (Unsafe.getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED))
                 == (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED)
                 : "min_stat absent or not inlined for row group " + rowGroupIndex + ", column " + timestampColumnIndex;
-        return Unsafe.getUnsafe().getLong(chunkAddr + COLUMN_CHUNK_MIN_STAT_OFF);
+        return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MIN_STAT_OFF);
     }
 
     /**
@@ -410,7 +410,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      */
     public long getRowGroupSize(int rowGroupIndex) {
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
-        return Unsafe.getUnsafe().getLong(rowGroupBlockAddr(rowGroupIndex));
+        return Unsafe.getLong(rowGroupBlockAddr(rowGroupIndex));
     }
 
     /**
@@ -424,7 +424,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      * Returns the accumulated dead bytes in the parquet file tracked by the _pm footer.
      */
     public long getUnusedBytes() {
-        return Unsafe.getUnsafe().getLong(footerAddr + FOOTER_UNUSED_BYTES_OFF);
+        return Unsafe.getLong(footerAddr + FOOTER_UNUSED_BYTES_OFF);
     }
 
     public boolean isOpen() {
@@ -586,7 +586,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         long currentFooterLength;
         while (true) {
             currentFooterLength = Integer.toUnsignedLong(
-                    Unsafe.getUnsafe().getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
+                    Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
             currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
             if (currentOffset < HEADER_FIXED_SIZE || currentOffset >= currentSize) {
                 throw CairoException.critical(0)
@@ -599,13 +599,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
             }
 
             long currentAddr = addr + currentOffset;
-            long pqFooterOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
-            int pqFooterLength = Unsafe.getUnsafe().getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
+            long pqFooterOffset = Unsafe.getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
+            int pqFooterLength = Unsafe.getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
             long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + 8;
             if (derivedPqSize == parquetFileSize) {
                 break;
             }
-            long prevSize = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF);
+            long prevSize = Unsafe.getLong(currentAddr + FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF);
             // Reject prevSize values too small to hold a header +
             // trailer. The next iteration dereferences addr + prevSize
             // - FOOTER_TRAILER_SIZE, which for prevSize <
@@ -621,7 +621,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         // isOpen()==false, preventing double-munmap in callers that
         // check isOpen() in catch blocks.
         long footerAddr = addr + currentOffset;
-        int columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
+        int columnCount = Unsafe.getInt(addr + HEADER_COLUMN_COUNT_OFF);
         long headerEndOffset = HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
         if (headerEndOffset > parquetMetaFileSize) {
             throw CairoException.critical(0)
@@ -629,7 +629,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
                     .put(']');
         }
-        int rowGroupCount = Unsafe.getUnsafe().getInt(footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
+        int rowGroupCount = Unsafe.getInt(footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
         final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
         if (currentOffset + baseFooterLength > parquetMetaFileSize) {
             throw CairoException.critical(0)
@@ -638,7 +638,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
                     .put(']');
         }
-        long featureFlags = Unsafe.getUnsafe().getLong(addr + HEADER_FEATURE_FLAGS_OFF);
+        long featureFlags = Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF);
         long unknownRequired = featureFlags & REQUIRED_FEATURE_MASK;
         if (unknownRequired != 0) {
             throw CairoException.critical(0)
@@ -646,7 +646,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put(Long.toHexString(unknownRequired))
                     .put(']');
         }
-        long footerFeatureFlags = Unsafe.getUnsafe().getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
+        long footerFeatureFlags = Unsafe.getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
         long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK;
         if (unknownRequiredFooter != 0) {
             throw CairoException.critical(0)
@@ -678,7 +678,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         long minBlockSize = 8 + (long) columnCount * COLUMN_CHUNK_SIZE;
         for (int i = 0; i < rowGroupCount; i++) {
             long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * 4;
-            int stored = Unsafe.getUnsafe().getInt(entryAddr);
+            int stored = Unsafe.getInt(entryAddr);
             long blockOffset = Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
             if (blockOffset + minBlockSize > parquetMetaFileSize) {
                 throw CairoException.critical(0)
@@ -745,7 +745,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      */
     private long rowGroupBlockAddr(int rowGroupIndex) {
         long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) rowGroupIndex * 4;
-        int stored = Unsafe.getUnsafe().getInt(entryAddr);
+        int stored = Unsafe.getInt(entryAddr);
         return addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT);
     }
 

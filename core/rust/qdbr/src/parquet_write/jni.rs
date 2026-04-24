@@ -8,7 +8,6 @@ use qdb_core::col_type::ColumnType;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
-use std::ops::Sub;
 use std::path::Path;
 use std::slice;
 
@@ -910,7 +909,7 @@ impl Write for BufferWriter {
         unsafe {
             let buffer_ref = &mut *self.buffer;
             if buffer_ref.len() <= self.init_offset {
-                buffer_ref.set_len(self.init_offset);
+                buffer_ref.resize(self.init_offset, 0);
                 self.offset = self.init_offset;
             }
 
@@ -1136,7 +1135,11 @@ fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResu
         }
         write_pending_row_group(encoder)?;
         // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
-        let data_len = (encoder.current_buffer.len() - 16) as u64;
+        debug_assert!(
+            encoder.current_buffer.len() >= 16,
+            "streaming parquet writer must produce at least a 16-byte header",
+        );
+        let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         encoder.current_buffer[8..16]
             .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
@@ -1156,7 +1159,7 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
     for (idx, partition) in encoder.pending_partitions.iter().enumerate() {
         let partition_rows = partition.columns[0].row_count;
         let available_rows = if idx == 0 {
-            partition_rows.sub(first_start)
+            partition_rows.saturating_sub(first_start)
         } else {
             partition_rows
         };
@@ -1211,7 +1214,7 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
         .map(|(idx, p)| {
             let rows = p.columns[0].row_count;
             if idx == 0 {
-                rows.sub(encoder.first_partition_start)
+                rows.saturating_sub(encoder.first_partition_start)
             } else {
                 rows
             }
@@ -1262,7 +1265,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
         // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
-        let data_len = (encoder.current_buffer.len() - 16) as u64;
+        debug_assert!(
+            encoder.current_buffer.len() >= 16,
+            "streaming parquet writer must produce at least a 16-byte header",
+        );
+        let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         encoder.current_buffer[8..16]
             .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
@@ -1327,14 +1334,15 @@ fn create_partition_template(
     let mut col_names = unsafe {
         std::str::from_utf8_unchecked(slice::from_raw_parts(col_names_ptr, col_names_len))
     };
-    // SAFETY: JNI caller guarantees a valid pointer to `col_count * 2` elements of column metadata.
-    // The memory is backed by Java and remains valid for the JNI call duration.
-    let col_meta_datas = unsafe { slice::from_raw_parts(col_meta_data_ptr, col_count * 2) };
+    // SAFETY: JNI caller guarantees a valid pointer to `col_count * 3` elements of column metadata
+    // (name length, packed writer-index/type, parquet encoding config). The memory is backed by
+    // Java and remains valid for the JNI call duration.
+    let col_meta_datas = unsafe { slice::from_raw_parts(col_meta_data_ptr, col_count * 3) };
     let mut columns = vec![];
     let mut max_id: i32 = 0;
 
     for col_idx in 0..col_count {
-        let raw_idx = col_idx * 2;
+        let raw_idx = col_idx * 3;
         let col_name_size = col_meta_datas[raw_idx] as usize;
         if col_name_size > col_names.len() {
             return Err(fmt_err!(
@@ -1350,6 +1358,7 @@ fn create_partition_template(
         let packed = col_meta_datas[raw_idx + 1];
         let col_id = (packed >> 32) as i32;
         let col_type = (packed & 0xFFFFFFFF) as i32;
+        let parquet_encoding_config = col_meta_datas[raw_idx + 2] as i32;
         let designated_timestamp = col_idx as i32 == timestamp_index;
         let column = Column::from_raw_data(
             col_id,
@@ -1365,7 +1374,7 @@ fn create_partition_template(
             0,
             designated_timestamp,
             timestamp_descending == 0,
-            0,
+            parquet_encoding_config,
         )?;
 
         if col_id < 0 {
