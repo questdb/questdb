@@ -28,6 +28,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -235,8 +237,38 @@ public final class ArrowBulkExport implements QuietCloseable {
         return (long) (currentBatchRows + 1) * 4;
     }
 
-    public long getDictIdRef(int col) {
-        throw new UnsupportedOperationException("Phase 3: no SYMBOL dict yet");
+    /**
+     * @return the number of entries in the SYMBOL dictionary for column
+     *         {@code col}, or -1 if the column isn't SYMBOL.
+     */
+    public int getSymbolCount(int col) {
+        if (columnTags[col] != ColumnType.SYMBOL || cursor == null) {
+            return -1;
+        }
+        SymbolTable table = cursor.getSymbolTable(col);
+        if (table instanceof StaticSymbolTable) {
+            return ((StaticSymbolTable) table).getSymbolCount();
+        }
+        // Non-static tables (growing mid-cursor) — count via iteration;
+        // uncommon in practice, but handle gracefully.
+        int n = 0;
+        while (table.valueOf(n) != null) {
+            n++;
+        }
+        return n;
+    }
+
+    /**
+     * @return the dictionary value at index {@code idx} for SYMBOL column
+     *         {@code col}. The returned String is safe to materialise on
+     *         the Python side; no native pointer semantics.
+     */
+    public String getSymbolValue(int col, int idx) {
+        if (columnTags[col] != ColumnType.SYMBOL || cursor == null) {
+            return null;
+        }
+        CharSequence v = cursor.getSymbolTable(col).valueOf(idx);
+        return v == null ? null : v.toString();
     }
 
     /**
@@ -404,6 +436,7 @@ public final class ArrowBulkExport implements QuietCloseable {
         if (tag == ColumnType.TIMESTAMP) return 8;
         if (tag == ColumnType.FLOAT) return 4;
         if (tag == ColumnType.DOUBLE) return 8;
+        if (tag == ColumnType.SYMBOL) return 4; // int32 dict indices
         if (tag == ColumnType.DECIMAL8 || tag == ColumnType.DECIMAL16
                 || tag == ColumnType.DECIMAL32 || tag == ColumnType.DECIMAL64
                 || tag == ColumnType.DECIMAL128) return DEC128_BYTES;
@@ -474,6 +507,13 @@ public final class ArrowBulkExport implements QuietCloseable {
             double v = record.getDouble(col);
             data.putDouble((long) rowIdx * 8, v);
             if (Double.isNaN(v)) clearValidityBit(col, rowIdx);
+            return;
+        }
+        if (tag == ColumnType.SYMBOL) {
+            // QuestDB SYMBOL key is an int32; negative = null.
+            int key = record.getInt(col);
+            data.putInt((long) rowIdx * 4, key);
+            if (key < 0) clearValidityBit(col, rowIdx);
             return;
         }
         if (tag == ColumnType.DECIMAL8) {
