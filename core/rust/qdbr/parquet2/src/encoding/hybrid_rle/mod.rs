@@ -284,11 +284,11 @@ mod tests {
     fn roundtrip_mixed_runs_and_sequential() -> Result<(), Error> {
         // Mixed data: runs interspersed with sequential values.
         let mut data = Vec::new();
-        data.extend(vec![5u32; 200]);       // long run
-        data.extend(0..100);                 // sequential
-        data.extend(vec![99u32; 300]);       // long run
+        data.extend(vec![5u32; 200]); // long run
+        data.extend(0..100); // sequential
+        data.extend(vec![99u32; 300]); // long run
         data.extend((0..50).map(|x| x % 7)); // low-cardinality mix
-        data.extend(vec![0u32; 150]);        // run of zeros
+        data.extend(vec![0u32; 150]); // run of zeros
 
         let mut buffer = vec![];
         let num_bits = 10u32;
