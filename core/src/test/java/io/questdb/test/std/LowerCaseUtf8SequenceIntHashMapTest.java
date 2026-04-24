@@ -174,8 +174,8 @@ public class LowerCaseUtf8SequenceIntHashMapTest {
 
                 final Utf8String bcs = Utf8String.newInstance(dus);
                 map.put(Utf8String.newInstance(dus), i);
-                Assert.assertEquals(i, (int) map.get(dus));
-                Assert.assertEquals(i, (int) map.get(bcs));
+                Assert.assertEquals(i, map.get(dus));
+                Assert.assertEquals(i, map.get(bcs));
             }
         } finally {
             Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);

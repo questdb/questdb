@@ -51,6 +51,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     private long countsAddr;
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public AvgLongVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {

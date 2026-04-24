@@ -24,7 +24,11 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.PagedDirectLongList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 import java.io.Closeable;
 
@@ -87,13 +91,8 @@ public class DedupColumnCommitAddresses implements Closeable {
         return Unsafe.getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + O3_VAR_DATA_LEN_64);
     }
 
-    public static void setColAddressValues(
-            long addr,
-            long columnDataAddress
-    ) {
-        Unsafe.putLong(addr + COL_DATA_64, columnDataAddress);
-        Unsafe.putLong(addr + COL_VAR_DATA_64, NULL);
-        Unsafe.putLong(addr + COL_VAR_DATA_LEN_64, NULL);
+    public static void setColAddressValues(long addr, long columnDataAddress) {
+        setColAddressValues(addr, columnDataAddress, NULL, NULL);
     }
 
     public static void setColAddressValues(
@@ -208,6 +207,7 @@ public class DedupColumnCommitAddresses implements Closeable {
     }
 
     static {
+        //noinspection ConstantValue
         assert RECORD_BYTES % Long.BYTES == 0;
     }
 }

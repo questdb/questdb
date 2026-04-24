@@ -1319,7 +1319,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 long recvBuffer,
                 int recvBufferSize
         ) {
-            super(config, (nf, log) -> new PlainSocket(mockNf, log));
+            super(config, (_, log) -> new PlainSocket(mockNf, log));
             this.rawSocket = rawSocket;
             this.requestHeader = requestHeader;
             this.testRecvBuffer = recvBuffer;

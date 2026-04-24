@@ -54,6 +54,7 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     private final Long256Impl sumB = new Long256Impl();
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public SumLong256VectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {

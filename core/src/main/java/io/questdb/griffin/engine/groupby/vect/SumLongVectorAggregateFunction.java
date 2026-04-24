@@ -46,6 +46,7 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     private final LongAdder sum = new LongAdder();
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public SumLongVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {

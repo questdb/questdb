@@ -100,10 +100,9 @@ public class VarcharTypeDriverSliceTest extends AbstractCairoTest {
                 }
 
                 // Row 0: non-null, ASCII, length=5
-                long row0 = auxAddr;
-                Unsafe.putInt(row0, (data0.length << 4) | 2);
-                Unsafe.putInt(row0 + 4, 0);
-                Unsafe.putLong(row0 + 8, dataAddr0);
+                Unsafe.putInt(auxAddr, (data0.length << 4) | 2);
+                Unsafe.putInt(auxAddr + 4, 0);
+                Unsafe.putLong(auxAddr + 8, dataAddr0);
 
                 // Row 1: null
                 long row1 = auxAddr + VARCHAR_AUX_WIDTH_BYTES;

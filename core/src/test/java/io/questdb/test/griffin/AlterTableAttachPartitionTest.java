@@ -382,7 +382,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src26",
                     src,
                     "dst26",
-                    dst -> {
+                    _ -> {
                     },
                     s -> writeToStrIndexFile(s, "2022-08-01", "str.i", 0L, 16L),
                     "Variable size column has invalid data address value"
@@ -402,7 +402,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src27",
                     src,
                     "dst27",
-                    dst -> {
+                    _ -> {
                     },
                     s -> writeToStrIndexFile(s, "2022-08-01", "str.i", Long.MAX_VALUE, 256L),
                     "dataAddress=" + Long.MAX_VALUE
@@ -412,7 +412,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src28",
                     src,
                     "dst28",
-                    dst -> {
+                    _ -> {
                     },
                     s -> writeToStrIndexFile(s, "2022-08-01", "str.i", -1L, 256L),
                     "dataAddress=" + -1L
@@ -432,7 +432,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src30",
                     src,
                     "dst30",
-                    dst -> {
+                    _ -> {
                     },
                     s -> {
                         engine.clear();
@@ -497,7 +497,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src32",
                     src,
                     "dst32",
-                    dst -> {
+                    _ -> {
                     },
                     s -> {
                         // .v file
@@ -610,9 +610,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     engine.clear();
                     assertQuery(
-                            replaceTimestampSuffix(replaceTimestampSuffix("ts\ti\tl\ts\tstr\tvch\n" +
-                                    "2022-08-02T11:59:59.625000Z\tnull\t3\t\t\t\uF2C1ӍKB\n" +
-                                    "2022-08-02T23:59:59.500000Z\tnull\t4\t\t\tK䰭\n"), timestampType.getTypeName()),
+                            replaceTimestampSuffix(replaceTimestampSuffix("""
+                                    ts\ti\tl\ts\tstr\tvch
+                                    2022-08-02T11:59:59.625000Z\tnull\t3\t\t\t\uF2C1ӍKB
+                                    2022-08-02T23:59:59.500000Z\tnull\t4\t\t\tK䰭
+                                    """), timestampType.getTypeName()),
                             dst.getName(),
                             "ts",
                             true,
@@ -668,12 +670,16 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     engine.clear();
                     assertQuery(
                             ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
-                                    "ts\ti\tl\n" +
-                                            "2022-08-01T08:43:38.090909Z\t1\t1\n" +
-                                            "2022-08-01T17:27:16.181818Z\t2\t2\n" :
-                                    "ts\ti\tl\n" +
-                                            "2022-08-01T08:43:38.090909090Z\t1\t1\n" +
-                                            "2022-08-01T17:27:16.181818180Z\t2\t2\n",
+                                    """
+                                            ts\ti\tl
+                                            2022-08-01T08:43:38.090909Z\t1\t1
+                                            2022-08-01T17:27:16.181818Z\t2\t2
+                                            """ :
+                                    """
+                                            ts\ti\tl
+                                            2022-08-01T08:43:38.090909090Z\t1\t1
+                                            2022-08-01T17:27:16.181818180Z\t2\t2
+                                            """,
                             dst.getName(),
                             "ts",
                             true,
@@ -1155,11 +1161,15 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                 ) {
                     String tableHeader = "l\ti\tstr\tvch\tts\n";
                     // check the original src table is not affected
-                    String srcPartition2020_01_09 = "1\t1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2020-01-09T09:35:59.800000Z\n" +
-                            "2\t2\t2\t\t2020-01-09T19:11:59.600000Z\n";
-                    String srcPartition2020_01_10 = "3\t3\t3\těȞ鼷G\uD991\uDE7E\t2020-01-10T04:47:59.400000Z\n" +
-                            "4\t4\t4\t\t2020-01-10T14:23:59.200000Z\n" +
-                            "5\t5\t5\t͛Ԉ龘и\uDA89\uDFA4~\t2020-01-10T23:59:59.000000Z\n";
+                    String srcPartition2020_01_09 = """
+                            1\t1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2020-01-09T09:35:59.800000Z
+                            2\t2\t2\t\t2020-01-09T19:11:59.600000Z
+                            """;
+                    String srcPartition2020_01_10 = """
+                            3\t3\t3\těȞ鼷G\uD991\uDE7E\t2020-01-10T04:47:59.400000Z
+                            4\t4\t4\t\t2020-01-10T14:23:59.200000Z
+                            5\t5\t5\t͛Ԉ龘и\uDA89\uDFA4~\t2020-01-10T23:59:59.000000Z
+                            """;
                     String expected = tableHeader + srcPartition2020_01_09 + srcPartition2020_01_10;
                     assertCursor(replaceTimestampSuffix(expected), srcCursor, srcReader.getMetadata(), true);
 
@@ -1283,23 +1293,15 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         int otherLen = other.size();
 
         int hi = -1;
-        switch (dst.getPartitionBy()) {
-            case PartitionBy.DAY:
-                hi = 10; // yyyy-MM-dd;
-                break;
-            case PartitionBy.WEEK:
-                hi = 8; // YYYY-Www
-                break;
-            case PartitionBy.MONTH:
-                hi = 7; // yyyy-MM
-                break;
-            case PartitionBy.YEAR:
-                hi = 4; // yyyy
-                break;
-            case PartitionBy.HOUR:
-                hi = 13; // yyyy-MM-ddTHH
-                break;
-        }
+        // yyyy-MM-ddTHH
+        hi = switch (dst.getPartitionBy()) {
+            case PartitionBy.DAY -> 10; // yyyy-MM-dd;
+            case PartitionBy.WEEK -> 8; // YYYY-Www
+            case PartitionBy.MONTH -> 7; // yyyy-MM
+            case PartitionBy.YEAR -> 4; // yyyy
+            case PartitionBy.HOUR -> 13;
+            default -> hi;
+        };
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
             int limit;
@@ -1377,7 +1379,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     private String replaceTimestampSuffix(String expected) {
-        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
+        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replace("Z\t", "000Z\t").replace("Z\n", "000Z\n") : expected;
     }
 
     private void testAttachPartitionWrongFixedColumn(int columnType) throws Exception {
@@ -1391,7 +1393,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     "src34" + ColumnType.nameOf(columnType),
                     src,
                     "dst34" + ColumnType.nameOf(columnType),
-                    dst -> {
+                    _ -> {
                     },
                     s -> {
                         engine.clear();

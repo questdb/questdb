@@ -228,7 +228,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) {
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }

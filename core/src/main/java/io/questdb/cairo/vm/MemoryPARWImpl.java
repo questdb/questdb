@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
@@ -738,8 +739,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putLong128(long lo, long hi) {
         if (pageHi - appendPointer > 15) {
-            Unsafe.putLong(appendPointer, lo);
-            Unsafe.putLong(appendPointer + Long.BYTES, hi);
+            Long128.putLong128(lo, hi, appendPointer);
             appendPointer += 16;
         } else {
             putLong128Slow(lo, hi);
@@ -775,10 +775,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putLong256(long l0, long l1, long l2, long l3) {
         if (pageHi - appendPointer > Long256.BYTES - 1) {
-            Unsafe.putLong(appendPointer, l0);
-            Unsafe.putLong(appendPointer + Long.BYTES, l1);
-            Unsafe.putLong(appendPointer + Long.BYTES * 2, l2);
-            Unsafe.putLong(appendPointer + Long.BYTES * 3, l3);
+            Long256.putLong256(l0, l1, l2, l3, appendPointer);
             appendPointer += Long256.BYTES;
         } else {
             putLong128Slow(l0, l1);

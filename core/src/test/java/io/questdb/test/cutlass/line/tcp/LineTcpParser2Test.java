@@ -310,12 +310,16 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Override
     public void testSkipLine() {
         assertThat(
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
-                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
-                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
-                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
-                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n"
+                """
+                        measurement,tag=value,tag2=value field=10000i,field2="str" 100000
+                        measurement,tag=value3,tag2=value2 field=,field2="ok"
+                        measurement,tag=value4,tag2=value4 field=200i,field2="super"
+                        """,
+                """
+                        measurement,tag=value,tag2=value field=10000i,field2="str" 100000
+                        measurement,tag=value3,tag2=value2 field=,field2="ok"
+                        measurement,tag=value4,tag2=value4 field=200i,field2="super"
+                        """
         );
     }
 
@@ -507,8 +511,10 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
         // Shorter version
         assertThat(
-                "md_msgs ts_nsec=1634886503004129476i,pcap_msg=1111111i,raw_msg=\"__\"____\"___,\"_______\"___,\"___\"________,\",Length=11i,MsgSeqNum=111111i,MsgType=11i,first_dir=T 1634886503004129476\n" +
-                        "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",raw_msg=\"__\"___________,\"________\"________\",Length=11i,first_dir=T 1634886503004129476\n",
+                """
+                        md_msgs ts_nsec=1634886503004129476i,pcap_msg=1111111i,raw_msg="__"____"___,"_______"___,"___"________,",Length=11i,MsgSeqNum=111111i,MsgType=11i,first_dir=T 1634886503004129476
+                        md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file="_______________________________________________________",raw_msg="__"___________,"________"________",Length=11i,first_dir=T 1634886503004129476
+                        """,
                 "md_msgs ts_nsec=1634886503004129476i,pcap_msg=1111111i,raw_msg=\"__\\\"____\\\"___,\\\"_______\\\"___,\\\"___\\\"________,\",Length=11i,MsgSeqNum=111111i,MsgType=11i,first_dir=T 1634886503004129476\r\n" +
                         "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",raw_msg=\"__\\\"___________,\\\"________\\\"________\",Length=11i,first_dir=T 1634886503004129476\r"
         );

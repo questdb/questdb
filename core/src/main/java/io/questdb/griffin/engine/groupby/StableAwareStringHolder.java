@@ -79,8 +79,7 @@ public class StableAwareStringHolder implements CharSequence {
         if (cs == null) {
             return;
         }
-        if (cs instanceof DirectString) {
-            DirectString ds = (DirectString) cs;
+        if (cs instanceof DirectString ds) {
             if (ds.isStable()) {
                 direct = true;
                 checkCapacity(4); // pointer is 8 bytes = 4 chars

@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.groupby.FirstByteGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.junit.After;
 import org.junit.Assert;

@@ -39,6 +39,8 @@ import org.junit.Test;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -87,7 +89,14 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
                 byte[] appendData = new byte[16];
                 Arrays.fill(appendData, CONTENT_A);
                 long buf = Unsafe.allocateMemory(appendData.length);
-                Unsafe.copyMemory(appendData, sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET, null, buf, appendData.length);
+                MemorySegment.copy(
+                        appendData,
+                        0,
+                        MemorySegment.ofAddress(buf).reinterpret(appendData.length),
+                        ValueLayout.JAVA_BYTE,
+                        0,
+                        appendData.length
+                );
 
                 long appendFd = -1;
                 try {

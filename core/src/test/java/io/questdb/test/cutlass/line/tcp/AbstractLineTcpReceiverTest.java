@@ -371,7 +371,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
         SOCountDownLatch releaseLatch = new SOCountDownLatch(tablesToWaitFor.size());
         try {
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, _, name, event, _, _) -> {
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     if (name != null && tablesToWaitFor.remove(name.getTableName()) != null) {
                         releaseLatch.countDown();

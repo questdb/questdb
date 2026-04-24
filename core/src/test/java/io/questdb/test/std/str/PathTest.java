@@ -283,9 +283,7 @@ public class PathTest {
     @Test
     public void testOverflow() {
         StringBuilder b = new StringBuilder();
-        for (int i = 0; i < 256; i++) {
-            b.append('9');
-        }
+        b.repeat("9", 256);
 
         try (Path p = new Path()) {
             TestUtils.assertEquals(
@@ -384,7 +382,7 @@ public class PathTest {
             sink.put(payload1);
             p0.put(sink);
             Assert.assertFalse(p0.isAscii());
-            Assert.assertEquals(p0.capacity(), 16);
+            Assert.assertEquals(16, p0.capacity());
             Assert.assertEquals(payload1, p0.toString());
             final String payload2 = ", mooooooooooooooooooooo: 🐮!";
             sink.clear();
@@ -512,7 +510,7 @@ public class PathTest {
                             path.concat("partition").slash$();
                             Assert.assertEquals(expected2, path.toString());
                             Assert.assertEquals(32, path.size());
-                            AtomicLong count = stats.computeIfAbsent(threadId, k -> new AtomicLong());
+                            AtomicLong count = stats.computeIfAbsent(threadId, _ -> new AtomicLong());
                             count.incrementAndGet();
                             Os.pause();
                         }

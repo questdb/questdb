@@ -38,6 +38,13 @@ public interface Long256 extends Long256Acceptor {
         Unsafe.putLong(p + 24L, value.getLong3());
     }
 
+    static void putLong256(long l0, long l1, long l2, long l3, long addr) {
+        Unsafe.putLong(addr, l0);
+        Unsafe.putLong(addr + Long.BYTES, l1);
+        Unsafe.putLong(addr + Long.BYTES * 2, l2);
+        Unsafe.putLong(addr + Long.BYTES * 3, l3);
+    }
+
     long getLong0();
 
     long getLong1();

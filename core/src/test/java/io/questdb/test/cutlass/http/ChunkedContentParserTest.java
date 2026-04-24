@@ -97,7 +97,7 @@ public class ChunkedContentParserTest {
                 ChunkedContentParser parser = new ChunkedContentParser();
                 parser.clear();
 
-                long result = parser.handleRecv(ptr, ptr + input.length(), (lo, hi) -> {
+                long result = parser.handleRecv(ptr, ptr + input.length(), (_, _) -> {
                 });
                 Assert.assertEquals(ptr + input.length(), result);
             } finally {
@@ -117,7 +117,7 @@ public class ChunkedContentParserTest {
                 ChunkedContentParser parser = new ChunkedContentParser();
                 parser.clear();
 
-                long result = parser.handleRecv(ptr, ptr + input.length(), (lo, hi) -> {
+                long result = parser.handleRecv(ptr, ptr + input.length(), (_, _) -> {
                 });
                 // Parser accepts the chunk size and consumes the 1 available
                 // byte, returning hi (end of buffer).
@@ -181,7 +181,7 @@ public class ChunkedContentParserTest {
                 ChunkedContentParser parser = new ChunkedContentParser();
                 parser.clear();
 
-                long result = parser.handleRecv(ptr, ptr + input.length(), (lo, hi) -> {
+                long result = parser.handleRecv(ptr, ptr + input.length(), (_, _) -> {
                 });
                 Assert.assertEquals(Long.MIN_VALUE, result);
             } finally {

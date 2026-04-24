@@ -32,6 +32,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
@@ -179,17 +180,13 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     @Override
     default void putLong128(long lo, long hi) {
         long addr = appendAddressFor(2 * Long.BYTES);
-        Unsafe.putLong(addr, lo);
-        Unsafe.putLong(addr + Long.BYTES, hi);
+        Long128.putLong128(lo, hi, addr);
     }
 
     @Override
     default void putLong256(long l0, long l1, long l2, long l3) {
         final long addr = appendAddressFor(32);
-        Unsafe.putLong(addr, l0);
-        Unsafe.putLong(addr + Long.BYTES, l1);
-        Unsafe.putLong(addr + Long.BYTES * 2, l2);
-        Unsafe.putLong(addr + Long.BYTES * 3, l3);
+        Long256.putLong256(l0, l1, l2, l3, addr);
     }
 
     @Override
@@ -226,10 +223,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     @Override
     default void putLong256(long offset, long l0, long l1, long l2, long l3) {
         final long addr = appendAddressFor(offset, Long256.BYTES);
-        Unsafe.putLong(addr, l0);
-        Unsafe.putLong(addr + Long.BYTES, l1);
-        Unsafe.putLong(addr + Long.BYTES * 2, l2);
-        Unsafe.putLong(addr + Long.BYTES * 3, l3);
+        Long256.putLong256(l0, l1, l2, l3, addr);
     }
 
     default void putLong256(CharSequence hexString, int start, int end, Long256Acceptor acceptor) {

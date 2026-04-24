@@ -73,7 +73,7 @@ public class TableWriterSegmentFileCache {
 
         FilesFacade ff = configuration.getFilesFacade();
         walColumnMemoryPool = new WeakClosableObjectPool<>(memoryFactory, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
-        walFdCloseCachedFdAction = (key, fdList) -> {
+        walFdCloseCachedFdAction = (_, fdList) -> {
             for (int i = 0, n = fdList.size(); i < n; i++) {
                 long fd = fdList.get(i);
                 LOG.debug().$("closing wal fd cache [fd=").$(fd).I$();

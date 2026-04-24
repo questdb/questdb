@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
-import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -36,6 +35,7 @@ import java.util.concurrent.atomic.LongAdder;
 
 import static io.questdb.std.MemoryTag.NATIVE_DEFAULT;
 
+@SuppressWarnings("removal")
 public final class Unsafe {
     // The various _ADDR fields are `long` in Java, but they are `* mut usize` in Rust, or `size_t*` in C.
     // These are off-heap allocated atomic counters for memory usage tracking.
@@ -52,7 +52,6 @@ public final class Unsafe {
     private static final long[] NATIVE_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
     private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
     private static final long NON_RSS_MEM_USED_ADDR;
-    private static final long OVERRIDE;
     private static final long REALLOC_COUNT_ADDR;
     private static final long RSS_MEM_LIMIT_ADDR;
     private static final long RSS_MEM_USED_ADDR;
@@ -319,16 +318,6 @@ public final class Unsafe {
         UNSAFE.loadFence();
     }
 
-    /**
-     * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
-     * it does not produce an illegal access error or warning.
-     *
-     * @param accessibleObject the instance to make accessible
-     */
-    public static void makeAccessible(AccessibleObject accessibleObject) {
-        UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
-    }
-
     public static long malloc(long size, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
@@ -439,10 +428,6 @@ public final class Unsafe {
         }
     }
 
-    public static long reallocateMemory(long address, long size) {
-        return UNSAFE.reallocateMemory(address, size);
-    }
-
     public static void recordMemAlloc(long size, int memoryTag) {
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
@@ -465,21 +450,6 @@ public final class Unsafe {
 
     public static void storeFence() {
         UNSAFE.storeFence();
-    }
-
-    private static long AccessibleObject_override_fieldOffset() {
-        if (isJava8Or11()) {
-            return getFieldOffset(AccessibleObject.class, "override");
-        }
-        // From Java 12 onwards, AccessibleObject#override is protected and cannot be accessed reflectively.
-        boolean is32BitJVM = is32BitJVM();
-        if (is32BitJVM) {
-            return 8L;
-        }
-        if (getOrdinaryObjectPointersCompressionStatus(is32BitJVM)) {
-            return 12L;
-        }
-        return 16L;
     }
 
     private static void checkAllocLimit(long size, int memoryTag) {
@@ -515,39 +485,6 @@ public final class Unsafe {
         UNSAFE.putLong(addr + 8, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
         UNSAFE.putInt(addr + 16, memoryTag);
         return addr;
-    }
-
-    private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
-        class Probe {
-            @SuppressWarnings("unused")
-            private int intField; // Accessed through reflection
-
-            boolean probe() {
-                long offset = getFieldOffset(Probe.class, "intField");
-                if (offset == 8L) {
-                    assert is32BitJVM;
-                    return false;
-                }
-                if (offset == 12L) {
-                    return true;
-                }
-                if (offset == 16L) {
-                    return false;
-                }
-                throw new AssertionError(offset);
-            }
-        }
-        return new Probe().probe();
-    }
-
-    private static boolean is32BitJVM() {
-        String sunArchDataModel = System.getProperty("sun.arch.data.model");
-        return sunArchDataModel.equals("32");
-    }
-
-    private static boolean isJava8Or11() {
-        String javaVersion = System.getProperty("java.version");
-        return javaVersion.startsWith("11") || javaVersion.startsWith("1.8");
     }
 
     // most significant bit
@@ -655,8 +592,6 @@ public final class Unsafe {
 
             LONG_OFFSET = UNSAFE.arrayBaseOffset(long[].class);
             LONG_SCALE = msb(UNSAFE.arrayIndexScale(long[].class));
-
-            OVERRIDE = AccessibleObject_override_fieldOffset();
 
             AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();
             if (classDefiner == null) {

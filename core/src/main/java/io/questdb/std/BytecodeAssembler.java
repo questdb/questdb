@@ -178,7 +178,7 @@ public class BytecodeAssembler {
             buf.limit(l);
             buf.position(p);
         } catch (Exception e) {
-            e.printStackTrace();
+            e.printStackTrace(System.err);
         }
     }
 

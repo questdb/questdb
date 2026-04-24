@@ -1269,7 +1269,7 @@ public class FilesTest {
                 File[] fileArray = link.getParentFile().listFiles();
                 Assert.assertNotNull(fileArray);
                 List<File> files = Arrays.asList(fileArray);
-                Assert.assertEquals(fileName + ".1", files.get(0).getName());
+                Assert.assertEquals(fileName + ".1", files.getFirst().getName());
 
                 // however
                 Assert.assertFalse(link.exists());
@@ -1718,7 +1718,7 @@ public class FilesTest {
                 File[] fileArray = link.getParentFile().listFiles();
                 Assert.assertNotNull(fileArray);
                 List<File> files = Arrays.asList(fileArray);
-                Assert.assertEquals(fileName, files.get(0).getName());
+                Assert.assertEquals(fileName, files.getFirst().getName());
 
                 // however, OS checks do check the existence of the file pointed to
                 Assert.assertFalse(link.exists());

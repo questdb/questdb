@@ -264,7 +264,7 @@ public class MapTest extends AbstractCairoTest {
             try {
                 // keyCapacity = 2^29 with loadFactor 0.5 drives post-ceilPow2 keyCapacity to 2^30,
                 // the map's hard cap.
-                createMap(keyColumnType(ColumnType.INT), valueTypes, 1 << 29, 0.5, Integer.MAX_VALUE);
+                createMap(keyColumnType(ColumnType.INT), valueTypes, 1 << 29, 0.5, Integer.MAX_VALUE).close();
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "exceeds batched probe addressable range");
@@ -1343,14 +1343,11 @@ public class MapTest extends AbstractCairoTest {
     }
 
     private int columnTypeForMapType() {
-        switch (mapType) {
-            case UNORDERED_8_MAP:
-                return ColumnType.LONG;
-            case UNORDERED_VARCHAR_MAP:
-                return ColumnType.VARCHAR;
-            default:
-                return ColumnType.INT;
-        }
+        return switch (mapType) {
+            case UNORDERED_8_MAP -> ColumnType.LONG;
+            case UNORDERED_VARCHAR_MAP -> ColumnType.VARCHAR;
+            default -> ColumnType.INT;
+        };
     }
 
     private Map createMap(ColumnTypes keyTypes, ColumnTypes valueTypes, int keyCapacity, double loadFactor, int maxResizes) {
@@ -1462,15 +1459,11 @@ public class MapTest extends AbstractCairoTest {
     // logical keys once and services both the direct-column fast path (via
     // getPageAddress) and the sink-based slow path (via getInt/getLong/getVarcharA).
     private static class TestPageFrameRecord extends PageFrameMemoryRecord {
-        private final int[] logicalKeys;
-        private final MapType mapType;
         private final ObjList<Utf8String> varcharKeys;
         private long bufferAddr;
         private long bufferSize;
 
         TestPageFrameRecord(MapType mapType, int[] logicalKeys) {
-            this.mapType = mapType;
-            this.logicalKeys = logicalKeys;
             if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
                 this.varcharKeys = new ObjList<>(logicalKeys.length);
                 for (int i = 0; i < logicalKeys.length; i++) {

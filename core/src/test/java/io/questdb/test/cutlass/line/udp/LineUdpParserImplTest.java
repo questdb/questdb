@@ -69,11 +69,13 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     public void testAddColumnDefaultDouble() throws Exception {
         testAddColumnFloat(
                 ColumnType.DOUBLE,
-                "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
-                        "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tnull\n" +
-                        "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tnull\n" +
-                        "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0\n" +
-                        "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tnull\n"
+                """
+                        tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5
+                        abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tnull
+                        woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tnull
+                        444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0
+                        666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tnull
+                        """
         );
     }
 
@@ -81,11 +83,13 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     public void testAddColumnDefaultFloat() throws Exception {
         testAddColumnFloat(
                 ColumnType.FLOAT,
-                "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
-                        "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tnull\n" +
-                        "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tnull\n" +
-                        "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0\n" +
-                        "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tnull\n"
+                """
+                        tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5
+                        abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tnull
+                        woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tnull
+                        444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0
+                        666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tnull
+                        """
         );
     }
 
@@ -106,19 +110,25 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testAddTag() throws Exception {
-        final String expected = "tag\ttag3\tfield\tf4\tfield2\tfx\ttimestamp\ttag2\n" +
-                "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t\n" +
-                "woopsie\t\t2000\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tdaisy\n";
-        final String lines = "tab,tag=abc,tag3=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
-                "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n";
+        final String expected = """
+                tag\ttag3\tfield\tf4\tfield2\tfx\ttimestamp\ttag2
+                abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t
+                woopsie\t\t2000\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tdaisy
+                """;
+        final String lines = """
+                tab,tag=abc,tag3=xyz field=10000i,f4=9.034,field2="str",fx=true 100000000000
+                tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2="comment",fx=true 100000000000
+                """;
         assertThat(expected, lines, "tab");
     }
 
     @Test
     public void testAppendExistingTable() throws Exception {
-        final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n" +
-                "1.6\t15\ttrue\t\txyz\tstring1\t2017-10-03T10:00:00.000000Z\n" +
-                "1.3\t11\tfalse\tabc\t\tstring2\t2017-10-03T10:00:00.010000Z\n";
+        final String expected = """
+                double\tint\tbool\tsym1\tsym2\tstr\ttimestamp
+                1.6\t15\ttrue\t\txyz\tstring1\t2017-10-03T10:00:00.000000Z
+                1.3\t11\tfalse\tabc\t\tstring2\t2017-10-03T10:00:00.010000Z
+                """;
 
         TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                 .col("double", ColumnType.DOUBLE)
@@ -130,8 +140,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 .timestamp();
         AbstractCairoTest.create(model);
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
+        String lines = """
+                x,sym2=xyz double=1.6,int=15i,bool=true,str="string1"
+                x,sym1=abc double=1.3,int=11i,bool=false,str="string2"
+                """;
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
@@ -145,15 +157,19 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testBadDouble1() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
-                "\tnull\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t
+                \tnull\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc
+                \t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3
+                \t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t1970-01-01T00:28:20.000000Z
+                66\tbox\t7.9\t1970-01-01T00:28:20.000000Z
+                """;
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1500000000000\n" +
                 "x,sym1=abc double=1x.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" + // <-- error here
@@ -167,15 +183,19 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testBadDouble2() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
-                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t
+                \t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc
+                \t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3
+                \t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t1970-01-01T00:28:20.000000Z
+                66\tbox\t7.9\t1970-01-01T00:28:20.000000Z
+                """;
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1500000000000\n" +
                 "x,sym2=xyz double=1.6x,int=11i,bool=false,str=\"string0\" 1500000000000\n" +  // <-- error here
@@ -190,14 +210,18 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testBadDouble3() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6x\t11\tfalse\tstring0\t1970-01-01T00:25:00.000000Z\t\n" +
-                "\ta\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\txxx\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6x\t11\tfalse\tstring0\t1970-01-01T00:25:00.000000Z\t
+                \ta\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3
+                \txxx\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t1970-01-01T00:28:20.000000Z
+                66\tbox\t7.9\t1970-01-01T00:28:20.000000Z
+                """;
 
         String lines = "x,sym2=xyz double=1.6x,int=11i,bool=false,str=\"string0\" 1500000000000\n" +  // <-- error here, taken as symbol
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
@@ -211,15 +235,19 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testBadInt1() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
-                "\t1.3\tnull\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t
+                \t1.3\tnull\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc
+                \t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3
+                \t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t1970-01-01T00:28:20.000000Z
+                66\tbox\t7.9\t1970-01-01T00:28:20.000000Z
+                """;
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1500000000000\n" +
                 "x,sym1=abc double=1.3,int=1s1i,bool=false,str=\"string2\" 1500000000000\n" + // <-- error here
@@ -233,15 +261,19 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testBadInt2() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\tnull\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
-                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\tnull\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t
+                \t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc
+                \t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3
+                \t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t1970-01-01T00:28:20.000000Z
+                66\tbox\t7.9\t1970-01-01T00:28:20.000000Z
+                """;
 
         String lines = "x,sym2=xyz double=1.6,int=1i5i,bool=true,str=\"string1\" 1500000000000\n" +  // <-- error here
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
@@ -255,14 +287,18 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testBadTimestamp1() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                \t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc
+                \t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3
+                \t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t1970-01-01T00:28:20.000000Z
+                66\tbox\t7.9\t1970-01-01T00:28:20.000000Z
+                """;
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1234ab\n" + // <-- error here
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
@@ -276,14 +312,18 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testBadTimestamp2() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:00:01.234000Z\t\n" +
-                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:00:01.234000Z\t
+                \t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc
+                \t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t1970-01-01T00:28:20.000000Z
+                66\tbox\t7.9\t1970-01-01T00:28:20.000000Z
+                """;
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1234000000\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
@@ -325,8 +365,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 .timestamp();
         AbstractCairoTest.create(model);
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
+        String lines = """
+                x,sym2=xyz double=1.6,int=15i,bool=true,str="string1"
+                x,sym1=abc double=1.3,int=11i,bool=false,str="string2"
+                """;
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
@@ -344,8 +386,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     @Test
     public void testCannotAutoCreateColumnWhenDisabledInConfiguration() throws Exception {
         try {
-            String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+            String lines = """
+                    t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
+                    t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000
+                    """;
 
             assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
                 @Override
@@ -362,8 +406,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     @Test
     public void testCannotAutoCreateTableWhenDisabledInConfiguration() throws Exception {
         try {
-            String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+            String lines = """
+                    t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
+                    t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000
+                    """;
 
             assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
                 @Override
@@ -398,12 +444,16 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
             }
         };
 
-        final String expected = "sym\tdouble\tint\tbool\tstr\ttimestamp\n" +
-                "zzz\t1.3\t11\tfalse\tnice\t2017-10-03T10:00:00.000000Z\n";
+        final String expected = """
+                sym\tdouble\tint\tbool\tstr\ttimestamp
+                zzz\t1.3\t11\tfalse\tnice\t2017-10-03T10:00:00.000000Z
+                """;
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
-                "y,sym=zzz double=1.3,int=11i,bool=false,str=\"nice\"\n";
+        String lines = """
+                x,sym2=xyz double=1.6,int=15i,bool=true,str="string1"
+                x,sym1=abc double=1.3,int=11i,bool=false,str="string2"
+                y,sym=zzz double=1.3,int=11i,bool=false,str="nice"
+                """;
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
@@ -432,8 +482,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 .col("char", ColumnType.CHAR)
                 .timestamp();
         AbstractCairoTest.create(model);
-        assertThat("char\ttimestamp\n" +
-                        "\t1970-01-01T00:00:00.000000Z\n",
+        assertThat("""
+                        char\ttimestamp
+                        \t1970-01-01T00:00:00.000000Z
+                        """,
                 "x char=\n",
                 "x",
                 new DefaultTestCairoConfiguration(root) {
@@ -450,8 +502,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 .col("char", ColumnType.CHAR)
                 .timestamp();
         AbstractCairoTest.create(model);
-        assertThat("char\ttimestamp\n" +
-                        "\t1970-01-01T00:00:00.000000Z\n",
+        assertThat("""
+                        char\ttimestamp
+                        \t1970-01-01T00:00:00.000000Z
+                        """,
                 "x char=\"\"\n",
                 "x",
                 new DefaultTestCairoConfiguration(root) {
@@ -468,8 +522,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 .col("char", ColumnType.CHAR)
                 .timestamp();
         AbstractCairoTest.create(model);
-        assertThat("char\ttimestamp\n" +
-                        "c\t1970-01-01T00:00:00.000000Z\n",
+        assertThat("""
+                        char\ttimestamp
+                        c\t1970-01-01T00:00:00.000000Z
+                        """,
                 "x char=\"c\"\n",
                 "x",
                 new DefaultTestCairoConfiguration(root) {
@@ -503,8 +559,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 .col("char", ColumnType.CHAR)
                 .timestamp();
         AbstractCairoTest.create(model);
-        assertThat("char\ttimestamp\n" +
-                        "c\t1970-01-01T00:00:00.000000Z\n",
+        assertThat("""
+                        char\ttimestamp
+                        c\t1970-01-01T00:00:00.000000Z
+                        """,
                 "x char=\"coconut\"\n",
                 "x",
                 new DefaultTestCairoConfiguration(root) {
@@ -521,22 +579,30 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT)
                 .col("int1", ColumnType.INT).col("date1", ColumnType.DATE).col("byte1", ColumnType.BYTE).timestamp();
         AbstractCairoTest.create(model);
-        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-        String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
-                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
-                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
+        String lines = """
+                t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
+                t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000
+                """;
+        String expected = """
+                event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp
+                12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z
+                12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z
+                """;
         assertThat(expected, lines, "t_ilp21");
     }
 
     @Test
     public void testCreateAndAppend() throws Exception {
-        final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\n" +
-                "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\n" +
-                "woopsie\tdaisy\t2000\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\n";
+        final String expected = """
+                tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp
+                abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z
+                woopsie\tdaisy\t2000\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z
+                """;
 
-        final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
-                "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n";
+        final String lines = """
+                tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2="str",fx=true 100000000000
+                tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2="comment",fx=true 100000000000
+                """;
 
 
         assertThat(expected, lines, "tab");
@@ -544,30 +610,38 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAndAppendTwoTables() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
-                "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.9\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3\n" +
-                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t
+                \t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc
+                \t0.9\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3
+                \t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
-                "66\tbox\t7.9\t2017-10-03T10:00:00.040000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t2017-10-03T10:00:00.020000Z
+                66\tbox\t7.9\t2017-10-03T10:00:00.040000Z
+                """;
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=t,str=\"string1\"\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=f,str=\"string2\"\n" +
-                "y,asym1=55,asym2=box adouble=5.9\n" +
-                "x,sym1=row3 double=.9,int=6i,bool=F,str=\"string3\"\n" +
-                "y,asym1=66,asym2=box adouble=7.9\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=T,str=\"string4\"\n";
+        String lines = """
+                x,sym2=xyz double=1.6,int=15i,bool=t,str="string1"
+                x,sym1=abc double=1.3,int=11i,bool=f,str="string2"
+                y,asym1=55,asym2=box adouble=5.9
+                x,sym1=row3 double=.9,int=6i,bool=F,str="string3"
+                y,asym1=66,asym2=box adouble=7.9
+                x,sym1=row4 double=.3,int=91i,bool=T,str="string4"
+                """;
 
         assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
     public void testCreateTable() throws Exception {
-        final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\n" +
-                "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\n";
+        final String expected = """
+                tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp
+                abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z
+                """;
         final String lines = "measurement,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n";
         assertThat(expected, lines, "measurement");
     }
@@ -590,11 +664,15 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         }
         engine.releaseInactive();
 
-        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-        String expected = "id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent\n" +
-                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12\n" +
-                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12\n";
+        String lines = """
+                t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
+                t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000
+                """;
+        String expected = """
+                id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent
+                0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12
+                0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12
+                """;
         assertThat(expected, lines, "t_ilp21");
     }
 
@@ -617,11 +695,15 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         }
         engine.releaseInactive();
 
-        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-        String expected = "id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent\n" +
-                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12\n" +
-                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12\n";
+        String lines = """
+                t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
+                t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000
+                """;
+        String expected = """
+                id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent
+                0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12
+                0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12
+                """;
         assertThat(expected, lines, "t_ilp21");
     }
 
@@ -639,11 +721,15 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 .timestamp();
         AbstractCairoTest.create(model);
 
-        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-        String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
-                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
-                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
+        String lines = """
+                t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
+                t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000
+                """;
+        String expected = """
+                event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp
+                12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z
+                12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z
+                """;
         assertThat(expected, lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
             @Override
             public boolean getAutoCreateNewColumns() {
@@ -670,8 +756,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 .timestamp();
         AbstractCairoTest.create(model);
 
-        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String lines = """
+                t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
+                t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000
+                """;
         try {
             assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
                 @Override
@@ -687,12 +775,16 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testFailsToAddColumnWithInvalidName() throws Exception {
-        String lines = "t_ilp21 ..event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String lines = """
+                t_ilp21 ..event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
+                t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000
+                """;
 
         assertThat(
-                "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
-                        "12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z\n",
+                """
+                        event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp
+                        12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z
+                        """,
                 lines,
                 "t_ilp21",
                 configuration
@@ -701,12 +793,16 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidTableName() throws Exception {
-        String lines = "..\\/db,a=b event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String lines = """
+                ..\\/db,a=b event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
+                t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000
+                """;
 
         assertThat(
-                "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
-                        "12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z\n",
+                """
+                        event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp
+                        12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z
+                        """,
                 lines,
                 "t_ilp21",
                 configuration
@@ -715,15 +811,19 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testLong() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\tnull\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
-                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\tnull\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t
+                \t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc
+                \t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3
+                \t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t1970-01-01T00:28:20.000000Z
+                66\tbox\t7.9\t1970-01-01T00:28:20.000000Z
+                """;
 
         String lines = "x,sym2=xyz double=1.6,int=1i5i,bool=true,str=\"string1\" 1500000000000\n" +  // <-- error here
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
@@ -737,31 +837,41 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testNoTag() throws Exception {
-        String expected = "uptime_format\ttimestamp\n" +
-                " 1:18\t2019-12-10T15:06:00.000000Z\n";
+        String expected = """
+                uptime_format\ttimestamp
+                 1:18\t2019-12-10T15:06:00.000000Z
+                """;
         String lines = "system uptime_format=\" 1:18\" 1575990360000000000";
         assertThat(expected, lines, "system");
     }
 
     @Test
     public void testO3() throws Exception {
-        String expected = "host\tuptime_format\ttimestamp\n" +
-                "linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z\n" +
-                "linux-questdb\t 4:38\t2019-12-10T15:06:01.000000Z\n";
-        String lines = "system,host=linux-questdb uptime_format=\" 4:38\" 1575990361000000000\n"
-                + "system,host=linux-questdb uptime_format=\" 1:18\" 1575990360000000000\n";
+        String expected = """
+                host\tuptime_format\ttimestamp
+                linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z
+                linux-questdb\t 4:38\t2019-12-10T15:06:01.000000Z
+                """;
+        String lines = """
+                system,host=linux-questdb uptime_format=" 4:38" 1575990361000000000
+                system,host=linux-questdb uptime_format=" 1:18" 1575990360000000000
+                """;
         assertThat(expected, lines, "system");
     }
 
     @Test
     public void testReservedName() throws Exception {
-        final String expected = "sym\tdouble\tint\tbool\tstr\ttimestamp\n" +
-                "ok\t2.1\t11\tfalse\tdone\t2017-10-03T10:00:00.000000Z\n";
+        final String expected = """
+                sym\tdouble\tint\tbool\tstr\ttimestamp
+                ok\t2.1\t11\tfalse\tdone\t2017-10-03T10:00:00.000000Z
+                """;
 
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
-                "y,sym=ok double=2.1,int=11i,bool=false,str=\"done\"\n";
+        String lines = """
+                x,sym2=xyz double=1.6,int=15i,bool=true,str="string1"
+                x,sym1=abc double=1.3,int=11i,bool=false,str="string2"
+                y,sym=ok double=2.1,int=11i,bool=false,str="done"
+                """;
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
@@ -780,86 +890,110 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testStr() throws Exception {
-        String expected = "host\tuptime_format\ttimestamp\n" +
-                "linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z\n";
+        String expected = """
+                host\tuptime_format\ttimestamp
+                linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z
+                """;
         String lines = "system,host=linux-questdb uptime_format=\" 1:18\" 1575990360000000000";
         assertThat(expected, lines, "system");
     }
 
     @Test
     public void testSyntaxError() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
-                "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\tnull\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3\n" +
-                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t
+                \t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc
+                \tnull\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3
+                \t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
-                "66\tbox\t7.9\t2017-10-03T10:00:00.040000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t2017-10-03T10:00:00.020000Z
+                66\tbox\t7.9\t2017-10-03T10:00:00.040000Z
+                """;
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
-                "y,asym1=55,asym2=box adouble=5.9\n" +
-                "x,sym1=row3 double=,int=6i,bool=false,str=\"string3\"\n" +
-                "y,asym1=66,asym2=box adouble=7.9\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\"\n";
+        String lines = """
+                x,sym2=xyz double=1.6,int=15i,bool=true,str="string1"
+                x,sym1=abc double=1.3,int=11i,bool=false,str="string2"
+                y,asym1=55,asym2=box adouble=5.9
+                x,sym1=row3 double=,int=6i,bool=false,str="string3"
+                y,asym1=66,asym2=box adouble=7.9
+                x,sym1=row4 double=.3,int=91i,bool=true,str="string4"
+                """;
 
         assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
     public void testTypeMismatch1() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
-                "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t
+                \t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc
+                \t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
-                "66\tbox\t7.9\t2017-10-03T10:00:00.030000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t2017-10-03T10:00:00.020000Z
+                66\tbox\t7.9\t2017-10-03T10:00:00.030000Z
+                """;
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
-                "y,asym1=55,asym2=box adouble=5.9\n" +
-                "x,sym1=row3 double=\"z\",int=6i,bool=false,str=\"string3\"\n" +
-                "y,asym1=66,asym2=box adouble=7.9\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\"\n";
+        String lines = """
+                x,sym2=xyz double=1.6,int=15i,bool=true,str="string1"
+                x,sym1=abc double=1.3,int=11i,bool=false,str="string2"
+                y,asym1=55,asym2=box adouble=5.9
+                x,sym1=row3 double="z",int=6i,bool=false,str="string3"
+                y,asym1=66,asym2=box adouble=7.9
+                x,sym1=row4 double=.3,int=91i,bool=true,str="string4"
+                """;
 
         assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
     public void testTypeMismatch2() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
-                "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t
+                \t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc
+                \t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
-                "66\tbox\t7.9\t2017-10-03T10:00:00.030000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t2017-10-03T10:00:00.020000Z
+                66\tbox\t7.9\t2017-10-03T10:00:00.030000Z
+                """;
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
-                "y,asym1=55,asym2=box adouble=5.9\n" +
-                "x,sym1=row3 double=9.4,int=6.3,bool=false,str=\"string3\"\n" +
-                "y,asym1=66,asym2=box adouble=7.9\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\"\n";
+        String lines = """
+                x,sym2=xyz double=1.6,int=15i,bool=true,str="string1"
+                x,sym1=abc double=1.3,int=11i,bool=false,str="string2"
+                y,asym1=55,asym2=box adouble=5.9
+                x,sym1=row3 double=9.4,int=6.3,bool=false,str="string3"
+                y,asym1=66,asym2=box adouble=7.9
+                x,sym1=row4 double=.3,int=91i,bool=true,str="string4"
+                """;
 
         assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
     public void testUnquotedString1() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
-                "\t9.4\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\trow3\n" +
-                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+        final String expected1 = """
+                sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
+                xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t
+                \t9.4\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\trow3
+                \t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t2017-10-03T10:00:00.010000Z\n" +
-                "66\tbox\t7.9\t2017-10-03T10:00:00.030000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t2017-10-03T10:00:00.010000Z
+                66\tbox\t7.9\t2017-10-03T10:00:00.030000Z
+                """;
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=string2\"\n" + // <-- error here
@@ -873,14 +1007,18 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testUnquotedString2() throws Exception {
-        final String expected1 = "sym1\tdouble\tint\tbool\tstr\ttimestamp\n" +
-                "abc\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.000000Z\n" +
-                "row3\t9.4\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\n" +
-                "row4\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\n";
+        final String expected1 = """
+                sym1\tdouble\tint\tbool\tstr\ttimestamp
+                abc\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.000000Z
+                row3\t9.4\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z
+                row4\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z
+                """;
 
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t2017-10-03T10:00:00.010000Z\n" +
-                "66\tbox\t7.9\t2017-10-03T10:00:00.030000Z\n";
+        final String expected2 = """
+                asym1\tasym2\tadouble\ttimestamp
+                55\tbox\t5.9\t2017-10-03T10:00:00.010000Z
+                66\tbox\t7.9\t2017-10-03T10:00:00.030000Z
+                """;
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=string1\"\n" + // <-- error here
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
@@ -953,10 +1091,12 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     private void testAddColumnFloat(short colType, String expected) throws Exception {
-        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
-                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
+        final String lines = """
+                tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2="str",fx=true 100000000000
+                tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2="comment",fx=true 100000000000
+                tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55,field2="comment",fx=true 100000000000
+                tab,tag=666,tag2=777 field=40i,f4=1.1,field2="comment\\ X",fx=false 100000000000
+                """;
 
         assertThat(
                 expected,
@@ -983,10 +1123,12 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
                 "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n";
 
-        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
-                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55i,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
+        final String lines = """
+                tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2="str",fx=true 100000000000
+                tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2="comment",fx=true 100000000000
+                tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55i,field2="comment",fx=true 100000000000
+                tab,tag=666,tag2=777 field=40i,f4=1.1,field2="comment\\ X",fx=false 100000000000
+                """;
 
         assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
             @Override

@@ -57,26 +57,17 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
     ) {
         if (configuration.isDevModeEnabled()) {
             final char crashType = args.getQuick(0).getChar(null);
-            switch (crashType) {
-                case 'C':
-                    return SimulateCrashFunction.INSTANCE;
-                case 'M':
-                    return OutOfMemoryFunction.INSTANCE;
-                case 'E':
-                    return CairoErrorFunction.INSTANCE;
-                case '0':
-                    return CairoExceptionFunction.INSTANCE_0;
-                case '1':
-                    return CairoExceptionFunction.INSTANCE_1;
-                case '2':
-                    return CairoExceptionFunction.INSTANCE_2;
-                case 'P':
-                    return CairoExceptionFunction.INSTANCE_P;
-                case 'A':
-                    return CairoExceptionFunction.INSTANCE_A;
-                default:
-                    throw new UnsupportedOperationException("Unsupported crash type: " + crashType);
-            }
+            return switch (crashType) {
+                case 'C' -> SimulateCrashFunction.INSTANCE;
+                case 'M' -> OutOfMemoryFunction.INSTANCE;
+                case 'E' -> CairoErrorFunction.INSTANCE;
+                case '0' -> CairoExceptionFunction.INSTANCE_0;
+                case '1' -> CairoExceptionFunction.INSTANCE_1;
+                case '2' -> CairoExceptionFunction.INSTANCE_2;
+                case 'P' -> CairoExceptionFunction.INSTANCE_P;
+                case 'A' -> CairoExceptionFunction.INSTANCE_A;
+                default -> throw new UnsupportedOperationException("Unsupported crash type: " + crashType);
+            };
         }
         return BooleanConstant.FALSE;
     }

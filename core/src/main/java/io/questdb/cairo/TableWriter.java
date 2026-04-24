@@ -2656,7 +2656,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // reset timestamp limits
             if (timestamp) {
                 txWriter.resetTimestamp();
-                timestampSetter = value -> {
+                timestampSetter = _ -> {
                 };
             }
 
@@ -4333,7 +4333,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void configureTimestampSetter() {
         int index = metadata.getTimestampIndex();
         if (index == -1) {
-            timestampSetter = value -> {
+            timestampSetter = _ -> {
             };
         } else {
             nullSetters.setQuick(index, NOOP);

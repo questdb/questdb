@@ -847,20 +847,17 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array) {
         int elemType = array.getElemType();
-        switch (elemType) {
-            case ColumnType.DOUBLE:
-                return VALUE_APPENDER_DOUBLE;
-            case ColumnType.LONG:
-            case ColumnType.NULL:
-                return VALUE_APPENDER_LONG;
-            case ColumnType.VARCHAR:
-                return VALUE_APPENDER_VARCHAR;
-            default:
+        return switch (elemType) {
+            case ColumnType.DOUBLE -> VALUE_APPENDER_DOUBLE;
+            case ColumnType.LONG, ColumnType.NULL -> VALUE_APPENDER_LONG;
+            case ColumnType.VARCHAR -> VALUE_APPENDER_VARCHAR;
+            default -> {
                 if (array.isEmpty()) {
-                    return VALUE_APPENDER_LONG;
+                    yield VALUE_APPENDER_LONG;
                 }
                 throw new AssertionError("No appender for ColumnType " + elemType);
-        }
+            }
+        };
     }
 
     private static void writeAuxEntry(MemoryA auxMem, long offset, int size) {

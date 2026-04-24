@@ -48,6 +48,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     );
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public MaxIntVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         super();
         this.columnIndex = columnIndex;

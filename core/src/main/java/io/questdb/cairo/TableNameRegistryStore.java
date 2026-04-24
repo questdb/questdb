@@ -434,7 +434,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 memory.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                 LOG.info()
                         .$("reloading tables file [path=").$(path)
-                        .$(", threadId=").$(Thread.currentThread().getId())
+                        .$(", threadId=").$(Thread.currentThread().threadId())
                         .I$();
                 if (memory.size() >= 2 * Long.BYTES) {
                     break;

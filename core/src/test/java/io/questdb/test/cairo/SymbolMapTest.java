@@ -61,7 +61,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapTest extends AbstractCairoTest {
-    private final static SymbolValueCountCollector NOOP_COLLECTOR = (symbolIndexInTxWriter, count) -> {
+    private final static SymbolValueCountCollector NOOP_COLLECTOR = (_, _) -> {
     };
 
     public static void create(Path path, CharSequence name, int symbolCapacity, boolean useCache) {
@@ -899,9 +899,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         // Create longer symbols to hit various mapping page sizes
         int symbolPrefixSize = (rnd.nextInt(200) + 5) / 3;
         StringBuilder symbolPrefix = new StringBuilder("abc");
-        for (int i = 0; i < symbolPrefixSize; i++) {
-            symbolPrefix.append("abc");
-        }
+        symbolPrefix.repeat("abc", Math.max(0, symbolPrefixSize));
         String prefix = symbolPrefix.toString();
 
         TestUtils.assertMemoryLeak(() -> {

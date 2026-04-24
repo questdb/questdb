@@ -53,11 +53,7 @@ public class BitXorLongGroupByFunction extends LongFunction implements GroupByFu
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
-            mapValue.putLong(valueIndex, value);
-        } else {
-            mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-        }
+        mapValue.putLong(valueIndex, value);
     }
 
     @Override

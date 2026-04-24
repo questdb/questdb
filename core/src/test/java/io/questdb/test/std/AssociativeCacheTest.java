@@ -408,41 +408,37 @@ public class AssociativeCacheTest {
     }
 
     private <V> AssociativeCache<V> createCache(int blocks, int rows, LongGauge cachedGauge, Counter hitCounter, Counter missCounter) {
-        switch (cacheType) {
-            case SIMPLE:
-                return new SimpleAssociativeCache<>(blocks, rows, cachedGauge, hitCounter, missCounter);
-            case CONCURRENT:
-                return new ConcurrentAssociativeCache<>(
-                        new ConcurrentCacheConfiguration() {
-                            @Override
-                            public int getBlocks() {
-                                return blocks;
-                            }
-
-                            @Override
-                            public LongGauge getCachedGauge() {
-                                return cachedGauge;
-                            }
-
-                            @Override
-                            public Counter getHiCounter() {
-                                return hitCounter;
-                            }
-
-                            @Override
-                            public Counter getMissCounter() {
-                                return missCounter;
-                            }
-
-                            @Override
-                            public int getRows() {
-                                return rows;
-                            }
+        return switch (cacheType) {
+            case SIMPLE -> new SimpleAssociativeCache<>(blocks, rows, cachedGauge, hitCounter, missCounter);
+            case CONCURRENT -> new ConcurrentAssociativeCache<>(
+                    new ConcurrentCacheConfiguration() {
+                        @Override
+                        public int getBlocks() {
+                            return blocks;
                         }
-                );
-            default:
-                throw new IllegalArgumentException("Unexpected cache type: " + cacheType);
-        }
+
+                        @Override
+                        public LongGauge getCachedGauge() {
+                            return cachedGauge;
+                        }
+
+                        @Override
+                        public Counter getHiCounter() {
+                            return hitCounter;
+                        }
+
+                        @Override
+                        public Counter getMissCounter() {
+                            return missCounter;
+                        }
+
+                        @Override
+                        public int getRows() {
+                            return rows;
+                        }
+                    }
+            );
+        };
     }
 
     public enum CacheType {

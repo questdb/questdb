@@ -571,13 +571,13 @@ public class QwpGeoHashDecoderTest {
                 long ptr = buf.getBufferPtr();
 
                 // Verify QWP1 header magic
-                Assert.assertEquals((byte) 'Q', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr));
-                Assert.assertEquals((byte) 'W', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 1));
-                Assert.assertEquals((byte) 'P', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 2));
-                Assert.assertEquals((byte) '1', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 3));
+                Assert.assertEquals((byte) 'Q', Unsafe.getByte(ptr));
+                Assert.assertEquals((byte) 'W', Unsafe.getByte(ptr + 1));
+                Assert.assertEquals((byte) 'P', Unsafe.getByte(ptr + 2));
+                Assert.assertEquals((byte) '1', Unsafe.getByte(ptr + 3));
 
                 // Table count = 1
-                Assert.assertEquals((short) 1, io.questdb.client.std.Unsafe.getUnsafe().getShort(ptr + 6));
+                Assert.assertEquals((short) 1, Unsafe.getShort(ptr + 6));
             }
         });
     }

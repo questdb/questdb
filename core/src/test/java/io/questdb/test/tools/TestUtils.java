@@ -2529,7 +2529,7 @@ public final class TestUtils {
         }
         String printed = sink.toString();
         map.compute(
-                printed, (s, i) -> {
+                printed, (_, i) -> {
                     if (i == null) {
                         return 1;
                     }

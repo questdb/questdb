@@ -34,28 +34,10 @@ public class HttpSemantics {
      * @return true if c is a delimiter
      */
     public static boolean isDelimiter(char c) {
-        switch (c) {
-            case '"':
-            case '(':
-            case ')':
-            case ',':
-            case '/':
-            case ':':
-            case ';':
-            case '<':
-            case '=':
-            case '>':
-            case '?':
-            case '@':
-            case '[':
-            case '\\':
-            case ']':
-            case '{':
-            case '}':
-                return true;
-            default:
-                return false;
-        }
+        return switch (c) {
+            case '"', '(', ')', ',', '/', ':', ';', '<', '=', '>', '?', '@', '[', '\\', ']', '{', '}' -> true;
+            default -> false;
+        };
     }
 
     /**

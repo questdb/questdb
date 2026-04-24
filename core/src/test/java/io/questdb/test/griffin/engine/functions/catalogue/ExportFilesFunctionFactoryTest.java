@@ -58,24 +58,22 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testExportFilesBasic() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\n" +
-                            "analytics" + File.separator + "metrics.parquet\t496\t496.0 B\n" +
-                            "analytics" + File.separator + "models" + File.separator + "prediction_model.parquet\t496\t496.0 B\n" +
-                            "analytics" + File.separator + "results" + File.separator + "output.parquet\t496\t496.0 B\n" +
-                            "exports" + File.separator + "data" + File.separator + "nested_table.parquet\t496\t496.0 B\n" +
-                            "exports" + File.separator + "table1.parquet\t496\t496.0 B\n" +
-                            "reports" + File.separator + "2023" + File.separator + "q1_report.parquet\t496\t496.0 B\n" +
-                            "reports" + File.separator + "2024" + File.separator + "q2_summary.parquet\t496\t496.0 B\n" +
-                            "reports" + File.separator + "monthly_report.csv\t7192\t7.0 KiB\n" +
-                            "temp" + File.separator + "archived" + File.separator + "old_backup.parquet\t496\t496.0 B\n" +
-                            "temp" + File.separator + "backup.sql\t1512\t1.5 KiB\n" +
-                            "users_export.parquet\t496\t496.0 B\n" +
-                            "users_export2.parquet\t496\t496.0 B\n",
-                    "select path, diskSize, diskSizeHuman from export_files() order by path"
-            );
-        });
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\n" +
+                        "analytics" + File.separator + "metrics.parquet\t496\t496.0 B\n" +
+                        "analytics" + File.separator + "models" + File.separator + "prediction_model.parquet\t496\t496.0 B\n" +
+                        "analytics" + File.separator + "results" + File.separator + "output.parquet\t496\t496.0 B\n" +
+                        "exports" + File.separator + "data" + File.separator + "nested_table.parquet\t496\t496.0 B\n" +
+                        "exports" + File.separator + "table1.parquet\t496\t496.0 B\n" +
+                        "reports" + File.separator + "2023" + File.separator + "q1_report.parquet\t496\t496.0 B\n" +
+                        "reports" + File.separator + "2024" + File.separator + "q2_summary.parquet\t496\t496.0 B\n" +
+                        "reports" + File.separator + "monthly_report.csv\t7192\t7.0 KiB\n" +
+                        "temp" + File.separator + "archived" + File.separator + "old_backup.parquet\t496\t496.0 B\n" +
+                        "temp" + File.separator + "backup.sql\t1512\t1.5 KiB\n" +
+                        "users_export.parquet\t496\t496.0 B\n" +
+                        "users_export2.parquet\t496\t496.0 B\n",
+                "select path, diskSize, diskSizeHuman from export_files() order by path"
+        ));
     }
 
     @Test

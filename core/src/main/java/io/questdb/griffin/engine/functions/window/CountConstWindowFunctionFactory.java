@@ -50,7 +50,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFactory {
-    public static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> true);
+    public static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((_, _) -> true);
 
     @Override
     public String getSignature() {

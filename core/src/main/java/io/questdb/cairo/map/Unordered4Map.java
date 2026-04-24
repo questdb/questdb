@@ -746,16 +746,15 @@ public class Unordered4Map implements Map, Reopenable {
         }
 
         // Copy the zero key entry to the new end-of-buffer slot.
-        final long newZeroMemStart = newMemLimit;
         if (hasZero) {
-            Unsafe.copyMemory(zeroMemStart, newZeroMemStart, entrySize);
+            Unsafe.copyMemory(zeroMemStart, newMemLimit, entrySize);
         }
 
         Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag);
 
         memStart = newMemStart;
         memLimit = newMemLimit;
-        zeroMemStart = newZeroMemStart;
+        zeroMemStart = newMemLimit;
         mask = newMask;
         free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
         keyCapacity = (int) newKeyCapacity;

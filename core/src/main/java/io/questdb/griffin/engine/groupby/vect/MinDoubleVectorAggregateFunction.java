@@ -50,6 +50,7 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     );
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public MinDoubleVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {

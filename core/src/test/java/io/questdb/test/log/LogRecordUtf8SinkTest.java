@@ -321,7 +321,7 @@ public class LogRecordUtf8SinkTest {
     }
 
     @FunctionalInterface
-    interface ScenarioConsumer {
+    public interface ScenarioConsumer {
         void accept(String msg, int utf8ByteLen, long sinkMaxLen, long expectedLen);
     }
 

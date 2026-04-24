@@ -81,9 +81,9 @@ public class TableReaderTest extends AbstractCairoTest {
     public static final int DO_NOT_CARE = 0;
     public static final int MUST_NOT_SWITCH = 2;
     public static final int MUST_SWITCH = 1;
-    private static final RecordAssert BATCH2_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 13);
-    private static final RecordAssert BATCH3_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(14));
-    private static final RecordAssert BATCH4_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+    private static final RecordAssert BATCH2_BEFORE_ASSERTER = (r, _, _, _) -> assertNullStr(r, 13);
+    private static final RecordAssert BATCH3_BEFORE_ASSERTER = (r, _, _, _) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(14));
+    private static final RecordAssert BATCH4_BEFORE_ASSERTER = (r, _, _, _) -> {
         Assert.assertEquals(0, r.getShort(15));
         Assert.assertFalse(r.getBool(16));
         Assert.assertEquals(0, r.getByte(17));
@@ -95,7 +95,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertNull(r.getBin(23));
         Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(23));
     };
-    private static final RecordAssert BATCH5_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+    private static final RecordAssert BATCH5_BEFORE_ASSERTER = (r, _, _, _) -> {
         Assert.assertEquals(0, r.getShort(15));
         Assert.assertFalse(r.getBool(16));
         Assert.assertEquals(0, r.getByte(17));
@@ -105,11 +105,11 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(Numbers.LONG_NULL, r.getLong(21));
         Assert.assertEquals(Numbers.LONG_NULL, r.getDate(22));
     };
-    private static final RecordAssert BATCH_2_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 12);
-    private static final RecordAssert BATCH_2_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 11);
-    private static final RecordAssert BATCH_3_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(13));
-    private static final RecordAssert BATCH_3_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(12));
-    private static final RecordAssert BATCH_4_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+    private static final RecordAssert BATCH_2_7_BEFORE_ASSERTER = (r, _, _, _) -> assertNullStr(r, 12);
+    private static final RecordAssert BATCH_2_9_BEFORE_ASSERTER = (r, _, _, _) -> assertNullStr(r, 11);
+    private static final RecordAssert BATCH_3_7_BEFORE_ASSERTER = (r, _, _, _) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(13));
+    private static final RecordAssert BATCH_3_9_BEFORE_ASSERTER = (r, _, _, _) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(12));
+    private static final RecordAssert BATCH_4_7_BEFORE_ASSERTER = (r, _, _, _) -> {
         Assert.assertEquals(0, r.getShort(14));
         Assert.assertFalse(r.getBool(15));
         Assert.assertEquals(0, r.getByte(16));
@@ -119,7 +119,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(Numbers.LONG_NULL, r.getLong(20));
         Assert.assertEquals(Numbers.LONG_NULL, r.getDate(21));
     };
-    private static final RecordAssert BATCH_4_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+    private static final RecordAssert BATCH_4_9_BEFORE_ASSERTER = (r, _, _, _) -> {
         Assert.assertEquals(0, r.getShort(13));
         Assert.assertFalse(r.getBool(14));
         Assert.assertEquals(0, r.getByte(15));
