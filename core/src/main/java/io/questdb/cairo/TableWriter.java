@@ -5511,6 +5511,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void enforceTtl(long wallClockMicros) {
+        final int ttl = metadata.getTtlHoursOrMonths();
+        if (ttl == 0) {
+            // No TTL configured — nothing to enforce. Return early so the
+            // non-partitioned-table warning below only fires when TTL was
+            // actually set on a table that can't honour it.
+            return;
+        }
+
         if (metadata.getPartitionBy() == PartitionBy.NONE) {
             LOG.error().$("TTL set on a non-partitioned table. Ignoring").$();
             return;
@@ -5518,11 +5526,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (getPartitionCount() < 2) {
             // there is only a single partition, which is the active one
-            return;
-        }
-
-        final int ttl = metadata.getTtlHoursOrMonths();
-        if (ttl == 0) {
             return;
         }
 
