@@ -24,8 +24,8 @@
 
 //! 64-byte column chunk descriptor stored inside each row group block.
 
-use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::types::{decode_stat_sizes, Codec, EncodingMask, StatFlags};
+use crate::error::ParquetMetaResult;
+use crate::types::{decode_stat_sizes, Codec, EncodingMask, StatFlags};
 
 /// On-disk layout of a column chunk (64 bytes).
 ///
@@ -71,7 +71,7 @@ impl ColumnChunkRaw {
     }
 
     /// Parses the codec byte.
-    pub fn codec(&self) -> ParquetResult<Codec> {
+    pub fn codec(&self) -> ParquetMetaResult<Codec> {
         Codec::try_from(self.codec)
     }
 
@@ -95,7 +95,7 @@ impl ColumnChunkRaw {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parquet_metadata::types::encode_stat_sizes;
+    use crate::types::encode_stat_sizes;
 
     #[test]
     fn size_is_64_bytes() {

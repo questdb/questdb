@@ -30,8 +30,8 @@
 //! `unsafe` because they must match the JNI calling convention.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use crate::parquet::error::fmt_err;
-use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
+use crate::parquet::error::{fmt_err, parquet_meta_err};
+use crate::parquet_metadata::error::ParquetMetaErrorKind;
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
 use crate::parquet_metadata::types::ColumnFlags;
 use crate::parquet_metadata::writer::ParquetMetaWriter;
@@ -168,10 +168,11 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addBloomFilte
     );
     let wrapper = unsafe { &mut *ptr };
     let bitset = unsafe { slice::from_raw_parts(bitset_ptr, bitset_len as usize) };
-    if let Err(mut err) = wrapper
+    if let Err(err) = wrapper
         .writer
         .add_bloom_filter_to_last_row_group(col_index as usize, bitset)
     {
+        let mut err: crate::parquet::error::ParquetError = err.into();
         err.add_context("error in ParquetMetaFileWriter.addBloomFilter");
         err.into_cairo_exception().throw::<()>(&mut env);
     }
@@ -238,7 +239,8 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_finish(
             data,
             parquet_meta_file_size,
         })),
-        Err(mut err) => {
+        Err(err) => {
+            let mut err: crate::parquet::error::ParquetError = err.into();
             err.add_context("error in ParquetMetaFileWriter.finish");
             err.into_cairo_exception().throw(&mut env)
         }

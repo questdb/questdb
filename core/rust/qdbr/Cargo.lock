@@ -1257,6 +1257,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qdb-parquet-meta"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "parquet2",
+ "qdb-core",
+]
+
+[[package]]
 name = "qdbr"
 version = "0.1.0"
 dependencies = [
@@ -1275,6 +1284,7 @@ dependencies = [
  "parquet-format-safe",
  "parquet2",
  "qdb-core",
+ "qdb-parquet-meta",
  "rand",
  "rapidhash",
  "rayon",

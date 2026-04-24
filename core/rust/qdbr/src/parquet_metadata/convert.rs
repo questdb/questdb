@@ -24,10 +24,10 @@
 
 //! Conversion from parquet2 `FileMetaData` (+ optional `QdbMeta`) to `_pm` format.
 
-use crate::parquet::error::ParquetResult;
+use crate::parquet::error::{parquet_meta_err, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaColFormat};
 use crate::parquet_metadata::column_chunk::ColumnChunkRaw;
-use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
+use crate::parquet_metadata::error::ParquetMetaErrorKind;
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
 use crate::parquet_metadata::types::{
     encode_stat_sizes, Codec, ColumnFlags, EncodingMask, FieldRepetition, StatFlags,
@@ -263,7 +263,7 @@ pub fn convert_from_parquet(
         writer.add_row_group(rg_builder);
     }
 
-    writer.finish()
+    Ok(writer.finish()?)
 }
 
 struct BuiltChunk {
@@ -786,7 +786,7 @@ pub fn generate_parquet_metadata(
         writer.add_row_group(block);
     }
 
-    writer.finish()
+    Ok(writer.finish()?)
 }
 
 /// Updates an existing `_pm` file incrementally (append-only).

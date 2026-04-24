@@ -24,9 +24,10 @@
 
 //! Footer reader and builder.
 
-use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
-use crate::parquet_metadata::types::{
+use crate::error::ParquetMetaErrorKind;
+use crate::error::ParquetMetaResult;
+use crate::parquet_meta_err;
+use crate::types::{
     BlockAlignedOffset, FooterFeatureFlags, BLOCK_ALIGNMENT_SHIFT, FOOTER_CHECKSUM_SIZE,
     FOOTER_FIXED_SIZE, FOOTER_TRAILER_SIZE, ROW_GROUP_ENTRY_SIZE,
 };
@@ -73,7 +74,7 @@ impl<'a> Footer<'a> {
     ///
     /// `footer_length_through_crc` is the value from the trailer (bytes from
     /// footer start through CRC, inclusive).
-    pub fn new(data: &'a [u8], footer_length_through_crc: u32) -> ParquetResult<Self> {
+    pub fn new(data: &'a [u8], footer_length_through_crc: u32) -> ParquetMetaResult<Self> {
         if data.len() < FOOTER_FIXED_SIZE + FOOTER_CHECKSUM_SIZE {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
@@ -128,12 +129,16 @@ impl<'a> Footer<'a> {
             ));
         }
 
-        Ok(Self { raw, data, footer_length_through_crc })
+        Ok(Self {
+            raw,
+            data,
+            footer_length_through_crc,
+        })
     }
 
     /// Minimum byte size for the footer (fixed + base entries + CRC + trailer).
     /// Does not account for feature sections.
-    pub fn min_size(row_group_count: u32) -> ParquetResult<usize> {
+    pub fn min_size(row_group_count: u32) -> ParquetMetaResult<usize> {
         Self::base_size_through_crc(row_group_count)?
             .checked_add(FOOTER_TRAILER_SIZE)
             .ok_or_else(|| {
@@ -143,7 +148,7 @@ impl<'a> Footer<'a> {
 
     /// Byte size from footer start through CRC (inclusive), for the base
     /// footer without any feature sections.
-    pub fn base_size_through_crc(row_group_count: u32) -> ParquetResult<usize> {
+    pub fn base_size_through_crc(row_group_count: u32) -> ParquetMetaResult<usize> {
         let rg_entries = (row_group_count as usize)
             .checked_mul(ROW_GROUP_ENTRY_SIZE)
             .ok_or_else(|| {
@@ -197,7 +202,7 @@ impl<'a> Footer<'a> {
 
     /// Returns the actual byte offset of the row group block at `index`.
     /// The stored value is right-shifted by [`BLOCK_ALIGNMENT_SHIFT`].
-    pub fn row_group_block_offset(&self, index: usize) -> ParquetResult<u64> {
+    pub fn row_group_block_offset(&self, index: usize) -> ParquetMetaResult<u64> {
         if index >= self.raw.row_group_count as usize {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
@@ -219,7 +224,7 @@ impl<'a> Footer<'a> {
     }
 
     /// Returns the CRC32 checksum stored in the footer.
-    pub fn checksum(&self) -> ParquetResult<u32> {
+    pub fn checksum(&self) -> ParquetMetaResult<u32> {
         let o = self.crc_offset();
         let crc_data = self.data.get(o..o + 4).ok_or_else(|| {
             parquet_meta_err!(
@@ -289,7 +294,7 @@ impl FooterBuilder {
 
     /// Adds a row group block offset. The offset must be 8-byte aligned
     /// and representable as a block-aligned u32.
-    pub fn add_row_group_offset(&mut self, offset: u64) -> ParquetResult<&mut Self> {
+    pub fn add_row_group_offset(&mut self, offset: u64) -> ParquetMetaResult<&mut Self> {
         // Validates alignment AND that the shifted value fits in u32.
         let _ = BlockAlignedOffset::from_byte_offset(offset)?;
         self.row_group_offsets.push(offset);
@@ -461,7 +466,7 @@ mod tests {
 
     #[test]
     fn feature_flags_round_trip() {
-        use crate::parquet_metadata::types::FooterFeatureFlags;
+        use crate::types::FooterFeatureFlags;
 
         let mut fb = FooterBuilder::new(0, 0);
         fb.feature_flags(FooterFeatureFlags(0xA5));
@@ -474,7 +479,7 @@ mod tests {
 
     #[test]
     fn feature_flags_default_zero() {
-        use crate::parquet_metadata::types::FooterFeatureFlags;
+        use crate::types::FooterFeatureFlags;
 
         let fb = FooterBuilder::new(0, 0);
         let mut buf = Vec::new();

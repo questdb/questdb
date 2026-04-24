@@ -13,10 +13,11 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 qdb-core = { path = "../qdb-core" }
+qdb-parquet-meta = { path = "../qdb-parquet-meta" }
 jni = "0.21.1"
 num-traits = "0.2.18"
-parquet2 = { path = "parquet2" }
-parquet-format-safe = { path = "parquet-format-safe" }
+parquet2 = { path = "../parquet2" }
+parquet-format-safe = { path = "../parquet-format-safe" }
 libc = "0.2.155"
 rayon = "1.10.0"
 log = "0.4.22"

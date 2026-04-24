@@ -24,13 +24,14 @@
 
 //! Writer for `_pm` metadata files (create and update modes).
 
-use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
-use crate::parquet_metadata::footer::{Footer, FooterBuilder};
-use crate::parquet_metadata::header::FileHeaderBuilder;
-use crate::parquet_metadata::reader::ParquetMetaReader;
-use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
-use crate::parquet_metadata::types::{
+use crate::error::ParquetMetaErrorKind;
+use crate::error::ParquetMetaResult;
+use crate::footer::{Footer, FooterBuilder};
+use crate::header::FileHeaderBuilder;
+use crate::parquet_meta_err;
+use crate::reader::ParquetMetaReader;
+use crate::row_group::RowGroupBlockBuilder;
+use crate::types::{
     ColumnFlags, BLOCK_ALIGNMENT, BLOCK_ALIGNMENT_SHIFT, COLUMN_CHUNK_SIZE, FOOTER_CHECKSUM_SIZE,
     FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF, HEADER_PARQUET_META_FILE_SIZE_OFF,
 };
@@ -139,7 +140,7 @@ impl ParquetMetaWriter {
         &mut self,
         col_index: usize,
         bitset: &[u8],
-    ) -> ParquetResult<&mut Self> {
+    ) -> ParquetMetaResult<&mut Self> {
         let rg = self.row_groups.last_mut().ok_or_else(|| {
             parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
@@ -168,7 +169,7 @@ impl ParquetMetaWriter {
     /// committed file size — the same value that is patched into the header
     /// at `HEADER_PARQUET_META_FILE_SIZE_OFF` and matches `bytes.len() as u64`.
     #[must_use = "returns the file bytes and parquet_meta_file_size"]
-    pub fn finish(&mut self) -> ParquetResult<(Vec<u8>, u64)> {
+    pub fn finish(&mut self) -> ParquetMetaResult<(Vec<u8>, u64)> {
         // Auto-derive bloom filter columns from row group contents if not set.
         let is_external = self.header_builder.bloom_filters_external;
         if self.header_builder.bloom_filter_columns.is_empty() {
@@ -334,7 +335,10 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
     /// covers at least `existing_parquet_meta_file_size` bytes; trailing bytes beyond
     /// that (e.g. from an in-progress append or filesystem padding) are
     /// ignored.
-    pub fn new(existing: &'a [u8], existing_parquet_meta_file_size: u64) -> ParquetResult<Self> {
+    pub fn new(
+        existing: &'a [u8],
+        existing_parquet_meta_file_size: u64,
+    ) -> ParquetMetaResult<Self> {
         let reader = ParquetMetaReader::from_file_size(existing, existing_parquet_meta_file_size)?;
         let existing = reader.data();
         let existing_footer_offset = reader.footer_offset();
@@ -419,7 +423,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         &mut self,
         index: usize,
         builder: RowGroupBlockBuilder,
-    ) -> ParquetResult<&mut Self> {
+    ) -> ParquetMetaResult<&mut Self> {
         let len = self.entries.len();
         let slot = self.entries.get_mut(index).ok_or_else(|| {
             parquet_meta_err!(
@@ -450,7 +454,10 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
     /// governed by the committed `parquet_meta_file_size`, not the slice length —
     /// callers may pass a slice longer than the committed view (e.g. an
     /// mmap that includes trailing bytes from an in-progress append).
-    fn read_trailer_footer_length(data: &[u8], parquet_meta_file_size: u64) -> ParquetResult<u32> {
+    fn read_trailer_footer_length(
+        data: &[u8],
+        parquet_meta_file_size: u64,
+    ) -> ParquetMetaResult<u32> {
         let parquet_meta_file_size_usize =
             usize::try_from(parquet_meta_file_size).map_err(|_| {
                 parquet_meta_err!(
@@ -490,7 +497,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
     /// position inside `append_bytes`; it covers `[HEADER_CRC_AREA_OFF,
     /// new_crc_field_offset)` of the entire file (existing + appended).
     #[must_use = "returns the append bytes and new parquet_meta_file_size"]
-    pub fn finish(&self) -> ParquetResult<(Vec<u8>, u64)> {
+    pub fn finish(&self) -> ParquetMetaResult<(Vec<u8>, u64)> {
         // The new data starts right after the old footer's trailer — which
         // is exactly the current committed file size.
         let append_start = self.existing_parquet_meta_file_size as usize;
@@ -647,9 +654,9 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parquet_metadata::column_chunk::ColumnChunkRaw;
-    use crate::parquet_metadata::reader::ParquetMetaReader;
-    use crate::parquet_metadata::types::{Codec, FieldRepetition};
+    use crate::column_chunk::ColumnChunkRaw;
+    use crate::reader::ParquetMetaReader;
+    use crate::types::{Codec, FieldRepetition};
 
     fn make_simple_file() -> (Vec<u8>, u64) {
         let mut w = ParquetMetaWriter::new();

@@ -24,11 +24,10 @@
 
 //! File header, column descriptors, and sorting columns.
 
-use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
-use crate::parquet_metadata::types::{
-    ColumnFlags, HeaderFeatureFlags, COLUMN_DESCRIPTOR_SIZE, HEADER_FIXED_SIZE,
-};
+use crate::error::ParquetMetaErrorKind;
+use crate::error::ParquetMetaResult;
+use crate::parquet_meta_err;
+use crate::types::{ColumnFlags, HeaderFeatureFlags, COLUMN_DESCRIPTOR_SIZE, HEADER_FIXED_SIZE};
 
 // ── On-disk column descriptor (32 bytes) ───────────────────────────────
 
@@ -91,7 +90,7 @@ impl<'a> FileHeader<'a> {
     /// The slice must start at byte 0 of the `_pm` file and be large enough
     /// to contain the full header (fixed fields + descriptors + sorting columns
     /// + name strings + feature sections).
-    pub fn new(data: &'a [u8]) -> ParquetResult<Self> {
+    pub fn new(data: &'a [u8]) -> ParquetMetaResult<Self> {
         if data.len() < HEADER_FIXED_SIZE {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
@@ -115,7 +114,9 @@ impl<'a> FileHeader<'a> {
         let unknown_required = raw.feature_flags.unknown_required(0);
         if unknown_required != 0 {
             return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::UnsupportedFeature { flags: unknown_required }
+                ParquetMetaErrorKind::UnsupportedFeature {
+                    flags: unknown_required
+                }
             ));
         }
 
@@ -231,12 +232,17 @@ impl<'a> FileHeader<'a> {
             None
         };
 
-        Ok(Self { raw, data, bloom_filter_columns, squash_tracker })
+        Ok(Self {
+            raw,
+            data,
+            bloom_filter_columns,
+            squash_tracker,
+        })
     }
 
     /// Minimum byte size required for the header with the given column counts
     /// (not including name string data or feature sections).
-    fn min_size(column_count: u32, sorting_column_count: u32) -> ParquetResult<usize> {
+    fn min_size(column_count: u32, sorting_column_count: u32) -> ParquetMetaResult<usize> {
         HEADER_FIXED_SIZE
             .checked_add(
                 (column_count as usize)
@@ -252,7 +258,7 @@ impl<'a> FileHeader<'a> {
     }
 
     /// Computes the byte offset past the last name string entry.
-    fn compute_names_area_end(data: &[u8], column_count: u32) -> ParquetResult<usize> {
+    fn compute_names_area_end(data: &[u8], column_count: u32) -> ParquetMetaResult<usize> {
         let mut end = HEADER_FIXED_SIZE + (column_count as usize) * COLUMN_DESCRIPTOR_SIZE;
         // We don't know sorting_column_count here from just column_count,
         // but name_offsets are absolute, so we just find the max end.
@@ -318,7 +324,7 @@ impl<'a> FileHeader<'a> {
     }
 
     /// Returns a zero-copy reference to the column descriptor at `index`.
-    pub fn column_descriptor(&self, index: usize) -> ParquetResult<&'a ColumnDescriptorRaw> {
+    pub fn column_descriptor(&self, index: usize) -> ParquetMetaResult<&'a ColumnDescriptorRaw> {
         if index >= self.raw.column_count as usize {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
@@ -337,7 +343,7 @@ impl<'a> FileHeader<'a> {
 
     /// Returns the UTF-8 column name for the given descriptor.
     /// Reads `name_length` bytes at `name_offset`.
-    pub fn column_name(&self, desc: &ColumnDescriptorRaw) -> ParquetResult<&'a str> {
+    pub fn column_name(&self, desc: &ColumnDescriptorRaw) -> ParquetMetaResult<&'a str> {
         let start = desc.name_offset as usize;
         let len = desc.name_length as usize;
         let end = start.checked_add(len).ok_or_else(|| {
@@ -388,7 +394,7 @@ impl<'a> FileHeader<'a> {
 
     /// Returns the effective sorting column index at position `index`.
     /// When SORTING_IS_DTS_ASC is set, index 0 returns the designated timestamp.
-    pub fn sorting_column(&self, index: usize) -> ParquetResult<u32> {
+    pub fn sorting_column(&self, index: usize) -> ParquetMetaResult<u32> {
         if self.raw.feature_flags.has_sorting_is_dts_asc() {
             if index == 0 {
                 return Ok(self.raw.designated_timestamp as u32);
@@ -430,7 +436,7 @@ impl<'a> FileHeader<'a> {
     }
 
     /// Returns the column index at position `pos` in the bloom filter column list.
-    pub fn bloom_filter_column(&self, pos: usize) -> ParquetResult<u32> {
+    pub fn bloom_filter_column(&self, pos: usize) -> ParquetMetaResult<u32> {
         let slice = self.bloom_filter_columns.ok_or_else(|| {
             parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
@@ -674,7 +680,7 @@ impl FileHeaderBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parquet_metadata::types::FieldRepetition;
+    use crate::types::FieldRepetition;
 
     #[test]
     fn descriptor_size_is_32() {

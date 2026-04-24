@@ -71,27 +71,56 @@ impl fmt::Display for ParquetMetaErrorKind {
     }
 }
 
-/// Creates a [`ParquetError`](crate::parquet::error::ParquetError) with a
-/// [`ParquetMetaErrorKind`] reason.
+/// Self-contained error type carrying a kind plus a descriptive message.
+///
+/// qdbr wraps this in its richer `ParquetError` via a `From` impl, so `?`
+/// transparently lifts `ParquetMetaResult` into `ParquetResult` at the crate
+/// boundary.
+#[derive(Debug, Clone)]
+pub struct ParquetMetaError {
+    pub kind: ParquetMetaErrorKind,
+    pub msg: String,
+}
+
+impl ParquetMetaError {
+    pub fn with_descr(kind: ParquetMetaErrorKind, descr: impl Into<String>) -> Self {
+        Self {
+            kind,
+            msg: descr.into(),
+        }
+    }
+}
+
+impl fmt::Display for ParquetMetaError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.msg)
+    }
+}
+
+impl std::error::Error for ParquetMetaError {}
+
+pub type ParquetMetaResult<T> = Result<T, ParquetMetaError>;
+
+/// Builds a [`ParquetMetaError`] with a [`ParquetMetaErrorKind`] and a
+/// format-string description.
 ///
 /// Two forms:
-/// - `parquet_meta_err!(kind, "format string", args...)` — uses the format string as the description.
+/// - `parquet_meta_err!(kind, "format string", args...)`
 /// - `parquet_meta_err!(kind)` — uses the kind's `Display` impl as the description.
+///
+/// Note: qdbr keeps its own `parquet_meta_err!` macro that produces its
+/// `ParquetError` directly. Same name, different crate — callers import
+/// whichever one matches the error type they return.
+#[macro_export]
 macro_rules! parquet_meta_err {
     ($kind:expr, $($arg:tt)+) => {
-        $crate::parquet::error::ParquetError::with_descr(
-            $crate::parquet::error::ParquetErrorReason::ParquetMeta($kind),
-            format!($($arg)+))
+        $crate::error::ParquetMetaError::with_descr($kind, format!($($arg)+))
     };
     ($kind:expr) => {{
         let k = $kind;
-        $crate::parquet::error::ParquetError::with_descr(
-            $crate::parquet::error::ParquetErrorReason::ParquetMeta(k),
-            k.to_string())
+        $crate::error::ParquetMetaError::with_descr(k, k.to_string())
     }};
 }
-
-pub(crate) use parquet_meta_err;
 
 #[cfg(test)]
 mod tests {
@@ -100,11 +129,19 @@ mod tests {
     #[test]
     fn display_all_variants() {
         assert_eq!(
-            ParquetMetaErrorKind::VersionMismatch { found: 99, expected: 1 }.to_string(),
+            ParquetMetaErrorKind::VersionMismatch {
+                found: 99,
+                expected: 1
+            }
+            .to_string(),
             "version mismatch: found 99, expected 1"
         );
         assert_eq!(
-            ParquetMetaErrorKind::ChecksumMismatch { stored: 0xAABB, computed: 0xCCDD }.to_string(),
+            ParquetMetaErrorKind::ChecksumMismatch {
+                stored: 0xAABB,
+                computed: 0xCCDD
+            }
+            .to_string(),
             "checksum mismatch: stored 0x0000AABB, computed 0x0000CCDD"
         );
         assert_eq!(
@@ -128,8 +165,29 @@ mod tests {
             "conversion error"
         );
         assert_eq!(
-            ParquetMetaErrorKind::UnsupportedFeature { flags: 0x1_0000_0000 }.to_string(),
+            ParquetMetaErrorKind::UnsupportedFeature {
+                flags: 0x1_0000_0000
+            }
+            .to_string(),
             "unsupported required feature flags: 0x0000000100000000"
         );
+    }
+
+    #[test]
+    fn error_preserves_kind_and_msg() {
+        let err = ParquetMetaError::with_descr(ParquetMetaErrorKind::Truncated, "oops");
+        assert_eq!(err.kind, ParquetMetaErrorKind::Truncated);
+        assert_eq!(err.msg, "oops");
+        assert_eq!(err.to_string(), "oops");
+    }
+
+    #[test]
+    fn macro_two_forms_yield_consistent_kind() {
+        let a: ParquetMetaError = parquet_meta_err!(ParquetMetaErrorKind::InvalidValue, "x={}", 1);
+        let b: ParquetMetaError = parquet_meta_err!(ParquetMetaErrorKind::InvalidValue);
+        assert_eq!(a.kind, ParquetMetaErrorKind::InvalidValue);
+        assert_eq!(a.msg, "x=1");
+        assert_eq!(b.kind, ParquetMetaErrorKind::InvalidValue);
+        assert_eq!(b.msg, "invalid value");
     }
 }

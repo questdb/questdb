@@ -25,13 +25,14 @@
 //! JNI binding for generating a `_pm` metadata file from a parquet file.
 
 use crate::allocator::QdbAllocator;
+use crate::parquet::error::parquet_meta_err;
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet::io::FromRawFdI32Ext;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_metadata::convert::{
     convert_from_parquet, detect_designated_timestamp, extract_sorting_columns,
 };
-use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
+use crate::parquet_metadata::error::ParquetMetaErrorKind;
 use crate::parquet_read::decode_column::{decode_single_timestamp_value, reconstruct_descriptor};
 use jni::objects::JClass;
 use jni::JNIEnv;

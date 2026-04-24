@@ -24,7 +24,7 @@ core/cmake-build-debug-coverage
 core/cmake-build-release
 core/cmake-build-minsizerel
 core/CMakeCache.txt
-core/rust/qdbr/parquet2/target
+core/rust/parquet2/target
 **/.project
 **/.settings
 **/.classpath
@@ -34,7 +34,7 @@ core/rust/qdbr/parquet2/target
 .vscode
 core/rust/qdb-core/target
 core/rust/qdbr/target
-core/rust/qdbr/parquet2/parquet-tools/target/
+core/rust/parquet2/parquet-tools/target/
 # pgwire compatibility tests - build artifacts
 compat/src/test/rust-tokio/target/
 compat/src/test/rust-sqlx/target/

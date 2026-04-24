@@ -22,36 +22,28 @@
  *
  ******************************************************************************/
 
-//! `_pm` parquet partition metadata file format.
+//! `_pm` parquet partition metadata.
 //!
-//! This module implements readers and writers for the binary metadata file
-//! that accompanies each `data.parquet` partition file. The format stores
-//! column descriptors, per-row-group column chunk metadata (byte ranges,
-//! encodings, statistics), and a footer whose offset is tracked in `_txn`.
+//! Format primitives (readers, writers, footer/header/row-group/column-chunk
+//! types) live in the shared `qdb-parquet-meta` crate so that both `qdbr`
+//! (OSS) and `qdb-ent` (enterprise) can parse `_pm` independently. This
+//! module retains qdbr-only pieces: write-path conversion helpers
+//! (`convert`), JNI thunks (`jni`), and row-group filter pushdown that
+//! delegates to `crate::parquet_read::ParquetDecoder` (`skip`).
 //!
 //! The format specification lives in `docs/parquet-metadata.md`.
-//! Any change to the binary layout, field semantics, or feature flags
-//! must be reflected there.
 
-pub mod column_chunk;
 pub mod convert;
-pub mod error;
-pub mod footer;
-pub mod header;
 pub mod jni;
-pub mod reader;
-pub mod row_group;
-pub mod types;
-pub mod writer;
+pub mod skip;
 
-pub use column_chunk::ColumnChunkRaw;
+pub use qdb_parquet_meta::{
+    column_chunk, error, footer, header, reader, row_group, types, writer, ColumnChunkRaw,
+    ColumnDescriptorRaw, FileHeader, FileHeaderBuilder, Footer, FooterBuilder, ParquetMetaReader,
+    ParquetMetaUpdateWriter, ParquetMetaWriter, RowGroupBlockBuilder, RowGroupBlockReader,
+};
+
 pub use convert::{
     generate_parquet_metadata, physical_type_to_u8, update_parquet_metadata, ParquetMetaColumnInfo,
     ParquetMetaUpdateResult,
 };
-pub use footer::{Footer, FooterBuilder};
-pub use header::{ColumnDescriptorRaw, FileHeader, FileHeaderBuilder};
-pub use reader::ParquetMetaReader;
-pub use row_group::{RowGroupBlockBuilder, RowGroupBlockReader};
-pub use types::*;
-pub use writer::{ParquetMetaUpdateWriter, ParquetMetaWriter};

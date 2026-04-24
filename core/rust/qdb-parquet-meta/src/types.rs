@@ -27,8 +27,9 @@
 #[cfg(not(target_endian = "little"))]
 compile_error!("pm metadata format requires a little-endian target");
 
-use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
+use crate::error::ParquetMetaErrorKind;
+use crate::error::ParquetMetaResult;
+use crate::parquet_meta_err;
 
 // ── File format constants ──────────────────────────────────────────────
 
@@ -163,7 +164,7 @@ impl HeaderFeatureFlags {
     }
 
     /// Validates bit dependencies: bit 1 (external) requires bit 0 (bloom filters).
-    pub fn validate_bit_dependencies(self) -> ParquetResult<()> {
+    pub fn validate_bit_dependencies(self) -> ParquetMetaResult<()> {
         if self.has_bloom_filters_external() && !self.has_bloom_filters() {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
@@ -246,7 +247,7 @@ impl BlockAlignedOffset {
     }
 
     /// Creates from an absolute byte offset. The offset must be block-aligned.
-    pub fn from_byte_offset(offset: u64) -> ParquetResult<Self> {
+    pub fn from_byte_offset(offset: u64) -> ParquetMetaResult<Self> {
         if !offset.is_multiple_of(BLOCK_ALIGNMENT as u64) {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::Alignment,
@@ -284,9 +285,9 @@ pub enum Codec {
 }
 
 impl TryFrom<u8> for Codec {
-    type Error = crate::parquet::error::ParquetError;
+    type Error = crate::error::ParquetMetaError;
 
-    fn try_from(value: u8) -> ParquetResult<Self> {
+    fn try_from(value: u8) -> ParquetMetaResult<Self> {
         match value {
             0 => Ok(Codec::Uncompressed),
             1 => Ok(Codec::Snappy),
@@ -526,9 +527,9 @@ impl From<FieldRepetition> for parquet2::schema::Repetition {
 }
 
 impl TryFrom<u8> for FieldRepetition {
-    type Error = crate::parquet::error::ParquetError;
+    type Error = crate::error::ParquetMetaError;
 
-    fn try_from(value: u8) -> ParquetResult<Self> {
+    fn try_from(value: u8) -> ParquetMetaResult<Self> {
         match value {
             0 => Ok(FieldRepetition::Required),
             1 => Ok(FieldRepetition::Optional),
@@ -574,7 +575,7 @@ impl ColumnFlags {
         self.0 & Self::IS_ASCII_BIT != 0
     }
 
-    pub fn repetition(self) -> ParquetResult<FieldRepetition> {
+    pub fn repetition(self) -> ParquetMetaResult<FieldRepetition> {
         let val = ((self.0 & Self::REPETITION_MASK) >> Self::REPETITION_SHIFT) as u8;
         FieldRepetition::try_from(val)
     }

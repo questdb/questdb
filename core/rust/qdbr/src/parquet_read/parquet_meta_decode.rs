@@ -387,7 +387,7 @@ mod tests {
             writer.add_row_group(rg);
         }
 
-        writer.finish()
+        Ok(writer.finish()?)
     }
 
     // -----------------------------------------------------------------------

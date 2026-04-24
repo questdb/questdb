@@ -24,10 +24,11 @@
 
 //! Row group block reader and builder.
 
-use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::column_chunk::ColumnChunkRaw;
-use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
-use crate::parquet_metadata::types::{BLOCK_ALIGNMENT, COLUMN_CHUNK_SIZE};
+use crate::column_chunk::ColumnChunkRaw;
+use crate::error::ParquetMetaErrorKind;
+use crate::error::ParquetMetaResult;
+use crate::parquet_meta_err;
+use crate::types::{BLOCK_ALIGNMENT, COLUMN_CHUNK_SIZE};
 
 // ── RowGroupBlockReader (zero-copy) ────────────────────────────────────
 
@@ -43,7 +44,7 @@ pub struct RowGroupBlockReader<'a> {
 
 impl<'a> RowGroupBlockReader<'a> {
     /// Creates a reader over the byte slice starting at a row group block.
-    pub fn new(data: &'a [u8], column_count: u32) -> ParquetResult<Self> {
+    pub fn new(data: &'a [u8], column_count: u32) -> ParquetMetaResult<Self> {
         let min_size = Self::min_block_size(column_count)?;
         if data.len() < min_size {
             return Err(parquet_meta_err!(
@@ -54,11 +55,15 @@ impl<'a> RowGroupBlockReader<'a> {
             ));
         }
         let num_rows = u64::from_le_bytes(data[0..8].try_into().unwrap());
-        Ok(Self { data, column_count, num_rows })
+        Ok(Self {
+            data,
+            column_count,
+            num_rows,
+        })
     }
 
     /// Minimum byte size of a row group block (NUM_ROWS + chunks, no out-of-line).
-    pub fn min_block_size(column_count: u32) -> ParquetResult<usize> {
+    pub fn min_block_size(column_count: u32) -> ParquetMetaResult<usize> {
         (column_count as usize)
             .checked_mul(COLUMN_CHUNK_SIZE)
             .and_then(|s| s.checked_add(8))
@@ -76,7 +81,7 @@ impl<'a> RowGroupBlockReader<'a> {
     }
 
     /// Returns a zero-copy reference to the column chunk at `index`.
-    pub fn column_chunk(&self, index: usize) -> ParquetResult<&'a ColumnChunkRaw> {
+    pub fn column_chunk(&self, index: usize) -> ParquetMetaResult<&'a ColumnChunkRaw> {
         if index >= self.column_count as usize {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
@@ -152,7 +157,7 @@ impl RowGroupBlockBuilder {
         &mut self,
         index: usize,
         chunk: ColumnChunkRaw,
-    ) -> ParquetResult<&mut Self> {
+    ) -> ParquetMetaResult<&mut Self> {
         let len = self.chunks.len();
         let slot = self.chunks.get_mut(index).ok_or_else(|| {
             parquet_meta_err!(
@@ -181,7 +186,7 @@ impl RowGroupBlockBuilder {
         col_index: usize,
         is_min: bool,
         data: &[u8],
-    ) -> ParquetResult<&mut Self> {
+    ) -> ParquetMetaResult<&mut Self> {
         let len = self.chunks.len();
         let chunk = self.chunks.get_mut(col_index).ok_or_else(|| {
             parquet_meta_err!(
@@ -224,7 +229,7 @@ impl RowGroupBlockBuilder {
         &mut self,
         col_index: usize,
         bitset: &[u8],
-    ) -> ParquetResult<&mut Self> {
+    ) -> ParquetMetaResult<&mut Self> {
         let len = self.chunks.len();
         if col_index >= len {
             return Err(parquet_meta_err!(
@@ -267,7 +272,7 @@ impl RowGroupBlockBuilder {
         col_index: usize,
         parquet_offset: u64,
         parquet_length: u64,
-    ) -> ParquetResult<&mut Self> {
+    ) -> ParquetMetaResult<&mut Self> {
         let len = self.chunks.len();
         if col_index >= len {
             return Err(parquet_meta_err!(
@@ -317,7 +322,7 @@ impl RowGroupBlockBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parquet_metadata::types::{encode_stat_sizes, Codec, StatFlags};
+    use crate::types::{encode_stat_sizes, Codec, StatFlags};
 
     #[test]
     fn round_trip_simple() {
