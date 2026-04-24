@@ -62,6 +62,11 @@ import org.jetbrains.annotations.NotNull;
 public class InMemoryTable implements QuietCloseable {
     private static final int SYMBOL_MAP_INITIAL_CAPACITY = 16;
     private static final long PAGE_SIZE = 64 * 1024;
+    // Layout of {@link MergeBuffer}'s sort index, duplicated here so
+    // {@link #appendFromInSortedOrder} can decode rowIds without a cross-class reach.
+    // If MergeBuffer changes its index entry format, update these constants in lockstep.
+    private static final int SORT_INDEX_ENTRY_BYTES = 2 * Long.BYTES;
+    private static final int SORT_INDEX_ROWID_OFFSET = Long.BYTES;
     private static final long SYMBOL_MAP_INITIAL_BUF_BYTES = 1024;
 
     // aux columns for var-length types (null for fixed-size)
@@ -488,6 +493,51 @@ public class InMemoryTable implements QuietCloseable {
     }
 
     /**
+     * Appends {@code to - from} rows from {@code source} into this table in the order
+     * the caller's sort index specifies. Each entry of the sort index is a 16-byte
+     * {@code (timestamp, physicalRowId)} pair matching {@link MergeBuffer}'s layout;
+     * the rowId at offset 8 selects which physical row in {@code source} to copy.
+     * <p>
+     * Iterates columns outer and rows inner, so the column-type dispatch runs once per
+     * column instead of once per {@code (column, row)} pair. Fixed-size columns copy
+     * raw bytes per row via {@link Unsafe}; SYMBOL columns fall through the 4-byte
+     * branch and copy the int key directly (shared dictionaries via
+     * {@link #shareSymbolTablesWith} keep the key stable). Variable-length columns
+     * still invoke the type driver per row but without the outer switch dispatch.
+     * <p>
+     * Preconditions:
+     * <ul>
+     *     <li>{@code source.readStart == 0} — rowIds in the sort index are physical
+     *         and {@link LiveViewRecord#setRow} adds {@code readStart}, so a non-zero
+     *         offset would double-translate.</li>
+     *     <li>{@code sourceRecord} wraps {@code source}; it is used only to drive the
+     *         variable-length getters.</li>
+     *     <li>{@code source}'s metadata matches this table's.</li>
+     * </ul>
+     */
+    public void appendFromInSortedOrder(
+            InMemoryTable source,
+            LiveViewRecord sourceRecord,
+            long sortIndexAddr,
+            long from,
+            long to
+    ) {
+        long n = to - from;
+        if (n <= 0) {
+            return;
+        }
+        long entryBase = sortIndexAddr + from * SORT_INDEX_ENTRY_BYTES;
+        for (int col = 0; col < columnCount; col++) {
+            if (isVarLen[col]) {
+                appendVarLenColumnInSortedOrder(col, sourceRecord, entryBase, n);
+            } else {
+                appendFixedColumnInSortedOrder(col, source, entryBase, n);
+            }
+        }
+        this.rowCount += n;
+    }
+
+    /**
      * Appends a single row from the given {@link Record} into the columnar store
      * and increments the row count. The record must cover every column the table
      * was initialized with.
@@ -582,6 +632,78 @@ public class InMemoryTable implements QuietCloseable {
         }
         if (lo > readStart) {
             readStart = lo;
+        }
+    }
+
+    private void appendFixedColumnInSortedOrder(int col, InMemoryTable source, long entryBase, long n) {
+        int sz = columnSizes[col];
+        long srcAddr = source.columns.getQuick(col).getPageAddress(0);
+        long dstAddr = columns.getQuick(col).appendAddressFor(n * sz);
+        switch (sz) {
+            case 1:
+                for (long i = 0; i < n; i++) {
+                    long rowId = Unsafe.getUnsafe().getLong(entryBase + i * SORT_INDEX_ENTRY_BYTES + SORT_INDEX_ROWID_OFFSET);
+                    Unsafe.getUnsafe().putByte(dstAddr + i, Unsafe.getUnsafe().getByte(srcAddr + rowId));
+                }
+                break;
+            case 2:
+                for (long i = 0; i < n; i++) {
+                    long rowId = Unsafe.getUnsafe().getLong(entryBase + i * SORT_INDEX_ENTRY_BYTES + SORT_INDEX_ROWID_OFFSET);
+                    Unsafe.getUnsafe().putShort(dstAddr + i * 2, Unsafe.getUnsafe().getShort(srcAddr + rowId * 2));
+                }
+                break;
+            case 4:
+                for (long i = 0; i < n; i++) {
+                    long rowId = Unsafe.getUnsafe().getLong(entryBase + i * SORT_INDEX_ENTRY_BYTES + SORT_INDEX_ROWID_OFFSET);
+                    Unsafe.getUnsafe().putInt(dstAddr + i * 4, Unsafe.getUnsafe().getInt(srcAddr + rowId * 4));
+                }
+                break;
+            case 8:
+                for (long i = 0; i < n; i++) {
+                    long rowId = Unsafe.getUnsafe().getLong(entryBase + i * SORT_INDEX_ENTRY_BYTES + SORT_INDEX_ROWID_OFFSET);
+                    Unsafe.getUnsafe().putLong(dstAddr + i * 8, Unsafe.getUnsafe().getLong(srcAddr + rowId * 8));
+                }
+                break;
+            default:
+                throw new UnsupportedOperationException("unexpected fixed-size column width: " + sz);
+        }
+    }
+
+    private void appendVarLenColumnInSortedOrder(int col, LiveViewRecord sourceRecord, long entryBase, long n) {
+        int type = columnTypes[col];
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.STRING:
+                for (long i = 0; i < n; i++) {
+                    long rowId = Unsafe.getUnsafe().getLong(entryBase + i * SORT_INDEX_ENTRY_BYTES + SORT_INDEX_ROWID_OFFSET);
+                    sourceRecord.setRow(rowId);
+                    putStr(col, sourceRecord.getStrA(col));
+                }
+                break;
+            case ColumnType.VARCHAR:
+                for (long i = 0; i < n; i++) {
+                    long rowId = Unsafe.getUnsafe().getLong(entryBase + i * SORT_INDEX_ENTRY_BYTES + SORT_INDEX_ROWID_OFFSET);
+                    sourceRecord.setRow(rowId);
+                    putVarchar(col, sourceRecord.getVarcharA(col));
+                }
+                break;
+            case ColumnType.BINARY:
+                for (long i = 0; i < n; i++) {
+                    long rowId = Unsafe.getUnsafe().getLong(entryBase + i * SORT_INDEX_ENTRY_BYTES + SORT_INDEX_ROWID_OFFSET);
+                    sourceRecord.setRow(rowId);
+                    putBin(col, sourceRecord.getBin(col));
+                }
+                break;
+            default:
+                if (ColumnType.isArray(type)) {
+                    for (long i = 0; i < n; i++) {
+                        long rowId = Unsafe.getUnsafe().getLong(entryBase + i * SORT_INDEX_ENTRY_BYTES + SORT_INDEX_ROWID_OFFSET);
+                        sourceRecord.setRow(rowId);
+                        putArray(col, sourceRecord.getArray(col, type), type);
+                    }
+                } else {
+                    throw new UnsupportedOperationException("unsupported var-length type: " + ColumnType.nameOf(type));
+                }
+                break;
         }
     }
 }

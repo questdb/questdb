@@ -240,15 +240,10 @@ public class MergeBuffer implements QuietCloseable {
         compactScratch.clearRows();
         long indexAddr = sortIndex.getPageAddress(0);
         long maxTs = Long.MIN_VALUE;
-        // TODO(live-view): per-row appendRow dispatches a type switch for every column
-        //  on every compaction. For wide base tables this dominates compact cost.
-        //  A columnar "copy rows in sort-index order" helper on InMemoryTable would
-        //  iterate columns outer and rows inner, making the dispatch per-column.
-        for (long i = sortStart; i < count; i++) {
-            long rowId = Unsafe.getUnsafe().getLong(indexAddr + i * INDEX_ENTRY_BYTES + Long.BYTES);
-            record.setRow(rowId);
-            compactScratch.appendRow(record);
-        }
+        // Columnar copy: one type-switch dispatch per column instead of per (column,
+        // row) pair. Fixed-size columns tight-loop via Unsafe; SYMBOL columns copy the
+        // int key directly (dictionaries are shared, so the key is stable).
+        compactScratch.appendFromInSortedOrder(rows, record, indexAddr, sortStart, count);
         // Rewrite sort index to match the new physical layout: row {@code i} in the
         // compacted {@code rows} holds the entry formerly at sortStart + i, so the
         // new (ts, rowId) entry is (ts, i). Read positions are ahead of write
