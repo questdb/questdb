@@ -694,6 +694,59 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullOrderBySampleByLong256Key() throws Exception {
+        // Regression: SAMPLE BY ... FILL(NULL) ORDER BY <non-ts> with a LONG256 key hits
+        // SortedRecordCursor -> RecordChain.put -> Record.getLong256A. The fill record used
+        // by the classic keyed SAMPLE BY (SampleByFillRecord) did not implement getLong256*,
+        // so it fell through to Record's default throwing impl.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sb_l256 (k LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_sb_l256 VALUES ('0x01'::LONG256, 0), ('0x02'::LONG256, 60_000_000), ('0x01'::LONG256, 900_000_000)");
+            assertQueryNoLeakCheck(
+                    """
+                            k\tcnt\tts
+                            0x01\t1\t1970-01-01T00:00:00.000000Z
+                            0x01\tnull\t1970-01-01T00:01:00.000000Z
+                            0x01\tnull\t1970-01-01T00:02:00.000000Z
+                            0x01\tnull\t1970-01-01T00:03:00.000000Z
+                            0x01\tnull\t1970-01-01T00:04:00.000000Z
+                            0x01\tnull\t1970-01-01T00:05:00.000000Z
+                            0x01\tnull\t1970-01-01T00:06:00.000000Z
+                            0x01\tnull\t1970-01-01T00:07:00.000000Z
+                            0x01\tnull\t1970-01-01T00:08:00.000000Z
+                            0x01\tnull\t1970-01-01T00:09:00.000000Z
+                            0x01\tnull\t1970-01-01T00:10:00.000000Z
+                            0x01\tnull\t1970-01-01T00:11:00.000000Z
+                            0x01\tnull\t1970-01-01T00:12:00.000000Z
+                            0x01\tnull\t1970-01-01T00:13:00.000000Z
+                            0x01\tnull\t1970-01-01T00:14:00.000000Z
+                            0x01\t1\t1970-01-01T00:15:00.000000Z
+                            0x02\tnull\t1970-01-01T00:00:00.000000Z
+                            0x02\t1\t1970-01-01T00:01:00.000000Z
+                            0x02\tnull\t1970-01-01T00:02:00.000000Z
+                            0x02\tnull\t1970-01-01T00:03:00.000000Z
+                            0x02\tnull\t1970-01-01T00:04:00.000000Z
+                            0x02\tnull\t1970-01-01T00:05:00.000000Z
+                            0x02\tnull\t1970-01-01T00:06:00.000000Z
+                            0x02\tnull\t1970-01-01T00:07:00.000000Z
+                            0x02\tnull\t1970-01-01T00:08:00.000000Z
+                            0x02\tnull\t1970-01-01T00:09:00.000000Z
+                            0x02\tnull\t1970-01-01T00:10:00.000000Z
+                            0x02\tnull\t1970-01-01T00:11:00.000000Z
+                            0x02\tnull\t1970-01-01T00:12:00.000000Z
+                            0x02\tnull\t1970-01-01T00:13:00.000000Z
+                            0x02\tnull\t1970-01-01T00:14:00.000000Z
+                            0x02\tnull\t1970-01-01T00:15:00.000000Z
+                            """,
+                    "SELECT k, count() AS cnt, ts FROM t_sb_l256 SAMPLE BY 1m FILL(NULL) ORDER BY k, ts",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFillValueException() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table telem (created timestamp, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
