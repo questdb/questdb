@@ -51,7 +51,7 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
             final long hi = dataAddr + rowCount * (long) Character.BYTES;
             char max = 0;
             for (; dataAddr < hi; dataAddr += Character.BYTES) {
-                char value = Unsafe.getUnsafe().getChar(dataAddr);
+                char value = Unsafe.getChar(dataAddr);
                 if (value > max) {
                     max = value;
                 }

@@ -46,7 +46,7 @@ public class LastNotNullDateGroupByFunction extends FirstDateGroupByFunction {
             long hi = dataAddr + (rowCount - 1) * 8L;
             long offset = rowCount - 1;
             for (; hi >= dataAddr; hi -= 8L) {
-                long value = Unsafe.getUnsafe().getLong(hi);
+                long value = Unsafe.getLong(hi);
                 if (isArgNotNull || value != Numbers.LONG_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
@@ -79,24 +79,24 @@ public class LastNotNullDateGroupByFunction extends FirstDateGroupByFunction {
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
+                final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
                 if (isArgNotNull || value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final long existingValue = Unsafe.getUnsafe().getLong(entryBase + valueColumnOffset);
-                    if ((!isArgNotNull && existingValue == Numbers.LONG_NULL) || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putLong(entryBase + valueColumnOffset, value);
+                    final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
+                    if ((!isArgNotNull && existingValue == Numbers.LONG_NULL) || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putLong(entryBase + valueColumnOffset, value);
                     }
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 record.setRowIndex(rowIndex);
                 final long value = arg.getDate(record);
@@ -105,10 +105,10 @@ public class LastNotNullDateGroupByFunction extends FirstDateGroupByFunction {
                 if (isArgNotNull || value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final long existingValue = Unsafe.getUnsafe().getLong(entryBase + valueColumnOffset);
-                    if ((!isArgNotNull && existingValue == Numbers.LONG_NULL) || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putLong(entryBase + valueColumnOffset, value);
+                    final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
+                    if ((!isArgNotNull && existingValue == Numbers.LONG_NULL) || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putLong(entryBase + valueColumnOffset, value);
                     }
                 }
             }

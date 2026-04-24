@@ -106,15 +106,15 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final double value = Unsafe.getUnsafe().getDouble(argAddr + (rowIndex << 3));
+                final double value = Unsafe.getDouble(argAddr + (rowIndex << 3));
                 final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded), isArgNotNull);
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final double value = arg.getDouble(record);
                 final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
@@ -221,16 +221,16 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     private static void applyAvg(long sumAddr, long countAddr, double value, boolean isNew, boolean isArgNotNull) {
         if (isNew) {
             if (isArgNotNull || !Double.isNaN(value)) {
-                Unsafe.getUnsafe().putDouble(sumAddr, value);
-                Unsafe.getUnsafe().putLong(countAddr, 1L);
+                Unsafe.putDouble(sumAddr, value);
+                Unsafe.putLong(countAddr, 1L);
             } else {
                 // Overwrite the etalon's (NaN, 0) with the computeFirst NaN-case state.
-                Unsafe.getUnsafe().putDouble(sumAddr, 0);
-                Unsafe.getUnsafe().putLong(countAddr, 0L);
+                Unsafe.putDouble(sumAddr, 0);
+                Unsafe.putLong(countAddr, 0L);
             }
         } else if (isArgNotNull || !Double.isNaN(value)) {
-            Unsafe.getUnsafe().putDouble(sumAddr, Unsafe.getUnsafe().getDouble(sumAddr) + value);
-            Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1L);
+            Unsafe.putDouble(sumAddr, Unsafe.getDouble(sumAddr) + value);
+            Unsafe.putLong(countAddr, Unsafe.getLong(countAddr) + 1L);
         }
     }
 }

@@ -73,6 +73,44 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
  */
 public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private static final long DEFAULT_PAGE_SIZE = 1024 * 1024L;
+
+    private static void addColumnData(DirectLongList columnData, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf, int columnType) {
+        columnData.add(0L); // no col top
+        columnData.add(dataBuf.addressOf(0));
+        columnData.add(dataBuf.getAppendOffset());
+        if (auxBuf != null) {
+            columnData.add(auxBuf.addressOf(0));
+            // For STRING columns, the aux buffer has N+1 entries. Discard the
+            // last entry, which refers to the offset of the yet-unwritten string.
+            long auxSize = auxBuf.getAppendOffset();
+            if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
+                auxSize -= Long.BYTES;
+            }
+            columnData.add(auxSize);
+        } else {
+            columnData.add(0L);
+            columnData.add(0L);
+        }
+        columnData.add(0L);
+        columnData.add(0L);
+    }
+
+    private static boolean isTypePreservingParquetPassThrough(int sourceColumnType, int outputColumnType) {
+        return sourceColumnType == outputColumnType
+                && outputColumnType == toExportColumnType(outputColumnType);
+    }
+
+    private static int toExportColumnType(int columnType) {
+        if (ColumnType.isSymbol(columnType)) {
+            return ColumnType.STRING;
+        }
+        if (columnType == ColumnType.VARCHAR_SLICE) {
+            return ColumnType.VARCHAR;
+        }
+        return columnType;
+    }
+
+    private final GenericRecordMetadata adjustedMetadata = new GenericRecordMetadata();
     // Per computed col: aux memory (for var-size) or null (for fixed-size)
     private final ObjList<MemoryCARWImpl> auxBuffers = new ObjList<>();
     // Per output col: base col index, or -1 if computed
@@ -95,13 +133,12 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final ObjList<MemoryCARWImpl> dataBuffers = new ObjList<>();
     private final Decimal128 decimal128A = new Decimal128();
     private final Decimal256 decimal256A = new Decimal256();
+    private final HybridSymbolTableSource hybridSymbolTableSource = new HybridSymbolTableSource();
     private final PageFrameMemoryRecord pageFrameRecord = new PageFrameMemoryRecord();
     private final ReusablePageFrameMemory pfMemory = new ReusablePageFrameMemory();
     // Buffers that Rust still references (pending_partitions). Freed after row group flush.
     private final ObjList<MemoryCARWImpl> pinnedAuxBuffers = new ObjList<>();
     private final ObjList<MemoryCARWImpl> pinnedDataBuffers = new ObjList<>();
-    private final GenericRecordMetadata adjustedMetadata = new GenericRecordMetadata();
-    private final HybridSymbolTableSource hybridSymbolTableSource = new HybridSymbolTableSource();
     private int computedCount;
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
@@ -276,7 +313,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
     /**
      * Sets up for cursor-based export: all columns materialized from a RecordCursor
-     * (no page frame backing).
+     * (no page frame backing). This is the fallback path used when the cursor-mode
+     * factory is not a {@link io.questdb.griffin.engine.table.VirtualRecordCursorFactory}
+     * (e.g. join factories, aggregation factories).
      */
     public void setUp(RecordMetadata metadata) {
         this.outputColumnCount = metadata.getColumnCount();
@@ -289,13 +328,61 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
         for (int i = 0; i < outputColumnCount; i++) {
             int columnType = metadata.getColumnType(i);
+            int parquetEncodingConfig = 0;
+            if (columnType == toExportColumnType(columnType)) {
+                parquetEncodingConfig = metadata.getColumnMetadata(i).getParquetEncodingConfig();
+            }
             baseColumnMap.setQuick(i, -1); // all computed in full mode
-            addComputedColumn(metadata, i, columnType);
+            addComputedColumn(metadata, i, columnType, parquetEncodingConfig);
         }
 
         buildComputedColumnIndices();
 
         int tsIdx = metadata.getTimestampIndex();
+        if (tsIdx >= 0) {
+            adjustedMetadata.setTimestampIndex(tsIdx);
+        }
+    }
+
+    /**
+     * Sets up for cursor-based export of a virtual factory: all columns are materialized
+     * from a RecordCursor, but true pass-through columns can still inherit parquet encoding
+     * overrides when the exported type is unchanged.
+     */
+    public void setUpCursorBacked(VirtualRecordCursorFactory vf) {
+        PriorityMetadata priorityMetadata = vf.getPriorityMetadata();
+        ObjList<Function> vfFunctions = vf.getFunctions();
+        RecordMetadata outputMeta = vf.getMetadata();
+        RecordMetadata baseMeta = vf.getBaseFactory().getMetadata();
+        this.outputColumnCount = outputMeta.getColumnCount();
+        this.baseColumnMap.setPos(outputColumnCount);
+        this.computedBufferIdx.setPos(outputColumnCount);
+        this.functions = null;
+
+        adjustedMetadata.clear();
+        computedCount = 0;
+
+        for (int i = 0; i < outputColumnCount; i++) {
+            int columnType = outputMeta.getColumnType(i);
+            int parquetEncodingConfig = 0;
+            ColumnFunction cf = ColumnFunction.unwrap(vfFunctions.getQuick(i));
+            if (cf != null) {
+                int baseColIdx = priorityMetadata.getBaseColumnIndex(cf.getColumnIndex());
+                if (baseColIdx >= 0) {
+                    int sourceColumnType = baseMeta.getColumnType(baseColIdx);
+                    if (isTypePreservingParquetPassThrough(sourceColumnType, columnType)) {
+                        parquetEncodingConfig = baseMeta.getColumnMetadata(baseColIdx).getParquetEncodingConfig();
+                    }
+                }
+            }
+
+            baseColumnMap.setQuick(i, -1); // all columns are materialized in cursor mode
+            addComputedColumn(outputMeta, i, columnType, parquetEncodingConfig);
+        }
+
+        buildComputedColumnIndices();
+
+        int tsIdx = outputMeta.getTimestampIndex();
         if (tsIdx >= 0) {
             adjustedMetadata.setTimestampIndex(tsIdx);
         }
@@ -315,6 +402,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         PriorityMetadata priorityMetadata = vf.getPriorityMetadata();
         this.functions = vf.getFunctions();
         RecordMetadata outputMeta = vf.getMetadata();
+        RecordMetadata baseMeta = vf.getBaseFactory().getMetadata();
         this.outputColumnCount = outputMeta.getColumnCount();
         this.baseColumnMap.setPos(outputColumnCount);
         this.computedBufferIdx.setPos(outputColumnCount);
@@ -322,10 +410,10 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         this.computedCount = 0;
 
         for (int i = 0; i < outputColumnCount; i++) {
-            Function func = functions.getQuick(i);
+            ColumnFunction cf = ColumnFunction.unwrap(functions.getQuick(i));
             int baseColIdx = -1;
 
-            if (func instanceof ColumnFunction cf) {
+            if (cf != null) {
                 int joinSpaceIdx = cf.getColumnIndex();
                 // The column index in function space includes virtualColumnReservedSlots offset.
                 // For base columns, the index is >= virtualColumnReservedSlots.
@@ -341,22 +429,32 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             if (baseColIdx >= 0) {
                 // Pass-through
                 computedBufferIdx.setQuick(i, -1);
+                TableColumnMetadata passThrough;
                 if (ColumnType.isSymbol(columnType)) {
                     // SYMBOL columns require the extended constructor
-                    adjustedMetadata.add(new TableColumnMetadata(
+                    passThrough = new TableColumnMetadata(
                             outputMeta.getColumnName(i),
                             columnType,
                             false,
                             0,
                             true,
                             null
-                    ));
+                    );
                 } else {
-                    adjustedMetadata.add(new TableColumnMetadata(
+                    passThrough = new TableColumnMetadata(
                             outputMeta.getColumnName(i),
                             columnType
-                    ));
+                    );
                 }
+                // Forward the per-column parquet encoding config from the source
+                // metadata so that user-specified PARQUET_ENCODING(...) overrides
+                // survive the hybrid pass-through path. Computed columns keep the
+                // default 0 because the encoding choice does not translate when
+                // the column type changes (e.g. SYMBOL -> STRING).
+                passThrough.setParquetEncodingConfig(
+                        baseMeta.getColumnMetadata(baseColIdx).getParquetEncodingConfig()
+                );
+                adjustedMetadata.add(passThrough);
             } else {
                 assert ColumnType.tagOf(columnType) != ColumnType.BINARY;
                 addComputedColumn(outputMeta, i, columnType);
@@ -393,40 +491,19 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         functionRecord.of(pageFrameRecord);
     }
 
-    private static void addColumnData(DirectLongList columnData, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf, int columnType) {
-        columnData.add(0L); // no col top
-        columnData.add(dataBuf.addressOf(0));
-        columnData.add(dataBuf.getAppendOffset());
-        if (auxBuf != null) {
-            columnData.add(auxBuf.addressOf(0));
-            // For STRING columns, the aux buffer has N+1 entries. Discard the
-            // last entry, which refers to the offset of the yet-unwritten string.
-            long auxSize = auxBuf.getAppendOffset();
-            if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
-                auxSize -= Long.BYTES;
-            }
-            columnData.add(auxSize);
-        } else {
-            columnData.add(0L);
-            columnData.add(0L);
-        }
-        columnData.add(0L);
-        columnData.add(0L);
+    private void addComputedColumn(RecordMetadata metadata, int i, int columnType) {
+        addComputedColumn(metadata, i, columnType, 0);
     }
 
-    private void addComputedColumn(RecordMetadata metadata, int i, int columnType) {
-        int adjustedType = columnType;
-        if (ColumnType.isSymbol(columnType)) {
-            adjustedType = ColumnType.STRING;
-        } else if (columnType == ColumnType.VARCHAR_SLICE) {
-            adjustedType = ColumnType.VARCHAR;
-        }
-
+    private void addComputedColumn(RecordMetadata metadata, int i, int columnType, int parquetEncodingConfig) {
+        int adjustedType = toExportColumnType(columnType);
         computedBufferIdx.setQuick(i, computedCount);
         allocateBuffer(adjustedType);
         computedSourceTypes.add(columnType);
         computedCount++;
-        adjustedMetadata.add(new TableColumnMetadata(metadata.getColumnName(i), adjustedType));
+        TableColumnMetadata adjustedColumn = new TableColumnMetadata(metadata.getColumnName(i), adjustedType);
+        adjustedColumn.setParquetEncodingConfig(parquetEncodingConfig);
+        adjustedMetadata.add(adjustedColumn);
     }
 
     private void allocateBuffer(int columnType) {

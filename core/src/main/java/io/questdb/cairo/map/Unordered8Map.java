@@ -266,7 +266,7 @@ public class Unordered8Map implements Map, Reopenable {
                         src8Map.valueAt(src8Map.zeroMemStart)
                 );
             } else {
-                Unsafe.getUnsafe().copyMemory(src8Map.zeroMemStart, zeroMemStart, entrySize);
+                Unsafe.copyMemory(src8Map.zeroMemStart, zeroMemStart, entrySize);
                 hasZero = true;
             }
             // Check if zero was the only element in the source map.
@@ -278,14 +278,14 @@ public class Unordered8Map implements Map, Reopenable {
         // Then we handle all non-zero keys.
         OUTER:
         for (long srcAddr = src8Map.memStart; srcAddr < src8Map.memLimit; srcAddr += entrySize) {
-            long key = Unsafe.getUnsafe().getLong(srcAddr);
+            long key = Unsafe.getLong(srcAddr);
             if (key == 0) {
                 continue;
             }
 
             long destAddr = getStartAddress(Hash.hashLong64(key) & mask);
             for (; ; ) {
-                long k = Unsafe.getUnsafe().getLong(destAddr);
+                long k = Unsafe.getLong(destAddr);
                 if (k == 0) {
                     break;
                 } else if (k == key) {
@@ -299,7 +299,7 @@ public class Unordered8Map implements Map, Reopenable {
                 destAddr = getNextAddress(destAddr);
             }
 
-            Unsafe.getUnsafe().copyMemory(srcAddr, destAddr, entrySize);
+            Unsafe.copyMemory(srcAddr, destAddr, entrySize);
             size++;
             if (--free == 0) {
                 try {
@@ -354,13 +354,13 @@ public class Unordered8Map implements Map, Reopenable {
                 long hashCode = Hash.hashLong64(k);
                 startAddress = getStartAddress(hashCode & mask);
                 for (; ; ) {
-                    long existing = Unsafe.getUnsafe().getLong(startAddress);
+                    long existing = Unsafe.getLong(startAddress);
                     if (existing == 0) {
-                        Unsafe.getUnsafe().putLong(startAddress, k);
+                        Unsafe.putLong(startAddress, k);
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                            Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -377,13 +377,13 @@ public class Unordered8Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                        Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
 
             long encoded = Map.encodeBatchEntry(r, startAddress + KEY_SIZE - memStart, isNew);
-            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            Unsafe.putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return memStart;
@@ -410,7 +410,7 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         for (long p = batchStart; p < batchEnd; p++) {
-            final long r = Unsafe.getUnsafe().getLong(rowIdsAddr + (p << 3));
+            final long r = Unsafe.getLong(rowIdsAddr + (p << 3));
             record.setRowIndex(r);
             mapSink.copy(record, key);
             final long k = key.key;
@@ -421,13 +421,13 @@ public class Unordered8Map implements Map, Reopenable {
                 long hashCode = Hash.hashLong64(k);
                 startAddress = getStartAddress(hashCode & mask);
                 for (; ; ) {
-                    long existing = Unsafe.getUnsafe().getLong(startAddress);
+                    long existing = Unsafe.getLong(startAddress);
                     if (existing == 0) {
-                        Unsafe.getUnsafe().putLong(startAddress, k);
+                        Unsafe.putLong(startAddress, k);
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                            Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -443,13 +443,13 @@ public class Unordered8Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                        Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
 
             long encoded = Map.encodeBatchEntry(r, startAddress + KEY_SIZE - memStart, isNew);
-            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            Unsafe.putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return memStart;
@@ -523,7 +523,7 @@ public class Unordered8Map implements Map, Reopenable {
             // since fresh slots are already zeroed by clear().
             boolean allZero = true;
             for (long p = buf, end = buf + valueSize; p < end; p++) {
-                if (Unsafe.getUnsafe().getByte(p) != 0) {
+                if (Unsafe.getByte(p) != 0) {
                     allZero = false;
                     break;
                 }
@@ -577,7 +577,7 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     private FlyweightPackedMapValue asNew(long startAddress, long key, long hashCode, FlyweightPackedMapValue value) {
-        Unsafe.getUnsafe().putLong(startAddress, key);
+        Unsafe.putLong(startAddress, key);
         if (--free == 0) {
             try {
                 rehash();
@@ -588,7 +588,7 @@ public class Unordered8Map implements Map, Reopenable {
             // Index may have changed after rehash, so we need to find the key.
             startAddress = getStartAddress(hashCode & mask);
             for (; ; ) {
-                long k = Unsafe.getUnsafe().getLong(startAddress);
+                long k = Unsafe.getLong(startAddress);
                 if (k == key) {
                     break;
                 }
@@ -619,8 +619,8 @@ public class Unordered8Map implements Map, Reopenable {
 
     private long probeBatchFilteredUnsafe(long columnAddr, long rowIdsAddr, long batchStart, long batchEnd, long batchAddr) {
         for (long p = batchStart; p < batchEnd; p++) {
-            final long r = Unsafe.getUnsafe().getLong(rowIdsAddr + (p << 3));
-            final long k = Unsafe.getUnsafe().getLong(columnAddr + r * Long.BYTES);
+            final long r = Unsafe.getLong(rowIdsAddr + (p << 3));
+            final long k = Unsafe.getLong(columnAddr + r * Long.BYTES);
 
             long startAddress;
             boolean isNew;
@@ -628,13 +628,13 @@ public class Unordered8Map implements Map, Reopenable {
                 long hashCode = Hash.hashLong64(k);
                 startAddress = getStartAddress(hashCode & mask);
                 for (; ; ) {
-                    long existing = Unsafe.getUnsafe().getLong(startAddress);
+                    long existing = Unsafe.getLong(startAddress);
                     if (existing == 0) {
-                        Unsafe.getUnsafe().putLong(startAddress, k);
+                        Unsafe.putLong(startAddress, k);
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                            Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -650,13 +650,13 @@ public class Unordered8Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                        Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
 
             long encoded = Map.encodeBatchEntry(r, startAddress + KEY_SIZE - memStart, isNew);
-            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            Unsafe.putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return memStart;
@@ -664,7 +664,7 @@ public class Unordered8Map implements Map, Reopenable {
 
     private long probeBatchUnsafe(long columnAddr, long batchStart, long batchEnd, long batchAddr) {
         for (long r = batchStart; r < batchEnd; r++) {
-            final long k = Unsafe.getUnsafe().getLong(columnAddr + r * Long.BYTES);
+            final long k = Unsafe.getLong(columnAddr + r * Long.BYTES);
 
             long startAddress;
             boolean isNew;
@@ -672,13 +672,13 @@ public class Unordered8Map implements Map, Reopenable {
                 long hashCode = Hash.hashLong64(k);
                 startAddress = getStartAddress(hashCode & mask);
                 for (; ; ) {
-                    long existing = Unsafe.getUnsafe().getLong(startAddress);
+                    long existing = Unsafe.getLong(startAddress);
                     if (existing == 0) {
-                        Unsafe.getUnsafe().putLong(startAddress, k);
+                        Unsafe.putLong(startAddress, k);
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                            Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -694,13 +694,13 @@ public class Unordered8Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                        Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
 
             long encoded = Map.encodeBatchEntry(r, startAddress + KEY_SIZE - memStart, isNew);
-            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            Unsafe.putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return memStart;
@@ -730,24 +730,24 @@ public class Unordered8Map implements Map, Reopenable {
         final int newMask = (int) newKeyCapacity - 1;
 
         for (long addr = memStart; addr < memLimit; addr += entrySize) {
-            long key = Unsafe.getUnsafe().getLong(addr);
+            long key = Unsafe.getLong(addr);
             if (key == 0) {
                 continue;
             }
 
             long newAddr = getStartAddress(newMemStart, Hash.hashLong64(key) & newMask);
-            while (Unsafe.getUnsafe().getLong(newAddr) != 0) {
+            while (Unsafe.getLong(newAddr) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
                     newAddr = newMemStart;
                 }
             }
-            Unsafe.getUnsafe().copyMemory(addr, newAddr, entrySize);
+            Unsafe.copyMemory(addr, newAddr, entrySize);
         }
 
         // Copy the zero key entry to the new end-of-buffer slot.
         if (hasZero) {
-            Unsafe.getUnsafe().copyMemory(zeroMemStart, newMemLimit, entrySize);
+            Unsafe.copyMemory(zeroMemStart, newMemLimit, entrySize);
         }
 
         Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag);
@@ -770,7 +770,7 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     boolean isZeroKey(long startAddress) {
-        return Unsafe.getUnsafe().getLong(startAddress) == 0;
+        return Unsafe.getLong(startAddress) == 0;
     }
 
     class Key implements MapKey {
@@ -951,7 +951,7 @@ public class Unordered8Map implements Map, Reopenable {
         private MapValue createNonZeroKeyValue(long key, long hashCode) {
             long startAddress = getStartAddress(hashCode & mask);
             for (; ; ) {
-                long k = Unsafe.getUnsafe().getLong(startAddress);
+                long k = Unsafe.getLong(startAddress);
                 if (k == 0) {
                     return asNew(startAddress, key, hashCode, value);
                 } else if (k == key) {
@@ -976,7 +976,7 @@ public class Unordered8Map implements Map, Reopenable {
 
             long startAddress = getStartAddress(Hash.hashLong64(key) & mask);
             for (; ; ) {
-                long k = Unsafe.getUnsafe().getLong(startAddress);
+                long k = Unsafe.getLong(startAddress);
                 if (k == 0) {
                     return null;
                 } else if (k == key) {

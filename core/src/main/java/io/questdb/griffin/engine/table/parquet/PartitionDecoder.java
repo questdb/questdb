@@ -265,8 +265,8 @@ public class PartitionDecoder implements QuietCloseable {
         this.fileSize = fileSize;
         final long allocator = Unsafe.getNativeAllocator(memoryTag);
         ptr = create(allocator, addr, fileSize); // throws CairoException on error
-        columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
-        rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
+        columnsPtr = Unsafe.getLong(ptr + COLUMNS_PTR_OFFSET);
+        rowGroupSizesPtr = Unsafe.getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
         metadata.init();
     }
 
@@ -313,6 +313,11 @@ public class PartitionDecoder implements QuietCloseable {
                 (int) (columns.size() >>> 1),
                 rowGroupIndex
         );
+    }
+
+    public boolean rowGroupColumnHasEncoding(int rowGroupIndex, int columnIndex, int encoding) {
+        assert ptr != 0;
+        return rowGroupColumnHasEncoding(ptr, rowGroupIndex, columnIndex, encoding);
     }
 
     public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
@@ -414,6 +419,13 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long rowCountOffset();
 
+    private static native boolean rowGroupColumnHasEncoding(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex,
+            int encoding
+    ) throws CairoException;
+
     private static native long rowGroupCountOffset();
 
     private static native long rowGroupMaxTimestamp(
@@ -507,11 +519,11 @@ public class PartitionDecoder implements QuietCloseable {
         }
 
         public int getColumnCount() {
-            return Unsafe.getUnsafe().getInt(ptr + COLUMN_COUNT_OFFSET);
+            return Unsafe.getInt(ptr + COLUMN_COUNT_OFFSET);
         }
 
         public int getColumnId(int columnIndex) {
-            return Unsafe.getUnsafe().getInt(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_IDS_OFFSET);
+            return Unsafe.getInt(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_IDS_OFFSET);
         }
 
         public int getColumnIndex(CharSequence name) {
@@ -529,30 +541,30 @@ public class PartitionDecoder implements QuietCloseable {
         }
 
         public int getColumnType(int columnIndex) {
-            return Unsafe.getUnsafe().getInt(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_RECORD_TYPE_OFFSET);
+            return Unsafe.getInt(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_RECORD_TYPE_OFFSET);
         }
 
         public long getRowCount() {
-            return Unsafe.getUnsafe().getLong(ptr + ROW_COUNT_OFFSET);
+            return Unsafe.getLong(ptr + ROW_COUNT_OFFSET);
         }
 
         public int getRowGroupCount() {
-            return Unsafe.getUnsafe().getInt(ptr + ROW_GROUP_COUNT_OFFSET);
+            return Unsafe.getInt(ptr + ROW_GROUP_COUNT_OFFSET);
         }
 
         public int getRowGroupSize(int rowGroupIndex) {
-            return Unsafe.getUnsafe().getInt(rowGroupSizesPtr + 4L * rowGroupIndex);
+            return Unsafe.getInt(rowGroupSizesPtr + 4L * rowGroupIndex);
         }
 
         public int getTimestampIndex() {
             // The value is stored as Option<NonMaxU32> on the Rust side,
             // so we need to apply bitwise not to get the actual value.
             // None is mapped to ~0 which is u32::max or -1_i32.
-            return ~Unsafe.getUnsafe().getInt(ptr + TIMESTAMP_INDEX_OFFSET);
+            return ~Unsafe.getInt(ptr + TIMESTAMP_INDEX_OFFSET);
         }
 
         public long getUnusedBytes() {
-            return Unsafe.getUnsafe().getLong(ptr + UNUSED_BYTES_OFFSET);
+            return Unsafe.getLong(ptr + UNUSED_BYTES_OFFSET);
         }
 
         public boolean isNotNull(int columnIndex) {
@@ -569,8 +581,8 @@ public class PartitionDecoder implements QuietCloseable {
             long currentColumnPtr = columnsPtr;
             for (long i = 0; i < columnCount; i++) {
                 DirectString str = directStringPool.next();
-                int len = Unsafe.getUnsafe().getInt(currentColumnPtr + COLUMN_RECORD_NAME_SIZE_OFFSET);
-                long colNamePtr = Unsafe.getUnsafe().getLong(currentColumnPtr + COLUMN_RECORD_NAME_PTR_OFFSET);
+                int len = Unsafe.getInt(currentColumnPtr + COLUMN_RECORD_NAME_SIZE_OFFSET);
+                long colNamePtr = Unsafe.getLong(currentColumnPtr + COLUMN_RECORD_NAME_PTR_OFFSET);
                 str.of(colNamePtr, len);
                 columnNames.add(str);
                 currentColumnPtr += COLUMN_STRUCT_SIZE;

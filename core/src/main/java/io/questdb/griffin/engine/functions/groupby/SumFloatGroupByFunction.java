@@ -58,7 +58,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
             boolean hasValue = false;
             final long hi = dataAddr + rowCount * (long) Float.BYTES;
             for (; dataAddr < hi; dataAddr += Float.BYTES) {
-                final float value = Unsafe.getUnsafe().getFloat(dataAddr);
+                final float value = Unsafe.getFloat(dataAddr);
                 if (isArgNotNull || !Float.isNaN(value)) {
                     acc += value;
                     hasValue = true;
@@ -96,24 +96,24 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final float value = Unsafe.getUnsafe().getFloat(argAddr + (rowIndex << 2));
+                final float value = Unsafe.getFloat(argAddr + (rowIndex << 2));
                 if (isArgNotNull || !Float.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    final float current = Unsafe.getUnsafe().getFloat(addr);
-                    Unsafe.getUnsafe().putFloat(addr, !Float.isNaN(current) ? current + value : value);
+                    final float current = Unsafe.getFloat(addr);
+                    Unsafe.putFloat(addr, !Float.isNaN(current) ? current + value : value);
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final float value = arg.getFloat(record);
                 if (isArgNotNull || !Float.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    final float current = Unsafe.getUnsafe().getFloat(addr);
-                    Unsafe.getUnsafe().putFloat(addr, !Float.isNaN(current) ? current + value : value);
+                    final float current = Unsafe.getFloat(addr);
+                    Unsafe.putFloat(addr, !Float.isNaN(current) ? current + value : value);
                 }
             }
         }

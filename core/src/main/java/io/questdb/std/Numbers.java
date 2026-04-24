@@ -540,10 +540,10 @@ public final class Numbers {
     }
 
     public static void appendLong256FromUnsafe(long address, CharSink<?> sink) {
-        final long a = Unsafe.getUnsafe().getLong(address);
-        final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
-        final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);
-        final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);
+        final long a = Unsafe.getLong(address);
+        final long b = Unsafe.getLong(address + Long.BYTES);
+        final long c = Unsafe.getLong(address + Long.BYTES * 2);
+        final long d = Unsafe.getLong(address + Long.BYTES * 3);
         appendLong256(a, b, c, d, sink);
     }
 

@@ -58,7 +58,7 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putChar(valueIndex + 1, Unsafe.getUnsafe().getChar(dataAddr));
+                mapValue.putChar(valueIndex + 1, Unsafe.getChar(dataAddr));
             }
         }
     }
@@ -87,27 +87,27 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long rowId = baseRowId + rowIndex;
                 final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                final long existingRowId = Unsafe.getUnsafe().getLong(entryBase + rowIdOffset);
+                final long existingRowId = Unsafe.getLong(entryBase + rowIdOffset);
                 if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId) {
-                    Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                    Unsafe.getUnsafe().putChar(entryBase + valueColumnOffset, Unsafe.getUnsafe().getChar(argAddr + (rowIndex << 1)));
+                    Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                    Unsafe.putChar(entryBase + valueColumnOffset, Unsafe.getChar(argAddr + (rowIndex << 1)));
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long rowId = baseRowId + rowIndex;
                 final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                final long existingRowId = Unsafe.getUnsafe().getLong(entryBase + rowIdOffset);
+                final long existingRowId = Unsafe.getLong(entryBase + rowIdOffset);
                 if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId) {
                     record.setRowIndex(rowIndex);
-                    Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                    Unsafe.getUnsafe().putChar(entryBase + valueColumnOffset, arg.getChar(record));
+                    Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                    Unsafe.putChar(entryBase + valueColumnOffset, arg.getChar(record));
                 }
             }
         }

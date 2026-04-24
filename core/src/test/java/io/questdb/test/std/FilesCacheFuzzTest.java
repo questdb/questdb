@@ -485,9 +485,9 @@ public class FilesCacheFuzzTest extends AbstractTest {
                                 assert writeOffset < (mapSize - 8);
                             }
 
-                            Unsafe.getUnsafe().putLong(address + writeOffset, testValue);
+                            Unsafe.putLong(address + writeOffset, testValue);
 
-                            long read = Unsafe.getUnsafe().getLong(address2 + writeOffset);
+                            long read = Unsafe.getLong(address2 + writeOffset);
                             Assert.assertEquals("Read value should match written value",
                                     testValue, read);
 
@@ -495,7 +495,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
                             Assert.assertTrue(fd2 > -1);
                             long mapSize3 = mapSize / 2 + rnd.nextLong(mapSize / 2);
                             long address3 = Files.mmap(fd2, mapSize3, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-                            long read2 = Unsafe.getUnsafe().getLong(address2 + writeOffset);
+                            long read2 = Unsafe.getLong(address2 + writeOffset);
                             Assert.assertEquals("Read value should match written value",
                                     testValue, read2);
 
@@ -559,7 +559,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
                                 failed.set(true);
                                 continue;
                             }
-                            Unsafe.getUnsafe().putLong(buff, op + 1);
+                            Unsafe.putLong(buff, op + 1);
                             Files.write(fd1, buff, 8, thread * 8);
 
                             openOperations.incrementAndGet();
@@ -569,7 +569,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
                             if (fd2 > -1) {
                                 if (Files.read(fd2, buff, 8, thread * 8) == 8) {
-                                    long value = Unsafe.getUnsafe().getLong(buff);
+                                    long value = Unsafe.getLong(buff);
                                     if (value != 0) {
                                         Assert.assertEquals(op + 1, value);
                                     }

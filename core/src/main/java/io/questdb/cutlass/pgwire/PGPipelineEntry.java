@@ -732,7 +732,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public void msgParseCopyParameterTypesFromMsg(long lo, short parameterTypeCount) {
         msgParseParameterTypeOIDs.setPos(parameterTypeCount);
         for (int i = 0; i < parameterTypeCount; i++) {
-            msgParseParameterTypeOIDs.setQuick(i, Unsafe.getUnsafe().getInt(lo + i * 4L));
+            msgParseParameterTypeOIDs.setQuick(i, Unsafe.getInt(lo + i * 4L));
         }
     }
 
@@ -2942,7 +2942,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             BindVariableService bindVariableService
     ) throws SqlException, PGMessageProcessingException {
         ensureValueLength(variableIndex, Byte.BYTES, valueSize);
-        byte val = Unsafe.getUnsafe().getByte(valueAddr);
+        byte val = Unsafe.getByte(valueAddr);
         bindVariableService.setBoolean(variableIndex, val == 1);
     }
 

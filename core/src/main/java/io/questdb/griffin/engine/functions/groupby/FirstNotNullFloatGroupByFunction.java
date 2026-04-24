@@ -46,7 +46,7 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
             final long hi = dataAddr + rowCount * (long) Float.BYTES;
             long offset = 0;
             for (; dataAddr < hi; dataAddr += Float.BYTES) {
-                float value = Unsafe.getUnsafe().getFloat(dataAddr);
+                float value = Unsafe.getFloat(dataAddr);
                 if (isArgNotNull || !Numbers.isNull(value)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
@@ -80,25 +80,25 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final float value = Unsafe.getUnsafe().getFloat(argAddr + (rowIndex << 2));
+                final float value = Unsafe.getFloat(argAddr + (rowIndex << 2));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
                 if (isArgNotNull || !Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final long existingRowId = Unsafe.getUnsafe().getLong(entryBase + rowIdOffset);
-                    final float existingValue = Unsafe.getUnsafe().getFloat(entryBase + valueColumnOffset);
+                    final long existingRowId = Unsafe.getLong(entryBase + rowIdOffset);
+                    final float existingValue = Unsafe.getFloat(entryBase + valueColumnOffset);
                     if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && Numbers.isNull(existingValue))) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putFloat(entryBase + valueColumnOffset, value);
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putFloat(entryBase + valueColumnOffset, value);
                     }
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 record.setRowIndex(rowIndex);
                 final float value = arg.getFloat(record);
@@ -107,11 +107,11 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
                 if (isArgNotNull || !Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final long existingRowId = Unsafe.getUnsafe().getLong(entryBase + rowIdOffset);
-                    final float existingValue = Unsafe.getUnsafe().getFloat(entryBase + valueColumnOffset);
+                    final long existingRowId = Unsafe.getLong(entryBase + rowIdOffset);
+                    final float existingValue = Unsafe.getFloat(entryBase + valueColumnOffset);
                     if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && Numbers.isNull(existingValue))) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putFloat(entryBase + valueColumnOffset, value);
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putFloat(entryBase + valueColumnOffset, value);
                     }
                 }
             }

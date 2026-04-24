@@ -87,19 +87,19 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
+                final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.getUnsafe().putLong(addr, Math.max(value, Unsafe.getUnsafe().getLong(addr)));
+                Unsafe.putLong(addr, Math.max(value, Unsafe.getLong(addr)));
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getTimestamp(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.getUnsafe().putLong(addr, Math.max(value, Unsafe.getUnsafe().getLong(addr)));
+                Unsafe.putLong(addr, Math.max(value, Unsafe.getLong(addr)));
             }
         }
     }

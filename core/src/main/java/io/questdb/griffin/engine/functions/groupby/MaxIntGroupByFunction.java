@@ -85,19 +85,19 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
+                final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.getUnsafe().putInt(addr, Math.max(value, Unsafe.getUnsafe().getInt(addr)));
+                Unsafe.putInt(addr, Math.max(value, Unsafe.getInt(addr)));
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.getUnsafe().putInt(addr, Math.max(value, Unsafe.getUnsafe().getInt(addr)));
+                Unsafe.putInt(addr, Math.max(value, Unsafe.getInt(addr)));
             }
         }
     }

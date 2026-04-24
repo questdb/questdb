@@ -120,7 +120,7 @@ public class MillisTimestampDriver implements TimestampDriver {
 
     @Override
     public boolean append(long fixedAddr, CharSink<?> sink, boolean notNull) {
-        long value = Unsafe.getUnsafe().getLong(fixedAddr);
+        long value = Unsafe.getLong(fixedAddr);
         if (notNull || value != Numbers.LONG_NULL) {
             DateFormatUtils.appendDateTime(sink, value);
             return true;

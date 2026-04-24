@@ -806,7 +806,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
         byte[] utf8Bytes = value.getBytes(StandardCharsets.UTF_8);
         Assert.assertTrue(utf8Bytes.length <= DBCS_MAX_SIZE);
         for (int i = 0, n = utf8Bytes.length; i < n; i++) {
-            Unsafe.getUnsafe().putByte(mem + i, utf8Bytes[i]);
+            Unsafe.putByte(mem + i, utf8Bytes[i]);
         }
         return dus.of(mem, mem + utf8Bytes.length);
     }

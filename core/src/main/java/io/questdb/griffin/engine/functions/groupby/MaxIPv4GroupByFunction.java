@@ -59,7 +59,7 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
             final long hi = dataAddr + rowCount * (long) Integer.BYTES;
             long max = Numbers.ipv4ToLong(Numbers.IPv4_NULL);
             for (; dataAddr < hi; dataAddr += Integer.BYTES) {
-                long value = Numbers.ipv4ToLong(Unsafe.getUnsafe().getInt(dataAddr));
+                long value = Numbers.ipv4ToLong(Unsafe.getInt(dataAddr));
                 if (value > max) {
                     max = value;
                 }
@@ -94,24 +94,24 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
+                final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                final int current = Unsafe.getUnsafe().getInt(addr);
+                final int current = Unsafe.getInt(addr);
                 if (Numbers.ipv4ToLong(value) > Numbers.ipv4ToLong(current)) {
-                    Unsafe.getUnsafe().putInt(addr, value);
+                    Unsafe.putInt(addr, value);
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getIPv4(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                final int current = Unsafe.getUnsafe().getInt(addr);
+                final int current = Unsafe.getInt(addr);
                 if (Numbers.ipv4ToLong(value) > Numbers.ipv4ToLong(current)) {
-                    Unsafe.getUnsafe().putInt(addr, value);
+                    Unsafe.putInt(addr, value);
                 }
             }
         }

@@ -93,15 +93,15 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final short value = Unsafe.getUnsafe().getShort(argAddr + (rowIndex << 1));
+                final short value = Unsafe.getShort(argAddr + (rowIndex << 1));
                 final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final short value = arg.getShort(record);
                 final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
@@ -215,11 +215,11 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     private static void applyAvg(long sumAddr, long countAddr, short value, boolean isNew) {
         if (isNew) {
-            Unsafe.getUnsafe().putLong(sumAddr, value);
-            Unsafe.getUnsafe().putLong(countAddr, 1L);
+            Unsafe.putLong(sumAddr, value);
+            Unsafe.putLong(countAddr, 1L);
         } else {
-            Unsafe.getUnsafe().putLong(sumAddr, Unsafe.getUnsafe().getLong(sumAddr) + value);
-            Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1L);
+            Unsafe.putLong(sumAddr, Unsafe.getLong(sumAddr) + value);
+            Unsafe.putLong(countAddr, Unsafe.getLong(countAddr) + 1L);
         }
     }
 }

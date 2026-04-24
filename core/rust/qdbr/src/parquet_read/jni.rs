@@ -253,6 +253,67 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     }
 }
 
+const QUESTDB_ENCODING_PLAIN: i32 = 1;
+const QUESTDB_ENCODING_RLE_DICTIONARY: i32 = 2;
+const QUESTDB_ENCODING_DELTA_LENGTH_BYTE_ARRAY: i32 = 3;
+const QUESTDB_ENCODING_DELTA_BINARY_PACKED: i32 = 4;
+const QUESTDB_ENCODING_BYTE_STREAM_SPLIT: i32 = 5;
+
+// Parquet spec encoding ordinals (from parquet.thrift Encoding enum).
+const PARQUET_ENCODING_PLAIN: i32 = 0;
+const PARQUET_ENCODING_DELTA_BINARY_PACKED: i32 = 5;
+const PARQUET_ENCODING_DELTA_LENGTH_BYTE_ARRAY: i32 = 6;
+const PARQUET_ENCODING_RLE_DICTIONARY: i32 = 8;
+const PARQUET_ENCODING_BYTE_STREAM_SPLIT: i32 = 9;
+
+fn questdb_encoding_id_to_parquet_encoding(encoding_id: i32) -> ParquetResult<i32> {
+    match encoding_id {
+        QUESTDB_ENCODING_PLAIN => Ok(PARQUET_ENCODING_PLAIN),
+        QUESTDB_ENCODING_RLE_DICTIONARY => Ok(PARQUET_ENCODING_RLE_DICTIONARY),
+        QUESTDB_ENCODING_DELTA_LENGTH_BYTE_ARRAY => Ok(PARQUET_ENCODING_DELTA_LENGTH_BYTE_ARRAY),
+        QUESTDB_ENCODING_DELTA_BINARY_PACKED => Ok(PARQUET_ENCODING_DELTA_BINARY_PACKED),
+        QUESTDB_ENCODING_BYTE_STREAM_SPLIT => Ok(PARQUET_ENCODING_BYTE_STREAM_SPLIT),
+        _ => Err(fmt_err!(
+            InvalidType,
+            "unsupported parquet encoding id {}",
+            encoding_id
+        )),
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupColumnHasEncoding(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    column_index: u32,
+    encoding_id: i32,
+) -> bool {
+    let res = (|| -> ParquetResult<bool> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+
+        let parquet_encoding = questdb_encoding_id_to_parquet_encoding(encoding_id)?;
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_column_has_encoding(row_group_index, column_index, parquet_encoding)
+    })();
+
+    match res {
+        Ok(has_encoding) => has_encoding,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not read encodings for row group {}, column {}",
+                row_group_index, column_index
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupColumnHasEncoding");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroup(
     mut env: JNIEnv,
@@ -873,4 +934,65 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         return err.into_cairo_exception().throw(&mut env);
     }
     1 // JNI_TRUE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        questdb_encoding_id_to_parquet_encoding, PARQUET_ENCODING_BYTE_STREAM_SPLIT,
+        PARQUET_ENCODING_DELTA_BINARY_PACKED, PARQUET_ENCODING_DELTA_LENGTH_BYTE_ARRAY,
+        PARQUET_ENCODING_PLAIN, PARQUET_ENCODING_RLE_DICTIONARY,
+        QUESTDB_ENCODING_BYTE_STREAM_SPLIT, QUESTDB_ENCODING_DELTA_BINARY_PACKED,
+        QUESTDB_ENCODING_DELTA_LENGTH_BYTE_ARRAY, QUESTDB_ENCODING_PLAIN,
+        QUESTDB_ENCODING_RLE_DICTIONARY,
+    };
+    use crate::parquet::error::ParquetErrorReason;
+
+    #[test]
+    fn encoding_id_to_parquet_encoding_maps_known_ids() {
+        assert_eq!(
+            questdb_encoding_id_to_parquet_encoding(QUESTDB_ENCODING_PLAIN).unwrap(),
+            PARQUET_ENCODING_PLAIN,
+        );
+        assert_eq!(
+            questdb_encoding_id_to_parquet_encoding(QUESTDB_ENCODING_RLE_DICTIONARY).unwrap(),
+            PARQUET_ENCODING_RLE_DICTIONARY,
+        );
+        assert_eq!(
+            questdb_encoding_id_to_parquet_encoding(QUESTDB_ENCODING_DELTA_LENGTH_BYTE_ARRAY)
+                .unwrap(),
+            PARQUET_ENCODING_DELTA_LENGTH_BYTE_ARRAY,
+        );
+        assert_eq!(
+            questdb_encoding_id_to_parquet_encoding(QUESTDB_ENCODING_DELTA_BINARY_PACKED).unwrap(),
+            PARQUET_ENCODING_DELTA_BINARY_PACKED,
+        );
+        assert_eq!(
+            questdb_encoding_id_to_parquet_encoding(QUESTDB_ENCODING_BYTE_STREAM_SPLIT).unwrap(),
+            PARQUET_ENCODING_BYTE_STREAM_SPLIT,
+        );
+    }
+
+    #[test]
+    fn encoding_id_to_parquet_encoding_rejects_unknown() {
+        for bad_id in [0, 6, 99, -1, i32::MIN, i32::MAX] {
+            let err = questdb_encoding_id_to_parquet_encoding(bad_id)
+                .err()
+                .unwrap_or_else(|| panic!("expected error for encoding id {bad_id}"));
+            assert!(
+                matches!(err.reason(), ParquetErrorReason::InvalidType),
+                "expected InvalidType for encoding id {bad_id}, got {:?}",
+                err.reason()
+            );
+            let msg = err.to_string();
+            assert!(
+                msg.contains("unsupported parquet encoding id"),
+                "error message should mention 'unsupported parquet encoding id', got: {msg}"
+            );
+            assert!(
+                msg.contains(&bad_id.to_string()),
+                "error message should include the rejected id {bad_id}, got: {msg}"
+            );
+        }
+    }
 }

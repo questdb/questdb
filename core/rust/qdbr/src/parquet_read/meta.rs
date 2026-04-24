@@ -360,6 +360,7 @@ mod tests {
     use std::ptr::null;
 
     use crate::allocator::TestAllocatorState;
+    use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::meta::ParquetDecoder;
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
@@ -492,6 +493,173 @@ mod tests {
                 ColumnType::new_decimal(20, 4).expect("valid QuestDB decimal type")
             );
         }
+    }
+
+    /// Parquet thrift Encoding enum bytes that the writer emits and the
+    /// `row_group_column_has_encoding` reader compares against.
+    /// PLAIN=0, RLE=3, RLE_DICTIONARY=8, PLAIN_DICTIONARY=2.
+    const PARQUET_ENCODING_PLAIN: i32 = 0;
+    const PARQUET_ENCODING_RLE_DICTIONARY: i32 = 8;
+
+    /// Build a 100-row Int column. `parquet_encoding` follows the
+    /// `parquet_encoding_override_round_trip_representative_types` convention:
+    /// the low byte is a QuestDB encoding id (1 = Plain, 2 = RleDictionary)
+    /// and bit 24 marks the override as user-supplied.
+    fn build_int_column_with_encoding(encoding_id: i32) -> (Vec<i32>, Column) {
+        let data: Vec<i32> = (0..100i32).collect();
+        let parquet_encoding = if encoding_id == 0 {
+            0
+        } else {
+            encoding_id | (1 << 24)
+        };
+        let col = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            data.len(),
+            data.as_ptr() as *const u8,
+            data.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            parquet_encoding,
+        )
+        .unwrap();
+        (data, col)
+    }
+
+    /// Write a single-column single-row-group parquet file to a temp file and
+    /// open it through `ParquetDecoder::read`. Returns the decoder, the temp
+    /// file (kept alive so the path stays valid), and the original buffer of
+    /// column data so the caller can keep that alive too.
+    fn round_trip_int_column(
+        encoding_id: i32,
+    ) -> (
+        ParquetDecoder,
+        NamedTempFile,
+        Vec<i32>,
+        crate::allocator::TestAllocatorState,
+    ) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let (data, col) = build_int_column_with_encoding(encoding_id);
+        let partition = Partition { table: "t".to_string(), columns: vec![col] };
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_row_group_size(Some(1_048_576))
+            .with_data_page_size(Some(1_048_576))
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let mut temp_file = NamedTempFile::new().expect("temp file");
+        temp_file
+            .write_all(bytes.to_byte_slice())
+            .expect("write parquet bytes");
+
+        let path = temp_file.path().to_str().unwrap();
+        let mut file = File::open(Path::new(path)).unwrap();
+        let file_len = file.len();
+        let decoder = ParquetDecoder::read(allocator, &mut file, file_len).unwrap();
+        (decoder, temp_file, data, tas)
+    }
+
+    #[test]
+    fn row_group_column_has_encoding_finds_plain() {
+        let (decoder, _temp_file, _data, _tas) = round_trip_int_column(0);
+
+        // Sanity-check the file shape.
+        assert_eq!(decoder.row_group_count, 1);
+        assert_eq!(decoder.col_count, 1);
+
+        let has_plain = decoder
+            .row_group_column_has_encoding(0, 0, PARQUET_ENCODING_PLAIN)
+            .expect("plain lookup");
+        assert!(has_plain, "default-encoded column should report PLAIN");
+
+        let has_dict = decoder
+            .row_group_column_has_encoding(0, 0, PARQUET_ENCODING_RLE_DICTIONARY)
+            .expect("dict lookup");
+        assert!(
+            !has_dict,
+            "default-encoded column should not report RLE_DICTIONARY"
+        );
+    }
+
+    #[test]
+    fn row_group_column_has_encoding_finds_rle_dictionary() {
+        // QuestDB encoding id 2 = RleDictionary; the writer should emit
+        // RLE_DICTIONARY=8 in the column chunk's encoding list.
+        let (decoder, _temp_file, _data, _tas) = round_trip_int_column(2);
+
+        let has_dict = decoder
+            .row_group_column_has_encoding(0, 0, PARQUET_ENCODING_RLE_DICTIONARY)
+            .expect("dict lookup");
+        assert!(
+            has_dict,
+            "RleDictionary-overridden column should report RLE_DICTIONARY"
+        );
+    }
+
+    #[test]
+    fn row_group_column_has_encoding_row_group_index_out_of_range() {
+        let (decoder, _temp_file, _data, _tas) = round_trip_int_column(0);
+
+        let err = decoder
+            .row_group_column_has_encoding(5, 0, PARQUET_ENCODING_PLAIN)
+            .expect_err("expected out-of-range row group error");
+        assert!(
+            matches!(
+                err.reason(),
+                crate::parquet::error::ParquetErrorReason::InvalidLayout
+            ),
+            "expected InvalidLayout, got {:?}",
+            err.reason()
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("row group index"),
+            "error should mention 'row group index', got: {msg}"
+        );
+        assert!(
+            msg.contains("out of range"),
+            "error should mention 'out of range', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn row_group_column_has_encoding_column_index_out_of_range() {
+        let (decoder, _temp_file, _data, _tas) = round_trip_int_column(0);
+
+        let bad_col = decoder.col_count + 1;
+        let err = decoder
+            .row_group_column_has_encoding(0, bad_col, PARQUET_ENCODING_PLAIN)
+            .expect_err("expected out-of-range column error");
+        assert!(
+            matches!(
+                err.reason(),
+                crate::parquet::error::ParquetErrorReason::InvalidLayout
+            ),
+            "expected InvalidLayout, got {:?}",
+            err.reason()
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("column index"),
+            "error should mention 'column index', got: {msg}"
+        );
+        assert!(
+            msg.contains("out of range"),
+            "error should mention 'out of range', got: {msg}"
+        );
     }
 
     fn create_fix_column(

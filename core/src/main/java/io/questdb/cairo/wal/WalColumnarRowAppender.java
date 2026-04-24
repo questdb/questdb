@@ -516,7 +516,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                             dataMem.putByte((byte) 0);
                         } else {
-                            dataMem.putByte(Unsafe.getUnsafe().getByte(valuesAddress + valueIdx));
+                            dataMem.putByte(Unsafe.getByte(valuesAddress + valueIdx));
                             valueIdx++;
                         }
                     }
@@ -526,7 +526,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                             dataMem.putShort((short) 0);
                         } else {
-                            dataMem.putShort(Unsafe.getUnsafe().getShort(valuesAddress + (long) valueIdx * 2));
+                            dataMem.putShort(Unsafe.getShort(valuesAddress + (long) valueIdx * 2));
                             valueIdx++;
                         }
                     }
@@ -536,7 +536,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                             dataMem.putInt(Numbers.INT_NULL);
                         } else {
-                            dataMem.putInt(Unsafe.getUnsafe().getInt(valuesAddress + (long) valueIdx * 4));
+                            dataMem.putInt(Unsafe.getInt(valuesAddress + (long) valueIdx * 4));
                             valueIdx++;
                         }
                     }
@@ -546,7 +546,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                             dataMem.putFloat(Float.NaN);
                         } else {
-                            dataMem.putFloat(Unsafe.getUnsafe().getFloat(valuesAddress + (long) valueIdx * 4));
+                            dataMem.putFloat(Unsafe.getFloat(valuesAddress + (long) valueIdx * 4));
                             valueIdx++;
                         }
                     }
@@ -556,7 +556,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                             dataMem.putLong(Numbers.LONG_NULL);
                         } else {
-                            dataMem.putLong(Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8));
+                            dataMem.putLong(Unsafe.getLong(valuesAddress + (long) valueIdx * 8));
                             valueIdx++;
                         }
                     }
@@ -566,7 +566,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                             dataMem.putDouble(Double.NaN);
                         } else {
-                            dataMem.putDouble(Unsafe.getUnsafe().getDouble(valuesAddress + (long) valueIdx * 8));
+                            dataMem.putDouble(Unsafe.getDouble(valuesAddress + (long) valueIdx * 8));
                             valueIdx++;
                         }
                     }
@@ -578,8 +578,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         } else {
                             long addr = valuesAddress + (long) valueIdx * 16;
                             dataMem.putLong128(
-                                    Unsafe.getUnsafe().getLong(addr),
-                                    Unsafe.getUnsafe().getLong(addr + 8)
+                                    Unsafe.getLong(addr),
+                                    Unsafe.getLong(addr + 8)
                             );
                             valueIdx++;
                         }
@@ -592,10 +592,10 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         } else {
                             long addr = valuesAddress + (long) valueIdx * 32;
                             dataMem.putLong256(
-                                    Unsafe.getUnsafe().getLong(addr),
-                                    Unsafe.getUnsafe().getLong(addr + 8),
-                                    Unsafe.getUnsafe().getLong(addr + 16),
-                                    Unsafe.getUnsafe().getLong(addr + 24)
+                                    Unsafe.getLong(addr),
+                                    Unsafe.getLong(addr + 8),
+                                    Unsafe.getLong(addr + 16),
+                                    Unsafe.getLong(addr + 24)
                             );
                             valueIdx++;
                         }
@@ -1736,7 +1736,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     // Null designated timestamp means server-assigned (atNow)
                     timestamp = serverTimestampMicros;
                 } else {
-                    timestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8);
+                    timestamp = Unsafe.getLong(valuesAddress + (long) valueIdx * 8);
                     valueIdx++;
                 }
                 walWriter.validateDesignatedTimestampBounds(timestamp);
@@ -1752,7 +1752,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                         dataMem.putLong(Numbers.LONG_NULL);
                     } else {
-                        dataMem.putLong(Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8));
+                        dataMem.putLong(Unsafe.getLong(valuesAddress + (long) valueIdx * 8));
                         valueIdx++;
                     }
                 }

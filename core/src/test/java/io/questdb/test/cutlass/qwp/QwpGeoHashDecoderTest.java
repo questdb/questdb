@@ -66,10 +66,10 @@ public class QwpGeoHashDecoderTest {
         long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
             // No null bitmap
-            Unsafe.getUnsafe().putByte(address, (byte) 0);
+            Unsafe.putByte(address, (byte) 0);
             // Write overflowing precision varint
             for (int i = 0; i < varintLen; i++) {
-                Unsafe.getUnsafe().putByte(address + 1 + i, varintBuf[i]);
+                Unsafe.putByte(address + 1 + i, varintBuf[i]);
             }
 
             QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
@@ -153,13 +153,13 @@ public class QwpGeoHashDecoderTest {
         try {
             // Zero out buffer
             for (int i = 0; i < allocSize; i++) {
-                Unsafe.getUnsafe().putByte(address + i, (byte) 0);
+                Unsafe.putByte(address + i, (byte) 0);
             }
 
             int offset = 0;
 
             // Write null bitmap flag
-            Unsafe.getUnsafe().putByte(address + offset, (byte) 1); // null bitmap present
+            Unsafe.putByte(address + offset, (byte) 1); // null bitmap present
             offset += flagSize;
 
             // Write null bitmap (rows 1 and 3 are null)
@@ -173,9 +173,9 @@ public class QwpGeoHashDecoderTest {
             offset += precisionVarintSize;
 
             // Write packed values (only non-null rows)
-            Unsafe.getUnsafe().putByte(address + offset, (byte) 22);      // row 0
-            Unsafe.getUnsafe().putByte(address + offset + 1, (byte) 31);  // row 2
-            Unsafe.getUnsafe().putByte(address + offset + 2, (byte) 21);  // row 4
+            Unsafe.putByte(address + offset, (byte) 22);      // row 0
+            Unsafe.putByte(address + offset + 1, (byte) 31);  // row 2
+            Unsafe.putByte(address + offset + 2, (byte) 21);  // row 4
 
             // Initialize cursor
             QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
@@ -217,7 +217,7 @@ public class QwpGeoHashDecoderTest {
         int allocSize = 1 + QwpVarint.encodedLength(5); // flag byte + precision
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             QwpVarint.encode(address + 1, 5);
             QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
             int consumed = cursor.of(address, allocSize, 0);
@@ -336,7 +336,7 @@ public class QwpGeoHashDecoderTest {
         int allocSize = 10;
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             // Encode precision = 61 (invalid, max is 60)
             QwpVarint.encode(address + 1, 61);
 
@@ -353,7 +353,7 @@ public class QwpGeoHashDecoderTest {
         int allocSize = 10;
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             // Encode precision = 0 (invalid)
             QwpVarint.encode(address + 1, 0);
 
@@ -434,7 +434,7 @@ public class QwpGeoHashDecoderTest {
         int allocSize = 1 + precisionVarintSize + 4; // flag byte + precision + only 4 bytes for values
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             QwpVarint.encode(address + 1, 10);
 
             QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
@@ -571,13 +571,13 @@ public class QwpGeoHashDecoderTest {
                 long ptr = buf.getBufferPtr();
 
                 // Verify QWP1 header magic
-                Assert.assertEquals((byte) 'Q', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr));
-                Assert.assertEquals((byte) 'W', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 1));
-                Assert.assertEquals((byte) 'P', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 2));
-                Assert.assertEquals((byte) '1', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 3));
+                Assert.assertEquals((byte) 'Q', Unsafe.getByte(ptr));
+                Assert.assertEquals((byte) 'W', Unsafe.getByte(ptr + 1));
+                Assert.assertEquals((byte) 'P', Unsafe.getByte(ptr + 2));
+                Assert.assertEquals((byte) '1', Unsafe.getByte(ptr + 3));
 
                 // Table count = 1
-                Assert.assertEquals((short) 1, io.questdb.client.std.Unsafe.getUnsafe().getShort(ptr + 6));
+                Assert.assertEquals((short) 1, Unsafe.getShort(ptr + 6));
             }
         });
     }

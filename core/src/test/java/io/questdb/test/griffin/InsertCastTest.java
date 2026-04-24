@@ -59,8 +59,10 @@ public class InsertCastTest extends AbstractCairoTest {
                 }
             }
             assertSql(
-                    "a\n" +
-                            "9\n",
+                    """
+                            a
+                            9
+                            """,
                     "y"
             );
         });
@@ -70,10 +72,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharByteFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "byte",
-                "a\n" +
-                        "5\n" +
-                        "3\n" +
-                        "0\n"
+                """
+                        a
+                        5
+                        3
+                        0
+                        """
         ));
     }
 
@@ -81,12 +85,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharByteTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "byte",
-                "a\n" +
-                        "5\n" +
-                        "3\n" +
-                        "0\n" +
-                        "7\n" +
-                        "0\n"
+                """
+                        a
+                        5
+                        3
+                        0
+                        7
+                        0
+                        """
         ));
     }
 
@@ -94,10 +100,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharDateFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "date",
-                "a\n" +
-                        "1970-01-01T00:00:00.005Z\n" +
-                        "1970-01-01T00:00:00.003Z\n" +
-                        "1970-01-01T00:00:00.000Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.005Z
+                        1970-01-01T00:00:00.003Z
+                        1970-01-01T00:00:00.000Z
+                        """
         ));
     }
 
@@ -105,12 +113,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharDateTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "date",
-                "a\n" +
-                        "1970-01-01T00:00:00.005Z\n" +
-                        "1970-01-01T00:00:00.003Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
-                        "1970-01-01T00:00:00.007Z\n" +
-                        "1970-01-01T00:00:00.000Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.005Z
+                        1970-01-01T00:00:00.003Z
+                        1970-01-01T00:00:00.000Z
+                        1970-01-01T00:00:00.007Z
+                        1970-01-01T00:00:00.000Z
+                        """
         ));
     }
 
@@ -118,10 +128,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharDoubleFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "double",
-                "a\n" +
-                        "5.0\n" +
-                        "3.0\n" +
-                        "0.0\n"
+                """
+                        a
+                        5.0
+                        3.0
+                        0.0
+                        """
         ));
     }
 
@@ -129,12 +141,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharDoubleTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "double",
-                "a\n" +
-                        "5.0\n" +
-                        "3.0\n" +
-                        "0.0\n" +
-                        "7.0\n" +
-                        "0.0\n"
+                """
+                        a
+                        5.0
+                        3.0
+                        0.0
+                        7.0
+                        0.0
+                        """
         ));
     }
 
@@ -142,10 +156,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharFloatFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "float",
-                "a\n" +
-                        "5.0\n" +
-                        "3.0\n" +
-                        "0.0\n"
+                """
+                        a
+                        5.0
+                        3.0
+                        0.0
+                        """
         ));
     }
 
@@ -153,12 +169,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharFloatTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "float",
-                "a\n" +
-                        "5.0\n" +
-                        "3.0\n" +
-                        "0.0\n" +
-                        "7.0\n" +
-                        "0.0\n"
+                """
+                        a
+                        5.0
+                        3.0
+                        0.0
+                        7.0
+                        0.0
+                        """
         ));
     }
 
@@ -166,12 +184,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharGeoByteTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "geohash(1c)",
-                "a\n" +
-                        "5\n" +
-                        "3\n" +
-                        "0\n" +
-                        "7\n" +
-                        "0\n"
+                """
+                        a
+                        5
+                        3
+                        0
+                        7
+                        0
+                        """
         ));
     }
 
@@ -179,10 +199,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharIntFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "int",
-                "a\n" +
-                        "5\n" +
-                        "3\n" +
-                        "0\n"
+                """
+                        a
+                        5
+                        3
+                        0
+                        """
         ));
     }
 
@@ -190,12 +212,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharIntTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "int",
-                "a\n" +
-                        "5\n" +
-                        "3\n" +
-                        "0\n" +
-                        "7\n" +
-                        "0\n"
+                """
+                        a
+                        5
+                        3
+                        0
+                        7
+                        0
+                        """
         ));
     }
 
@@ -203,10 +227,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharLongFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "long",
-                "a\n" +
-                        "5\n" +
-                        "3\n" +
-                        "0\n"
+                """
+                        a
+                        5
+                        3
+                        0
+                        """
         ));
     }
 
@@ -214,12 +240,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharLongTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "long",
-                "a\n" +
-                        "5\n" +
-                        "3\n" +
-                        "0\n" +
-                        "7\n" +
-                        "0\n"
+                """
+                        a
+                        5
+                        3
+                        0
+                        7
+                        0
+                        """
         ));
     }
 
@@ -227,10 +255,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharShortFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "short",
-                "a\n" +
-                        "5\n" +
-                        "3\n" +
-                        "0\n"
+                """
+                        a
+                        5
+                        3
+                        0
+                        """
         ));
     }
 
@@ -238,12 +268,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharShortTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "short",
-                "a\n" +
-                        "5\n" +
-                        "3\n" +
-                        "0\n" +
-                        "7\n" +
-                        "0\n"
+                """
+                        a
+                        5
+                        3
+                        0
+                        7
+                        0
+                        """
         ));
     }
 
@@ -251,10 +283,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharTimestampFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "timestamp",
-                "a\n" +
-                        "1970-01-01T00:00:00.000005Z\n" +
-                        "1970-01-01T00:00:00.000003Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000005Z
+                        1970-01-01T00:00:00.000003Z
+                        1970-01-01T00:00:00.000000Z
+                        """
         ));
     }
 
@@ -262,10 +296,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharTimestampNSFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "timestamp_ns",
-                "a\n" +
-                        "1970-01-01T00:00:00.000000005Z\n" +
-                        "1970-01-01T00:00:00.000000003Z\n" +
-                        "1970-01-01T00:00:00.000000000Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000000005Z
+                        1970-01-01T00:00:00.000000003Z
+                        1970-01-01T00:00:00.000000000Z
+                        """
         ));
     }
 
@@ -273,12 +309,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharTimestampNSTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "timestamp_ns",
-                "a\n" +
-                        "1970-01-01T00:00:00.000000005Z\n" +
-                        "1970-01-01T00:00:00.000000003Z\n" +
-                        "1970-01-01T00:00:00.000000000Z\n" +
-                        "1970-01-01T00:00:00.000000007Z\n" +
-                        "1970-01-01T00:00:00.000000000Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000000005Z
+                        1970-01-01T00:00:00.000000003Z
+                        1970-01-01T00:00:00.000000000Z
+                        1970-01-01T00:00:00.000000007Z
+                        1970-01-01T00:00:00.000000000Z
+                        """
         ));
     }
 
@@ -286,12 +324,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharTimestampTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "timestamp",
-                "a\n" +
-                        "1970-01-01T00:00:00.000005Z\n" +
-                        "1970-01-01T00:00:00.000003Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:00.000007Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000005Z
+                        1970-01-01T00:00:00.000003Z
+                        1970-01-01T00:00:00.000000Z
+                        1970-01-01T00:00:00.000007Z
+                        1970-01-01T00:00:00.000000Z
+                        """
         ));
     }
 
@@ -299,9 +339,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToByteBind() throws Exception {
         assertMemoryLeak(() -> assertCharBind(
                 "byte",
-                "a\n" +
-                        "0\n" +
-                        "3\n"
+                """
+                        a
+                        0
+                        3
+                        """
         ));
     }
 
@@ -309,10 +351,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToByteLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "byte",
-                "a\n" +
-                        "4\n" +
-                        "7\n" +
-                        "1\n"
+                """
+                        a
+                        4
+                        7
+                        1
+                        """
         ));
     }
 
@@ -321,9 +365,11 @@ public class InsertCastTest extends AbstractCairoTest {
         // this is internal widening cast
         assertMemoryLeak(() -> assertCharBind(
                 "date",
-                "a\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
-                        "1970-01-01T00:00:00.003Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000Z
+                        1970-01-01T00:00:00.003Z
+                        """
         ));
     }
 
@@ -331,10 +377,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToDateLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "date",
-                "a\n" +
-                        "1970-01-01T00:00:00.004Z\n" +
-                        "1970-01-01T00:00:00.007Z\n" +
-                        "1970-01-01T00:00:00.001Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.004Z
+                        1970-01-01T00:00:00.007Z
+                        1970-01-01T00:00:00.001Z
+                        """
         ));
     }
 
@@ -342,9 +390,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToDoubleBind() throws Exception {
         assertMemoryLeak(() -> assertCharBind(
                 "double",
-                "a\n" +
-                        "0.0\n" +
-                        "3.0\n"
+                """
+                        a
+                        0.0
+                        3.0
+                        """
         ));
     }
 
@@ -352,10 +402,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToDoubleLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "double",
-                "a\n" +
-                        "4.0\n" +
-                        "7.0\n" +
-                        "1.0\n"
+                """
+                        a
+                        4.0
+                        7.0
+                        1.0
+                        """
         ));
     }
 
@@ -363,9 +415,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToFloatBind() throws Exception {
         assertMemoryLeak(() -> assertCharBind(
                 "float",
-                "a\n" +
-                        "0.0\n" +
-                        "3.0\n"
+                """
+                        a
+                        0.0
+                        3.0
+                        """
         ));
     }
 
@@ -373,10 +427,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToFloatLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "float",
-                "a\n" +
-                        "4.0\n" +
-                        "7.0\n" +
-                        "1.0\n"
+                """
+                        a
+                        4.0
+                        7.0
+                        1.0
+                        """
         ));
     }
 
@@ -384,9 +440,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToGeoByteBind() throws Exception {
         assertMemoryLeak(() -> assertCharBind(
                 "geohash(1c)",
-                "a\n" +
-                        "0\n" +
-                        "3\n"
+                """
+                        a
+                        0
+                        3
+                        """
         ));
     }
 
@@ -394,10 +452,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToGeoByteLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "geohash(1c)",
-                "a\n" +
-                        "4\n" +
-                        "7\n" +
-                        "1\n"
+                """
+                        a
+                        4
+                        7
+                        1
+                        """
         ));
     }
 
@@ -405,9 +465,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToIntBind() throws Exception {
         assertMemoryLeak(() -> assertCharBind(
                 "int",
-                "a\n" +
-                        "0\n" +
-                        "3\n"
+                """
+                        a
+                        0
+                        3
+                        """
         ));
     }
 
@@ -415,10 +477,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToIntLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "int",
-                "a\n" +
-                        "4\n" +
-                        "7\n" +
-                        "1\n"
+                """
+                        a
+                        4
+                        7
+                        1
+                        """
         ));
     }
 
@@ -428,9 +492,11 @@ public class InsertCastTest extends AbstractCairoTest {
             try {
                 assertCharBind(
                         "long256",
-                        "a\n" +
-                                "0\n" +
-                                "3\n"
+                        """
+                                a
+                                0
+                                3
+                                """
                 );
                 Assert.fail();
             } catch (SqlException e) {
@@ -443,9 +509,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToLongBind() throws Exception {
         assertMemoryLeak(() -> assertCharBind(
                 "long",
-                "a\n" +
-                        "0\n" +
-                        "3\n"
+                """
+                        a
+                        0
+                        3
+                        """
         ));
     }
 
@@ -453,10 +521,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToLongLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "long",
-                "a\n" +
-                        "4\n" +
-                        "7\n" +
-                        "1\n"
+                """
+                        a
+                        4
+                        7
+                        1
+                        """
         ));
     }
 
@@ -464,9 +534,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToShortBind() throws Exception {
         assertMemoryLeak(() -> assertCharBind(
                 "short",
-                "a\n" +
-                        "0\n" +
-                        "3\n"
+                """
+                        a
+                        0
+                        3
+                        """
         ));
     }
 
@@ -474,10 +546,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToShortLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "short",
-                "a\n" +
-                        "4\n" +
-                        "7\n" +
-                        "1\n"
+                """
+                        a
+                        4
+                        7
+                        1
+                        """
         ));
     }
 
@@ -486,9 +560,11 @@ public class InsertCastTest extends AbstractCairoTest {
         // this is internal widening cast
         assertMemoryLeak(() -> assertCharBind(
                 "timestamp",
-                "a\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:00.000003Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000000Z
+                        1970-01-01T00:00:00.000003Z
+                        """
         ));
     }
 
@@ -496,10 +572,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToTimestampLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "timestamp",
-                "a\n" +
-                        "1970-01-01T00:00:00.000004Z\n" +
-                        "1970-01-01T00:00:00.000007Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000004Z
+                        1970-01-01T00:00:00.000007Z
+                        1970-01-01T00:00:00.000001Z
+                        """
         ));
     }
 
@@ -508,9 +586,11 @@ public class InsertCastTest extends AbstractCairoTest {
         // this is internal widening cast
         assertMemoryLeak(() -> assertCharBind(
                 "timestamp_ns",
-                "a\n" +
-                        "1970-01-01T00:00:00.000000000Z\n" +
-                        "1970-01-01T00:00:00.000000003Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000000000Z
+                        1970-01-01T00:00:00.000000003Z
+                        """
         ));
     }
 
@@ -518,10 +598,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastCharToTimestampNSLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "timestamp_ns",
-                "a\n" +
-                        "1970-01-01T00:00:00.000000004Z\n" +
-                        "1970-01-01T00:00:00.000000007Z\n" +
-                        "1970-01-01T00:00:00.000000001Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000000004Z
+                        1970-01-01T00:00:00.000000007Z
+                        1970-01-01T00:00:00.000000001Z
+                        """
         ));
     }
 
@@ -549,9 +631,11 @@ public class InsertCastTest extends AbstractCairoTest {
                 }
             }
             assertSql(
-                    "a\n" +
-                            "1.7E25\n" +
-                            "null\n",
+                    """
+                            a
+                            1.7E25
+                            null
+                            """,
                     "y"
             );
         });
@@ -561,18 +645,20 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastFloatByteTab() throws Exception {
         assertMemoryLeak(() -> assertCastFloatTab(
                 "byte",
-                "a\n" +
-                        "28\n" +
-                        "29\n" +
-                        "8\n" +
-                        "20\n" +
-                        "93\n" +
-                        "0\n" +
-                        "66\n" +
-                        "80\n" +
-                        "22\n" +
-                        "12\n" +
-                        "8\n",
+                """
+                        a
+                        28
+                        29
+                        8
+                        20
+                        93
+                        0
+                        66
+                        80
+                        22
+                        12
+                        8
+                        """,
                 -210f,
                 220f
         ));
@@ -582,18 +668,20 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastFloatIntTab() throws Exception {
         assertMemoryLeak(() -> assertCastFloatTab(
                 "int",
-                "a\n" +
-                        "28\n" +
-                        "29\n" +
-                        "8\n" +
-                        "20\n" +
-                        "93\n" +
-                        "null\n" +
-                        "66\n" +
-                        "80\n" +
-                        "22\n" +
-                        "12\n" +
-                        "8\n",
+                """
+                        a
+                        28
+                        29
+                        8
+                        20
+                        93
+                        null
+                        66
+                        80
+                        22
+                        12
+                        8
+                        """,
                 -3.4e20f,
                 3.4e20f
         ));
@@ -603,18 +691,20 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastFloatLongTab() throws Exception {
         assertMemoryLeak(() -> assertCastFloatTab(
                 "long",
-                "a\n" +
-                        "28\n" +
-                        "29\n" +
-                        "8\n" +
-                        "20\n" +
-                        "93\n" +
-                        "null\n" +
-                        "66\n" +
-                        "80\n" +
-                        "22\n" +
-                        "12\n" +
-                        "8\n",
+                """
+                        a
+                        28
+                        29
+                        8
+                        20
+                        93
+                        null
+                        66
+                        80
+                        22
+                        12
+                        8
+                        """,
                 -3.4e35f,
                 3.4e35f
         ));
@@ -624,18 +714,20 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastFloatShortTab() throws Exception {
         assertMemoryLeak(() -> assertCastFloatTab(
                 "short",
-                "a\n" +
-                        "28\n" +
-                        "29\n" +
-                        "8\n" +
-                        "20\n" +
-                        "93\n" +
-                        "0\n" +
-                        "66\n" +
-                        "80\n" +
-                        "22\n" +
-                        "12\n" +
-                        "8\n",
+                """
+                        a
+                        28
+                        29
+                        8
+                        20
+                        93
+                        0
+                        66
+                        80
+                        22
+                        12
+                        8
+                        """,
                 -42230f,
                 42230f
         ));
@@ -645,9 +737,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastIntToByteBind() throws Exception {
         assertMemoryLeak(() -> assertIntBind(
                 "byte",
-                "a\n" +
-                        "3\n" +
-                        "0\n"
+                """
+                        a
+                        3
+                        0
+                        """
         ));
     }
 
@@ -655,9 +749,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastIntToCharBind() throws Exception {
         assertMemoryLeak(() -> assertIntBind(
                 "char",
-                "a\n" +
-                        "3\n" +
-                        "\n"
+                """
+                        a
+                        3
+                        
+                        """
         ));
     }
 
@@ -667,9 +763,11 @@ public class InsertCastTest extends AbstractCairoTest {
             try {
                 assertIntBind(
                         "long256",
-                        "a\n" +
-                                "3\n" +
-                                "0\n"
+                        """
+                                a
+                                3
+                                0
+                                """
                 );
                 Assert.fail();
             } catch (SqlException e) {
@@ -682,9 +780,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastIntToShortBind() throws Exception {
         assertMemoryLeak(() -> assertIntBind(
                 "short",
-                "a\n" +
-                        "3\n" +
-                        "0\n"
+                """
+                        a
+                        3
+                        0
+                        """
         ));
     }
 
@@ -692,9 +792,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastLongToByteBind() throws Exception {
         assertMemoryLeak(() -> assertLongBind(
                 "byte",
-                "a\n" +
-                        "8\n" +
-                        "0\n"
+                """
+                        a
+                        8
+                        0
+                        """
         ));
     }
 
@@ -702,9 +804,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastLongToCharBind() throws Exception {
         assertMemoryLeak(() -> assertLongBind(
                 "char",
-                "a\n" +
-                        "8\n" +
-                        "\n"
+                """
+                        a
+                        8
+                        
+                        """
         ));
     }
 
@@ -714,9 +818,11 @@ public class InsertCastTest extends AbstractCairoTest {
             try {
                 assertLongBind(
                         "long256",
-                        "a\n" +
-                                "3\n" +
-                                "0\n"
+                        """
+                                a
+                                3
+                                0
+                                """
                 );
                 Assert.fail();
             } catch (SqlException e) {
@@ -729,9 +835,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastLongToShortBind() throws Exception {
         assertMemoryLeak(() -> assertLongBind(
                 "short",
-                "a\n" +
-                        "8\n" +
-                        "0\n"
+                """
+                        a
+                        8
+                        0
+                        """
         ));
     }
 
@@ -764,9 +872,11 @@ public class InsertCastTest extends AbstractCairoTest {
                 }
             }
             assertSql(
-                    "a\n" +
-                            "2\n" +
-                            "8\n",
+                    """
+                            a
+                            2
+                            8
+                            """,
                     "y"
             );
         });
@@ -788,12 +898,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrByteTab() throws Exception {
         assertMemoryLeak(() -> assertStrTab(
                 "byte",
-                "a\tb\n" +
-                        "76\t76\n" +
-                        "102\t102\n" +
-                        "27\t27\n" +
-                        "87\t87\n" +
-                        "79\t79\n"
+                """
+                        a\tb
+                        76\t76
+                        102\t102
+                        27\t27
+                        87\t87
+                        79\t79
+                        """
         ));
     }
 
@@ -806,12 +918,14 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             execute("insert into y select a,a from x");
             assertSql(
-                    "a\tb\n" +
-                            "6\t6\n" +
-                            "2\t2\n" +
-                            "7\t7\n" +
-                            "7\t7\n" +
-                            "9\t9\n",
+                    """
+                            a\tb
+                            6\t6
+                            2\t2
+                            7\t7
+                            7\t7
+                            9\t9
+                            """,
                     "y"
             );
         });
@@ -821,12 +935,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrDateTab() throws Exception {
         assertMemoryLeak(() -> assertStrTab(
                 "date",
-                "a\tb\n" +
-                        "1970-01-01T00:00:00.076Z\t76\n" +
-                        "1970-01-01T00:00:00.102Z\t102\n" +
-                        "1970-01-01T00:00:00.027Z\t27\n" +
-                        "1970-01-01T00:00:00.087Z\t87\n" +
-                        "1970-01-01T00:00:00.079Z\t79\n"
+                """
+                        a\tb
+                        1970-01-01T00:00:00.076Z\t76
+                        1970-01-01T00:00:00.102Z\t102
+                        1970-01-01T00:00:00.027Z\t27
+                        1970-01-01T00:00:00.087Z\t87
+                        1970-01-01T00:00:00.079Z\t79
+                        """
         ));
     }
 
@@ -834,12 +950,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrDoubleTab() throws Exception {
         assertMemoryLeak(() -> assertStrTab(
                 "double",
-                "a\tb\n" +
-                        "76.0\t76\n" +
-                        "102.0\t102\n" +
-                        "27.0\t27\n" +
-                        "87.0\t87\n" +
-                        "79.0\t79\n"
+                """
+                        a\tb
+                        76.0\t76
+                        102.0\t102
+                        27.0\t27
+                        87.0\t87
+                        79.0\t79
+                        """
         ));
     }
 
@@ -847,12 +965,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrFloatTab() throws Exception {
         assertMemoryLeak(() -> assertStrTab(
                 "float",
-                "a\tb\n" +
-                        "76.0\t76\n" +
-                        "102.0\t102\n" +
-                        "27.0\t27\n" +
-                        "87.0\t87\n" +
-                        "79.0\t79\n"
+                """
+                        a\tb
+                        76.0\t76
+                        102.0\t102
+                        27.0\t27
+                        87.0\t87
+                        79.0\t79
+                        """
         ));
     }
 
@@ -860,12 +980,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrIntTab() throws Exception {
         assertMemoryLeak(() -> assertStrTab(
                 "int",
-                "a\tb\n" +
-                        "76\t76\n" +
-                        "102\t102\n" +
-                        "27\t27\n" +
-                        "87\t87\n" +
-                        "79\t79\n"
+                """
+                        a\tb
+                        76\t76
+                        102\t102
+                        27\t27
+                        87\t87
+                        79\t79
+                        """
         ));
     }
 
@@ -873,12 +995,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrLongTab() throws Exception {
         assertMemoryLeak(() -> assertStrTab(
                 "long",
-                "a\tb\n" +
-                        "76\t76\n" +
-                        "102\t102\n" +
-                        "27\t27\n" +
-                        "87\t87\n" +
-                        "79\t79\n"
+                """
+                        a\tb
+                        76\t76
+                        102\t102
+                        27\t27
+                        87\t87
+                        79\t79
+                        """
         ));
     }
 
@@ -886,12 +1010,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrShortTab() throws Exception {
         assertMemoryLeak(() -> assertStrTab(
                 "short",
-                "a\tb\n" +
-                        "76\t76\n" +
-                        "102\t102\n" +
-                        "27\t27\n" +
-                        "87\t87\n" +
-                        "79\t79\n"
+                """
+                        a\tb
+                        76\t76
+                        102\t102
+                        27\t27
+                        87\t87
+                        79\t79
+                        """
         ));
     }
 
@@ -899,12 +1025,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrTimestampNSTab() throws Exception {
         assertMemoryLeak(() -> assertStrTab(
                 "timestamp_ns",
-                "a\tb\n" +
-                        "1970-01-01T00:00:00.000000076Z\t76\n" +
-                        "1970-01-01T00:00:00.000000102Z\t102\n" +
-                        "1970-01-01T00:00:00.000000027Z\t27\n" +
-                        "1970-01-01T00:00:00.000000087Z\t87\n" +
-                        "1970-01-01T00:00:00.000000079Z\t79\n"
+                """
+                        a\tb
+                        1970-01-01T00:00:00.000000076Z\t76
+                        1970-01-01T00:00:00.000000102Z\t102
+                        1970-01-01T00:00:00.000000027Z\t27
+                        1970-01-01T00:00:00.000000087Z\t87
+                        1970-01-01T00:00:00.000000079Z\t79
+                        """
         ));
     }
 
@@ -912,12 +1040,14 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrTimestampTab() throws Exception {
         assertMemoryLeak(() -> assertStrTab(
                 "timestamp",
-                "a\tb\n" +
-                        "1970-01-01T00:00:00.000076Z\t76\n" +
-                        "1970-01-01T00:00:00.000102Z\t102\n" +
-                        "1970-01-01T00:00:00.000027Z\t27\n" +
-                        "1970-01-01T00:00:00.000087Z\t87\n" +
-                        "1970-01-01T00:00:00.000079Z\t79\n"
+                """
+                        a\tb
+                        1970-01-01T00:00:00.000076Z\t76
+                        1970-01-01T00:00:00.000102Z\t102
+                        1970-01-01T00:00:00.000027Z\t27
+                        1970-01-01T00:00:00.000087Z\t87
+                        1970-01-01T00:00:00.000079Z\t79
+                        """
         ));
     }
 
@@ -925,10 +1055,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToByteBind() throws Exception {
         assertMemoryLeak(() -> assertStrBind(
                 "byte",
-                "a\n" +
-                        "12\n" +
-                        "31\n" +
-                        "0\n"
+                """
+                        a
+                        12
+                        31
+                        0
+                        """
         ));
     }
 
@@ -936,10 +1068,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToByteLit() throws Exception {
         assertMemoryLeak(() -> assertStrLit(
                 "byte",
-                "a\n" +
-                        "45\n" +
-                        "76\n" +
-                        "124\n"
+                """
+                        a
+                        45
+                        76
+                        124
+                        """
         ));
     }
 
@@ -959,10 +1093,12 @@ public class InsertCastTest extends AbstractCairoTest {
             }
             execute("insert into y values (cast('K' as string))");
             assertSql(
-                    "a\n" +
-                            "A\n" +
-                            "7\n" +
-                            "K\n",
+                    """
+                            a
+                            A
+                            7
+                            K
+                            """,
                     "y"
             );
         });
@@ -1002,12 +1138,14 @@ public class InsertCastTest extends AbstractCairoTest {
                 }
             }
             assertSql(
-                    "a\n" +
-                            "2012-04-11T10:45:11.000Z\n" +
-                            "2012-04-11T10:45:11.344Z\n" +
-                            "2012-04-11T00:00:00.000Z\n" +
-                            "2013-05-12T00:00:00.000Z\n" +
-                            "\n",
+                    """
+                            a
+                            2012-04-11T10:45:11.000Z
+                            2012-04-11T10:45:11.344Z
+                            2012-04-11T00:00:00.000Z
+                            2013-05-12T00:00:00.000Z
+                            
+                            """,
                     "y"
             );
         });
@@ -1017,10 +1155,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToDateLit() throws Exception {
         assertMemoryLeak(() -> assertStrLit(
                 "date",
-                "a\n" +
-                        "1970-01-01T00:00:00.045Z\n" +
-                        "1970-01-01T00:00:00.076Z\n" +
-                        "1970-01-01T00:00:00.124Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.045Z
+                        1970-01-01T00:00:00.076Z
+                        1970-01-01T00:00:00.124Z
+                        """
         ));
     }
 
@@ -1040,10 +1180,12 @@ public class InsertCastTest extends AbstractCairoTest {
             }
             execute("insert into y values ('2222-01-01T00:00:00.124Z');");
             assertSql(
-                    "a\n" +
-                            "2022-01-01T00:00:00.045Z\n" +
-                            "2022-01-01T00:00:00.076Z\n" +
-                            "2222-01-01T00:00:00.124Z\n",
+                    """
+                            a
+                            2022-01-01T00:00:00.045Z
+                            2022-01-01T00:00:00.076Z
+                            2222-01-01T00:00:00.124Z
+                            """,
                     "y"
             );
         });
@@ -1053,10 +1195,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToDoubleBind() throws Exception {
         assertMemoryLeak(() -> assertStrBind(
                 "double",
-                "a\n" +
-                        "12.0\n" +
-                        "31.0\n" +
-                        "null\n"
+                """
+                        a
+                        12.0
+                        31.0
+                        null
+                        """
         ));
     }
 
@@ -1064,10 +1208,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToDoubleLit() throws Exception {
         assertMemoryLeak(() -> assertStrLit(
                 "double",
-                "a\n" +
-                        "45.0\n" +
-                        "76.0\n" +
-                        "124.0\n"
+                """
+                        a
+                        45.0
+                        76.0
+                        124.0
+                        """
         ));
     }
 
@@ -1075,10 +1221,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToFloatBind() throws Exception {
         assertMemoryLeak(() -> assertStrBind(
                 "float",
-                "a\n" +
-                        "12.0\n" +
-                        "31.0\n" +
-                        "null\n"
+                """
+                        a
+                        12.0
+                        31.0
+                        null
+                        """
         ));
     }
 
@@ -1086,10 +1234,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToFloatLit() throws Exception {
         assertMemoryLeak(() -> assertStrLit(
                 "float",
-                "a\n" +
-                        "45.0\n" +
-                        "76.0\n" +
-                        "124.0\n"
+                """
+                        a
+                        45.0
+                        76.0
+                        124.0
+                        """
         ));
     }
 
@@ -1097,10 +1247,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToIntBind() throws Exception {
         assertMemoryLeak(() -> assertStrBind(
                 "int",
-                "a\n" +
-                        "12\n" +
-                        "31\n" +
-                        "null\n"
+                """
+                        a
+                        12
+                        31
+                        null
+                        """
         ));
     }
 
@@ -1108,10 +1260,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToIntLit() throws Exception {
         assertMemoryLeak(() -> assertStrLit(
                 "int",
-                "a\n" +
-                        "45\n" +
-                        "76\n" +
-                        "124\n"
+                """
+                        a
+                        45
+                        76
+                        124
+                        """
         ));
     }
 
@@ -1119,10 +1273,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToLong256Bind() throws Exception {
         assertMemoryLeak(() -> assertStrBind(
                 "long256",
-                "a\n" +
-                        "0x12\n" +
-                        "0x31\n" +
-                        "\n"
+                """
+                        a
+                        0x12
+                        0x31
+                        
+                        """
         ));
     }
 
@@ -1130,10 +1286,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToLongBind() throws Exception {
         assertMemoryLeak(() -> assertStrBind(
                 "long",
-                "a\n" +
-                        "12\n" +
-                        "31\n" +
-                        "null\n"
+                """
+                        a
+                        12
+                        31
+                        null
+                        """
         ));
     }
 
@@ -1141,10 +1299,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToLongLit() throws Exception {
         assertMemoryLeak(() -> assertStrLit(
                 "long",
-                "a\n" +
-                        "45\n" +
-                        "76\n" +
-                        "124\n"
+                """
+                        a
+                        45
+                        76
+                        124
+                        """
         ));
     }
 
@@ -1152,10 +1312,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToShortBind() throws Exception {
         assertMemoryLeak(() -> assertStrBind(
                 "short",
-                "a\n" +
-                        "12\n" +
-                        "31\n" +
-                        "0\n"
+                """
+                        a
+                        12
+                        31
+                        0
+                        """
         ));
     }
 
@@ -1163,10 +1325,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToShortLit() throws Exception {
         assertMemoryLeak(() -> assertStrLit(
                 "short",
-                "a\n" +
-                        "45\n" +
-                        "76\n" +
-                        "124\n"
+                """
+                        a
+                        45
+                        76
+                        124
+                        """
         ));
     }
 
@@ -1198,10 +1362,12 @@ public class InsertCastTest extends AbstractCairoTest {
                 }
             }
             assertSql(
-                    "a\n" +
-                            "2012-04-11T10:45:11.000000Z\n" +
-                            "2012-04-11T10:45:11.344999Z\n" +
-                            "\n",
+                    """
+                            a
+                            2012-04-11T10:45:11.000000Z
+                            2012-04-11T10:45:11.344999Z
+                            
+                            """,
                     "y"
             );
         });
@@ -1211,10 +1377,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToTimestampLit() throws Exception {
         assertMemoryLeak(() -> assertStrLit(
                 "timestamp",
-                "a\n" +
-                        "1970-01-01T00:00:00.000045Z\n" +
-                        "1970-01-01T00:00:00.000076Z\n" +
-                        "1970-01-01T00:00:00.000124Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000045Z
+                        1970-01-01T00:00:00.000076Z
+                        1970-01-01T00:00:00.000124Z
+                        """
         ));
     }
 
@@ -1234,10 +1402,12 @@ public class InsertCastTest extends AbstractCairoTest {
             }
             execute("insert into y values ('2222-01-01T00:00:00.000124Z');");
             assertSql(
-                    "a\n" +
-                            "2022-01-01T00:00:00.000045Z\n" +
-                            "2222-01-01T00:00:00.000076Z\n" +
-                            "2222-01-01T00:00:00.000124Z\n",
+                    """
+                            a
+                            2022-01-01T00:00:00.000045Z
+                            2222-01-01T00:00:00.000076Z
+                            2222-01-01T00:00:00.000124Z
+                            """,
                     "y"
             );
         });
@@ -1259,10 +1429,12 @@ public class InsertCastTest extends AbstractCairoTest {
             }
             execute("insert into y values ('2222-01-01T00:00:00.000124987Z');");
             assertSql(
-                    "a\n" +
-                            "2022-01-01T00:00:00.000045678Z\n" +
-                            "2222-01-01T00:00:00.000076543Z\n" +
-                            "2222-01-01T00:00:00.000124987Z\n",
+                    """
+                            a
+                            2022-01-01T00:00:00.000045678Z
+                            2222-01-01T00:00:00.000076543Z
+                            2222-01-01T00:00:00.000124987Z
+                            """,
                     "y"
             );
         });
@@ -1297,10 +1469,12 @@ public class InsertCastTest extends AbstractCairoTest {
                 }
             }
             assertSql(
-                    "a\n" +
-                            "2012-04-11T10:45:11.000000000Z\n" +
-                            "2012-04-11T10:45:11.344999123Z\n" +
-                            "\n",
+                    """
+                            a
+                            2012-04-11T10:45:11.000000000Z
+                            2012-04-11T10:45:11.344999123Z
+                            
+                            """,
                     "y"
             );
         });
@@ -1310,10 +1484,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastStrToTimestampNSLit() throws Exception {
         assertMemoryLeak(() -> assertStrLit(
                 "timestamp_ns",
-                "a\n" +
-                        "1970-01-01T00:00:00.000000045Z\n" +
-                        "1970-01-01T00:00:00.000000076Z\n" +
-                        "1970-01-01T00:00:00.000000124Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000000045Z
+                        1970-01-01T00:00:00.000000076Z
+                        1970-01-01T00:00:00.000000124Z
+                        """
         ));
     }
 
@@ -1321,9 +1497,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastTimestampToByteBind() throws Exception {
         assertMemoryLeak(() -> assertTimestampBind(
                 "byte",
-                "a\n" +
-                        "8\n" +
-                        "0\n"
+                """
+                        a
+                        8
+                        0
+                        """
         ));
     }
 
@@ -1331,10 +1509,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastTimestampToDoubleBind() throws Exception {
         assertMemoryLeak(() -> assertTimestampBindNoOverflow(
                 "double",
-                "a\n" +
-                        "8.0\n" +
-                        "null\n" +
-                        "8.8990229990007E13\n"
+                """
+                        a
+                        8.0
+                        null
+                        8.8990229990007E13
+                        """
         ));
     }
 
@@ -1342,10 +1522,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastTimestampToFloatBind() throws Exception {
         assertMemoryLeak(() -> assertTimestampBindNoOverflow(
                 "float",
-                "a\n" +
-                        "8.0\n" +
-                        "null\n" +
-                        "8.8990229E13\n"
+                """
+                        a
+                        8.0
+                        null
+                        8.899023E13
+                        """
         ));
     }
 
@@ -1353,9 +1535,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastTimestampToIntBind() throws Exception {
         assertMemoryLeak(() -> assertTimestampBind(
                 "int",
-                "a\n" +
-                        "8\n" +
-                        "null\n"
+                """
+                        a
+                        8
+                        null
+                        """
         ));
     }
 
@@ -1365,10 +1549,12 @@ public class InsertCastTest extends AbstractCairoTest {
             try {
                 assertTimestampBindNoOverflow(
                         "long256",
-                        "a\n" +
-                                "1970-01-01T00:00:00.000008Z\n" +
-                                "\n" +
-                                "1972-10-26T23:30:29.990007Z\n"
+                        """
+                                a
+                                1970-01-01T00:00:00.000008Z
+                                
+                                1972-10-26T23:30:29.990007Z
+                                """
                 );
                 Assert.fail();
             } catch (SqlException e) {
@@ -1381,10 +1567,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastTimestampToLongBind() throws Exception {
         assertMemoryLeak(() -> assertTimestampBindNoOverflow(
                 "long",
-                "a\n" +
-                        "8\n" +
-                        "null\n" +
-                        "88990229990007\n"
+                """
+                        a
+                        8
+                        null
+                        88990229990007
+                        """
         ));
     }
 
@@ -1392,9 +1580,11 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastTimestampToShortBind() throws Exception {
         assertMemoryLeak(() -> assertTimestampBind(
                 "short",
-                "a\n" +
-                        "8\n" +
-                        "0\n"
+                """
+                        a
+                        8
+                        0
+                        """
         ));
     }
 
@@ -1402,10 +1592,12 @@ public class InsertCastTest extends AbstractCairoTest {
     public void testCastTimestampToStringBind() throws Exception {
         assertMemoryLeak(() -> assertTimestampBindNoOverflow(
                 "string",
-                "a\n" +
-                        "1970-01-01T00:00:00.000008Z\n" +
-                        "\n" +
-                        "1972-10-26T23:30:29.990007Z\n"
+                """
+                        a
+                        1970-01-01T00:00:00.000008Z
+                        
+                        1972-10-26T23:30:29.990007Z
+                        """
         ));
     }
 
@@ -1415,9 +1607,11 @@ public class InsertCastTest extends AbstractCairoTest {
             execute("create table tab(d string, ts timestamp NOT NULL) timestamp(ts) partition by day");
             execute("insert into tab values ('string', '2000'::string), ('varchar', '2000'::varchar);");
             assertSql(
-                    "d\tts\n" +
-                            "string\t2000-01-01T00:00:00.000000Z\n" +
-                            "varchar\t2000-01-01T00:00:00.000000Z\n",
+                    """
+                            d\tts
+                            string\t2000-01-01T00:00:00.000000Z
+                            varchar\t2000-01-01T00:00:00.000000Z
+                            """,
                     "select * from tab order by d"
             );
         });
@@ -1429,9 +1623,11 @@ public class InsertCastTest extends AbstractCairoTest {
             execute("create table tab(d string, ts timestamp_ns) timestamp(ts) partition by day");
             execute("insert into tab values ('string', '2000'::string), ('varchar', '2000'::varchar);");
             assertSql(
-                    "d\tts\n" +
-                            "string\t2000-01-01T00:00:00.000000000Z\n" +
-                            "varchar\t2000-01-01T00:00:00.000000000Z\n",
+                    """
+                            d\tts
+                            string\t2000-01-01T00:00:00.000000000Z
+                            varchar\t2000-01-01T00:00:00.000000000Z
+                            """,
                     "select * from tab order by d"
             );
         });
@@ -1443,8 +1639,10 @@ public class InsertCastTest extends AbstractCairoTest {
             execute("create table x(ts timestamp)");
             execute("insert into x values (cast(null as date))");
             assertSql(
-                    "ts\n" +
-                            "\n",
+                    """
+                            ts
+                            
+                            """,
                     "x"
             );
         });
@@ -1456,8 +1654,10 @@ public class InsertCastTest extends AbstractCairoTest {
             execute("create table x(ts timestamp_ns)");
             execute("insert into x values (cast(null as date))");
             assertSql(
-                    "ts\n" +
-                            "\n",
+                    """
+                            ts
+                            
+                            """,
                     "x"
             );
         });
@@ -1520,9 +1720,11 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab(arr double[][])");
             execute("insert into tab values ('{{1.0, 2.0}, {3.0, 4.0}}'::varchar), (null)");
-            assertQuery("arr\n" +
-                            "[[1.0,2.0],[3.0,4.0]]\n" +
-                            "null\n",
+            assertQuery("""
+                            arr
+                            [[1.0,2.0],[3.0,4.0]]
+                            null
+                            """,
                     "select * from tab",
                     true);
 
@@ -1703,9 +1905,11 @@ public class InsertCastTest extends AbstractCairoTest {
             }
         }
         assertSql(
-                "a\n" +
-                        "12\n" +
-                        "31\n", "y"
+                """
+                        a
+                        12
+                        31
+                        """, "y"
         );
     }
 
