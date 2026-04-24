@@ -61,14 +61,6 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
     ) {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
-        // `x = NULL` / `x IS NULL` on a NOT NULL TIMESTAMP column is always false.
-        // NegatingFunctionFactory flips the constant for IS NOT NULL.
-        if (left.isConstant() && left.getTimestamp(null) == Numbers.LONG_NULL && right.isNotNull()) {
-            return BooleanConstant.FALSE;
-        }
-        if (right.isConstant() && right.getTimestamp(null) == Numbers.LONG_NULL && left.isNotNull()) {
-            return BooleanConstant.FALSE;
-        }
         int leftType = ColumnType.getTimestampType(left.getType());
         int rightType = ColumnType.getTimestampType(right.getType());
         int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
@@ -99,6 +91,22 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
             Misc.free(left);
             Misc.free(right);
             return BooleanConstant.of(leftVal == rightVal);
+        }
+
+        // `x = NULL` / `x IS NULL` on a NOT NULL TIMESTAMP column is always
+        // false (NegatingFunctionFactory flips the constant for IS NOT NULL).
+        // Check only when exactly one side is a constant; calling
+        // getTimestamp on the constant here is safe because each side reads
+        // at most once further down when we wrap it in a caching function.
+        if (left.isConstant() && right.isNotNull() && left.getTimestamp(null) == Numbers.LONG_NULL) {
+            Misc.free(left);
+            Misc.free(right);
+            return BooleanConstant.FALSE;
+        }
+        if (right.isConstant() && left.isNotNull() && right.getTimestamp(null) == Numbers.LONG_NULL) {
+            Misc.free(left);
+            Misc.free(right);
+            return BooleanConstant.FALSE;
         }
 
         if (leftType == rightType) {
