@@ -4622,6 +4622,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
         final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
 
+        rejectUpdateNullOnNotNullColumn(updateQueryModel, selectQueryModel, metadata);
+
         // Update IQueryModel structure is
         // IQueryModel with SET column expressions
         // |-- IQueryModel of select-virtual or select-choose of data selected for update
@@ -4955,6 +4957,59 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+    }
+
+    private void rejectUpdateNullOnNotNullColumn(
+            IQueryModel updateQueryModel,
+            IQueryModel selectQueryModel,
+            TableRecordMetadata metadata
+    ) throws SqlException {
+        if (updateQueryModel == null || selectQueryModel == null) {
+            return;
+        }
+        final ObjList<ExpressionNode> targetNames = updateQueryModel.getUpdateExpressions();
+        final ObjList<QueryColumn> valueColumns = selectQueryModel.getColumns();
+        if (targetNames == null || valueColumns == null) {
+            return;
+        }
+        final int n = Math.min(targetNames.size(), valueColumns.size());
+        for (int i = 0; i < n; i++) {
+            final ExpressionNode targetName = targetNames.getQuick(i);
+            final QueryColumn setColumn = valueColumns.getQuick(i);
+            if (targetName == null || setColumn == null) {
+                continue;
+            }
+            final int columnIndex = metadata.getColumnIndexQuiet(targetName.token);
+            if (columnIndex < 0 || !metadata.isNotNull(columnIndex)) {
+                continue;
+            }
+            if (isExpressionConstantNull(setColumn.getAst())) {
+                throw SqlException.$(setColumn.getAst().position, "NOT NULL constraint violation [column=")
+                        .put(targetName.token).put(']');
+            }
+        }
+    }
+
+    private static boolean isExpressionConstantNull(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        // Bare NULL literal.
+        if (node.type == ExpressionNode.CONSTANT && isNullKeyword(node.token)) {
+            return true;
+        }
+        // CAST(NULL AS T) -- the cast operator wraps the NULL literal.
+        if (node.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCaseNc("cast", node.token)) {
+            // cast has exactly 2 args: expression and type. Argument 0 is the
+            // expression being cast. If it is NULL, the cast returns NULL.
+            if (node.args.size() >= 2 && isExpressionConstantNull(node.args.getQuick(node.args.size() - 1))) {
+                return true;
+            }
+            if (node.lhs != null && isExpressionConstantNull(node.lhs)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {

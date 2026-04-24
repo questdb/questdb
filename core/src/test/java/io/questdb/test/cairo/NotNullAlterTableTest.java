@@ -471,6 +471,119 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateSetLiteralNullRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, x LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01'), (2, 20, '2024-01-02')");
+
+            try {
+                execute("UPDATE t SET x = NULL WHERE id = 1");
+                fail("Expected NOT NULL violation when UPDATE sets NULL");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateSetLiteralNullRejectedWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, x LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01'), (2, 20, '2024-01-02')");
+            drainWalQueue();
+
+            try {
+                execute("UPDATE t SET x = NULL WHERE id = 1");
+                fail("Expected NOT NULL violation when UPDATE sets NULL on WAL table");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+
+            // The row must remain unmodified.
+            assertSql(
+                    """
+                            id\tx\tts
+                            1\t10\t2024-01-01T00:00:00.000000Z
+                            2\t20\t2024-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testUpdateSetCastNullRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, x INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01')");
+
+            try {
+                execute("UPDATE t SET x = CAST(NULL AS INT) WHERE id = 1");
+                fail("Expected NOT NULL violation when UPDATE casts NULL");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=x");
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateSetSymbolNullRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, s SYMBOL NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 'a', '2024-01-01')");
+
+            try {
+                execute("UPDATE t SET s = NULL WHERE id = 1");
+                fail("Expected NOT NULL violation when UPDATE sets SYMBOL NULL");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=s");
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateOnNullableColumnAllowsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // Regression guard: nullable columns still accept NULL via UPDATE.
+            execute("CREATE TABLE t (id INT, x LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01')");
+
+            execute("UPDATE t SET x = NULL WHERE id = 1");
+
+            assertSql(
+                    """
+                            id\tx\tts
+                            1\tnull\t2024-01-01T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testUpdateOnNotNullColumnAllowsNonNullValue() throws Exception {
+        assertMemoryLeak(() -> {
+            // Regression guard: a real value still flows through UPDATE.
+            execute("CREATE TABLE t (id INT, x LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01')");
+
+            execute("UPDATE t SET x = 42 WHERE id = 1");
+
+            assertSql(
+                    """
+                            id\tx\tts
+                            1\t42\t2024-01-01T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t"
+            );
+        });
+    }
+
+    @Test
     public void testSetNotNullRoundTripOnWalTable() throws Exception {
         assertMemoryLeak(() -> {
             // Regression: SET_COLUMN_NOT_NULL used to be non-structural, so the
