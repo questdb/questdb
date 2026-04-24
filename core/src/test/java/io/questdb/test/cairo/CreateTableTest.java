@@ -24,11 +24,13 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -40,12 +42,16 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
@@ -60,6 +66,50 @@ public class CreateTableTest extends AbstractCairoTest {
                 0,
                 "cannot create NULL-type column, please use type cast, e.g. x::type"
         );
+    }
+
+    @Test
+    public void testCreateNonWalLeavesOrphanDirWhenRegisterNameHydrateFails() throws Exception {
+        final String tableName = "x_orphan";
+        final AtomicBoolean failNextMetaOpen = new AtomicBoolean(false);
+
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNextMetaOpen.get()
+                        && Utf8s.containsAscii(name, tableName)
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    failNextMetaOpen.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE " + tableName +
+                    " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("DROP TABLE " + tableName);
+
+            // Fail the openRO(_meta) performed by
+            // TableNameRegistryRW.registerName -> MetadataCache.hydrateTableStartup,
+            // which runs after createTableOrViewOrMatViewUnsafe has already written
+            // the directory and _meta to disk.
+            failNextMetaOpen.set(true);
+            try {
+                execute("CREATE TABLE " + tableName +
+                        " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                fail("expected CREATE to fail on injected _meta openRO failure");
+            } catch (CairoException | SqlException ignore) {
+                // expected: SqlException wraps the injected CairoException
+            }
+
+            // Once the engine rolls back the on-disk state on registerName failure,
+            // retrying CREATE under the same name must succeed. Today it fails
+            // with "name is reserved" from CairoEngine.createTableOrViewOrMatViewUnsafe.
+            execute("CREATE TABLE " + tableName +
+                    " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        });
     }
 
     @Test
