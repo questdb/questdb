@@ -31,7 +31,148 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.Assert.fail;
 
+/**
+ * Keyed FILL tests in this class assert exact row order within each bucket
+ * (e.g. London before Paris at 00:00, Paris before London at 01:00). That
+ * order comes from AsyncGroupByRecordCursorFactory's hash-merge interleave
+ * and is NOT a first-class SAMPLE BY contract. See PR #6946 trade-offs.
+ * <p>
+ * If AsyncGroupBy's hash sizing, merge strategy, or sharedQueryWorkerCount
+ * changes and a keyed FILL test starts failing on row ordering alone, do
+ * not re-lock the new order -- wrap the query in {@code ORDER BY ts, <key>}
+ * so the assertion depends on a stable contract instead. Tests that already
+ * do this are tagged // ORDER BY-safe.
+ */
 public class SampleByFillTest extends AbstractCairoTest {
+
+    @Test
+    public void testExplainOuterOrderByAggregate() throws Exception {
+        // Outer ORDER BY on an aggregate column must survive the SAMPLE BY rewrite:
+        // the fill cursor only guarantees ts order, so ordering by a non-ts column
+        // must emit a sort node (radix-based "Encode sort" for DOUBLE) on top of
+        // Sample By Fill.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES ('London', 10.0, '2024-01-01T00:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, city, avg(temp) AS avg FROM weather " +
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY avg",
+                    """
+                            Encode sort
+                              keys: [avg]
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: null
+                                    Sort
+                                      keys: [ts]
+                                        Async Group By workers: 1
+                                          keys: [ts,city]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [avg(temp)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: weather
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testExplainOuterOrderByKey() throws Exception {
+        // Outer ORDER BY on a key column must survive the SAMPLE BY rewrite --
+        // the fill cursor only guarantees ts order. Regression guard: an earlier
+        // optimiser pass could drop the outer ORDER BY if it mistook ts ordering
+        // for full ordering.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES ('London', 10.0, '2024-01-01T00:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, city, avg(temp) FROM weather " +
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY city",
+                    """
+                            Sort
+                              keys: [city]
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: null
+                                    Sort
+                                      keys: [ts]
+                                        Async Group By workers: 1
+                                          keys: [ts,city]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [avg(temp)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: weather
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testExplainOuterOrderByTs() throws Exception {
+        // Outer ORDER BY ts is redundant with the fill cursor's intrinsic ts
+        // ordering and the optimiser correctly elides the outer Sort. The plan
+        // has Sample By Fill at the top with no wrapping sort.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES ('London', 10.0, '2024-01-01T00:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, city, avg(temp) FROM weather " +
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY ts",
+                    """
+                            Sample By Fill
+                              stride: '1h'
+                              fill: null
+                                Sort
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts,city]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [avg(temp)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: weather
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testExplainOuterOrderByTsCity() throws Exception {
+        // Outer ORDER BY ts, city must emit a Sort on top of Sample By Fill
+        // because only the leading ts prefix is already satisfied; the trailing
+        // city key is not. Regression guard against the optimiser eliding the
+        // whole sort based only on the leading key match.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES ('London', 10.0, '2024-01-01T00:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, city, avg(temp) FROM weather " +
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY ts, city",
+                    """
+                            Sort
+                              keys: [ts, city]
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: null
+                                    Sort
+                                      keys: [ts]
+                                        Async Group By workers: 1
+                                          keys: [ts,city]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [avg(temp)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: weather
+                            """
+            );
+        });
+    }
 
     @Test
     public void testExplainFillRange() throws Exception {
@@ -617,6 +758,8 @@ public class SampleByFillTest extends AbstractCairoTest {
             // London has data at 00:00 and 02:00.
             // Paris has data at 00:00 and 01:00.
             // With 1h stride, expect cartesian product: 3 buckets x 2 keys = 6 rows.
+            // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+            // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, city.
             execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO weather VALUES " +
                     "('London', 10.0, '2024-01-01T00:00:00.000000Z')," +
@@ -646,6 +789,8 @@ public class SampleByFillTest extends AbstractCairoTest {
             // Leading fill at 00:00, 01:00 (null for both keys).
             // Data at 02:00-04:00 with nulls for missing keys.
             // Trailing fill at 05:00 (null for both).
+            // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+            // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, city.
             execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO weather VALUES " +
                     "('London', 10.0, '2024-01-01T02:00:00.000000Z')," +
@@ -702,6 +847,8 @@ public class SampleByFillTest extends AbstractCairoTest {
             // 4 buckets (00:00..03:00) x 2 keys = 8 rows.
             // Leading fill at 00:00, 01:00, 02:00. Data at 03:00.
             // London at 04:00 is outside TO range and NOT included.
+            // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+            // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, city.
             execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO weather VALUES " +
                     "('London', 10.0, '2024-01-01T03:00:00.000000Z')," +
@@ -751,6 +898,8 @@ public class SampleByFillTest extends AbstractCairoTest {
             // Berlin appears only at 03:00 but is discovered in pass 1.
             // 5 buckets (00:00..04:00) x 3 keys = 15 rows.
             // Berlin gets null fill for buckets 00:00-02:00 and 04:00.
+            // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+            // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, city.
             execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO weather VALUES " +
                     "('London', 10.0, '2024-01-01T01:00:00.000000Z')," +
@@ -788,6 +937,8 @@ public class SampleByFillTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Two aggregate columns (sum(val), sum(ival)) with keyed FROM/TO.
             // 4 buckets (00:00..03:00) x 2 keys = 8 rows.
+            // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+            // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, key.
             execute("CREATE TABLE x (key STRING, val DOUBLE, ival INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "('A', 1.0, 10, '2024-01-01T01:00:00.000000Z')," +
@@ -841,6 +992,8 @@ public class SampleByFillTest extends AbstractCairoTest {
     public void testFillNullKeyedThreeKeys() throws Exception {
         assertMemoryLeak(() -> {
             // Three keys where Paris and Berlin appear only in first bucket.
+            // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+            // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, city.
             execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO weather VALUES " +
                     "('London', 10.0, '2024-01-01T00:00:00.000000Z')," +
@@ -867,6 +1020,8 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullKeyedWithCalendarOffset() throws Exception {
+        // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+        // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, city.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (ts TIMESTAMP, city SYMBOL, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO test VALUES " +
@@ -891,10 +1046,109 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillKeyedWithParallelWorkers() throws Exception {
+        // The class Javadoc notes that keyed FILL tests at sharedQueryWorkerCount=1
+        // lock AsyncGroupBy's intra-bucket hash-merge order. This test runs the
+        // same query shape under a 4-worker pool with ORDER BY ts, city so the
+        // assertion depends on stable semantics rather than hash interleave --
+        // it catches correctness regressions in worker>1 configurations that
+        // the single-worker tests cannot see.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE weather (city SYMBOL, temp DOUBLE, ts TIMESTAMP) " +
+                                        "TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO weather VALUES " +
+                                        "('London', 10.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('Berlin', 5.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
+                                        "('London', 11.0, '2024-01-01T02:00:00.000000Z')," +
+                                        "('Berlin', 6.0, '2024-01-01T02:00:00.000000Z')",
+                                sqlExecutionContext
+                        );
+                        TestUtils.assertSql(
+                                compiler,
+                                sqlExecutionContext,
+                                "SELECT ts, city, avg(temp) FROM weather " +
+                                        "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR " +
+                                        "ORDER BY ts, city",
+                                sink,
+                                """
+                                        ts\tcity\tavg
+                                        2024-01-01T00:00:00.000000Z\tBerlin\t5.0
+                                        2024-01-01T00:00:00.000000Z\tLondon\t10.0
+                                        2024-01-01T00:00:00.000000Z\tParis\t20.0
+                                        2024-01-01T01:00:00.000000Z\tBerlin\tnull
+                                        2024-01-01T01:00:00.000000Z\tLondon\tnull
+                                        2024-01-01T01:00:00.000000Z\tParis\t21.0
+                                        2024-01-01T02:00:00.000000Z\tBerlin\t6.0
+                                        2024-01-01T02:00:00.000000Z\tLondon\t11.0
+                                        2024-01-01T02:00:00.000000Z\tParis\tnull
+                                        """
+                        );
+                        TestUtils.assertSql(
+                                compiler,
+                                sqlExecutionContext,
+                                "SELECT ts, city, last(temp) AS last FROM weather " +
+                                        "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR " +
+                                        "ORDER BY ts, city",
+                                sink,
+                                """
+                                        ts\tcity\tlast
+                                        2024-01-01T00:00:00.000000Z\tBerlin\t5.0
+                                        2024-01-01T00:00:00.000000Z\tLondon\t10.0
+                                        2024-01-01T00:00:00.000000Z\tParis\t20.0
+                                        2024-01-01T01:00:00.000000Z\tBerlin\t5.0
+                                        2024-01-01T01:00:00.000000Z\tLondon\t10.0
+                                        2024-01-01T01:00:00.000000Z\tParis\t21.0
+                                        2024-01-01T02:00:00.000000Z\tBerlin\t6.0
+                                        2024-01-01T02:00:00.000000Z\tLondon\t11.0
+                                        2024-01-01T02:00:00.000000Z\tParis\t21.0
+                                        """
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullDuplicateAlias() throws Exception {
+        // Guard against factoryColToUserFillIdx mis-mapping when two SELECT columns
+        // share an alias: groupByMetadata.getColumnIndexQuiet() returns the first
+        // match, so a non-rejection here would silently route one aggregate onto
+        // the wrong fill slot. The SqlOptimiser rejects duplicate aliases up front
+        // (SqlOptimiser#Duplicate column), and this test locks that rejection in
+        // place for FILL-bearing SAMPLE BY queries.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1.0)");
+            // Position 25 points at the AS token of the second alias -- the
+            // optimiser raises the duplicate before the alias literal is
+            // positioned, so "AS k" is reported rather than the k token itself.
+            assertExceptionNoLeakCheck(
+                    "SELECT ts AS k, count(*) AS k FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    25,
+                    "Duplicate column [name=k]"
+            );
+        });
+    }
+
+    @Test
     public void testFillNullKeyedWithNullKey() throws Exception {
         assertMemoryLeak(() -> {
             // NULL symbol key forms its own group in the cartesian product.
             // 2 buckets x 2 keys (null + London) = 4 rows.
+            // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+            // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, city.
             execute("CREATE TABLE t (city SYMBOL, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(null, 10.0, '2024-01-01T01:00:00.000000Z')," +
@@ -2108,6 +2362,8 @@ public class SampleByFillTest extends AbstractCairoTest {
             // At 00:00 both keys have null (no prev yet).
             // At 01:00 data for both. At 02:00 prev. At 03:00 London data,
             // Paris prev. At 04:00 both prev.
+            // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+            // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, city.
             execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO weather VALUES " +
                     "('London', 10.0, '2024-01-01T01:00:00.000000Z')," +
@@ -2140,6 +2396,8 @@ public class SampleByFillTest extends AbstractCairoTest {
             // Wrapping SAMPLE BY FILL(PREV) in a CTE verifies the FILL_KEY
             // reclassification works correctly when the factory is reused
             // as a subquery.
+            // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+            // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, city.
             execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO weather VALUES " +
                     "('London', 10.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2169,6 +2427,8 @@ public class SampleByFillTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // London appears at 00:00, Paris first appears at 01:00.
             // At 00:00, Paris is missing and has no prev -> should get null.
+            // Row order within a bucket is AsyncGroupBy hash-merge order -- see class
+            // Javadoc. If this test starts failing on ordering, wrap in ORDER BY ts, city.
             execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO weather VALUES " +
                     "('London', 10.0, '2024-01-01T00:00:00.000000Z')," +
