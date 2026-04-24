@@ -17256,6 +17256,207 @@ public class WindowFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCumeDistExplainPlan() throws Exception {
+        // Locks down toPlan output for cume_dist across both dismissOrder paths.
+        // Before the SqlCodeGenerator fix that passes ac.getOrderBy() to initRecordComparator,
+        // any ORDER BY clause that was not the designated timestamp routed through the
+        // dismissOrder=false branch and crashed with NPE in CumeDistFunction.toPlan because
+        // the orderBy field was left null.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+
+            // No ORDER BY -> CumeDistNoOrderFunction (constant 1.0), Window (not Cached).
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER () FROM tab",
+                    """
+                            Window
+                              functions: [cume_dist() over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER (PARTITION BY i) FROM tab",
+                    """
+                            Window
+                              functions: [cume_dist() over (partition by [i])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+
+            // ORDER BY designated timestamp -> dismissOrder=true path.
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER (ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [cume_dist() over (order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+
+            // ORDER BY non-timestamp column -> dismissOrder=false path (the previously-broken one).
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER (ORDER BY val) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[val] => [cume_dist() over (order by [val])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER (PARTITION BY i ORDER BY val) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[val] => [cume_dist() over (partition by [i] order by [val])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testNtileExplainPlan() throws Exception {
+        // Locks down toPlan output for ntile across both dismissOrder paths.
+        // Before the fix, ntile silently dropped the ORDER BY clause from the plan
+        // whenever the order-by column was not the designated timestamp.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER () FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(3) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER (PARTITION BY i) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(3) over (partition by [i])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER (ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(3) over (order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER (PARTITION BY i ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(3) over (partition by [i] order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER (ORDER BY val) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[val] => [ntile(3) over (order by [val])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER (PARTITION BY i ORDER BY val) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[val] => [ntile(3) over (partition by [i] order by [val])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueExplainPlan() throws Exception {
+        // Spot-checks toPlan output for the most common nth_value variants. nth_value
+        // factories do not render ORDER BY in their plan output (frame info is shown
+        // instead), so the SqlCodeGenerator change does not affect their plan strings,
+        // but locking these in guards against future regressions in the framing logic.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertPlanNoLeakCheck(
+                    "SELECT nth_value(val, 2) OVER () FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [nth_value(val,2) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT nth_value(val, 2) OVER (PARTITION BY i) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT nth_value(val, 2) OVER (PARTITION BY i ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (partition by [i] rows between 2 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT nth_value(val, 2) OVER (ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (rows between current row and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
     private static void normalizeSuffix(List<String> values) {
         int maxLength = 0;
         for (int i = 0, n = values.size(); i < n; i++) {
