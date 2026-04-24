@@ -603,8 +603,6 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
         });
     }
 
-    // ==== Cross-branch coverage beyond the per-getter loops ====
-
     @Test
     public void testDoubleCrossColumnPrevToAggregate() throws Exception {
         // DOUBLE cross-col PREV-to-aggregate branch exercises the

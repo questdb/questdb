@@ -83,12 +83,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     public static final int FILL_CONSTANT = -1;
     public static final int FILL_KEY = -3;
     public static final int FILL_PREV_SELF = -2;
-    public static final int HAS_PREV_SLOT = 1;
-    public static final int KEY_INDEX_SLOT = 0;
-    public static final int PREV_ROWID_SLOT = 2;
-    // Key columns in the MapRecord start at KEY_POS_OFFSET; slots below it are
-    // the fixed-width value header (KEY_INDEX, HAS_PREV, PREV_ROWID).
-    public static final int KEY_POS_OFFSET = PREV_ROWID_SLOT + 1;
+    private static final int HAS_PREV_SLOT = 1;
+    private static final int KEY_INDEX_SLOT = 0;
+    // Key columns in the MapRecord start at KEY_POS_OFFSET (= PREV_ROWID_SLOT + 1);
+    // slots below it are the fixed-width value header (KEY_INDEX, HAS_PREV, PREV_ROWID).
+    private static final int KEY_POS_OFFSET = 3;
+    private static final int PREV_ROWID_SLOT = 2;
 
     private final RecordCursorFactory base;
     private final ObjList<Function> constantFills;
@@ -257,6 +257,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     private boolean hasAnyConstantFill() {
+        // Intentional asymmetry with hasAnyConstantSlot: this method scans ALL
+        // fillModes entries (including timestampIndex, which is always classified
+        // FILL_CONSTANT with NullConstant.NULL), and the `!(f instanceof NullConstant)`
+        // filter below naturally excludes the timestamp's sentinel. The sibling
+        // method skips timestampIndex explicitly because it does NOT apply a
+        // NullConstant filter.
         for (int i = 0, n = fillModes.size(); i < n; i++) {
             if (fillModes.getQuick(i) == FILL_CONSTANT) {
                 Function f = constantFills.getQuick(i);
@@ -320,7 +326,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final int timestampIndex;
         private final TimestampSampler timestampSampler;
         private final Function toFunc;
-
 
         private SampleByFillCursor(
                 RecordMetadata metadata,

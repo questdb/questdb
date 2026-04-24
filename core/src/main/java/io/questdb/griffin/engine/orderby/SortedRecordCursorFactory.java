@@ -41,9 +41,12 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
+    // `base` is non-final because the constructor sets it to null in the catch
+    // block so `_close()` does not double-free a caller-owned factory when
+    // construction throws after the field has been assigned.
+    private RecordCursorFactory base;
     private final SortedRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
-    private RecordCursorFactory base;
 
     public SortedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -79,6 +82,13 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             // createRankMaps succeeds. On success, ownership passes to the cursor.
             rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
             this.cursor = new SortedRecordCursor(chain, comparator, rankMaps);
+            // Ownership of chain and rankMaps has transferred to the cursor.
+            // Null the locals so the catch block does not double-free them if
+            // any future statement between here and the closing brace throws;
+            // the cursor's close() (reached via close() -> _close() -> Misc.free(cursor))
+            // will handle their release.
+            chain = null;
+            rankMaps = null;
         } catch (Throwable th) {
             // Null the field so _close() does not double-free the caller-owned
             // base factory if the assignment above completed before the throw.

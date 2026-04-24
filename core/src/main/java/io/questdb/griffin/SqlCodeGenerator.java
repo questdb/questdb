@@ -3245,7 +3245,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         ObjList<Function> fillValues = null;
-        ObjList<Function> constantFillFuncs = null;
+        ObjList<Function> constantFills = null;
         final ExpressionNode fillFrom = curr.getFillFrom();
         final ExpressionNode fillTo = curr.getFillTo();
         final ExpressionNode fillStride = curr.getFillStride();
@@ -3379,7 +3379,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata groupByMetadata = groupByFactory.getMetadata();
             final int columnCount = groupByMetadata.getColumnCount();
             final IntList fillModes = new IntList(columnCount);
-            constantFillFuncs = new ObjList<>(columnCount);
+            constantFills = new ObjList<>(columnCount);
 
             // Detect key columns: output columns whose AST expression is a
             // LITERAL (column reference) that is not the timestamp floor function.
@@ -3469,13 +3469,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        constantFillFuncs.add(NullConstant.NULL);
+                        constantFills.add(NullConstant.NULL);
                     } else if (factoryColToUserFillIdx.getQuick(col) < 0) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
-                        constantFillFuncs.add(NullConstant.NULL);
+                        constantFills.add(NullConstant.NULL);
                     } else {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
-                        constantFillFuncs.add(NullConstant.NULL);
+                        constantFills.add(NullConstant.NULL);
                     }
                 }
             } else {
@@ -3528,7 +3528,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        constantFillFuncs.add(NullConstant.NULL);
+                        constantFills.add(NullConstant.NULL);
                         continue;
                     }
                     final int fillIdx = factoryColToUserFillIdx.getQuick(col);
@@ -3539,7 +3539,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // correctly defaults to FILL_KEY for backwards compatibility
                         // with the original isKeyColumn(col, bottomUpCols, ...) path.
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
-                        constantFillFuncs.add(NullConstant.NULL);
+                        constantFills.add(NullConstant.NULL);
                         continue;
                     }
                     // In broadcast mode the pre-loop check above validated a single
@@ -3573,7 +3573,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // PREV(self) — equivalent to bare PREV; normalize internally to avoid
                                 // a dead snapshot slot.
                                 fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
-                                constantFillFuncs.add(NullConstant.NULL);
+                                constantFills.add(NullConstant.NULL);
                                 continue;
                             }
                             // Cross-column PREV type check: most types only need
@@ -3624,10 +3624,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // bare PREV — self-prev
                             fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
                         }
-                        constantFillFuncs.add(NullConstant.NULL);
+                        constantFills.add(NullConstant.NULL);
                     } else if (isNullKeyword(fillExpr.token)) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        constantFillFuncs.add(NullConstant.NULL);
+                        constantFills.add(NullConstant.NULL);
                     } else {
                         // Reaching this branch implies isBroadcastMode == false,
                         // because every broadcastable fill value (NULL or bare PREV)
@@ -3662,7 +3662,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                         }
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        constantFillFuncs.add(fillValues.getQuick(fillIdx));
+                        constantFills.add(fillValues.getQuick(fillIdx));
                         fillValues.setQuick(fillIdx, null); // transfer ownership
                     }
                 }
@@ -3769,7 +3769,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     samplingIntervalUnit,
                     timestampSampler,
                     fillModes,
-                    constantFillFuncs,
+                    constantFills,
                     timestampIndex,
                     timestampType,
                     keySink,
@@ -3781,7 +3781,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues);
-            Misc.freeObjList(constantFillFuncs);
+            Misc.freeObjList(constantFills);
             Misc.free(fillFromFunc);
             Misc.free(fillToFunc);
             Misc.free(groupByFactory);
