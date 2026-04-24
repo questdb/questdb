@@ -148,7 +148,8 @@ impl<'a, T: VarDictDecoder> RleDictionarySlicer<'a, T> {
         if num_bits > 0 {
             buffer = &buffer[1..];
             let decoder = Decoder::new(buffer, num_bits as usize);
-            // We mustn't eagerly decode here, a page may have zero non-null values.
+            // Decode lazily on first consume: a valid page may have zero non-null
+            // values, leaving nothing for an eager RLE pull.
             Ok(Self {
                 dict,
                 inner: SlicerInner::new(

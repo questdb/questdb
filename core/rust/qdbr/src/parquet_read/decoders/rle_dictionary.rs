@@ -287,7 +287,8 @@ where
         if num_bits > 0 {
             buffer = &buffer[1..];
             let decoder = Decoder::new(buffer, num_bits as usize);
-            // We mustn't eagerly decode here, a page may have zero non-null values.
+            // Decode lazily on first consume: a valid page may have zero non-null
+            // values, leaving nothing for an eager RLE pull.
             Ok(Self {
                 dict,
                 inner: Slicer::new(Some(decoder), RleIterator::Rle(RepeatN::new(0, 0))),
@@ -491,6 +492,25 @@ mod tests {
                 "unexpected error: {err}"
             );
         }
+    }
+
+    #[test]
+    fn test_rle_dict_decoder_empty_buffer_errors_on_construction() {
+        // `try_new` must reject an empty buffer (no bit_width byte) with
+        // a clear layout error rather than panicking on `buffer[0]`.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+        let dict = TestPrimitiveDictDecoder::new(vec![10]);
+        let err = match RleDictionaryDecoder::try_new(&[], dict, 0, I32_NULL, &mut buffers) {
+            Ok(_) => panic!("try_new must reject an empty buffer"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string()
+                .contains("RLE dictionary page is missing the initial byte with bit width"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

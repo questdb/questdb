@@ -61,7 +61,8 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
         if num_bits > 0 {
             buffer = &buffer[1..];
             let hybrid_decoder = Decoder::new(buffer, num_bits as usize);
-            // We mustn't eagerly decode here, a page may have zero non-null values.
+            // Decode lazily on first consume: a valid page may have zero non-null
+            // values, leaving nothing for an eager RLE pull.
             Ok(Self {
                 buffers,
                 dict_aux,
@@ -1619,6 +1620,8 @@ mod tests {
 
     #[test]
     fn test_empty_rle_buffer() {
+        // `try_new` must reject an empty buffer (no bit_width byte) with
+        // a clear layout error rather than panicking on `buffer[0]`.
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
         let mut buffers = create_test_buffers(&allocator);
@@ -1627,8 +1630,14 @@ mod tests {
         let dict_buf = build_dict_page_buffer(dict_strings);
         let dict_page = make_dict_page(&dict_buf, dict_strings.len());
 
-        let result = RleDictVarcharSliceDecoder::try_new(&[], &dict_page, &mut buffers, true);
-        assert!(result.is_err());
+        let err = match RleDictVarcharSliceDecoder::try_new(&[], &dict_page, &mut buffers, true) {
+            Ok(_) => panic!("try_new must reject an empty buffer"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("empty RLE dictionary buffer"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
