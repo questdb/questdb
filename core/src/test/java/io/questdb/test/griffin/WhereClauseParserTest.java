@@ -4207,7 +4207,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     "select * from " + tableName + " where\n" +
                             "ts = '2024-02-29' or ts <= '2024-03-01'",
                     "Async JIT Filter workers: 1\n" +
-                            "  filter: (ts=2024-02-29T00:00:00.000000Z or 2024-03-01T00:00:00.000000Z>=ts)\n" +
+                            "  filter: (2024-02-29T00:00:00.000000Z=ts or 2024-03-01T00:00:00.000000Z>=ts)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: " + tableName + "\n"
@@ -4217,7 +4217,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     "select * from " + tableName + " where\n" +
                             "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar",
                     "Async Filter workers: 1\n" +
-                            "  filter: ((ts=2024-02-29T00:00:00.000000Z or 2024-03-01T00:00:00.000000Z>=ts) or ts=2024-05-01T00:00:00.000000Z)\n" +
+                            "  filter: ((2024-02-29T00:00:00.000000Z=ts or 2024-03-01T00:00:00.000000Z>=ts) or 2024-05-01T00:00:00.000000Z=ts)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: " + tableName + "\n"
