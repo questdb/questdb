@@ -42,11 +42,13 @@ import org.jetbrains.annotations.NotNull;
 
 public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     private int valueIndex;
 
     public SumDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.DOUBLE);
     }
 
@@ -89,7 +91,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final double value = Unsafe.getUnsafe().getDouble(argAddr + (rowIndex << 3));
-                if (!Double.isNaN(value)) {
+                if (isArgNotNull || !Double.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final double current = Unsafe.getUnsafe().getDouble(addr);
                     Unsafe.getUnsafe().putDouble(addr, !Double.isNaN(current) ? current + value : value);
@@ -100,7 +102,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final double value = arg.getDouble(record);
-                if (!Double.isNaN(value)) {
+                if (isArgNotNull || !Double.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final double current = Unsafe.getUnsafe().getDouble(addr);
                     Unsafe.getUnsafe().putDouble(addr, !Double.isNaN(current) ? current + value : value);
@@ -112,7 +114,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (!Double.isNaN(value)) {
+        if (isArgNotNull || !Double.isNaN(value)) {
             final double sum = mapValue.getDouble(valueIndex);
             if (!Double.isNaN(sum)) {
                 mapValue.putDouble(valueIndex, sum + value);
@@ -193,7 +195,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

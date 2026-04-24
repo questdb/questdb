@@ -2041,16 +2041,19 @@ public class AggregateTest extends AbstractCairoTest {
                 sqlExecutionContext
         );
         try {
+            // ts is NOT NULL: count(ts) includes column_top-backfilled rows
+            // (valid sentinel data per the PR contract) as well as rows
+            // whose ts value was explicitly stored.
             assertCursor(
                     """
                             k\tc1\tcstar\tci\tcl\tcd\tcdat\tcts
-                            null\t3\t3\t0\t0\t0\t0\t0
-                            0\t1\t1\t0\t0\t0\t0\t0
-                            1\t1\t1\t0\t0\t0\t0\t0
+                            null\t3\t3\t0\t0\t0\t0\t3
+                            0\t1\t1\t0\t0\t0\t0\t1
+                            1\t1\t1\t0\t0\t0\t0\t1
                             2\t1\t1\t1\t1\t1\t1\t1
-                            3\t2\t2\t0\t0\t0\t0\t0
-                            4\t2\t2\t1\t1\t1\t1\t1
-                            5\t1\t1\t0\t0\t0\t0\t0
+                            3\t2\t2\t0\t0\t0\t0\t2
+                            4\t2\t2\t1\t1\t1\t1\t2
+                            5\t1\t1\t0\t0\t0\t0\t1
                             """,
                     query.getRecordCursorFactory(),
                     query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
@@ -2145,12 +2148,14 @@ public class AggregateTest extends AbstractCairoTest {
         );
 
         try {
+            // ts is NOT NULL: count(ts) counts every row regardless of bit
+            // pattern, matching the PR contract that sentinels are valid data.
             assertCursor(
                     """
                             hour\tc1\tcstar\tci\tcl\tcd\tcdat\tcts
-                            0\t2\t2\t0\t0\t0\t0\t0
-                            1\t2\t2\t0\t0\t0\t0\t0
-                            2\t2\t2\t1\t1\t1\t1\t1
+                            0\t2\t2\t0\t0\t0\t0\t2
+                            1\t2\t2\t0\t0\t0\t0\t2
+                            2\t2\t2\t1\t1\t1\t1\t2
                             """,
                     query.getRecordCursorFactory(),
                     true,

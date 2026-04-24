@@ -40,16 +40,18 @@ import org.jetbrains.annotations.NotNull;
  */
 public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private int valueIndex;
 
     public KSumDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Numbers.isFinite(value)) {
+        if (isArgNotNull || Numbers.isFinite(value)) {
             mapValue.putDouble(valueIndex, value);
             mapValue.putLong(valueIndex + 2, 1);
         } else {
@@ -62,7 +64,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Numbers.isFinite(value)) {
+        if (isArgNotNull || Numbers.isFinite(value)) {
             double sum = mapValue.getDouble(valueIndex);
             double c = mapValue.getDouble(valueIndex + 1);
             double y = value - c;

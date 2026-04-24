@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 
 public class SumIntGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     private int valueIndex;
 
     public SumIntGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.INT);
     }
 
@@ -69,7 +71,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull || value != Numbers.INT_NULL) {
             mapValue.putLong(valueIndex, value);
         } else {
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
@@ -94,7 +96,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getUnsafe().getLong(addr);
                     Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
@@ -105,7 +107,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getUnsafe().getLong(addr);
                     Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
@@ -117,7 +119,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull || value != Numbers.INT_NULL) {
             final long sum = mapValue.getLong(valueIndex);
             if (sum != Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, sum + value);
@@ -203,7 +205,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

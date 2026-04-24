@@ -46,7 +46,7 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
             long offset = rowCount - 1;
             for (; hi >= dataAddr; hi -= 4L) {
                 int value = Unsafe.getUnsafe().getInt(hi);
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
                     if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
@@ -84,11 +84,11 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
                 final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
                     final int existingValue = Unsafe.getUnsafe().getInt(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.INT_NULL || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if ((!isArgNotNull && existingValue == Numbers.INT_NULL) || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putInt(entryBase + valueColumnOffset, value);
                     }
@@ -102,11 +102,11 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
                 final int value = arg.getInt(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
                     final int existingValue = Unsafe.getUnsafe().getInt(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.INT_NULL || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if ((!isArgNotNull && existingValue == Numbers.INT_NULL) || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putInt(entryBase + valueColumnOffset, value);
                     }
@@ -117,8 +117,8 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (arg.getInt(record) != Numbers.INT_NULL) {
-            if (mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL || rowId > mapValue.getLong(valueIndex)) {
+        if (isArgNotNull || arg.getInt(record) != Numbers.INT_NULL) {
+            if ((!isArgNotNull && mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL) || rowId > mapValue.getLong(valueIndex)) {
                 computeFirst(mapValue, record, rowId);
             }
         }

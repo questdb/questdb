@@ -47,10 +47,10 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
             long offset = 0;
             for (; dataAddr < hi; dataAddr += Double.BYTES) {
                 double value = Unsafe.getUnsafe().getDouble(dataAddr);
-                if (!Numbers.isNull(value)) {
+                if (isArgNotNull || !Numbers.isNull(value)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || Numbers.isNull(mapValue.getDouble(valueIndex + 1))) {
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || (!isArgNotNull && Numbers.isNull(mapValue.getDouble(valueIndex + 1)))) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putDouble(valueIndex + 1, value);
                     }
@@ -85,11 +85,11 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
                 final double value = Unsafe.getUnsafe().getDouble(argAddr + (rowIndex << 3));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (!Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || !Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
                     final double existingValue = Unsafe.getUnsafe().getDouble(entryBase + valueColumnOffset);
-                    if (Numbers.isNull(existingValue) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if ((!isArgNotNull && Numbers.isNull(existingValue)) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putDouble(entryBase + valueColumnOffset, value);
                     }
@@ -103,11 +103,11 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
                 final double value = arg.getDouble(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (!Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || !Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
                     final double existingValue = Unsafe.getUnsafe().getDouble(entryBase + valueColumnOffset);
-                    if (Numbers.isNull(existingValue) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if ((!isArgNotNull && Numbers.isNull(existingValue)) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putDouble(entryBase + valueColumnOffset, value);
                     }
@@ -119,8 +119,8 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double val = arg.getDouble(record);
-        if (!Numbers.isNull(val)) {
-            if (Numbers.isNull(mapValue.getDouble(valueIndex + 1)) || rowId < mapValue.getLong(valueIndex)) {
+        if (isArgNotNull || !Numbers.isNull(val)) {
+            if ((!isArgNotNull && Numbers.isNull(mapValue.getDouble(valueIndex + 1))) || rowId < mapValue.getLong(valueIndex)) {
                 mapValue.putLong(valueIndex, rowId);
                 mapValue.putDouble(valueIndex + 1, val);
             }

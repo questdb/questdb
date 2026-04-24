@@ -78,6 +78,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     private static final long ENTRY_SIZE = 16;
     private static final long INITIAL_CAPACITY = 16;
     private final Function arg;
+    private final boolean isArgNotNull;
     private final char[] chars;
     private final int functionPosition;
     private final @Nullable Function maxFunc;
@@ -115,6 +116,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         this.name = name;
         this.chars = chars;
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.minFunc = minFunc;
         this.maxFunc = maxFunc;
         this.widthFunc = widthFunc;
@@ -471,8 +473,8 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
                 if (v < min) min = v;
                 if (v > max) max = v;
             }
-            if (!Double.isNaN(userMin)) min = userMin;
-            if (!Double.isNaN(userMax)) max = userMax;
+            if (isArgNotNull || !Double.isNaN(userMin)) min = userMin;
+            if (isArgNotNull || !Double.isNaN(userMax)) max = userMax;
         } else {
             min = userMin;
             max = userMax;

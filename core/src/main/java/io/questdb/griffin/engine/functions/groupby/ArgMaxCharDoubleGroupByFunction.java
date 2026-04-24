@@ -37,18 +37,20 @@ import org.jetbrains.annotations.NotNull;
 
 public class ArgMaxCharDoubleGroupByFunction extends CharFunction implements GroupByFunction, BinaryFunction {
     private final Function keyArg;
+    private final boolean isArgNotNull;
     private final Function valueArg;
     private int valueIndex;
 
     public ArgMaxCharDoubleGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg) {
         this.valueArg = valueArg;
         this.keyArg = keyArg;
+        this.isArgNotNull = keyArg != null && keyArg.isNotNull();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         double key = keyArg.getDouble(record);
-        if (Numbers.isNull(key)) {
+        if (!isArgNotNull && Numbers.isNull(key)) {
             mapValue.putChar(valueIndex, Numbers.CHAR_NULL);
             mapValue.putDouble(valueIndex + 1, Double.NaN);
         } else {
@@ -60,7 +62,7 @@ public class ArgMaxCharDoubleGroupByFunction extends CharFunction implements Gro
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double nextKey = keyArg.getDouble(record);
-        if (Numbers.isNull(nextKey)) {
+        if (!isArgNotNull && Numbers.isNull(nextKey)) {
             return;
         }
         double maxKey = mapValue.getDouble(valueIndex + 1);
@@ -120,7 +122,7 @@ public class ArgMaxCharDoubleGroupByFunction extends CharFunction implements Gro
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcMaxKey = srcValue.getDouble(valueIndex + 1);
-        if (Numbers.isNull(srcMaxKey)) {
+        if (!isArgNotNull && Numbers.isNull(srcMaxKey)) {
             return;
         }
         double destMaxKey = destValue.getDouble(valueIndex + 1);

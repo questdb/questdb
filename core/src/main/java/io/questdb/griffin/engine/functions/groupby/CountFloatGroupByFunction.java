@@ -51,7 +51,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
             final long hi = dataAddr + rowCount * (long) Float.BYTES;
             for (; dataAddr < hi; dataAddr += Float.BYTES) {
                 final float value = Unsafe.getUnsafe().getFloat(dataAddr);
-                if (!Numbers.isNull(value)) {
+                if (isArgNotNull || !Numbers.isNull(value)) {
                     nonNullCount++;
                 }
             }
@@ -64,7 +64,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
-        if (!Numbers.isNull(value)) {
+        if (isArgNotNull || !Numbers.isNull(value)) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -90,7 +90,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final float value = Unsafe.getUnsafe().getFloat(argAddr + (rowIndex << 2));
-                if (!Numbers.isNull(value)) {
+                if (isArgNotNull || !Numbers.isNull(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
                 }
@@ -100,7 +100,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final float value = arg.getFloat(record);
-                if (!Numbers.isNull(value)) {
+                if (isArgNotNull || !Numbers.isNull(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
                 }
@@ -111,7 +111,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
-        if (!Numbers.isNull(value)) {
+        if (isArgNotNull || !Numbers.isNull(value)) {
             mapValue.addLong(valueIndex, 1);
         }
     }
@@ -123,6 +123,6 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 }

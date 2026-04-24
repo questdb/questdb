@@ -47,10 +47,10 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
             long offset = 0;
             for (; dataAddr < hi; dataAddr += 8L) {
                 long value = Unsafe.getUnsafe().getLong(dataAddr);
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL) {
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || (!isArgNotNull && mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL)) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putLong(valueIndex + 1, value);
                     }
@@ -84,11 +84,11 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
                 final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
                     final long existingValue = Unsafe.getUnsafe().getLong(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.LONG_NULL || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if ((!isArgNotNull && existingValue == Numbers.LONG_NULL) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putLong(entryBase + valueColumnOffset, value);
                     }
@@ -100,11 +100,11 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 record.setRowIndex(rowIndex);
                 final long value = arg.getLong(record);
-                if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
                     final long existingValue = Unsafe.getUnsafe().getLong(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.LONG_NULL || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if ((!isArgNotNull && existingValue == Numbers.LONG_NULL) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putLong(entryBase + valueColumnOffset, value);
                     }
@@ -116,8 +116,8 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         long val = arg.getLong(record);
-        if (val != Numbers.LONG_NULL) {
-            if (mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL || rowId < mapValue.getLong(valueIndex)) {
+        if (isArgNotNull || val != Numbers.LONG_NULL) {
+            if ((!isArgNotNull && mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL) || rowId < mapValue.getLong(valueIndex)) {
                 mapValue.putLong(valueIndex, rowId);
                 mapValue.putLong(valueIndex + 1, val);
             }

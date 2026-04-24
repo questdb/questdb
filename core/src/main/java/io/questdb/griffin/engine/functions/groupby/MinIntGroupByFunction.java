@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 
 public class MinIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     private int valueIndex;
 
     public MinIntGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.INT);
     }
 
@@ -55,7 +57,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
             final int batchMin = Vect.minInt(dataAddr, rowCount);
-            if (batchMin != Numbers.INT_NULL) {
+            if (isArgNotNull || batchMin != Numbers.INT_NULL) {
                 final int existing = mapValue.getInt(valueIndex);
                 if (batchMin < existing || existing == Numbers.INT_NULL) {
                     mapValue.putInt(valueIndex, batchMin);
@@ -87,7 +89,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getUnsafe().getInt(addr);
                     Unsafe.getUnsafe().putInt(addr, current != Numbers.INT_NULL ? Math.min(current, value) : value);
@@ -98,7 +100,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getUnsafe().getInt(addr);
                     Unsafe.getUnsafe().putInt(addr, current != Numbers.INT_NULL ? Math.min(current, value) : value);
@@ -179,7 +181,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

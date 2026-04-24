@@ -41,6 +41,7 @@ import io.questdb.std.histogram.org.HdrHistogram.PackedHistogram;
 
 public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function exprFunc;
+    private final boolean isArgNotNull;
     private final int funcPosition;
     private ObjList<PackedHistogram> histograms = new ObjList<>();
     private boolean isShared;
@@ -52,6 +53,7 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
     public ApproxPercentileLongPackedGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
         assert precision >= 0 && precision <= 5;
         this.exprFunc = exprFunc;
+        this.isArgNotNull = exprFunc != null && exprFunc.isNotNull();
         this.percentileFunc = percentileFunc;
         this.precision = precision;
         this.funcPosition = funcPosition;
@@ -78,7 +80,7 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
         }
 
         final long val = exprFunc.getLong(record);
-        if (val != Numbers.LONG_NULL) {
+        if (isArgNotNull || val != Numbers.LONG_NULL) {
             histogram.recordValue(val);
         }
         mapValue.putLong(valueIndex, histogramIndex++);
@@ -88,7 +90,7 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final PackedHistogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
         final long val = exprFunc.getLong(record);
-        if (val != Numbers.LONG_NULL) {
+        if (isArgNotNull || val != Numbers.LONG_NULL) {
             histogram.recordValue(val);
         }
     }

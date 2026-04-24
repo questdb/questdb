@@ -42,18 +42,20 @@ import org.jetbrains.annotations.NotNull;
 
 public class BitOrLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     private int valueIndex;
 
     public BitOrLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.LONG);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (isArgNotNull || value != Numbers.LONG_NULL) {
             mapValue.putLong(valueIndex, value);
         } else {
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
@@ -78,7 +80,7 @@ public class BitOrLongGroupByFunction extends LongFunction implements GroupByFun
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getUnsafe().getLong(addr);
                     Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current | value : value);
@@ -89,7 +91,7 @@ public class BitOrLongGroupByFunction extends LongFunction implements GroupByFun
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getLong(record);
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getUnsafe().getLong(addr);
                     Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current | value : value);
@@ -101,7 +103,7 @@ public class BitOrLongGroupByFunction extends LongFunction implements GroupByFun
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (isArgNotNull || value != Numbers.LONG_NULL) {
             final long current = mapValue.getLong(valueIndex);
             if (current != Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, current | value);
@@ -155,9 +157,9 @@ public class BitOrLongGroupByFunction extends LongFunction implements GroupByFun
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final long srcVal = srcValue.getLong(valueIndex);
-        if (srcVal != Numbers.LONG_NULL) {
+        if (isArgNotNull || srcVal != Numbers.LONG_NULL) {
             final long destVal = destValue.getLong(valueIndex);
-            if (destVal != Numbers.LONG_NULL) {
+            if (isArgNotNull || destVal != Numbers.LONG_NULL) {
                 destValue.putLong(valueIndex, destVal | srcVal);
             } else {
                 destValue.putLong(valueIndex, srcVal);

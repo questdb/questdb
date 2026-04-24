@@ -1422,29 +1422,27 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testAggregateOnNotNullColumnIsConsistent() throws Exception {
         assertMemoryLeak(() -> {
-            // Every native aggregate kernel today (both the vectorized Vect.* / Rosti::keyed*
-            // path and the non-vectorized GroupByFunction classes) sentinel-skips, which
-            // disagrees with the NOT NULL semantic that "sentinels are valid values".
-            // SqlCodeGenerator.isVectorAggregateUnsafeForNotNull refuses the vec path for
-            // NOT NULL columns so a Java-only fast-path cannot silently diverge from the
-            // keyed path; the query falls back to the non-vectorized GroupByFunction
-            // pipeline. That pipeline also sentinel-skips today — fixing the semantic
-            // properly waits for validity bitmaps (Part 2 of the null-bitmaps plan). The
-            // invariant we DO enforce here: keyed and non-keyed aggregates agree for the
-            // same data, and sum of per-group aggregates equals the non-keyed aggregate.
+            // Non-vectorized GroupByFunction classes honour the NOT NULL contract:
+            // for a NOT NULL column, the null-sentinel check is bypassed, so every
+            // row contributes to COUNT/SUM/MIN/MAX regardless of its stored bit
+            // pattern. SqlCodeGenerator.isVectorAggregateUnsafeForNotNull still
+            // falls back from the native vec path to the Java keyed path on NOT
+            // NULL columns; this test pins the Java-path semantic.
+            // The rows below contain only real data: four integers, none of
+            // which collides with LONG_NULL.
             execute("CREATE TABLE t (x LONG NOT NULL, g SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
                         (1, 'a', '2024-01-01'),
                         (2, 'a', '2024-01-02'),
                         (3, 'b', '2024-01-03'),
-                        (NULL, 'b', '2024-01-04')
+                        (4, 'b', '2024-01-04')
                     """);
 
             assertSql(
                     """
                             count_x\tcount_star
-                            3\t4
+                            4\t4
                             """,
                     "SELECT count(x) count_x, count(*) count_star FROM t"
             );
@@ -1453,16 +1451,16 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     """
                             g\tcount_x
                             a\t2
-                            b\t1
+                            b\t2
                             """,
                     "SELECT g, count(x) count_x FROM t ORDER BY g"
             );
 
-            // Sum, min, max are similarly consistent between keyed and non-keyed paths.
+            // Sum, min, max match a plain SELECT across the same rows.
             assertSql(
                     """
                             sum_x\tmin_x\tmax_x
-                            6\t1\t3
+                            10\t1\t4
                             """,
                     "SELECT sum(x) sum_x, min(x) min_x, max(x) max_x FROM t"
             );
@@ -1470,7 +1468,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     """
                             g\tsum_x
                             a\t3
-                            b\t3
+                            b\t7
                             """,
                     "SELECT g, sum(x) sum_x FROM t ORDER BY g"
             );
@@ -1480,8 +1478,10 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testFilterOnNotNullColumnAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            // Aggregates on NOT NULL columns should produce the same results as nullable
-            // (but conceptually could skip null checks). Verify correctness at minimum.
+            // Aggregates on NOT NULL columns honour the PR contract: every row
+            // contributes to count/sum/min/max regardless of bit pattern. On
+            // the nullable sibling column, sentinel values still skip, matching
+            // the pre-PR behaviour.
             execute("CREATE TABLE t (x LONG NOT NULL, y LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
@@ -1490,13 +1490,94 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         (3, 30, '2024-01-03')
                     """);
 
-            // SUM on NOT NULL column vs nullable column
             assertSql(
                     """
                             sum_x\tsum_y\tcount_x\tcount_y\tmin_x\tmax_x
                             6\t40\t3\t2\t1\t3
                             """,
                     "SELECT sum(x) sum_x, sum(y) sum_y, count(x) count_x, count(y) count_y, min(x) min_x, max(x) max_x FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testCountOnNotNullColumnCountsSentinelValues() throws Exception {
+        assertMemoryLeak(() -> {
+            // Regression: count(x) on a NOT NULL column used to skip rows whose
+            // stored value equals the type's null sentinel (Long.MIN_VALUE for
+            // LONG, Integer.MIN_VALUE for INT, etc.). Under the NOT NULL
+            // contract those sentinels are real data and must count.
+            execute("CREATE TABLE t (x LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, '2024-01-01'),
+                        (CAST(-9223372036854775807 AS LONG) - 1, '2024-01-02'),
+                        (3, '2024-01-03')
+                    """);
+
+            assertSql(
+                    """
+                            count_x\tcount_star
+                            3\t3
+                            """,
+                    "SELECT count(x) count_x, count(*) count_star FROM t"
+            );
+
+            // GROUP BY path goes through a different factory; must produce the
+            // same count.
+            execute("CREATE TABLE g (x LONG NOT NULL, k INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO g VALUES
+                        (1, 0, '2024-01-01'),
+                        (CAST(-9223372036854775807 AS LONG) - 1, 0, '2024-01-02'),
+                        (5, 1, '2024-01-03')
+                    """);
+            assertSql(
+                    """
+                            k\tcount_x
+                            0\t2
+                            1\t1
+                            """,
+                    "SELECT k, count(x) count_x FROM g GROUP BY k ORDER BY k"
+            );
+        });
+    }
+
+    @Test
+    public void testFirstLastNotNullOnNotNullColumnReturnsSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            // first_not_null / last_not_null on a NOT NULL column must return
+            // the first / last stored row, even if the bit pattern matches the
+            // type sentinel. On nullable siblings the old "skip null" semantic
+            // still applies.
+            execute("CREATE TABLE t (x LONG NOT NULL, y LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        (CAST(-9223372036854775807 AS LONG) - 1, NULL, '2024-01-01'),
+                        (2, NULL, '2024-01-02'),
+                        (CAST(-9223372036854775807 AS LONG) - 1, 42, '2024-01-03')
+                    """);
+
+            // first_not_null / last_not_null return LONG_MIN for x (the stored
+            // sentinel on rows 1 and 3). The result type is nullable LONG so
+            // the default rendering shows "null"; y still has a skip-null
+            // semantic since it is a nullable column.
+            assertSql(
+                    """
+                            first_not_null_x\tfirst_not_null_y\tlast_not_null_x\tlast_not_null_y
+                            null\t42\tnull\t42
+                            """,
+                    "SELECT first_not_null(x) first_not_null_x, first_not_null(y) first_not_null_y, " +
+                            "last_not_null(x) last_not_null_x, last_not_null(y) last_not_null_y FROM t"
+            );
+
+            // Nullable sibling column: last_not_null(y) returns 42 from row 3;
+            // first_not_null(y) returns 42 too because rows 1 and 2 are NULL.
+            // Under the old behaviour first_not_null(x) would have skipped the
+            // sentinel rows and hit row 2's value 2 -- pin that regression:
+            assertSql(
+                    "expected\ntrue\n",
+                    "SELECT first_not_null(x) != 2 expected FROM t"
             );
         });
     }

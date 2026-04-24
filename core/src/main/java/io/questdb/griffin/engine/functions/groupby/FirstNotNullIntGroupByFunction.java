@@ -46,10 +46,10 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
             long offset = 0;
             for (; dataAddr < hi; dataAddr += 4L) {
                 int value = Unsafe.getUnsafe().getInt(dataAddr);
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL) {
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || (!isArgNotNull && mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL)) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putInt(valueIndex + 1, value);
                     }
@@ -84,11 +84,11 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
                 final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
                     final int existingValue = Unsafe.getUnsafe().getInt(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.INT_NULL || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if ((!isArgNotNull && existingValue == Numbers.INT_NULL) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putInt(entryBase + valueColumnOffset, value);
                     }
@@ -102,11 +102,11 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
                 final int value = arg.getInt(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
                     final int existingValue = Unsafe.getUnsafe().getInt(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.INT_NULL || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if ((!isArgNotNull && existingValue == Numbers.INT_NULL) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putInt(entryBase + valueColumnOffset, value);
                     }
@@ -118,8 +118,8 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         int val = arg.getInt(record);
-        if (val != Numbers.INT_NULL) {
-            if (mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL || rowId < mapValue.getLong(valueIndex)) {
+        if (isArgNotNull || val != Numbers.INT_NULL) {
+            if ((!isArgNotNull && mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL) || rowId < mapValue.getLong(valueIndex)) {
                 mapValue.putLong(valueIndex, rowId);
                 mapValue.putInt(valueIndex + 1, val);
             }

@@ -44,6 +44,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public class ArgMaxVarcharIntGroupByFunction extends VarcharFunction implements GroupByFunction, BinaryFunction {
     private final Function keyArg;
+    private final boolean isArgNotNull;
     private final StableAwareUtf8StringHolder sink = new StableAwareUtf8StringHolder();
     private final Function valueArg;
     private int valueIndex;
@@ -51,6 +52,7 @@ public class ArgMaxVarcharIntGroupByFunction extends VarcharFunction implements 
     public ArgMaxVarcharIntGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg) {
         this.valueArg = valueArg;
         this.keyArg = keyArg;
+        this.isArgNotNull = keyArg != null && keyArg.isNotNull();
     }
 
     @Override
@@ -61,7 +63,7 @@ public class ArgMaxVarcharIntGroupByFunction extends VarcharFunction implements 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         int key = keyArg.getInt(record);
-        if (key == Numbers.INT_NULL) {
+        if (!isArgNotNull && key == Numbers.INT_NULL) {
             mapValue.putInt(valueIndex, Numbers.INT_NULL);
             mapValue.putLong(valueIndex + 1, 0);
             mapValue.putBool(valueIndex + 2, true);
@@ -82,7 +84,7 @@ public class ArgMaxVarcharIntGroupByFunction extends VarcharFunction implements 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         int nextKey = keyArg.getInt(record);
-        if (nextKey == Numbers.INT_NULL) {
+        if (!isArgNotNull && nextKey == Numbers.INT_NULL) {
             return;
         }
         int maxKey = mapValue.getInt(valueIndex);
@@ -166,7 +168,7 @@ public class ArgMaxVarcharIntGroupByFunction extends VarcharFunction implements 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcMaxKey = srcValue.getInt(valueIndex);
-        if (srcMaxKey == Numbers.INT_NULL) {
+        if (!isArgNotNull && srcMaxKey == Numbers.INT_NULL) {
             return;
         }
         int destMaxKey = destValue.getInt(valueIndex);

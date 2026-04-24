@@ -58,7 +58,7 @@ public class CountLongGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (isArgNotNull || value != Numbers.LONG_NULL) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -85,7 +85,7 @@ public class CountLongGroupByFunction extends AbstractCountGroupByFunction {
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
                 }
@@ -95,7 +95,7 @@ public class CountLongGroupByFunction extends AbstractCountGroupByFunction {
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getLong(record);
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
                 }
@@ -106,13 +106,16 @@ public class CountLongGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (isArgNotNull || value != Numbers.LONG_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
     }
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        // Vect.countLong is sentinel-skipping and has no NOT-NULL-aware variant
+        // yet. Disable the batch path for NOT NULL so the per-row computeFirst
+        // / computeNext path (which honours isArgNotNull) is used instead.
+        return !isArgNotNull;
     }
 }
