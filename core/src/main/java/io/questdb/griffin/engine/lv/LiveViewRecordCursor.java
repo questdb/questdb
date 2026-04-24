@@ -33,7 +33,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.ObjList;
+import io.questdb.std.DirectSymbolMap;
+import io.questdb.std.str.DirectString;
 
 /**
  * Cursor over a snapshot of a live view's double-buffered InMemoryTable. On {@link
@@ -137,19 +138,18 @@ public class LiveViewRecordCursor implements RecordCursor {
         if (ColumnType.tagOf(type) != ColumnType.SYMBOL) {
             return null;
         }
-        ObjList<String> st = pinnedBuffer.getSymbolTable(columnIndex);
+        DirectSymbolMap st = pinnedBuffer.getSymbolTable(columnIndex);
+        DirectString viewA = new DirectString();
+        DirectString viewB = new DirectString();
         return new SymbolTable() {
             @Override
             public CharSequence valueBOf(int key) {
-                return valueOf(key);
+                return key >= 0 && st != null ? st.valueOf(key, viewB) : null;
             }
 
             @Override
             public CharSequence valueOf(int key) {
-                if (key < 0 || st == null || key >= st.size()) {
-                    return null;
-                }
-                return st.getQuick(key);
+                return key >= 0 && st != null ? st.valueOf(key, viewA) : null;
             }
         };
     }

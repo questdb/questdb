@@ -44,8 +44,8 @@ import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.IntList;
-import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -94,7 +94,7 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     // WAL_DEDUP_MODE_DEFAULT behavior in WalWriter.getKeyOrNextSymbolKey).
     // A null entry at a given index means that column had no diff in this
     // transaction, so resolution falls through to the reader.
-    private final ObjList<IntObjHashMap<CharSequence>> txnSymbolDiffs = new ObjList<>();
+    private final ObjList<DirectSymbolMap> txnSymbolDiffs = new ObjList<>();
     private boolean consumed;
     private WalReader reader;
     private long rowHi;
@@ -132,6 +132,7 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     public void close() {
         reader = Misc.free(reader);
         Misc.free(extractedTimestampMem);
+        Misc.freeObjList(txnSymbolDiffs);
     }
 
     @Override
@@ -224,17 +225,9 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
      * index that {@code LiveViewRefreshJob.buildColumnMappings} stores in
      * {@link #columnIndexes}.
      */
-    // TODO(live-view): zero-GC — allocates a String per diff entry via String.valueOf (the
-    //  entry's CharSequence view is rebound on the next nextEntry() call, so a stable copy
-    //  is required) and uses IntObjHashMap<CharSequence> which boxes int keys and may
-    //  rehash. Replace with an off-heap byte buffer + (key -> (offset, length)) primitive
-    //  map: copy entry bytes via entry.appendSymbolTo(buffer) and serve lookups through a
-    //  reusable DirectString view. Aligns with the similar TODO on InMemoryTable.putSymbol
-    //  and the long-standing pattern in WalReader.openSymbolMaps. Refresh-hot-path cost
-    //  today is O(new-symbols-per-txn) strings per incremental cycle.
     private void buildTxnSymbolDiffs(@Nullable SymbolMapDiffCursor txnDiffs) {
         for (int i = 0, n = txnSymbolDiffs.size(); i < n; i++) {
-            IntObjHashMap<CharSequence> m = txnSymbolDiffs.getQuick(i);
+            DirectSymbolMap m = txnSymbolDiffs.getQuick(i);
             if (m != null) {
                 m.clear();
             }
@@ -245,16 +238,16 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         SymbolMapDiff diff = txnDiffs.nextSymbolMapDiff();
         while (diff != null) {
             int colIdx = diff.getColumnIndex();
-            IntObjHashMap<CharSequence> map = colIdx < txnSymbolDiffs.size() ? txnSymbolDiffs.getQuick(colIdx) : null;
+            DirectSymbolMap map = colIdx < txnSymbolDiffs.size() ? txnSymbolDiffs.getQuick(colIdx) : null;
             if (map == null) {
-                map = new IntObjHashMap<>();
+                map = new DirectSymbolMap(256, 8, MemoryTag.NATIVE_DEFAULT);
                 txnSymbolDiffs.extendAndSet(colIdx, map);
             }
             SymbolMapDiffEntry entry = diff.nextEntry();
             while (entry != null) {
-                // String.valueOf copies the transient CharSequence so the overlay survives
-                // past this entry's re-use on the next nextEntry() call.
-                map.put(entry.getKey(), String.valueOf(entry.getSymbol()));
+                // DirectSymbolMap.put copies the CharSequence's bytes off-heap, so the
+                // overlay survives past this entry's re-use on the next nextEntry() call.
+                map.put(entry.getKey(), entry.getSymbol());
                 entry = diff.nextEntry();
             }
             diff = txnDiffs.nextSymbolMapDiff();
@@ -339,7 +332,7 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                     symTab = new WalSymbolTable();
                     symbolTables.setQuick(i, symTab);
                 }
-                IntObjHashMap<CharSequence> diff = walColumnIndex < txnSymbolDiffs.size()
+                DirectSymbolMap diff = walColumnIndex < txnSymbolDiffs.size()
                         ? txnSymbolDiffs.getQuick(walColumnIndex)
                         : null;
                 // Pass an empty map as null — valueOf short-circuits to the reader.
@@ -373,7 +366,7 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         // Per-transaction overlay (key -> symbol) built from the current txn's
         // SymbolMapDiff. Null when the txn has no diff entries for this column;
         // resolution falls straight through to the reader.
-        private IntObjHashMap<CharSequence> txnDiff;
+        private DirectSymbolMap txnDiff;
         private WalReader reader;
         private int walColumnIndex;
 
@@ -385,7 +378,7 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         @Override
         public int getSymbolCount() {
             // The WAL symbol map does not expose an exact count without walking
-            // the backing IntObjHashMap; consumers of live view refresh only need
+            // the backing store; consumers of live view refresh only need
             // key->value resolution, so an upper-bound sentinel is enough.
             return Integer.MAX_VALUE;
         }
@@ -396,7 +389,7 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             return SymbolTable.VALUE_NOT_FOUND;
         }
 
-        public void of(int walColumnIndex, WalReader reader, @Nullable IntObjHashMap<CharSequence> txnDiff) {
+        public void of(int walColumnIndex, WalReader reader, @Nullable DirectSymbolMap txnDiff) {
             this.walColumnIndex = walColumnIndex;
             this.reader = reader;
             this.txnDiff = txnDiff;
@@ -416,7 +409,7 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             // files), the overlay does not have them and the reader resolves them
             // correctly.
             if (txnDiff != null) {
-                CharSequence value = txnDiff.get(key);
+                CharSequence value = txnDiff.valueOf(key);
                 if (value != null) {
                     return value;
                 }

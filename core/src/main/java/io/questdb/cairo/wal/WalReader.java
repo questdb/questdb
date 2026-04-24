@@ -242,10 +242,12 @@ public class WalReader implements Closeable {
     //  entry (same reason, see SymbolMapDiffImpl.Entry.getSymbol), and uses
     //  IntObjHashMap<CharSequence> which boxes int keys and may rehash. On the live-view
     //  refresh hot path the cursor is constructed per WAL transaction per segment, so
-    //  these run O(clean + diff) allocations per refresh cycle. Aligns with the TODO on
-    //  WalSegmentPageFrameCursor.buildTxnSymbolDiffs and InMemoryTable.putSymbol; a future
-    //  sweep should back both symbol paths with an off-heap byte buffer plus a
-    //  (key -> (offset, length)) primitive map served through a reusable DirectString.
+    //  these run O(clean + diff) allocations per refresh cycle. Migrating to DirectSymbolMap
+    //  requires updating the getSymbolValue contract from "stable CharSequence" to "flyweight
+    //  view invalidated on next call"; consumers in WalWriterTest and elsewhere assert the
+    //  returned CharSequence against String literals via String.equals, so the flip needs a
+    //  broader sweep. InMemoryTable.putSymbol and WalSegmentPageFrameCursor.buildTxnSymbolDiffs
+    //  already use DirectSymbolMap on the row-hot path.
     private void openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration) {
         while (eventCursor.hasNext()) {
             if (WalTxnType.isDataType(eventCursor.getType())) {

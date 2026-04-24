@@ -33,12 +33,14 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.DirectString;
 
 /**
  * Retention-bounded native-memory store of base-table rows feeding the live view.
@@ -438,12 +440,17 @@ public class MergeBuffer implements QuietCloseable {
 
     /**
      * Static symbol table over the MergeBuffer's currently active {@link #rows} buffer.
-     * Symbol values are interned into the buffer's {@link ObjList} by {@link InMemoryTable#putSymbol};
-     * keys are positions within that list. Resolves through the live {@code rows}
-     * reference so that lookups stay valid after the compact-time rows/compactScratch swap.
+     * Symbol values are interned into the buffer's {@link DirectSymbolMap} by
+     * {@link InMemoryTable#putSymbol}; keys are the int positions the map assigns.
+     * Resolves through the live {@code rows} reference so that lookups stay valid
+     * after the compact-time rows/compactScratch swap.
      */
     private class ActiveSymbolTable implements StaticSymbolTable {
         private final int columnIndex;
+        // Per-instance flyweight views so concurrent valueOf/valueBOf calls do not
+        // alias each other through the DirectSymbolMap's shared view.
+        private final DirectString viewA = new DirectString();
+        private final DirectString viewB = new DirectString();
 
         ActiveSymbolTable(int columnIndex) {
             this.columnIndex = columnIndex;
@@ -456,7 +463,7 @@ public class MergeBuffer implements QuietCloseable {
 
         @Override
         public int getSymbolCount() {
-            ObjList<String> entries = rows.getSymbolTable(columnIndex);
+            DirectSymbolMap entries = rows.getSymbolTable(columnIndex);
             return entries != null ? entries.size() : 0;
         }
 
@@ -465,21 +472,21 @@ public class MergeBuffer implements QuietCloseable {
             if (value == null) {
                 return SymbolTable.VALUE_IS_NULL;
             }
-            ObjList<String> entries = rows.getSymbolTable(columnIndex);
+            DirectSymbolMap entries = rows.getSymbolTable(columnIndex);
             if (entries == null) {
                 return SymbolTable.VALUE_NOT_FOUND;
             }
-            for (int i = 0, n = entries.size(); i < n; i++) {
-                if (entries.getQuick(i).contentEquals(value)) {
-                    return i;
-                }
-            }
-            return SymbolTable.VALUE_NOT_FOUND;
+            int key = entries.keyOf(value);
+            return key >= 0 ? key : SymbolTable.VALUE_NOT_FOUND;
         }
 
         @Override
         public CharSequence valueBOf(int key) {
-            return valueOf(key);
+            if (key < 0) {
+                return null;
+            }
+            DirectSymbolMap entries = rows.getSymbolTable(columnIndex);
+            return entries != null ? entries.valueOf(key, viewB) : null;
         }
 
         @Override
@@ -487,11 +494,8 @@ public class MergeBuffer implements QuietCloseable {
             if (key < 0) {
                 return null;
             }
-            ObjList<String> entries = rows.getSymbolTable(columnIndex);
-            if (entries == null || key >= entries.size()) {
-                return null;
-            }
-            return entries.getQuick(key);
+            DirectSymbolMap entries = rows.getSymbolTable(columnIndex);
+            return entries != null ? entries.valueOf(key, viewA) : null;
         }
     }
 

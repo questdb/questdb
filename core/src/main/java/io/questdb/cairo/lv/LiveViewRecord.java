@@ -34,7 +34,7 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.DirectByteSequenceView;
-import io.questdb.std.ObjList;
+import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Utf8Sequence;
@@ -57,6 +57,8 @@ public class LiveViewRecord implements Record {
     private final DirectByteSequenceView binView = new DirectByteSequenceView();
     private final DirectString csViewA = new DirectString();
     private final DirectString csViewB = new DirectString();
+    private final DirectString symViewA = new DirectString();
+    private final DirectString symViewB = new DirectString();
     private final Utf8SplitString utf8ViewA = new Utf8SplitString();
     private final Utf8SplitString utf8ViewB = new Utf8SplitString();
     private long row;
@@ -167,13 +169,18 @@ public class LiveViewRecord implements Record {
         if (key < 0) {
             return null;
         }
-        ObjList<String> st = table.getSymbolTable(col);
-        return st != null && key < st.size() ? st.getQuick(key) : null;
+        DirectSymbolMap st = table.getSymbolTable(col);
+        return st != null ? st.valueOf(key, symViewA) : null;
     }
 
     @Override
     public CharSequence getSymB(int col) {
-        return getSymA(col);
+        int key = getInt(col);
+        if (key < 0) {
+            return null;
+        }
+        DirectSymbolMap st = table.getSymbolTable(col);
+        return st != null ? st.valueOf(key, symViewB) : null;
     }
 
     @Override

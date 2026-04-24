@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -59,7 +60,9 @@ import org.jetbrains.annotations.NotNull;
  * </ul>
  */
 public class InMemoryTable implements QuietCloseable {
+    private static final int SYMBOL_MAP_INITIAL_CAPACITY = 16;
     private static final long PAGE_SIZE = 64 * 1024;
+    private static final long SYMBOL_MAP_INITIAL_BUF_BYTES = 1024;
 
     // aux columns for var-length types (null for fixed-size)
     private final ObjList<MemoryCARW> auxColumns = new ObjList<>();
@@ -77,7 +80,12 @@ public class InMemoryTable implements QuietCloseable {
     // rows below readStart that have been logically evicted but not yet compacted.
     // Visible rows are [readStart, rowCount); their count is rowCount - readStart.
     private long rowCount;
-    private ObjList<ObjList<String>> symbolTables;
+    // True when this table owns the DirectSymbolMap at the same index and must
+    // free it on close. Reset for columns whose dictionary was replaced by a
+    // reference via {@link #shareSymbolTablesWith} — those columns share
+    // another table's DirectSymbolMap, which owns the native memory.
+    private boolean[] ownsSymbolTable;
+    private ObjList<DirectSymbolMap> symbolTables;
     private int timestampColumnIndex = -1;
 
     @Override
@@ -92,9 +100,9 @@ public class InMemoryTable implements QuietCloseable {
         auxColumns.clear();
         if (symbolTables != null) {
             for (int i = 0, n = symbolTables.size(); i < n; i++) {
-                ObjList<String> st = symbolTables.getQuick(i);
-                if (st != null) {
-                    st.clear();
+                DirectSymbolMap st = symbolTables.getQuick(i);
+                if (st != null && ownsSymbolTable[i]) {
+                    Misc.free(st);
                 }
             }
             symbolTables.clear();
@@ -102,6 +110,7 @@ public class InMemoryTable implements QuietCloseable {
         columnTypes = null;
         columnSizes = null;
         isVarLen = null;
+        ownsSymbolTable = null;
         metadata = null;
         rowCount = 0;
     }
@@ -109,8 +118,11 @@ public class InMemoryTable implements QuietCloseable {
     public void clear() {
         clearRows();
         if (symbolTables != null) {
+            // Clear shared dictionaries too — a sibling InMemoryTable that shares this
+            // column's DirectSymbolMap expects its copy of the (post-swap) state to be
+            // reset as a group. Ownership only gates {@link #close}, not clear.
             for (int i = 0, n = symbolTables.size(); i < n; i++) {
-                ObjList<String> st = symbolTables.getQuick(i);
+                DirectSymbolMap st = symbolTables.getQuick(i);
                 if (st != null) {
                     st.clear();
                 }
@@ -215,13 +227,10 @@ public class InMemoryTable implements QuietCloseable {
 
         if (symbolTables != null && source.symbolTables != null) {
             for (int i = 0; i < columnCount; i++) {
-                ObjList<String> srcSt = source.symbolTables.getQuick(i);
-                ObjList<String> dstSt = symbolTables.getQuick(i);
-                if (srcSt != null && dstSt != null) {
-                    dstSt.clear();
-                    for (int j = 0, m = srcSt.size(); j < m; j++) {
-                        dstSt.add(srcSt.getQuick(j));
-                    }
+                DirectSymbolMap srcSt = source.symbolTables.getQuick(i);
+                DirectSymbolMap dstSt = symbolTables.getQuick(i);
+                if (srcSt != null && dstSt != null && dstSt != srcSt) {
+                    dstSt.copyFrom(srcSt);
                 }
             }
         }
@@ -293,7 +302,7 @@ public class InMemoryTable implements QuietCloseable {
         return rowCount - readStart;
     }
 
-    public ObjList<String> getSymbolTable(int columnIndex) {
+    public DirectSymbolMap getSymbolTable(int columnIndex) {
         return symbolTables != null ? symbolTables.getQuick(columnIndex) : null;
     }
 
@@ -320,6 +329,7 @@ public class InMemoryTable implements QuietCloseable {
         this.columnTypes = new int[columnCount];
         this.columnSizes = new int[columnCount];
         this.isVarLen = new boolean[columnCount];
+        this.ownsSymbolTable = new boolean[columnCount];
         this.timestampColumnIndex = metadata.getTimestampIndex();
         this.symbolTables = new ObjList<>(columnCount);
 
@@ -333,7 +343,12 @@ public class InMemoryTable implements QuietCloseable {
 
             if (tag == ColumnType.SYMBOL) {
                 columnSizes[i] = Integer.BYTES;
-                symbolTables.extendAndSet(i, new ObjList<>());
+                symbolTables.extendAndSet(i, new DirectSymbolMap(
+                        SYMBOL_MAP_INITIAL_BUF_BYTES,
+                        SYMBOL_MAP_INITIAL_CAPACITY,
+                        MemoryTag.NATIVE_DEFAULT
+                ));
+                ownsSymbolTable[i] = true;
             } else if (varLen) {
                 columnSizes[i] = 0;
                 symbolTables.extendAndSet(i, null);
@@ -362,17 +377,29 @@ public class InMemoryTable implements QuietCloseable {
     }
 
     /**
-     * Replaces this table's per-SYMBOL-column dictionary lists with references to
-     * the other table's, so {@link #putSymbol} in either table interns into the
-     * same {@link ObjList}. Used by {@link MergeBuffer} to keep partition keys
+     * Replaces this table's per-SYMBOL-column dictionary with references to the
+     * other table's, so {@link #putSymbol} in either table interns into the same
+     * {@link DirectSymbolMap}. Used by {@link MergeBuffer} to keep partition keys
      * stable across its pending/retained buffer swap: identical string values
-     * always resolve to the same int key.
+     * always resolve to the same int key. This table's original dictionaries for
+     * those columns are freed to avoid leaking the native memory they own.
      */
     public void shareSymbolTablesWith(InMemoryTable other) {
         for (int i = 0; i < columnCount; i++) {
             if (ColumnType.tagOf(columnTypes[i]) == ColumnType.SYMBOL) {
-                ObjList<String> shared = other.symbolTables.getQuick(i);
-                if (shared != null) {
+                DirectSymbolMap shared = other.symbolTables.getQuick(i);
+                DirectSymbolMap current = symbolTables.getQuick(i);
+                // {@code shared == current} after a {@link MergeBuffer#compact} swap:
+                // the rows/compactScratch pointers flipped, but the underlying
+                // dictionary each points at has not moved. Freeing {@code current}
+                // and reassigning would drop the only live reference and leave a
+                // dangling pointer. Only proceed when we are truly adopting a
+                // different dictionary.
+                if (shared != null && shared != current) {
+                    if (ownsSymbolTable[i]) {
+                        Misc.free(current);
+                        ownsSymbolTable[i] = false;
+                    }
                     symbolTables.setQuick(i, shared);
                 }
             }
@@ -450,21 +477,12 @@ public class InMemoryTable implements QuietCloseable {
         VarcharTypeDriver.appendValue(auxColumns.getQuick(col), columns.getQuick(col), value);
     }
 
-    // TODO(live-view): zero-GC — allocates a new String per non-null symbol (value.toString()) on the refresh hot path,
-    //  and does an O(n) linear scan via ObjList.indexOf(). Replace with a CharSequence-keyed open-addressed symbol map
-    //  that interns into off-heap storage (see SymbolMapReader / GroupByAllocator patterns).
     public int putSymbol(int col, CharSequence value) {
-        ObjList<String> st = symbolTables.getQuick(col);
         if (value == null) {
             putInt(col, -1);
             return -1;
         }
-        String s = value.toString();
-        int key = st.indexOf(s);
-        if (key < 0) {
-            key = st.size();
-            st.add(s);
-        }
+        int key = symbolTables.getQuick(col).intern(value);
         putInt(col, key);
         return key;
     }
