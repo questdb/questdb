@@ -72,9 +72,9 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 5;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
-                Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
-                Unsafe.getUnsafe().putByte(address + 1, (byte) 1); // nDims=1
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
+                Unsafe.putByte(address, (byte) 0); // no null bitmap
+                Unsafe.putByte(address + 1, (byte) 1); // nDims=1
 
                 QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
                 cursor.of(address, bufferSize, 1, TYPE_DOUBLE_ARRAY);
@@ -93,7 +93,7 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 8;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
                 // null bitmap flag is already 0 from setMemory
 
                 QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
@@ -113,7 +113,7 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 16;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(address, bufferSize, 100, TYPE_DECIMAL64);
@@ -159,29 +159,29 @@ public class QwpCursorBoundsCheckTest {
             int totalSize = tsColumnSize + intColumnSize;
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, totalSize, (byte) 0);
+                Unsafe.setMemory(address, totalSize, (byte) 0);
 
                 // Write timestamp column wire data
                 long pos = address;
-                Unsafe.getUnsafe().putByte(pos, (byte) 0);         // no null bitmap
+                Unsafe.putByte(pos, (byte) 0);         // no null bitmap
                 pos++;
-                Unsafe.getUnsafe().putByte(pos, QwpTimestampColumnCursor.ENCODING_GORILLA);
+                Unsafe.putByte(pos, QwpTimestampColumnCursor.ENCODING_GORILLA);
                 pos++;
-                Unsafe.getUnsafe().putLong(pos, ts1);              // first timestamp
+                Unsafe.putLong(pos, ts1);              // first timestamp
                 pos += 8;
-                Unsafe.getUnsafe().putLong(pos, ts2);              // second timestamp
+                Unsafe.putLong(pos, ts2);              // second timestamp
                 pos += 8;
-                Unsafe.getUnsafe().putByte(pos, (byte) 0);         // Gorilla: 1 bit '0' (DoD=0)
+                Unsafe.putByte(pos, (byte) 0);         // Gorilla: 1 bit '0' (DoD=0)
                 pos++;
 
                 // Write int column data (simulating next column in table block)
-                Unsafe.getUnsafe().putByte(pos, (byte) 0);         // no null bitmap
+                Unsafe.putByte(pos, (byte) 0);         // no null bitmap
                 pos++;
-                Unsafe.getUnsafe().putInt(pos, 100);
+                Unsafe.putInt(pos, 100);
                 pos += 4;
-                Unsafe.getUnsafe().putInt(pos, 200);
+                Unsafe.putInt(pos, 200);
                 pos += 4;
-                Unsafe.getUnsafe().putInt(pos, 300);
+                Unsafe.putInt(pos, 300);
 
                 // Step 1: Parse with valid data — verify correct behavior
                 QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
@@ -201,7 +201,7 @@ public class QwpCursorBoundsCheckTest {
                 // Step 2: Corrupt the Gorilla byte to 0xFF
                 // Prefix '1111' triggers 36-bit read (4 prefix + 32 data bits = 5 bytes)
                 long gorillaByteAddr = address + 1 + 1 + 8 + 8; // skip flag, encoding, ts1, ts2
-                Unsafe.getUnsafe().putByte(gorillaByteAddr, (byte) 0xFF);
+                Unsafe.putByte(gorillaByteAddr, (byte) 0xFF);
 
                 cursor = new QwpTimestampColumnCursor();
                 int corruptedConsumed = cursor.of(address, totalSize, 3, TYPE_TIMESTAMP, true);
@@ -241,7 +241,7 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 32;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
 
                 QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
                 cursor.of(address, bufferSize, 1000, TYPE_LONG);
@@ -278,7 +278,7 @@ public class QwpCursorBoundsCheckTest {
             long address = Unsafe.malloc(message.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < message.length; i++) {
-                    Unsafe.getUnsafe().putByte(address + i, message[i]);
+                    Unsafe.putByte(address + i, message[i]);
                 }
 
                 QwpMessageCursor cursor = new QwpMessageCursor();
@@ -304,14 +304,14 @@ public class QwpCursorBoundsCheckTest {
             int messageLength = HEADER_SIZE;
             long address = Unsafe.malloc(messageLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, messageLength, (byte) 0);
-                Unsafe.getUnsafe().putByte(address, (byte) 'Q');
-                Unsafe.getUnsafe().putByte(address + 1, (byte) 'W');
-                Unsafe.getUnsafe().putByte(address + 2, (byte) 'P');
-                Unsafe.getUnsafe().putByte(address + 3, (byte) '1');
-                Unsafe.getUnsafe().putByte(address + 4, (byte) 1);
-                Unsafe.getUnsafe().putShort(address + 6, (short) 1);
-                Unsafe.getUnsafe().putInt(address + 8, 1);
+                Unsafe.setMemory(address, messageLength, (byte) 0);
+                Unsafe.putByte(address, (byte) 'Q');
+                Unsafe.putByte(address + 1, (byte) 'W');
+                Unsafe.putByte(address + 2, (byte) 'P');
+                Unsafe.putByte(address + 3, (byte) '1');
+                Unsafe.putByte(address + 4, (byte) 1);
+                Unsafe.putShort(address + 6, (short) 1);
+                Unsafe.putInt(address + 8, 1);
 
                 QwpMessageCursor cursor = new QwpMessageCursor();
                 try {
@@ -414,17 +414,17 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 256;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
                 // byte 0: null bitmap flag = 0 (already zero from setMemory)
-                Unsafe.getUnsafe().putInt(address + 1, 0);
-                Unsafe.getUnsafe().putInt(address + 5, 5);
+                Unsafe.putInt(address + 1, 0);
+                Unsafe.putInt(address + 5, 5);
 
                 QwpStringColumnCursor cursor = new QwpStringColumnCursor();
                 int consumed = cursor.of(address, legitimateSize, 1, TYPE_VARCHAR);
                 Assert.assertEquals(14, consumed);
 
                 // Attacker sets offset[1] = 200 — claims 200 bytes of string data
-                Unsafe.getUnsafe().putInt(address + 5, 200);
+                Unsafe.putInt(address + 5, 200);
 
                 cursor = new QwpStringColumnCursor();
                 try {
@@ -445,7 +445,7 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 16;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
 
                 QwpStringColumnCursor cursor = new QwpStringColumnCursor();
                 // rowCount=100 needs (101)*4 = 404 bytes for offset array alone
@@ -544,14 +544,14 @@ public class QwpCursorBoundsCheckTest {
     private static byte[] copyFromNative(long address, int length) {
         byte[] dst = new byte[length];
         for (int i = 0; i < length; i++) {
-            dst[i] = Unsafe.getUnsafe().getByte(address + i);
+            dst[i] = Unsafe.getByte(address + i);
         }
         return dst;
     }
 
     private static void copyToNative(byte[] src, long address) {
         for (int i = 0; i < src.length; i++) {
-            Unsafe.getUnsafe().putByte(address + i, src[i]);
+            Unsafe.putByte(address + i, src[i]);
         }
     }
 

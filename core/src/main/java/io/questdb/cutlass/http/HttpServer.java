@@ -307,7 +307,7 @@ public class HttpServer implements Closeable {
                 lastSlash = false;
             }
             if (shift > 0) {
-                Unsafe.getUnsafe().putByte(p + i - shift, b);
+                Unsafe.putByte(p + i - shift, b);
             }
         }
         url.squeezeHi(shift);

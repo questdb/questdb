@@ -259,7 +259,7 @@ public class CharGroupByFunctionBatchTest {
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         long addr = lastAllocated;
         for (char value : values) {
-            Unsafe.getUnsafe().putChar(addr, value);
+            Unsafe.putChar(addr, value);
             addr += Character.BYTES;
         }
         return lastAllocated;

@@ -98,7 +98,7 @@ public final class WebSocketFrameWriter {
         }
 
         int headerLen = writeHeader(buf, true, WebSocketOpcode.CLOSE, payloadLen, false);
-        Unsafe.getUnsafe().putShort(buf + headerLen, Short.reverseBytes((short) code));
+        Unsafe.putShort(buf + headerLen, Short.reverseBytes((short) code));
         if (reasonLen > 0) {
             Utf8s.strCpyUtf8(reason, buf + headerLen + 2, reasonLen);
         }
@@ -120,20 +120,20 @@ public final class WebSocketFrameWriter {
 
         // First byte: FIN + opcode
         int byte0 = (fin ? FIN_BIT : 0) | (opcode & 0x0F);
-        Unsafe.getUnsafe().putByte(buf + offset++, (byte) byte0);
+        Unsafe.putByte(buf + offset++, (byte) byte0);
 
         // Second byte: MASK + payload length
         int maskBit = masked ? MASK_BIT : 0;
 
         if (payloadLength <= 125) {
-            Unsafe.getUnsafe().putByte(buf + offset++, (byte) (maskBit | payloadLength));
+            Unsafe.putByte(buf + offset++, (byte) (maskBit | payloadLength));
         } else if (payloadLength <= 65535) {
-            Unsafe.getUnsafe().putByte(buf + offset++, (byte) (maskBit | 126));
-            Unsafe.getUnsafe().putByte(buf + offset++, (byte) ((payloadLength >> 8) & 0xFF));
-            Unsafe.getUnsafe().putByte(buf + offset++, (byte) (payloadLength & 0xFF));
+            Unsafe.putByte(buf + offset++, (byte) (maskBit | 126));
+            Unsafe.putByte(buf + offset++, (byte) ((payloadLength >> 8) & 0xFF));
+            Unsafe.putByte(buf + offset++, (byte) (payloadLength & 0xFF));
         } else {
-            Unsafe.getUnsafe().putByte(buf + offset++, (byte) (maskBit | 127));
-            Unsafe.getUnsafe().putLong(buf + offset, Long.reverseBytes(payloadLength));
+            Unsafe.putByte(buf + offset++, (byte) (maskBit | 127));
+            Unsafe.putLong(buf + offset, Long.reverseBytes(payloadLength));
             offset += 8;
         }
 
@@ -154,7 +154,7 @@ public final class WebSocketFrameWriter {
 
         // Copy payload
         for (int i = 0; i < payloadLen; i++) {
-            Unsafe.getUnsafe().putByte(buf + headerLen + i, payload[payloadOff + i]);
+            Unsafe.putByte(buf + headerLen + i, payload[payloadOff + i]);
         }
 
         return headerLen + payloadLen;
@@ -172,9 +172,8 @@ public final class WebSocketFrameWriter {
         int headerLen = writeHeader(buf, true, WebSocketOpcode.PONG, payloadLen, false);
 
         // Copy payload from memory
-        Unsafe.getUnsafe().copyMemory(payloadPtr, buf + headerLen, payloadLen);
+        Unsafe.copyMemory(payloadPtr, buf + headerLen, payloadLen);
 
         return headerLen + payloadLen;
     }
-
 }

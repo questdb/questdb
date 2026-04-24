@@ -77,7 +77,7 @@ public class QwpMessageHeader {
      * @return magic integer (little-endian)
      */
     public static int readMagic(long address) {
-        return Unsafe.getUnsafe().getInt(address);
+        return Unsafe.getInt(address);
     }
 
     /**
@@ -179,11 +179,11 @@ public class QwpMessageHeader {
         }
 
         // Read all fields (little-endian)
-        this.magic = Unsafe.getUnsafe().getInt(address + HEADER_OFFSET_MAGIC);
-        this.version = Unsafe.getUnsafe().getByte(address + HEADER_OFFSET_VERSION);
-        this.flags = Unsafe.getUnsafe().getByte(address + HEADER_OFFSET_FLAGS);
-        this.tableCount = Unsafe.getUnsafe().getShort(address + HEADER_OFFSET_TABLE_COUNT) & 0xFFFF;
-        this.payloadLength = Unsafe.getUnsafe().getInt(address + HEADER_OFFSET_PAYLOAD_LENGTH) & 0xFFFFFFFFL;
+        this.magic = Unsafe.getInt(address + HEADER_OFFSET_MAGIC);
+        this.version = Unsafe.getByte(address + HEADER_OFFSET_VERSION);
+        this.flags = Unsafe.getByte(address + HEADER_OFFSET_FLAGS);
+        this.tableCount = Unsafe.getShort(address + HEADER_OFFSET_TABLE_COUNT) & 0xFFFF;
+        this.payloadLength = Unsafe.getInt(address + HEADER_OFFSET_PAYLOAD_LENGTH) & 0xFFFFFFFFL;
 
         validate();
     }

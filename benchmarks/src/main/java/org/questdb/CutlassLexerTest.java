@@ -71,7 +71,7 @@ public class CutlassLexerTest {
     static {
         int len = bytes.length;
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+            Unsafe.putByte(mem + i, bytes[i]);
         }
     }
 

@@ -17,3 +17,9 @@ else()
     target_compile_definitions(questdb PRIVATE QUESTDB_MAIN_CLASS="io.questdb/io.questdb.ServerMain")
 endif()
 
+if (QUESTDB_NATIVE_MODULES)
+    target_compile_definitions(questdb PRIVATE QUESTDB_NATIVE_MODULES="${QUESTDB_NATIVE_MODULES}")
+else()
+    target_compile_definitions(questdb PRIVATE QUESTDB_NATIVE_MODULES="io.questdb")
+endif()
+

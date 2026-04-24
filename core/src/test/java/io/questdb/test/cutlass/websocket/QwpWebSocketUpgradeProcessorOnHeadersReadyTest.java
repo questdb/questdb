@@ -302,7 +302,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
             byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
             long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             allocatedMemory.add(ptr);
             allocatedMemory.add((long) bytes.length);
