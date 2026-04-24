@@ -141,7 +141,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
-                            " (ts timestamp, commit int, s symbol) " +
+                            " (ts timestamp NOT NULL, commit int, s symbol) " +
                             " , index(s) timestamp(ts) partition by DAY WAL "
                             + " DEDUP UPSERT KEYS(ts, s)"
             );
@@ -158,7 +158,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
-                            " (ts timestamp, commit int) " +
+                            " (ts timestamp NOT NULL, commit int) " +
                             " timestamp(ts) partition by DAY WAL "
                             + " DEDUP UPSERT KEYS(ts)"
             );
@@ -174,7 +174,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
-                            " (ts timestamp, commit int, s varchar) " +
+                            " (ts timestamp NOT NULL, commit int, s varchar) " +
                             " timestamp(ts) partition by DAY WAL "
                             + " DEDUP UPSERT KEYS(ts, s)"
             );
@@ -193,7 +193,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
-                            " (ts timestamp, commit int) " +
+                            " (ts timestamp NOT NULL, commit int) " +
                             " timestamp(ts) partition by DAY WAL "
                             + " DEDUP UPSERT KEYS(ts)"
             );
@@ -610,7 +610,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private void createEmptyTable(String tableName, String dedupOption) throws SqlException {
-        execute("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL " + dedupOption
+        execute("create table " + tableName + " (ts timestamp NOT NULL, commit int) timestamp(ts) partition by DAY WAL " + dedupOption
                 , sqlExecutionContext);
     }
 

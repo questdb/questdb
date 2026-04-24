@@ -1321,7 +1321,7 @@ public class UnnestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE t ("
-                            + "ts TIMESTAMP, sym SYMBOL, arr DOUBLE[]"
+                            + "ts TIMESTAMP NOT NULL, sym SYMBOL, arr DOUBLE[]"
                             + ") TIMESTAMP(ts)"
             );
             execute(

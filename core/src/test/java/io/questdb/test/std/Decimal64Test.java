@@ -1021,10 +1021,37 @@ public class Decimal64Test {
 
     @Test
     public void testSinkNull() {
-        // Sinking a null value shouldn't print anything
+        // Sinking a null value via toSink shouldn't print anything — toSink is the
+        // null-aware entry point. For raw bit-pattern printing on NOT NULL columns
+        // see Decimal64.toSinkBits.
         StringSink sink = new StringSink();
         Decimal64.NULL_VALUE.toSink(sink);
         Assert.assertEquals("", sink.toString());
+    }
+
+    @Test
+    public void testSinkBitsMinValueAppliesScale() {
+        // toSinkBits surfaces the raw bit pattern, including the Long.MIN_VALUE
+        // sentinel. Long.MIN_VALUE is a valid stored value on NOT NULL DECIMAL64
+        // columns (the result of INSERT NULL into such a column) and must format
+        // as the scaled decimal. Negating the value overflows, so toSinkBits
+        // handles this via a dedicated canonical-string path.
+        StringSink sink = new StringSink();
+
+        Decimal64.toSinkBits(sink, Long.MIN_VALUE, 0, 18);
+        Assert.assertEquals("-9223372036854775808", sink.toString());
+
+        sink.clear();
+        Decimal64.toSinkBits(sink, Long.MIN_VALUE, 2, 18);
+        Assert.assertEquals("-92233720368547758.08", sink.toString());
+
+        sink.clear();
+        Decimal64.toSinkBits(sink, Long.MIN_VALUE, 19, 19);
+        Assert.assertEquals("-0.9223372036854775808", sink.toString());
+
+        sink.clear();
+        Decimal64.toSinkBits(sink, Long.MIN_VALUE, 22, 22);
+        Assert.assertEquals("-0.0009223372036854775808", sink.toString());
     }
 
     @Test

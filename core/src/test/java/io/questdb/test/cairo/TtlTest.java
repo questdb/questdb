@@ -57,7 +57,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testAlterSyntaxInvalid() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
         try {
             execute("ALTER TABLE tango SET TTL");
             fail("Invalid syntax accepted");
@@ -120,7 +120,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableSetTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
         execute("INSERT INTO tango VALUES (0), (3_600_000_000), (7_200_000_001)");
         drainWalQueue();
         assertSql("ts\n" +
@@ -142,61 +142,61 @@ public class TtlTest extends AbstractCairoTest {
     public void testCreateSyntaxInvalid() {
         Assume.assumeTrue(walMode == WalMode.NO_WAL);
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[69] missing argument, should be <number> <unit> or <number_with_unit>", e.getMessage());
+            assertEquals("[78] missing argument, should be <number> <unit> or <number_with_unit>", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL X");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL X");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be <number> <unit> but was X", e.getMessage());
+            assertEquals("[79] invalid syntax, should be <number> <unit> but was X", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 12");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 12");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[72] missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected", e.getMessage());
+            assertEquals("[81] missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 NONE");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 NONE");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[72] invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was 'NONE'",
+            assertEquals("[81] invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was 'NONE'",
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL HOURS");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid argument, should be <number> <unit> or <number_with_unit>",
+            assertEquals("[79] invalid argument, should be <number> <unit> or <number_with_unit>",
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL H");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL H");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be <number> <unit> but was H",
+            assertEquals("[79] invalid syntax, should be <number> <unit> but was H",
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1G");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1G");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[71] invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was 'G'",
+            assertEquals("[80] invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was 'G'",
                     e.getMessage());
         }
     }
 
     @Test
     public void testCreateTableLike() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2 HOURS " + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 2 HOURS " + wal);
         execute("CREATE TABLE samba (LIKE tango)");
         assertSql("""
                         ddl
                         CREATE TABLE 'samba' (\s
-                        \tts TIMESTAMP
+                        \tts TIMESTAMP NOT NULL
                         ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS%s
                         """.formatted(walMode == WalMode.WITH_WAL ? ";" : wal),
                 "SHOW CREATE TABLE samba");
@@ -204,7 +204,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testDayExactlyAtTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T23:00:00'), ('1970-01-02T00:59:59.999999')");
         drainWalQueue();
         assertSql("""
@@ -218,7 +218,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testDayOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T23:00:00'), ('1970-01-02T01:00:00')");
         assertSql("""
                         ts
@@ -234,7 +234,7 @@ public class TtlTest extends AbstractCairoTest {
         setCurrentMicros(1717243200000000L); // 1717243200 seconds since epoch, in micros
         try {
             // Create table with 1 day TTL, partitioned by hour
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D" + wal);
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D" + wal);
 
             // Insert data that is within TTL relative to wall clock (2024-06-01T12:00:00)
             // For 1 day TTL, partition ceiling must be >= 2024-05-31T12:00:00 to survive
@@ -333,7 +333,7 @@ public class TtlTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, false);
         try {
             // Create table with 1 day TTL, partitioned by hour
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
 
             // Insert data with timestamps around 2024-06-01
             execute("INSERT INTO tango VALUES " +
@@ -368,7 +368,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testGranularityInvalidAlter() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
         try {
             execute("ALTER TABLE tango SET TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
@@ -382,7 +382,7 @@ public class TtlTest extends AbstractCairoTest {
             assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY WEEK");
         try {
             execute("ALTER TABLE tango SET TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
@@ -402,7 +402,7 @@ public class TtlTest extends AbstractCairoTest {
             assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY MONTH");
         try {
             execute("ALTER TABLE tango SET TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
@@ -422,7 +422,7 @@ public class TtlTest extends AbstractCairoTest {
             assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR");
         try {
             execute("ALTER TABLE tango SET TTL 1000 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
@@ -452,104 +452,104 @@ public class TtlTest extends AbstractCairoTest {
     @Test
     public void testGranularityInvalidCreate() throws Exception {
         assertException(
-                "CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1 HOUR",
-                69,
+                "CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY TTL 1 HOUR",
+                78,
                 "TTL value must be an integer multiple of partition size"
         );
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 25 HOUR");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY TTL 25 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[69] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[78] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 1 HOUR");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY WEEK TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 1 DAY");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY WEEK TTL 1 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 12 DAY");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY WEEK TTL 12 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH TTL 1 HOUR");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY MONTH TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[80] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH TTL 30 DAY");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY MONTH TTL 30 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[80] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH TTL 4 WEEK");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY MONTH TTL 4 WEEK");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[80] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 1000 HOUR");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR TTL 1000 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 365 DAY");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR TTL 365 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 52 WEEK");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR TTL 52 WEEK");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 13 MONTH");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR TTL 13 MONTH");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
     }
 
     @Test
     public void testGranularityValidAlter() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
         execute("ALTER TABLE tango SET TTL 24 HOUR");
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY WEEK");
         execute("ALTER TABLE tango SET TTL 168 HOUR");
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR");
         execute("ALTER TABLE tango SET TTL 12 MONTH");
     }
 
     @Test
     public void testGranularityValidCreate() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 24 HOUR");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY TTL 24 HOUR");
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 7 DAY");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY WEEK TTL 7 DAY");
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 168 HOUR");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY WEEK TTL 168 HOUR");
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 12 MONTH");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR TTL 12 MONTH");
     }
 
     @Test
     public void testHourExactlyAtTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T01:00:00'), ('1970-01-01T01:59:59.999999')");
         assertSql("""
                         ts
@@ -562,7 +562,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testHourOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T01:00:00'), ('1970-01-01T02:00:00')");
         drainWalQueue();
         assertSql("""
@@ -575,7 +575,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testManyPartitions() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR" + wal);
         execute("INSERT INTO tango SELECT (x*1_000_000*60*60)::TIMESTAMP ts FROM long_sequence(72);");
         drainWalQueue();
         assertSql("""
@@ -588,7 +588,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testMonthExactlyAtTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH" + wal);
         execute("INSERT INTO tango VALUES ('1970-02-01T04:20:00.0Z'), ('1970-02-10T04:20:00.0Z'), ('1970-03-01T04:59:59.999999Z')");
         drainWalQueue();
         assertSql("""
@@ -602,7 +602,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testMonthOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M" + wal);
         execute("INSERT INTO tango VALUES ('1970-02-01T04:20:00.0Z'), ('1970-02-10T04:20:00.0Z'), ('1970-03-01T05:00:00')");
         drainWalQueue();
         assertSql("""
@@ -615,7 +615,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testRandomInsertion() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1D" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY TTL 1D" + wal);
         execute("INSERT INTO tango SELECT rnd_timestamp('1970-01-01', '1970-12-01', 0) ts from long_sequence(2_000_000)");
         execute("INSERT INTO tango values ('1970-12-02')");
         drainWalQueue();
@@ -628,15 +628,15 @@ public class TtlTest extends AbstractCairoTest {
     public void testSyntaxJustWithinRange() throws Exception {
         Assume.assumeTrue(walMode == WalMode.NO_WAL);
 
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_647 HOURS");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_647 HOURS");
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 89_478_485 DAYS");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 89_478_485 DAYS");
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 12_782_640 WEEKS");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 12_782_640 WEEKS");
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 244_978 MONTHS");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 244_978 MONTHS");
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 244_978 YEARS");
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 244_978 YEARS");
     }
 
     @Test
@@ -644,85 +644,85 @@ public class TtlTest extends AbstractCairoTest {
         Assume.assumeTrue(walMode == WalMode.NO_WAL);
 
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL -1 HOURS");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL -1 HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be <number> <unit> but was -",
+            assertEquals("[79] invalid syntax, should be <number> <unit> but was -",
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_648 HOURS");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_648 HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 2147483648. Max value: 2147483647",
+            assertEquals("[79] value out of range: 2147483648. Max value: 2147483647",
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 89_478_486 DAYS");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 89_478_486 DAYS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 89478486 days. Max value: 89478485 days",
+            assertEquals("[79] value out of range: 89478486 days. Max value: 89478485 days",
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 12_782_641 WEEKS");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 12_782_641 WEEKS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 12782641 weeks. Max value: 12782640 weeks",
+            assertEquals("[79] value out of range: 12782641 weeks. Max value: 12782640 weeks",
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_648 MONTHS");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_648 MONTHS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 2147483648. Max value: 2147483647",
+            assertEquals("[79] value out of range: 2147483648. Max value: 2147483647",
                     e.getMessage());
         }
         try {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 178_956_971 YEARS");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 178_956_971 YEARS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 178956971 years. Max value: 178956970 years",
+            assertEquals("[79] value out of range: 178956971 years. Max value: 178956970 years",
                     e.getMessage());
         }
     }
 
     @Test
     public void testSyntaxValid() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOURS" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOURS" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAYS" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAYS" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEKS" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEKS" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTHS" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTHS" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR" + wal);
         execute("DROP TABLE tango");
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEARS" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEARS" + wal);
     }
 
     @Test
     public void testTablesFunction() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
         assertSql("ttlValue\tttlUnit\n0\tHOUR\n", "select ttlValue, ttlUnit from tables()");
         execute("ALTER TABLE tango SET TTL 2 HOURS");
         drainWalQueue();
@@ -743,7 +743,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testWeekExactlyAtTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01'), ('1970-01-03'), ('1970-01-08T00:59:59.999999')");
         drainWalQueue();
         assertSql("""
@@ -757,7 +757,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testWeekOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01'), ('1970-01-03'), ('1970-01-08T01:00:00')");
         drainWalQueue();
         assertSql("""
@@ -770,7 +770,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testYearExactlyAtTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1970-12-01'), ('1971-01-01T04:59:59.999999')");
         drainWalQueue();
         assertSql("""
@@ -784,7 +784,7 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testYearOneMicrosBeyondTtl() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1970-12-01'), ('1971-01-01T05:00:00')");
         drainWalQueue();
         assertSql("""

@@ -239,6 +239,10 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     .putAscii(' ')
                     .put(ColumnType.nameOf(column.getType()));
 
+            if (column.isNotNull()) {
+                sink.putAscii(" NOT NULL");
+            }
+
             if (column.getType() == ColumnType.SYMBOL) {
                 // omit capacity due to autoscaling
                 if (!column.isSymbolCached()) {

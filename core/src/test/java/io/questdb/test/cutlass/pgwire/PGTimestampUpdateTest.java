@@ -133,7 +133,7 @@ public class PGTimestampUpdateTest extends BasePGTest {
                         "id LONG, " +
                         "status SYMBOL CAPACITY 32 CACHE INDEX CAPACITY 256, " +
                         "mts " + tsType + ", " +
-                        "cts TIMESTAMP" +
+                        "cts TIMESTAMP NOT NULL" +
                         ") timestamp(cts) PARTITION BY MONTH WAL");
             }
 
@@ -171,7 +171,7 @@ public class PGTimestampUpdateTest extends BasePGTest {
                         "id LONG, " +
                         "status SYMBOL CAPACITY 32 CACHE INDEX CAPACITY 256, " +
                         "mts " + tsType + ", " +
-                        "cts TIMESTAMP" +
+                        "cts TIMESTAMP NOT NULL" +
                         ") timestamp(cts) PARTITION BY MONTH WAL");
             }
 
@@ -210,7 +210,7 @@ public class PGTimestampUpdateTest extends BasePGTest {
                         "id LONG, " +
                         "status SYMBOL CAPACITY 32 CACHE INDEX CAPACITY 256, " +
                         "mts " + tsType + ", " +
-                        "cts TIMESTAMP" +
+                        "cts TIMESTAMP NOT NULL" +
                         ") timestamp(cts) PARTITION BY MONTH WAL");
             }
 

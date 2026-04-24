@@ -1203,8 +1203,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
 
-        execute("create table trades (timestamp timestamp, tag symbol) timestamp(timestamp)");
-        execute("create table quotes (timestamp timestamp, tag symbol) timestamp(timestamp)");
+        execute("create table trades (timestamp timestamp NOT NULL, tag symbol) timestamp(timestamp)");
+        execute("create table quotes (timestamp timestamp NOT NULL, tag symbol) timestamp(timestamp)");
         assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10",
                 61,
                 "expected interval qualifier");
@@ -1405,7 +1405,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testBaseTableNameInQuotes() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base 'x' as (select ts, max(v) from x sample by 1d) partition by day;");
             execute("create materialized view x_view2 with base \"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
         });
@@ -1414,7 +1414,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testBaseTableNameWithPublicSchema() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
 
             execute("create materialized view x_view with base public.x as (select ts, max(v) from x sample by 1d) partition by day;");
             assertTableExistence(true, engine.verifyTableName("x_view"));
@@ -2701,7 +2701,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " f DOUBLE," +
                         " g DATE," +
                         " h BINARY," +
-                        " t TIMESTAMP," +
+                        " t TIMESTAMP NOT NULL," +
                         " x SYMBOL capacity 128 cache," +
                         " z STRING," +
                         " y BOOLEAN," +
@@ -2716,7 +2716,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "f DOUBLE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL, " +
                         "z STRING, " +
                         "y BOOLEAN, " +
@@ -2784,13 +2784,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "b BYTE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP blah, " +
+                        "t TIMESTAMP NOT NULL blah, " +
                         "x SYMBOL index, " +
                         "z STRING, " +
                         "bool BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by YEAR index",
-                61,
+                70,
                 "',' or ')' expected"
         );
     }
@@ -2807,7 +2807,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " f DOUBLE," +
                         " g DATE," +
                         " h BINARY," +
-                        " t TIMESTAMP," +
+                        " t TIMESTAMP NOT NULL," +
                         " x SYMBOL capacity 64 cache," +
                         " z STRING," +
                         " y BOOLEAN)" +
@@ -2822,7 +2822,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "f DOUBLE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL CAPACITY 64 CACHE, " +
                         "z STRING, " +
                         "y BOOLEAN) " +
@@ -3007,13 +3007,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "f DOUBLE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL index, " +
                         "z STRING, " +
                         "T BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by YEAR",
-                124,
+                133,
                 "Duplicate column [name=T]"
         );
     }
@@ -3031,14 +3031,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableForKafka() throws SqlException {
         assertCreateTable(
                 "create atomic table quickstart-events4 (" +
-                        "flag BOOLEAN, " +
-                        "id8 SHORT, " +
-                        "id16 SHORT, " +
-                        "id32 INT, " +
-                        "id64 LONG, " +
-                        "idFloat FLOAT, " +
-                        "idDouble DOUBLE, " +
-                        "idBytes STRING, " +
+                        "flag BOOLEAN NOT NULL, " +
+                        "id8 SHORT NOT NULL, " +
+                        "id16 SHORT NOT NULL, " +
+                        "id32 INT NOT NULL, " +
+                        "id64 LONG NOT NULL, " +
+                        "idFloat FLOAT NOT NULL, " +
+                        "idDouble DOUBLE NOT NULL, " +
+                        "idBytes STRING NOT NULL, " +
                         "msg STRING)",
                 """
                         CREATE TABLE "quickstart-events4" (
@@ -3100,7 +3100,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " f DOUBLE," +
                         " g DATE," +
                         " h BINARY," +
-                        " t TIMESTAMP," +
+                        " t TIMESTAMP NOT NULL," +
                         " x SYMBOL capacity 128 cache index capacity 256," +
                         " z STRING," +
                         " y BOOLEAN)" +
@@ -3115,7 +3115,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "f DOUBLE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL index, " + // <-- index here
                         "z STRING, " +
                         "y BOOLEAN) " +
@@ -3131,7 +3131,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
-                        " t TIMESTAMP," +
+                        " t TIMESTAMP NOT NULL," +
                         " d LONG," +
                         " e FLOAT," +
                         " f DOUBLE," +
@@ -3144,7 +3144,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3165,7 +3165,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3176,7 +3176,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                122,
+                131,
                 "max index block capacity is"
         );
     }
@@ -3188,7 +3188,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3199,7 +3199,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                123,
+                132,
                 "bad integer"
         );
     }
@@ -3211,7 +3211,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3222,7 +3222,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                122,
+                131,
                 "min index block capacity is"
         );
     }
@@ -3234,7 +3234,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3245,7 +3245,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                122,
+                131,
                 "min index block capacity is"
         );
     }
@@ -3257,7 +3257,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
-                        " t TIMESTAMP," +
+                        " t TIMESTAMP NOT NULL," +
                         " d LONG," +
                         " e FLOAT," +
                         " f DOUBLE," +
@@ -3270,7 +3270,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3298,43 +3298,43 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertCreateTable(
-                "create atomic table tst2 (i INT, ts TIMESTAMP) timestamp(ts) in volume 'volume'",
-                "create table tst2 (i int, ts timestamp) timestamp(ts) in volume 'volume'"
+                "create atomic table tst2 (i INT, ts TIMESTAMP NOT NULL) timestamp(ts) in volume 'volume'",
+                "create table tst2 (i int, ts timestamp NOT NULL) timestamp(ts) in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day in volume 'volume'"
+                "create atomic table tst3 (i INT, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst3 (i int, ts timestamp NOT NULL) timestamp(ts) partition by day in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, in volume 'volume'"
+                "create atomic table tst4 (i INT, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst4 (i int, ts timestamp NOT NULL) timestamp(ts) partition by day with maxUncommittedRows=7, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+                "create atomic table tst5 (i INT, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst5 (i int, ts timestamp NOT NULL) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+                "create atomic table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst6 (i symbol, ts timestamp NOT NULL), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst7 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
-                "create table tst7 (i symbol, ts timestamp), index(i capacity 32) in volume 'volume'"
+                "create atomic table tst7 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP NOT NULL) in volume 'volume'",
+                "create table tst7 (i symbol, ts timestamp NOT NULL), index(i capacity 32) in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
-                "create table tst8 (i symbol, ts timestamp), index(i capacity 32) with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+                "create atomic table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP NOT NULL) in volume 'volume'",
+                "create table tst8 (i symbol, ts timestamp NOT NULL), index(i capacity 32) with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst8 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+                "create atomic table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst8 (i symbol, ts timestamp NOT NULL), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
     }
 
@@ -3343,23 +3343,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
         Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
 
         assertCreateTable(
-                "create atomic table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day bypass wal in volume 'volume'"
+                "create atomic table tst3 (i INT, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst3 (i int, ts timestamp NOT NULL) timestamp(ts) partition by day bypass wal in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, in volume 'volume'"
+                "create atomic table tst4 (i INT, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst4 (i int, ts timestamp NOT NULL) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+                "create atomic table tst5 (i INT, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst5 (i int, ts timestamp NOT NULL) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+                "create atomic table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst6 (i symbol, ts timestamp NOT NULL), index(i capacity 32) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
     }
 
@@ -3372,7 +3372,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 "a INT, " +
                                 "b BYTE, " +
                                 "c CHAR, " +
-                                "t TIMESTAMP) " +
+                                "t TIMESTAMP NOT NULL) " +
                                 "TIMESTAMP(t) " +
                                 "PARTITION BY YEAR IN VOLUME 12", sqlExecutionContext
                 );
@@ -3380,10 +3380,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
             } catch (SqlException e) {
                 if (Os.isWindows()) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
-                    Assert.assertEquals(89, e.getPosition());
+                    Assert.assertEquals(98, e.getPosition());
                 } else {
                     TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=12]");
-                    Assert.assertEquals(96, e.getPosition());
+                    Assert.assertEquals(105, e.getPosition());
                 }
             }
         });
@@ -3396,10 +3396,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c CHAR, " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR VOLUME peterson",
-                86,
+                95,
                 "unexpected token [VOLUME]"
         );
 
@@ -3408,10 +3408,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c CHAR, " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR IN peterson",
-                89,
+                98,
                 "'volume' expected"
         );
 
@@ -3420,10 +3420,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c CHAR, " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR IN VOLUME",
-                95,
+                104,
                 "path for volume expected"
         );
     }
@@ -3433,23 +3433,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
         Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
 
         assertCreateTable(
-                "create atomic table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day wal in volume 'volume'"
+                "create atomic table tst3 (i INT, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst3 (i int, ts timestamp NOT NULL) timestamp(ts) partition by day wal in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, in volume 'volume'"
+                "create atomic table tst4 (i INT, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst4 (i int, ts timestamp NOT NULL) timestamp(ts) partition by day wal with maxUncommittedRows=7, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+                "create atomic table tst5 (i INT, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst5 (i int, ts timestamp NOT NULL) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create atomic table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+                "create atomic table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst6 (i symbol, ts timestamp NOT NULL), index(i capacity 32) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
     }
 
@@ -3460,7 +3460,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE INDEX, " + // INDEX is not supported for non-SYMBOL columns
                         "c CHAR, " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR",
                 30,
@@ -3475,11 +3475,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c CHAR, " +
-                        "t TIMESTAMP), " +
+                        "t TIMESTAMP NOT NULL), " +
                         "INDEX (b) " + // INDEX is not supported for non-SYMBOL columns
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR",
-                60,
+                69,
                 "indexes are supported only for SYMBOL columns [columnName=b, columnType=BYTE]"
         );
     }
@@ -3501,14 +3501,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "b BYTE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL index, " +
                         "z STRING, " +
                         "bool BOOLEAN), " +
                         "index(k) " +
                         "timestamp(t) " +
                         "partition by YEAR",
-                109,
+                118,
                 "Invalid column"
         );
     }
@@ -3530,13 +3530,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "b BYTE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL index, " +
                         "z STRING, " +
                         "bool BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by EPOCH",
-                128,
+                137,
                 "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected"
         );
     }
@@ -3549,13 +3549,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "b BYTE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL index, " +
                         "z STRING, " +
                         "bool BOOLEAN) " +
                         "timestamp(zyz) " +
                         "partition by YEAR",
-                112,
+                121,
                 "invalid designated timestamp column [name=zyz]"
         );
     }
@@ -3607,13 +3607,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "b BYTE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL index, " +
                         "z STRING, " +
                         "bool BOOLEAN, ) " +
                         "timestamp(t) " +
                         "partition by YEAR index",
-                102,
+                111,
                 "missing column definition"
         );
     }
@@ -3640,7 +3640,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " f DOUBLE," +
                         " g DATE," +
                         " h BINARY," +
-                        " t TIMESTAMP," +
+                        " t TIMESTAMP NOT NULL," +
                         " x SYMBOL capacity 128 nocache," +
                         " z STRING," +
                         " y BOOLEAN)" +
@@ -3655,7 +3655,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "f DOUBLE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL NOCACHE, " +
                         "z STRING, " +
                         "y BOOLEAN) " +
@@ -3676,7 +3676,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " f DOUBLE," +
                         " g DATE," +
                         " h BINARY," +
-                        " t TIMESTAMP," +
+                        " t TIMESTAMP NOT NULL," +
                         " x SYMBOL capacity 128 nocache index capacity 256," +
                         " z STRING," +
                         " y BOOLEAN)" +
@@ -3691,7 +3691,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "f DOUBLE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL nocache index, " +
                         "z STRING, " +
                         "y BOOLEAN) " +
@@ -3707,7 +3707,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a SYMBOL capacity 128 cache index capacity 256," +
                         " b BYTE," +
                         " c SHORT," +
-                        " t TIMESTAMP," +
+                        " t TIMESTAMP NOT NULL," +
                         " d LONG," +
                         " e FLOAT," +
                         " f DOUBLE," +
@@ -3722,7 +3722,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3741,8 +3741,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableOutOfPlaceIndexAndCapacity() throws SqlException {
         assertCreateTable(
-                "create atomic table x (a SYMBOL capacity 128 cache index capacity 16, b BYTE, c SHORT, t TIMESTAMP, d LONG, e FLOAT, g DATE, h BINARY, x SYMBOL capacity 128 cache index capacity 32, z STRING, y BOOLEAN) timestamp(t) partition by MONTH",
-                "create table x (a SYMBOL, b BYTE, c SHORT, t TIMESTAMP, d LONG, e FLOAT, g DATE, h BINARY, x SYMBOL, z STRING, y BOOLEAN) , index (a capacity 16) , index (x capacity 24) timestamp(t) partition by MONTH"
+                "create atomic table x (a SYMBOL capacity 128 cache index capacity 16, b BYTE, c SHORT, t TIMESTAMP NOT NULL, d LONG, e FLOAT, g DATE, h BINARY, x SYMBOL capacity 128 cache index capacity 32, z STRING, y BOOLEAN) timestamp(t) partition by MONTH",
+                "create table x (a SYMBOL, b BYTE, c SHORT, t TIMESTAMP NOT NULL, d LONG, e FLOAT, g DATE, h BINARY, x SYMBOL, z STRING, y BOOLEAN) , index (a capacity 16) , index (x capacity 24) timestamp(t) partition by MONTH"
         );
     }
 
@@ -3753,7 +3753,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3766,7 +3766,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity 10000000) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                176,
+                185,
                 "max index block capacity is"
         );
     }
@@ -3778,7 +3778,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3791,7 +3791,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity -) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                177,
+                186,
                 "bad integer"
         );
     }
@@ -3803,7 +3803,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3816,7 +3816,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity 1) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                176,
+                185,
                 "min index block capacity is"
         );
     }
@@ -3828,7 +3828,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -3841,7 +3841,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity -10) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                176,
+                185,
                 "min index block capacity is"
         );
     }
@@ -3851,7 +3851,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (" +
                         "a INT PARQUET(BYTE_STREAM_SPLIT), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY",
                 30,
@@ -3865,13 +3865,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create atomic table x (" +
                         "a INT," +
                         " b DOUBLE parquet(default, zstd(3))," +
-                        " t TIMESTAMP)" +
+                        " t TIMESTAMP NOT NULL)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT, " +
                         "b DOUBLE PARQUET(default, ZSTD(3)), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY"
         );
@@ -3882,7 +3882,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (" +
                         "a DOUBLE PARQUET(default, BROTLI(12)), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY",
                 49,
@@ -3896,13 +3896,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create atomic table x (" +
                         "a INT," +
                         " b DOUBLE parquet(default, gzip(9))," +
-                        " t TIMESTAMP)" +
+                        " t TIMESTAMP NOT NULL)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT, " +
                         "b DOUBLE PARQUET(default, GZIP(9)), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY"
         );
@@ -3913,7 +3913,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (" +
                         "a DOUBLE PARQUET(default, ZSTD(30)), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY",
                 47,
@@ -3926,7 +3926,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (" +
                         "a DOUBLE PARQUET(default, ZSTD(0)), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY",
                 47,
@@ -3940,13 +3940,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create atomic table x (" +
                         "a INT," +
                         " b DOUBLE parquet(default, lz4_raw)," +
-                        " t TIMESTAMP)" +
+                        " t TIMESTAMP NOT NULL)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT, " +
                         "b DOUBLE PARQUET(default, LZ4_RAW), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY"
         );
@@ -3958,13 +3958,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create atomic table x (" +
                         "a INT," +
                         " b DOUBLE parquet(default, uncompressed)," +
-                        " t TIMESTAMP)" +
+                        " t TIMESTAMP NOT NULL)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT, " +
                         "b DOUBLE PARQUET(default, UNCOMPRESSED), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY"
         );
@@ -3975,12 +3975,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertCreateTable(
                 "create atomic table x (" +
                         "sym SYMBOL capacity 128 cache parquet(default, snappy)," +
-                        " ts TIMESTAMP)" +
+                        " ts TIMESTAMP NOT NULL)" +
                         " timestamp(ts)" +
                         " partition by DAY",
                 "create table x (" +
                         "sym SYMBOL PARQUET(default, SNAPPY), " +
-                        "ts TIMESTAMP) " +
+                        "ts TIMESTAMP NOT NULL) " +
                         "timestamp(ts) " +
                         "partition by DAY"
         );
@@ -3991,12 +3991,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertCreateTable(
                 "create atomic table x (" +
                         "sym SYMBOL capacity 64 cache parquet(default, snappy)," +
-                        " ts TIMESTAMP)" +
+                        " ts TIMESTAMP NOT NULL)" +
                         " timestamp(ts)" +
                         " partition by DAY",
                 "create table x (" +
                         "sym SYMBOL CAPACITY 64 CACHE PARQUET(default, SNAPPY), " +
-                        "ts TIMESTAMP) " +
+                        "ts TIMESTAMP NOT NULL) " +
                         "timestamp(ts) " +
                         "partition by DAY"
         );
@@ -4007,12 +4007,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertCreateTable(
                 "create atomic table x (" +
                         "sym SYMBOL capacity 128 cache index capacity 256 parquet(default, snappy)," +
-                        " ts TIMESTAMP)" +
+                        " ts TIMESTAMP NOT NULL)" +
                         " timestamp(ts)" +
                         " partition by DAY",
                 "create table x (" +
                         "sym SYMBOL INDEX PARQUET(default, SNAPPY), " +
-                        "ts TIMESTAMP) " +
+                        "ts TIMESTAMP NOT NULL) " +
                         "timestamp(ts) " +
                         "partition by DAY"
         );
@@ -4023,7 +4023,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (" +
                         "a INT PARQUET(DELTA_LENGTH_BYTE_ARRAY), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY",
                 30,
@@ -4037,13 +4037,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create atomic table x (" +
                         "a INT parquet(delta_binary_packed)," +
                         " b DOUBLE," +
-                        " t TIMESTAMP)" +
+                        " t TIMESTAMP NOT NULL)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT PARQUET(DELTA_BINARY_PACKED), " +
                         "b DOUBLE, " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY"
         );
@@ -4055,13 +4055,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create atomic table x (" +
                         "a INT parquet(delta_binary_packed, zstd(3))," +
                         " b DOUBLE," +
-                        " t TIMESTAMP)" +
+                        " t TIMESTAMP NOT NULL)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3)), " +
                         "b DOUBLE, " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY"
         );
@@ -4072,12 +4072,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertCreateTable(
                 "create atomic table x (" +
                         "a LONG parquet(delta_binary_packed)," +
-                        " t TIMESTAMP)" +
+                        " t TIMESTAMP NOT NULL)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a LONG PARQUET(DELTA_BINARY_PACKED), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY"
         );
@@ -4088,12 +4088,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertCreateTable(
                 "create atomic table x (" +
                         "a STRING parquet(delta_length_byte_array)," +
-                        " t TIMESTAMP)" +
+                        " t TIMESTAMP NOT NULL)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a STRING PARQUET(DELTA_LENGTH_BYTE_ARRAY), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY"
         );
@@ -4104,7 +4104,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (" +
                         "a INT PARQUET(DELTA_LENGTH_BYTE_ARRAY), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY",
                 30,
@@ -4117,7 +4117,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (" +
                         "a DOUBLE PARQUET(INVALID_ENCODING), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY",
                 33,
@@ -4130,7 +4130,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (" +
                         "a DOUBLE PARQUET(default, INVALID_CODEC), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY",
                 42,
@@ -4145,14 +4145,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT parquet(delta_binary_packed, zstd(3))," +
                         " b DOUBLE parquet(plain)," +
                         " d VARCHAR parquet(default, lz4_raw)," +
-                        " t TIMESTAMP)" +
+                        " t TIMESTAMP NOT NULL)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3)), " +
                         "b DOUBLE PARQUET(PLAIN), " +
                         "d VARCHAR PARQUET(default, LZ4_RAW), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY"
         );
@@ -4163,7 +4163,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (" +
                         "a VARCHAR PARQUET(PLAIN), " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY",
                 34,
@@ -4178,14 +4178,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT parquet(delta_binary_packed)," +
                         " s SYMBOL capacity 128 cache," +
                         " b DOUBLE," +
-                        " t TIMESTAMP)" +
+                        " t TIMESTAMP NOT NULL)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT PARQUET(DELTA_BINARY_PACKED), " +
                         "s SYMBOL, " +
                         "b DOUBLE, " +
-                        "t TIMESTAMP) " +
+                        "t TIMESTAMP NOT NULL) " +
                         "timestamp(t) " +
                         "partition by DAY"
         );
@@ -4198,7 +4198,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
-                        " t TIMESTAMP," +
+                        " t TIMESTAMP NOT NULL," +
                         " d LONG," +
                         " e FLOAT," +
                         " f DOUBLE," +
@@ -4213,7 +4213,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "d LONG, " +
                         "e FLOAT, " +
                         "f DOUBLE, " +
@@ -4245,13 +4245,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "b BYTE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL capacity 1100000000, " +
                         "z STRING, " +
                         "bool BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by YEAR",
-                80,
+                89,
                 "max symbol capacity is"
         );
     }
@@ -4264,13 +4264,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "b BYTE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL capacity -10, " +
                         "z STRING, " +
                         "bool BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by YEAR",
-                80,
+                89,
                 "min symbol capacity is"
         );
     }
@@ -4315,13 +4315,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "b BYTE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL index, " +
                         "z STRING, " +
                         "bool BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by YEAR index",
-                133,
+                142,
                 "unexpected token"
         );
     }
@@ -4334,13 +4334,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "b BYTE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "x SYMBOL index, " +
                         "z STRING, " +
                         "bool BOOLEAN) " +
                         "timestamp(t) " +
                         " index",
-                116,
+                125,
                 "unexpected token"
         );
     }
@@ -4356,8 +4356,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWitInvalidMaxUncommittedRows() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=asif,",
-                95,
+                "create table x (a INT, t TIMESTAMP NOT NULL) timestamp(t) partition by DAY WITH maxUncommittedRows=asif,",
+                104,
                 "could not parse maxUncommittedRows value \"asif\""
         );
     }
@@ -4365,8 +4365,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWitInvalidO3MaxLag() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxLag=asif,",
-                89,
+                "create table x (a INT, t TIMESTAMP NOT NULL) timestamp(t) partition by DAY WITH o3MaxLag=asif,",
+                98,
                 "invalid interval qualifier asif"
         );
     }
@@ -4374,23 +4374,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithGeoHash1() throws Exception {
         assertCreateTable(
-                "create atomic table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
+                "create atomic table x (gh GEOHASH(8c), t TIMESTAMP NOT NULL) timestamp(t) partition by DAY",
+                "create table x (gh GEOHASH(8c), t TIMESTAMP NOT NULL) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
         );
     }
 
     @Test
     public void testCreateTableWithGeoHash2() throws Exception {
         assertCreateTable(
-                "create atomic table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
+                "create atomic table x (gh GEOHASH(51b), t TIMESTAMP NOT NULL) timestamp(t) partition by DAY",
+                "create table x (gh GEOHASH(51b), t TIMESTAMP NOT NULL) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
         );
     }
 
     @Test
     public void testCreateTableWithGeoHashNoSizeUnit() throws Exception {
         assertSyntaxError(
-                "create table x (gh GEOHASH(12), t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (gh GEOHASH(12), t TIMESTAMP NOT NULL) timestamp(t) partition by DAY",
                 26, "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits"
         );
     }
@@ -4398,7 +4398,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithGeoHashVariablePrecisionIsNotSupportedYet() throws Exception {
         assertSyntaxError(
-                "create table x (gh GEOHASH(), t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (gh GEOHASH(), t TIMESTAMP NOT NULL) timestamp(t) partition by DAY",
                 27, "literal expected"
         );
     }
@@ -4406,7 +4406,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithGeoHashWrongSize1() throws Exception {
         assertSyntaxError(
-                "create table x (gh GEOHASH(0b), t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (gh GEOHASH(0b), t TIMESTAMP NOT NULL) timestamp(t) partition by DAY",
                 26, "invalid GEOHASH type precision range, must be [1, 60] bits, provided=0"
         );
     }
@@ -4414,7 +4414,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithGeoHashWrongSize2() throws Exception {
         assertSyntaxError(
-                "create table x (gh GEOHASH(61b), t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (gh GEOHASH(61b), t TIMESTAMP NOT NULL) timestamp(t) partition by DAY",
                 26, "invalid GEOHASH type precision range, must be [1, 60] bits, provided=61"
         );
     }
@@ -4422,7 +4422,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithGeoHashWrongSizeUnit() throws Exception {
         assertSyntaxError(
-                "create table x (gh GEOHASH(12s), t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (gh GEOHASH(12s), t TIMESTAMP NOT NULL) timestamp(t) partition by DAY",
                 26, "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits"
         );
     }
@@ -4443,8 +4443,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithInvalidParameter1() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3invalid=250ms",
-                112,
+                "create table x (a INT, t TIMESTAMP NOT NULL) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3invalid=250ms",
+                121,
                 "unrecognized o3invalid after WITH"
         );
     }
@@ -4452,8 +4452,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithInvalidParameter2() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x o3MaxLag=250ms",
-                96,
+                "create table x (a INT, t TIMESTAMP NOT NULL) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x o3MaxLag=250ms",
+                105,
                 "unexpected token [x]"
         );
     }
@@ -4461,16 +4461,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithO3() throws Exception {
         assertCreateTable(
-                "create atomic table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
+                "create atomic table x (a INT, t TIMESTAMP NOT NULL) timestamp(t) partition by DAY",
+                "create table x (a INT, t TIMESTAMP NOT NULL) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
         );
     }
 
     @Test
     public void testCreateTableWithPartialParameter1() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=",
-                105,
+                "create table x (a INT, t TIMESTAMP NOT NULL) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=",
+                114,
                 "too few arguments for '=' [found=1,expected=2]"
         );
     }
@@ -4478,8 +4478,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithPartialParameter2() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag",
-                105,
+                "create table x (a INT, t TIMESTAMP NOT NULL) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag",
+                114,
                 "expected parameter after WITH"
         );
     }
@@ -4487,8 +4487,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithPartialParameter3() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000,",
-                95,
+                "create table x (a INT, t TIMESTAMP NOT NULL) timestamp(t) partition by DAY WITH maxUncommittedRows=10000,",
+                104,
                 "unexpected token [,]"
         );
     }
@@ -5130,8 +5130,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testDuplicateColumnErrorPos() throws Exception {
         assertException(
-                "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;",
-                79,
+                "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp NOT NULL, col4 symbol) timestamp(ts) partition by DAY;",
+                88,
                 "Duplicate column [name=col4]"
         );
     }
@@ -8624,7 +8624,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "(" +
                         " price double," +
                         " symbol symbol," +
-                        " ts timestamp" +
+                        " ts timestamp NOT NULL" +
                         ") timestamp(ts) partition by day",
                 7,
                 "non-window function called in window context"
@@ -10593,7 +10593,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView10() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
             assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM '2020-09-10T20:00:00.000000Z';",
@@ -10606,7 +10606,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView11() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
             assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to",
@@ -10619,7 +10619,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView12() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
             assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to 'foobar'",
@@ -10632,7 +10632,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView13() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
             assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to '2020-09-10T19:00:00.000000Z'",
@@ -10673,7 +10673,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base_table (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table base_table (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             assertException(
                     "REFRESH MATERIALIZED VIEW base_table",
                     26,
@@ -10685,7 +10685,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView5() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
             assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' foobar",
@@ -10698,7 +10698,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView6() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
             assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar",
@@ -10711,7 +10711,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView7() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
             assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE;",
@@ -10724,7 +10724,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView8() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
             assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM",
@@ -10737,7 +10737,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testRefreshMatView9() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create table x (ts timestamp NOT NULL, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
             assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM foobar;",
@@ -11207,7 +11207,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToWithAlignToFirstObservation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (ts TIMESTAMP, price DOUBLE)");
+            execute("CREATE TABLE tbl (ts TIMESTAMP NOT NULL, price DOUBLE)");
             assertException("select ts, avg(price) from tbl sample by 5m from '2018' align to first observation", 82, "incompatible");
         });
     }
@@ -11418,7 +11418,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                   usage_steal LONG,
                   usage_guest LONG,
                   usage_guest_nice LONG,
-                  timestamp TIMESTAMP
+                  timestamp TIMESTAMP NOT NULL
                 ) timestamp (timestamp) PARTITION BY DAY WAL;""");
 
         assertException("select * from cpu sample by 1d align to first observation", 28, "at least one aggregation function must be present in 'select' clause");
@@ -11904,13 +11904,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectContainsDuplicateColumnAliases() throws Exception {
         execute(
                 "CREATE TABLE t1 (" +
-                        "  ts TIMESTAMP, " +
+                        "  ts TIMESTAMP NOT NULL, " +
                         "  x INT" +
                         ") TIMESTAMP(ts) PARTITION BY DAY"
         );
         execute(
                 "CREATE TABLE t2 (" +
-                        "  ts TIMESTAMP, " +
+                        "  ts TIMESTAMP NOT NULL, " +
                         "  x INT" +
                         ") TIMESTAMP(ts) PARTITION BY DAY"
         );
@@ -13193,7 +13193,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "(" +
                         " price double," +
                         " symbol symbol," +
-                        " ts timestamp" +
+                        " ts timestamp NOT NULL" +
                         ") timestamp(ts) partition by day",
                 7,
                 "wrong number of arguments for function `row_number`"

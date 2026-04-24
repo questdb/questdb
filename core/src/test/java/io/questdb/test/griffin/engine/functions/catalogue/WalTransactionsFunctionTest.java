@@ -38,7 +38,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     @Test
     public void testNonWal() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("create table x (ts timestamp NOT NULL, x int, y int) timestamp(ts) partition by DAY BYPASS WAL");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
             execute("alter table x add column z int");
@@ -96,7 +96,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     public void testWalTransactions() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosTimestampDriver.floor("2023-11-22T19:00:53.950468Z"));
-            execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
+            execute("create table x (ts timestamp NOT NULL, x int, y int) timestamp(ts) partition by DAY WAL");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
             execute("alter table x add column z int");
@@ -117,7 +117,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     public void testWalTransactionsLastLine() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosTimestampDriver.floor("2023-11-22T19:00:53.950468Z"));
-            execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
+            execute("create table x (ts timestamp NOT NULL, x int, y int) timestamp(ts) partition by DAY WAL");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
             execute("alter table x add column z int");
@@ -137,7 +137,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosTimestampDriver.floor("2023-11-22T19:00:53.950468Z"));
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-            execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
+            execute("create table x (ts timestamp NOT NULL, x int, y int) timestamp(ts) partition by DAY WAL");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
             execute("insert into x values ('2020-02-01T00:00:00.000000Z', 2, 3)");
             execute("alter table x add column z int");

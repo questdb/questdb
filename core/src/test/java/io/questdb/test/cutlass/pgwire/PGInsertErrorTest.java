@@ -39,7 +39,7 @@ public class PGInsertErrorTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareCall(
                     "CREATE TABLE IF NOT EXISTS foo (\n" +
-                            "            ts TIMESTAMP,\n" +
+                            "            ts TIMESTAMP NOT NULL,\n" +
                             "            bar INT\n" +
                             "        ) TIMESTAMP (ts)\n" +
                             "          PARTITION BY DAY"
@@ -67,7 +67,7 @@ public class PGInsertErrorTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareCall(
                     "CREATE TABLE IF NOT EXISTS foo (\n" +
-                            "            ts TIMESTAMP,\n" +
+                            "            ts TIMESTAMP NOT NULL,\n" +
                             "            bar INT\n" +
                             "        ) TIMESTAMP (ts)\n" +
                             "          PARTITION BY DAY"

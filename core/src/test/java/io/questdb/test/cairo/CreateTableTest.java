@@ -147,7 +147,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectInheritsColumnIndex() throws Exception {
-        execute("create table old(s string,sym symbol index, ts timestamp)");
+        execute("create table old(s string,sym symbol index, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), index(s), cast(s as symbol), cast(ts as date)");
         assertSql(
                 "s\tsym\tts\n",
@@ -159,7 +159,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumn() throws Exception {
-        execute("create table old(s string,l long, ts timestamp)");
+        execute("create table old(s string,l long, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), cast(s as symbol), index(s)");
         assertSql("s\tl\tts\n", "new");
         assertColumnsIndexed("new", "s");
@@ -167,7 +167,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumnV2() throws Exception {
-        execute("create table old(s string,l long, ts timestamp)");
+        execute("create table old(s string,l long, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), index(s), cast(s as symbol)");
         assertSql("s\tl\tts\n", "new");
         assertColumnsIndexed("new", "s");
@@ -175,7 +175,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumnV3() throws Exception {
-        execute("create table old(s string,l long, ts timestamp)");
+        execute("create table old(s string,l long, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), cast(s as symbol), index(s)");
         assertSql("s\tl\tts\n", "new");
         assertColumnsIndexed("new", "s");
@@ -183,7 +183,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithCastAndIndex_v2() throws Exception {
-        execute("create table old(s symbol,l long, ts timestamp)");
+        execute("create table old(s symbol,l long, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), index(s), cast(l as int)");
         assertSql("s\tl\tts\n", "new");
         assertColumnsIndexed("new", "s");
@@ -191,7 +191,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithCastAndSeparateIndex() throws Exception {
-        execute("create table old(s symbol,l long, ts timestamp)");
+        execute("create table old(s symbol,l long, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), cast(l as int), index(s)");
         assertSql("s\tl\tts\n", "new");
         assertColumnsIndexed("new", "s");
@@ -199,21 +199,21 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test(expected = SqlException.class)
     public void testCreateTableAsSelectWithCastSymbolToStringAndIndexOnIt() throws Exception {
-        execute("create table old(s symbol,l long, ts timestamp)");
+        execute("create table old(s symbol,l long, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), index(s), cast(s as string)");
         assertSql("s\tl\tts\n", "new");
     }
 
     @Test(expected = SqlException.class)
     public void testCreateTableAsSelectWithIndexOnSymbolCastedToString() throws Exception {
-        execute("create table old(s symbol,l long, ts timestamp)");
+        execute("create table old(s symbol,l long, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), cast(s as string), index(s)");
         assertSql("s\tl\tts\n", "new");
     }
 
     @Test
     public void testCreateTableAsSelectWithMultipleCasts() throws Exception {
-        execute("create table old(s symbol,l long, ts timestamp)");
+        execute("create table old(s symbol,l long, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), cast(s as string), cast(l as long), cast(ts as date)");
         assertSql("s\tl\tts\n", "new");
     }
@@ -228,7 +228,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexes() throws Exception {
-        execute("create table old(s string,sym symbol, ts timestamp)");
+        execute("create table old(s string,sym symbol, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)");
         assertSql("s\tsym\tts\n", "new");
         assertColumnsIndexed("new", "s", "sym");
@@ -236,7 +236,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexesV2() throws Exception {
-        execute("create table old(s string,sym symbol, ts timestamp)");
+        execute("create table old(s string,sym symbol, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)");
         assertSql("s\tsym\tts\n", "select * from new");
         assertColumnsIndexed("new", "s", "sym");
@@ -244,7 +244,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexesV3() throws Exception {
-        execute("create table old(s string,sym symbol, ts timestamp)");
+        execute("create table old(s string,sym symbol, ts timestamp NOT NULL)");
         execute("create table new as (select * from old), index(s), cast(s as symbol), cast(ts as date), index(sym), cast(sym as symbol)");
         assertSql("s\tsym\tts\n", "select * from new");
         assertColumnsIndexed("new", "s", "sym");
@@ -300,7 +300,7 @@ public class CreateTableTest extends AbstractCairoTest {
         execute(
                 "create table x (" +
                         "a INT," +
-                        "t timestamp) timestamp(t) partition by MONTH"
+                        "t timestamp NOT NULL) timestamp(t) partition by MONTH"
         );
         execute("create table tab (like x)");
         assertSql("a\tt\n", "select * from tab");
@@ -371,7 +371,7 @@ public class CreateTableTest extends AbstractCairoTest {
                         barrier.await();
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
-                                execute("create table if not exists tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
+                                execute("create table if not exists tab" + j + " (x int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR WAL", executionContext);
                             }
                         }
                     } catch (Throwable e) {
@@ -457,7 +457,7 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableLikeTableWithDedup() throws Exception {
         execute(
                 "CREATE TABLE foo (" +
-                        "ts TIMESTAMP," +
+                        "ts TIMESTAMP NOT NULL," +
                         "a INT," +
                         "b STRING" +
                         ") " +
@@ -466,10 +466,10 @@ public class CreateTableTest extends AbstractCairoTest {
         );
         execute("create table foo_clone ( like foo)");
         assertSql(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                        "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n" +
-                        "b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\ttrue\n" +
+                        "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\ttrue\n" +
+                        "b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
                 "SHOW COLUMNS FROM foo_clone"
         );
     }
@@ -481,7 +481,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 "create table x (" +
                         "a INT," +
                         "y SYMBOL NOCACHE INDEX CAPACITY " + indexBlockCapacity + "," +
-                        "t timestamp) timestamp(t) partition by MONTH"
+                        "t timestamp NOT NULL) timestamp(t) partition by MONTH"
         );
         execute("create table tab ( like x)");
 
@@ -494,7 +494,7 @@ public class CreateTableTest extends AbstractCairoTest {
         int maxUncommittedRows = 20;
         int o3MaxLag = 200;
         execute(
-                "create table y (s2 symbol, ts TIMESTAMP) timestamp(ts)" +
+                "create table y (s2 symbol, ts TIMESTAMP NOT NULL) timestamp(ts)" +
                         " PARTITION BY DAY" +
                         " WITH maxUncommittedRows = " + maxUncommittedRows + ", o3MaxLag = " + o3MaxLag + "us");
         execute("create table x (like y)");
@@ -515,7 +515,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 "create table x (" +
                         "a INT," +
                         "y SYMBOL CAPACITY " + symbolCapacity + " NOCACHE," +
-                        "t timestamp) timestamp(t) partition by MONTH"
+                        "t timestamp NOT NULL) timestamp(t) partition by MONTH"
         );
         execute("create table tab ( like x)");
         assertSql("a\ty\tt\n", "select * from tab");
@@ -584,7 +584,7 @@ public class CreateTableTest extends AbstractCairoTest {
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    execute("create table tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
+                                    execute("create table tab" + j + " (x int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR WAL", executionContext);
                                 } catch (SqlException e) {
                                     TestUtils.assertEquals("table already exists", e.getFlyweightMessage());
                                 }
@@ -634,7 +634,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableWithInvalidArrayType() throws Exception {
-        assertMemoryLeak(() -> assertException("create table x (ts timestamp, arr varchar[]);", 34, "unsupported array element type [type=VARCHAR]"));
+        assertMemoryLeak(() -> assertException("create table x (ts timestamp NOT NULL, arr varchar[]);", 43, "unsupported array element type [type=VARCHAR]"));
     }
 
     @Test
@@ -657,7 +657,7 @@ public class CreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'x' (\s
-                            \tns TIMESTAMP_NS,
+                            \tns TIMESTAMP_NS NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ns) PARTITION BY DAY;
                             """,
@@ -672,14 +672,14 @@ public class CreateTableTest extends AbstractCairoTest {
 
             assertSql("ddl\n" +
                             "CREATE TABLE 'y' ( \n" +
-                            "\tns TIMESTAMP_NS,\n" +
+                            "\tns TIMESTAMP_NS NOT NULL,\n" +
                             "\ts SYMBOL\n" +
                             ") timestamp(ns) PARTITION BY DAY;\n",
                     "show create table y;");
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n"
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                            "ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\n" +
+                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\tfalse\n"
                     ,
                     "SHOW COLUMNS FROM y"
             );
@@ -695,7 +695,7 @@ public class CreateTableTest extends AbstractCairoTest {
             );
             assertSql("ddl\n" +
                             "CREATE TABLE 'z' ( \n" +
-                            "\tns TIMESTAMP_NS,\n" +
+                            "\tns TIMESTAMP_NS NOT NULL,\n" +
                             "\ta INT,\n" +
                             "\tb STRING\n" +
                             ") timestamp(ns) PARTITION BY DAY\n" +
@@ -742,7 +742,7 @@ public class CreateTableTest extends AbstractCairoTest {
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    execute("create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL ", executionContext);
+                                    execute("create table tab" + j + " (x int, ts timestamp NOT NULL) timestamp(ts) Partition by DAY WAL ", executionContext);
                                     execute("drop table tab" + j, executionContext);
                                 } catch (SqlException e) {
                                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
@@ -868,7 +868,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     private void createTableLike(boolean isWalEnabled) throws Exception {
         String walParameterValue = isWalEnabled ? "WAL" : "BYPASS WAL";
-        execute("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
+        execute("create table y (s2 symbol, ts TIMESTAMP NOT NULL) timestamp(ts) PARTITION BY DAY " + walParameterValue);
         execute("create table x (like y)");
         assertSql("s2\tts\n", "select * from x");
         assertWalEnabled(isWalEnabled);
@@ -890,7 +890,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 "create table x (" +
                         "a INT," +
                         "y SYMBOL " + symbolCacheParameterValue + "," +
-                        "t timestamp) timestamp(t) partition by MONTH"
+                        "t timestamp NOT NULL) timestamp(t) partition by MONTH"
         );
         execute("create table tab ( like x)");
         assertSql("a\ty\tt\n", "select * from tab");

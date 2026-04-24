@@ -64,11 +64,11 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 final CairoEngine engine = serverMain.getEngine();
 
                 // Create two tables
-                execute(engine, "create table " + toKeep + " (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+                execute(engine, "create table " + toKeep + " (ts timestamp NOT NULL, x int) timestamp(ts) partition by DAY WAL");
                 execute(engine, "insert into " + toKeep + " values ('2024-01-01T00:00:00.000Z', 1)");
                 execute(engine, "insert into " + toKeep + " values ('2024-01-01T01:00:00.000Z', 2)");
 
-                execute(engine, "create table " + toDrop + " (ts timestamp, y int) timestamp(ts) partition by DAY WAL");
+                execute(engine, "create table " + toDrop + " (ts timestamp NOT NULL, y int) timestamp(ts) partition by DAY WAL");
                 execute(engine, "insert into " + toDrop + " values ('2024-01-01T00:00:00.000Z', 10)");
                 drainWalQueue(engine);
 
@@ -113,11 +113,11 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 final CairoEngine engine = serverMain.getEngine();
 
                 // Create tables and insert data
-                execute(engine, "create table " + tableToDrop + " (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+                execute(engine, "create table " + tableToDrop + " (ts timestamp NOT NULL, x int) timestamp(ts) partition by DAY WAL");
                 execute(engine, "insert into " + tableToDrop + " values (1, 1)");
                 execute(engine, "insert into " + tableToDrop + " values (2, 2)");
 
-                execute(engine, "create table " + tableToKeep + " (ts timestamp, y int) timestamp(ts) partition by DAY WAL");
+                execute(engine, "create table " + tableToKeep + " (ts timestamp NOT NULL, y int) timestamp(ts) partition by DAY WAL");
                 execute(engine, "insert into " + tableToKeep + " values (0, 10)");
 
                 drainWalQueue(engine);
@@ -169,14 +169,14 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
 
                 // Create first table and insert data
                 execute(engine, "create table " + table1 +
-                        " (ts timestamp, x int, s symbol) timestamp(ts) partition by DAY WAL");
+                        " (ts timestamp NOT NULL, x int, s symbol) timestamp(ts) partition by DAY WAL");
                 execute(engine, "insert into " + table1 + " values (0, 1, 'A')");
                 execute(engine, "insert into " + table1 + " values (1, 2, 'B')");
                 drainWalQueue(engine);
 
                 // Create second table and insert data
                 execute(engine, "create table " + table2 +
-                        " (ts timestamp, y int, t symbol) timestamp(ts) partition by DAY WAL");
+                        " (ts timestamp NOT NULL, y int, t symbol) timestamp(ts) partition by DAY WAL");
                 execute(engine, "insert into " + table2 + " values (0, 10, 'X')");
                 execute(engine, "insert into " + table2 + " values (1, 20, 'Y')");
                 execute(engine, "insert into " + table2 + " values (2, 30, 'Z')");
@@ -242,8 +242,8 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 final CairoEngine engine = serverMain.getEngine();
 
                 // Create tables
-                execute(engine, "create table " + toKeep + " (ts timestamp, x int, s symbol) timestamp(ts) partition by DAY WAL");
-                execute(engine, "create table " + toDrop + " (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+                execute(engine, "create table " + toKeep + " (ts timestamp NOT NULL, x int, s symbol) timestamp(ts) partition by DAY WAL");
+                execute(engine, "create table " + toDrop + " (ts timestamp NOT NULL, x int) timestamp(ts) partition by DAY WAL");
 
                 // Insert multiple transactions but don't drain WAL queue yet (creates pending transactions)
                 execute(engine, "insert into " + toDrop + " values (1, 1)");

@@ -205,7 +205,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 .$("  investmentMill LONG,")
                 .$("  ticketThous INT,")
                 .$("broker SYMBOL,")
-                .$("ts TIMESTAMP")
+                .$("ts TIMESTAMP NOT NULL")
                 .$(") TIMESTAMP(ts) PARTITION BY DAY");
 
         if (isWal) {

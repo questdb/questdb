@@ -562,7 +562,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE IF NOT EXISTS trades (
-                                                ts TIMESTAMP,
+                                                ts TIMESTAMP NOT NULL,
                                                 sym SYMBOL CAPACITY 2048,
                                                 side SYMBOL CAPACITY 4,
                                                 price DOUBLE,
@@ -589,7 +589,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE prices (
-                                            ts TIMESTAMP,
+                                            ts TIMESTAMP NOT NULL,
                                             sym SYMBOL CAPACITY 1024,
                                             bid DOUBLE,
                                             ask DOUBLE
@@ -629,7 +629,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE IF NOT EXISTS trades (
-                                                ts TIMESTAMP,
+                                                ts TIMESTAMP NOT NULL,
                                                 sym SYMBOL CAPACITY 2048,
                                                 side SYMBOL CAPACITY 4,
                                                 price DOUBLE,
@@ -652,7 +652,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE prices (
-                                            ts TIMESTAMP,
+                                            ts TIMESTAMP NOT NULL,
                                             sym SYMBOL CAPACITY 1024,
                                             bid DOUBLE,
                                             ask DOUBLE

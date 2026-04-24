@@ -66,13 +66,13 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
     private void createTablesToJoin() throws SqlException {
         // ASKS
-        execute("create table asks (ask int, ts timestamp) timestamp(ts) partition by none");
+        execute("create table asks (ask int, ts timestamp NOT NULL) timestamp(ts) partition by none");
         execute("insert into asks values(100, 0)");
         execute("insert into asks values(101, 2);");
         execute("insert into asks values(102, 4);");
 
         // BIDS
-        execute("create table bids (bid int, ts timestamp) timestamp(ts) partition by none");
+        execute("create table bids (bid int, ts timestamp NOT NULL) timestamp(ts) partition by none");
         execute("insert into bids values(101, 1);");
         execute("insert into bids values(102, 3);");
         execute("insert into bids values(103, 5);");

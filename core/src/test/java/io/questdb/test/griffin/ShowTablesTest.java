@@ -53,7 +53,7 @@ public class ShowTablesTest extends AbstractCairoTest {
         // returned stale table IDs from cached plans after DROP TABLE + CREATE TABLE operations.
 
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp) timestamp(ts) partition by DAY");
+            execute("create table x (ts timestamp NOT NULL) timestamp(ts) partition by DAY");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery compile = compiler.compile("tables()", sqlExecutionContext);
@@ -78,7 +78,7 @@ public class ShowTablesTest extends AbstractCairoTest {
 
                     // recreate the same table again
                     execute("drop table x");
-                    execute("create table x (ts timestamp) timestamp(ts) partition by DAY");
+                    execute("create table x (ts timestamp NOT NULL) timestamp(ts) partition by DAY");
                     drainWalQueue();
 
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
@@ -111,10 +111,10 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("insert into balances values (3, 'c', 3)");
             assertQueryNoLeakCheck(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse
-                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
+                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
+                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse\tfalse
+                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             """,
                     "select * from table_columns('balances')",
                     null,
@@ -156,11 +156,11 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("insert into balances values (2, 'foo', null, 2)");
             assertQueryNoLeakCheck(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
+                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
+                            ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\tfalse
+                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\tfalse
+                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             """,
                     "show columns from balances",
                     null,
@@ -321,7 +321,7 @@ public class ShowTablesTest extends AbstractCairoTest {
     @Test
     public void testTables() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table balances (ts timestamp, cust_id int, ccy symbol, balance double) timestamp(ts) partition by day wal");
+            execute("create table balances (ts timestamp NOT NULL, cust_id int, ccy symbol, balance double) timestamp(ts) partition by day wal");
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
             execute("create view balances_view as (select ts, max(balance) from balances sample by 1h)");
             drainWalAndViewQueues();

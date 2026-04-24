@@ -143,7 +143,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                         b_darr DOUBLE[],
                         b_ts TIMESTAMP,
                         b_tsns TIMESTAMP_NS,
-                        timestamp TIMESTAMP
+                        timestamp TIMESTAMP NOT NULL
                     ) TIMESTAMP(timestamp) PARTITION BY DAY WAL
                     """);
 
@@ -225,7 +225,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testByteDirect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_byte (val BYTE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_byte (val BYTE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_byte", tb -> {
@@ -249,7 +249,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testCharDirect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_char (val CHAR, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_char (val CHAR, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_char", tb -> {
@@ -273,7 +273,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testDateDirect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_date (val DATE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_date (val DATE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 // DATE is millis since epoch: 2024-01-15T00:00:00Z = 1705276800000
@@ -361,7 +361,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testDoubleArray1D() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_darr1 (vals DOUBLE[], timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_darr1 (vals DOUBLE[], timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -384,7 +384,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testDoubleArray2D() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_darr2 (vals DOUBLE[][], timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_darr2 (vals DOUBLE[][], timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -407,7 +407,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testDoubleArray3D() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_darr3 (vals DOUBLE[][][], timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_darr3 (vals DOUBLE[][][], timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -452,7 +452,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testFloatDirect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_float (val FLOAT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_float (val FLOAT, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_float", tb -> {
@@ -476,7 +476,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testGeoHashDirect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_geo (val GEOHASH(6c), timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_geo (val GEOHASH(6c), timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_geo", tb -> {
@@ -500,7 +500,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testIntDirect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_int (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_int (val INT, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_int", tb -> {
@@ -524,7 +524,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testLong256Direct() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_l256 (val LONG256, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_l256 (val LONG256, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_l256", tb -> {
@@ -572,7 +572,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testShortDirect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_short (val SHORT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_short (val SHORT, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_short", tb -> {
@@ -601,7 +601,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         // we can still assert that the data are eventually ingested correctly since the Sender will keep resending the same rows until the test finishes.
 
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_stress100k (tag SYMBOL, id LONG, val DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS (timestamp, id)");
+            execute("CREATE TABLE t_stress100k (tag SYMBOL, id LONG, val DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS (timestamp, id)");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(STRESS_CONF, engine)) {
                 // Drain concurrently with sending to minimize chances of kernel UDP buffer overflow
@@ -831,7 +831,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testUuidDirect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_uuid (val UUID, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_uuid (val UUID, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 // UUID: 550e8400-e29b-41d4-a716-446655440000
@@ -857,7 +857,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testVarcharDirect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_varchar (val VARCHAR, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_varchar (val VARCHAR, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_varchar", tb -> {

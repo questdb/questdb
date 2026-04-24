@@ -113,7 +113,7 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Create table with timestamp, price, volume and symbol columns
             execute("create table trades (" +
-                    "ts timestamp, " +
+                    "ts timestamp NOT NULL, " +
                     "price double, " +
                     "volume double, " +
                     "ticker symbol" +

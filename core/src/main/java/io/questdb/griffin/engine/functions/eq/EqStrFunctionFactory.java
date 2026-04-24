@@ -32,6 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -78,6 +79,11 @@ public class EqStrFunctionFactory implements FunctionFactory {
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
         CharSequence constValue = constFunc.getStrA(null);
         if (constValue == null) {
+            // `x = NULL` / `x IS NULL` on a NOT NULL STRING column is always false.
+            // NegatingFunctionFactory flips the constant for IS NOT NULL.
+            if (varFunc.isNotNull()) {
+                return BooleanConstant.FALSE;
+            }
             return new NullCheckFunc(varFunc);
         }
         return new ConstCheckFunc(varFunc, constValue);

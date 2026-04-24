@@ -56,7 +56,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectDoesNotPropagateParquetConfig() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE src (ts TIMESTAMP, v LONG PARQUET(delta_binary_packed, zstd(3))) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE src (ts TIMESTAMP NOT NULL, v LONG PARQUET(delta_binary_packed, zstd(3))) TIMESTAMP(ts) PARTITION BY DAY;");
             execute("INSERT INTO src VALUES('2024-01-01', 42);");
             execute("CREATE TABLE dest AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY;");
 
@@ -65,7 +65,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'dest' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \tv LONG
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
@@ -118,13 +118,13 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectParquetConfig() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp, v long PARQUET(DELTA_BINARY_PACKED, zstd(3))) timestamp(ts) partition by day;");
+            execute("create table src (ts timestamp NOT NULL, v long PARQUET(DELTA_BINARY_PACKED, zstd(3))) timestamp(ts) partition by day;");
             execute("create table dest (like src)");
 
             assertSql("""
                             ddl
                             CREATE TABLE 'dest' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \tv LONG PARQUET(delta_binary_packed, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
@@ -286,7 +286,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     private void createSrcTable() throws SqlException {
-        execute("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
+        execute("create table src (ts timestamp NOT NULL, v long) timestamp(ts) partition by day;");
         execute("insert into src values (0, 0);");
         execute("insert into src values (10000, 1);");
         execute("insert into src values (20000, 2);");

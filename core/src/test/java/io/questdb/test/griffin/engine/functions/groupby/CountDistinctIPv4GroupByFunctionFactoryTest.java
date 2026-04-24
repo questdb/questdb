@@ -47,7 +47,7 @@ public class CountDistinctIPv4GroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testSampleBy() throws Exception {
-        execute("create table x (ts timestamp, ip ipv4) timestamp(ts);");
+        execute("create table x (ts timestamp NOT NULL, ip ipv4) timestamp(ts);");
         execute("insert into x values ('2000-01-01', '192.168.1.1'), ('2000-01-01T04:30', '192.168.1.2'), ('2000-01-01T05:30', '192.168.1.3'), ('2000-01-03', '192.168.1.1');");
 
         String expectedDefault = """

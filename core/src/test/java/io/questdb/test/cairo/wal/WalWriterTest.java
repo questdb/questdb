@@ -153,7 +153,7 @@ public class WalWriterTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
 
         assertMemoryLeak(() -> {
-            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, id)");
+            execute("create table sm (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, id)");
             TableToken tableToken = engine.verifyTableName("sm");
 
             execute("insert into " + tableToken.getTableName() + "(id, ts) values (1, '2022-02-24')");
@@ -1013,8 +1013,8 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testAlterWithParallelTableRename() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table alter_rename0 (i int, s symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
-            execute("create table alter_rename1 (i int, s symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create table alter_rename0 (i int, s symbol, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
+            execute("create table alter_rename1 (i int, s symbol, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
             TableToken token0 = engine.verifyTableName("alter_rename0");
             TableToken token1 = engine.verifyTableName("alter_rename1");
 
@@ -1085,7 +1085,7 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testApplyManySmallCommits2Writers() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table sm (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
             long startTs = MicrosTimestampDriver.floor("2022-02-24");
             long tsIncrement = Micros.MINUTE_MICROS;
@@ -1199,7 +1199,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("CREATE TABLE " + tableName + " (" +
                     "sym SYMBOL NOCACHE INDEX CAPACITY 4," +
                     "val INT," +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             // Seed: insert initial batch into day1 + 1 row for day2
@@ -1275,7 +1275,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("CREATE TABLE " + tableName + " (" +
                     "sym SYMBOL NOCACHE INDEX CAPACITY 4," +
                     "val INT," +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             execute("INSERT INTO " + tableName +
@@ -3923,7 +3923,7 @@ public class WalWriterTest extends AbstractCairoTest {
         final String tableName = testName.getMethodName();
 
         assertMemoryLeak(ff, () -> {
-            execute("create table " + tableName + " (ts timestamp) timestamp(ts) partition by day wal;");
+            execute("create table " + tableName + " (ts timestamp NOT NULL) timestamp(ts) partition by day wal;");
             TableToken tt = engine.verifyTableName(tableName);
 
             engine.releaseInactive();
@@ -4598,7 +4598,7 @@ public class WalWriterTest extends AbstractCairoTest {
         // partition that can race with backup.
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP NOT NULL)" +
                     " TIMESTAMP(ts) PARTITION BY DAY WAL");
             TableToken tableToken = engine.verifyTableName(tableName);
 
@@ -5322,7 +5322,7 @@ public class WalWriterTest extends AbstractCairoTest {
     private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount) throws Exception {
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
-            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table sm (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
 
             long ts = MicrosTimestampDriver.floor("2022-02-24");

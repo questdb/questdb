@@ -2426,10 +2426,25 @@ public class Decimal256Test {
 
     @Test
     public void testSinkNull() {
-        // Sinking a null value shouldn't print anything
+        // Sinking a null value via toSink shouldn't print anything — toSink is the
+        // null-aware entry point. For raw bit-pattern printing on NOT NULL columns
+        // see Decimal256.toSinkBits.
         StringSink sink = new StringSink();
         Decimal256.NULL_VALUE.toSink(sink);
         Assert.assertEquals("", sink.toString());
+    }
+
+    @Test
+    public void testSinkBitsNullSentinelAppliesScale() {
+        // toSinkBits surfaces the raw bit pattern of the DECIMAL256 null sentinel
+        // (Long.MIN_VALUE, 0, 0, 0). Two's-complement negation of that overflows,
+        // so toSinkBits formats via the canonical absolute-value string (abs = 2^255).
+        StringSink sink = new StringSink();
+        Decimal256.toSinkBits(sink, Long.MIN_VALUE, 0L, 0L, 0L, 0, 76);
+        Assert.assertEquals(
+                "-57896044618658097711785492504343953926634992332820282019728792003956564819968",
+                sink.toString()
+        );
     }
 
     @Test

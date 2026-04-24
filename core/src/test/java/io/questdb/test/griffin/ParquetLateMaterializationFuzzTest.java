@@ -215,7 +215,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-                    engine.execute("create table x (id long, filter_col int, ts timestamp) timestamp(ts) partition by day;", sqlExecutionContext);
+                    engine.execute("create table x (id long, filter_col int, ts timestamp NOT NULL) timestamp(ts) partition by day;", sqlExecutionContext);
                     engine.execute(
                             """
                                     insert into x

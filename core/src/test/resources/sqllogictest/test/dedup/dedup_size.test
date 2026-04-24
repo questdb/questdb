@@ -4,7 +4,7 @@
 control iso_timestamp on
 
 statement ok
-create table size_control (s varchar, x int, ts timestamp)
+create table size_control (s varchar, x int, ts timestamp NOT NULL)
 timestamp(ts) partition by HOUR DEDUP UPSERT KEYS(ts, s);
 
 # Insert some data

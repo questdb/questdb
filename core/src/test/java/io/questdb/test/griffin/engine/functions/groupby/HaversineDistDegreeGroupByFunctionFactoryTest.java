@@ -202,7 +202,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testAggregationBySymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (s symbol, lat double, lon double, k timestamp) timestamp(k) partition by NONE");
+            execute("create table tab (s symbol, lat double, lon double, k timestamp NOT NULL) timestamp(k) partition by NONE");
 
             try (TableWriter w = getWriter("tab")) {
                 double latDegree = -5;
@@ -253,7 +253,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testAggregationBySymbolWithSampling() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (s symbol, lat double, lon double, p double,  k timestamp) timestamp(k) partition by NONE");
+            execute("create table tab (s symbol, lat double, lon double, p double,  k timestamp NOT NULL) timestamp(k) partition by NONE");
 
             try (TableWriter w = getWriter("tab")) {
                 long MICROS_IN_MIN = 60_000_000L;

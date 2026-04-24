@@ -120,6 +120,18 @@ pub struct QdbMetaCol {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub ascii: Option<bool>,
+
+    /// Preserves the `NOT NULL` column constraint declared at the QuestDB layer
+    /// across a Parquet round-trip. This is independent of the Parquet schema
+    /// Repetition, which stays Optional so `copy_row_group` remains safe across
+    /// O3 merges. Default `false` keeps old files (and readers) as nullable.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
+    pub not_null: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 /// The id stored in the parquet schema.
@@ -208,18 +220,21 @@ mod tests {
                     column_top: 0,
                     format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
                     ascii: None,
+                    not_null: false,
                 },
                 QdbMetaCol {
                     column_type: ColumnTypeTag::Int.into_type(),
                     column_top: 256,
                     format: None,
                     ascii: None,
+                    not_null: false,
                 },
                 QdbMetaCol {
                     column_type: ColumnTypeTag::Varchar.into_type(),
                     column_top: 0,
                     format: None,
                     ascii: Some(true),
+                    not_null: false,
                 },
             ],
             unused_bytes: 0,
@@ -269,6 +284,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             }],
             unused_bytes: 4096,
             squash_tracker: -1,
@@ -316,6 +332,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             }],
             unused_bytes: 0,
             squash_tracker: -1,
@@ -342,6 +359,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             }],
             unused_bytes: 0,
             squash_tracker: 42,
@@ -366,6 +384,65 @@ mod tests {
         let deserialized = QdbMeta::deserialize(&serialized_str)?;
         assert_eq!(metadata, deserialized);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialize_with_not_null() -> ParquetResult<()> {
+        let metadata = QdbMeta {
+            version: U32Const,
+            schema: vec![
+                QdbMetaCol {
+                    column_type: ColumnTypeTag::Int.into_type(),
+                    column_top: 0,
+                    format: None,
+                    ascii: None,
+                    not_null: true,
+                },
+                QdbMetaCol {
+                    column_type: ColumnTypeTag::Long.into_type(),
+                    column_top: 0,
+                    format: None,
+                    ascii: None,
+                    not_null: false,
+                },
+            ],
+            unused_bytes: 0,
+            squash_tracker: -1,
+        };
+
+        let expected = json!({
+            "version": 1,
+            "schema": [
+                {
+                    "column_type": 5,
+                    "column_top": 0,
+                    "not_null": true
+                },
+                {
+                    "column_type": 6,
+                    "column_top": 0
+                }
+            ]
+        });
+
+        let serialized_str = metadata.serialize()?;
+        let serialized: Value = serde_json::from_str(serialized_str.as_str())
+            .map_err(|e| ParquetErrorReason::QdbMeta(e.into()).into_err())?;
+        assert_eq!(serialized, expected);
+
+        let deserialized = QdbMeta::deserialize(&serialized_str)?;
+        assert_eq!(metadata, deserialized);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_without_not_null() -> ParquetResult<()> {
+        // Backward compatibility: old JSON without not_null should default to false
+        let json_str = r#"{"version":1,"schema":[{"column_type":5,"column_top":0}]}"#;
+        let deserialized = QdbMeta::deserialize(json_str)?;
+        assert!(!deserialized.schema[0].not_null);
         Ok(())
     }
 

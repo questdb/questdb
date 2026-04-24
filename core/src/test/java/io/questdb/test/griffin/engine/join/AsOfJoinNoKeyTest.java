@@ -64,7 +64,7 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
             execute("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 2, 'c');");
             execute("INSERT INTO t1 values ('2022-10-10T01:01:00.000000Z', 3, 'd');");
 
-            executeWithRewriteTimestamp("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts TIMESTAMP NOT NULL, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType.getTypeName());
             execute("INSERT INTO t2 values ('2022-10-05T08:18:00.000000Z', 4, 'e');");
             execute("INSERT INTO t2 values ('2022-10-05T08:19:00.000000Z', 5, 'f');");
             execute("INSERT INTO t2 values ('2023-10-05T09:00:00.000000Z', 6, 'g');");

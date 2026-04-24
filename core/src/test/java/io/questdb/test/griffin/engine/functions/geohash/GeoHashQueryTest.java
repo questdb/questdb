@@ -94,9 +94,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
 
                 String columnType = l % 5 == 0 ? (l / 5) + "c" : l + "b";
                 assertSql(
-                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                                "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                                String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n", columnType),
+                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                                "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
+                                String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n", columnType),
                         "show columns from " + tableName
                 );
             }
@@ -201,9 +201,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 execute(String.format("create table %s(x long)", tableName));
                 execute(String.format("alter table %s add hash geohash(%sc)", tableName, l));
                 assertSql(
-                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                                "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                                String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n", l),
+                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                                "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
+                                String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n", l),
                         "show columns from " + tableName
                 );
             }

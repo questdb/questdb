@@ -56,14 +56,15 @@ public class AlterOperationBuilder implements Mutable {
             boolean cache,
             boolean indexed,
             int indexValueBlockCapacity,
-            boolean dedupKey
+            boolean dedupKey,
+            boolean notNull
     ) {
         assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, dedupKey));
+        extraInfo.add(getFlags(indexed, dedupKey, notNull));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -106,13 +107,13 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
+    public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity, boolean notNull) {
         assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, false));
+        extraInfo.add(getFlags(indexed, false, notNull));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -196,6 +197,15 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofDropColumnNotNull(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
+        this.command = DROP_COLUMN_NOT_NULL;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        return this;
+    }
+
     public void ofDropIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int columnNamePosition) {
         this.command = DROP_INDEX;
         this.tableNamePosition = tableNamePosition;
@@ -241,6 +251,15 @@ public class AlterOperationBuilder implements Mutable {
     public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
         extraStrInfo.add(columnName);
         extraStrInfo.add(newName);
+    }
+
+    public AlterOperationBuilder ofSetColumnNotNull(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
+        this.command = SET_COLUMN_NOT_NULL;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        return this;
     }
 
     public AlterOperationBuilder ofSetMatViewRefresh(

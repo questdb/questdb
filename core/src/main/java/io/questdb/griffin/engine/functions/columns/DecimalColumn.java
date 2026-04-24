@@ -32,10 +32,16 @@ import io.questdb.std.Decimal256;
 
 public class DecimalColumn extends DecimalFunction implements ColumnFunction {
     private final int columnIndex;
+    private final boolean isNotNull;
 
     public DecimalColumn(int columnIndex, int columnType) {
+        this(columnIndex, columnType, false);
+    }
+
+    public DecimalColumn(int columnIndex, int columnType, boolean isNotNull) {
         super(columnType);
         this.columnIndex = columnIndex;
+        this.isNotNull = isNotNull;
     }
 
     public static DecimalColumn newInstance(int columnIndex, int columnType) {
@@ -75,6 +81,11 @@ public class DecimalColumn extends DecimalFunction implements ColumnFunction {
     @Override
     public byte getDecimal8(Record rec) {
         return rec.getDecimal8(columnIndex);
+    }
+
+    @Override
+    public boolean isNotNull() {
+        return isNotNull;
     }
 
     @Override

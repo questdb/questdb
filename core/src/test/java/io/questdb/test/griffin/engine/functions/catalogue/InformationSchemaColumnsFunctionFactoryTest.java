@@ -95,19 +95,19 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testRename() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
+            execute("create table test_rename ( ts timestamp NOT NULL, x int ) timestamp(ts) partition by day wal");
             drainWalQueue();
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
                     "show columns from test_rename"
             );
 
             assertSql(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\ttest_rename\tts\t0\t\tyes\ttimestamp without time zone\n" +
+                            "qdb\tpublic\ttest_rename\tts\t0\t\tno\ttimestamp without time zone\n" +
                             "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tinteger\n",
                     "information_schema.columns()"
             );
@@ -116,15 +116,15 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             drainWalQueue();
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
                     "show columns from test_renamed"
             );
 
             assertSql(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\ttest_renamed\tts\t0\t\tyes\ttimestamp without time zone\n" +
+                            "qdb\tpublic\ttest_renamed\tts\t0\t\tno\ttimestamp without time zone\n" +
                             "qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tinteger\n",
                     "information_schema.columns()"
             );

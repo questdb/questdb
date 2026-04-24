@@ -417,8 +417,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a asof join b on ts where a.i = b.ts::int", """
                     SelectedRecord
@@ -437,8 +437,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin0a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1", """
                     SelectedRecord
@@ -457,8 +457,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a asof join b on ts", """
                     SelectedRecord
@@ -476,8 +476,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a asof join (select * from b limit 10) on ts", """
                     SelectedRecord
@@ -496,8 +496,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts", """
                     SelectedRecord
@@ -517,8 +517,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * " + "from a " + "asof join b on ts " + "asof join a c on ts", """
                     SelectedRecord
@@ -540,8 +540,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // where clause predicate can't be pushed to join clause because asof is and outer join
     public void testAsOfJoin5() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * " + "from a " + "asof join b " + "where a.i = b.i", """
                     SelectedRecord
@@ -560,8 +560,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 assertPlanNoLeakCheck(compiler, "select * " + "from a " + "asof join b on a.i = b.i", """
@@ -582,8 +582,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp) timestamp(ts)");
-            execute("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a asof join b where a.i > 0", """
                     SelectedRecord
@@ -615,8 +615,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKeyFast1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp) timestamp(ts)");
-            execute("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a asof join b", """
                     SelectedRecord
@@ -634,8 +634,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKeyFast2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp) timestamp(ts)");
-            execute("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a asof join b on(ts)", """
                     SelectedRecord
@@ -653,8 +653,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKeyFast3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (ts timestamp, i int) timestamp(ts)");
-            execute("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (ts timestamp NOT NULL, i int) timestamp(ts)");
+            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a asof join b on(ts)", """
                     SelectedRecord
@@ -706,7 +706,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testConstantReassociationBindVariable() throws Exception {
         assertPlan(
-                "create table tab (d double, ts timestamp);",
+                "create table tab (d double, ts timestamp NOT NULL);",
                 "select * from tab where d + $1 + 4 > 10",
                 """
                         Async JIT Filter workers: 1
@@ -721,7 +721,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testConstantReassociationFoldsAddition() throws Exception {
         assertPlan(
-                "create table tab (d double, ts timestamp);",
+                "create table tab (d double, ts timestamp NOT NULL);",
                 "select * from tab where d + 1 + 4 > 10",
                 """
                         Async JIT Filter workers: 1
@@ -736,7 +736,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testConstantReassociationFoldsBitwiseAnd() throws Exception {
         assertPlan(
-                "create table tab (l long, ts timestamp);",
+                "create table tab (l long, ts timestamp NOT NULL);",
                 "select * from tab where l & 3 & 5 > 0",
                 """
                         Async Filter workers: 1
@@ -751,7 +751,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testConstantReassociationFoldsCommutativePattern() throws Exception {
         assertPlan(
-                "create table tab (d double, ts timestamp);",
+                "create table tab (d double, ts timestamp NOT NULL);",
                 "select * from tab where 4 + (d + 1) > 10",
                 """
                         Async JIT Filter workers: 1
@@ -765,12 +765,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testCountOfColumnsVectorized() throws Exception {
-        assertPlan("create table x " + "(" + " k int, " + " i int, " + " l long, " + " f float, " + " d double, " + " dat date, " + " ts timestamp " + ")", "select k, count(1) c1, " + "count(*) cstar, " + "count(i) ci, " + "count(l) cl, " + "count(d) cd, " + "count(dat) cdat, " + "count(ts) cts " + "from x", """
+        assertPlan("create table x " + "(" + " k int, " + " i int, " + " l long, " + " f float, " + " d double, " + " dat date, " + " ts timestamp NOT NULL " + ")", "select k, count(1) c1, " + "count(*) cstar, " + "count(i) ci, " + "count(l) cl, " + "count(d) cd, " + "count(dat) cdat, " + "count(ts) cts " + "from x", """
                 VirtualRecord
                   functions: [k,c1,c1,ci,cl,cd,cdat,cts]
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
                       keys: [k]
                       values: [count(*),count(i),count(l),count(d),count(dat),count(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x
@@ -832,7 +833,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
             String[] queries = {"select * from t t1 cross join t t2 order by t1.ts", "select * from (select * from t order by ts desc) t1 cross join t t2 order by t1.ts"};
             for (String query : queries) {
@@ -861,7 +862,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
 
             String query = "select * from " + "((select * from t order by ts desc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts desc";
@@ -883,7 +884,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts asc", """
                     SelectedRecord
@@ -902,7 +903,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts desc", """
                     Encode sort
@@ -923,7 +924,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort5() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts asc", """
                     SelectedRecord
@@ -942,7 +943,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDateaddIntrinsic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (id long, ts timestamp, ts2 timestamp) timestamp(ts) partition by hour;");
+            execute("create table x (id long, ts timestamp NOT NULL, ts2 timestamp NOT NULL) timestamp(ts) partition by hour;");
 
             assertPlanNoLeakCheck(
                     "select * from x where id = 42 and dateadd('h', -1, ts) = '2020-01-01T00:01'",
@@ -1036,7 +1037,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit1() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di order by 1 limit 10", """
+        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di order by 1 limit 10", """
                 Long Top K lo: 10
                   keys: [ts asc]
                     Async Group By workers: 1
@@ -1050,7 +1051,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit2() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di order by 1 desc limit 10", """
+        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di order by 1 desc limit 10", """
                 Long Top K lo: 10
                   keys: [ts desc]
                     Async Group By workers: 1
@@ -1064,7 +1065,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit3() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di limit 10", """
+        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di limit 10", """
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [ts]
@@ -1077,7 +1078,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit4() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di limit -10", """
+        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di limit -10", """
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [ts]
@@ -1090,7 +1091,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit5a() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where y = 5 limit 10", """
+        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di where y = 5 limit 10", """
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     Async JIT Group By workers: 1
                       keys: [ts]
@@ -1103,7 +1104,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit5b() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where y = 5 limit -10", """
+        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di where y = 5 limit -10", """
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     Async JIT Group By workers: 1
                       keys: [ts]
@@ -1116,7 +1117,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit6a() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10", """
+        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10", """
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [ts]
@@ -1129,7 +1130,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit6b() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit -10", """
+        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit -10", """
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [ts]
@@ -1142,7 +1143,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit7() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10, 20", """
+        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10, 20", """
                 Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [ts]
@@ -1303,7 +1304,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc", """
                     Except
@@ -1322,7 +1323,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc", """
                     Except
@@ -1341,7 +1342,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc", """
                     Encode sort light
@@ -1362,7 +1363,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc", """
                     Encode sort light
@@ -1382,7 +1383,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainCreateMatView() throws Exception {
-        assertPlan("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal", "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day", """
+        assertPlan("create table tab (ts timestamp NOT NULL, k symbol, v long) timestamp(ts) partition by day wal", "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day", """
                 Create materialized view: test
                     Encode sort light
                       keys: [ts]
@@ -1423,7 +1424,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     create table tab\s
                     (
                        id symbol index,
-                       ts timestamp,
+                       ts timestamp NOT NULL,
                        val double \s
                     ) timestamp(ts);""");
             execute("insert into tab values ( 'XXX', 0::timestamp, 1 );");
@@ -1461,7 +1462,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       symbol SYMBOL index,
                       instrumentType SYMBOL index,
                       referencePriceType SYMBOL index,
-                      ts TIMESTAMP,
+                      ts TIMESTAMP NOT NULL,
                       referencePrice DOUBLE
                     ) timestamp (ts)""");
 
@@ -1475,7 +1476,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           symbol SYMBOL index,
                           instrumentType SYMBOL index,
                           referencePriceType SYMBOL index,
-                          ts TIMESTAMP,
+                          ts TIMESTAMP NOT NULL,
                           referencePrice DOUBLE
                         ) timestamp (ts)""", executionContext);
 
@@ -1669,7 +1670,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "symbol symbol, " +
                         "price double, " +
                         "amount int, " +
-                        "ts timestamp" +
+                        "ts timestamp NOT NULL" +
                         ") timestamp(ts) partition by day WAL",
                 "update trades set amount = 0 where ts in '2022-11-11'",
                 """
@@ -1685,7 +1686,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainUpdateWithFilter() throws Exception {
         allowFunctionMemoization();
-        assertPlan("create table a ( l long, d double, ts timestamp) timestamp(ts)", "update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );", """
+        assertPlan("create table a ( l long, d double, ts timestamp NOT NULL) timestamp(ts)", "update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );", """
                 Update table: a
                     VirtualRecord
                       functions: [20,memoize(d+rnd_double())]
@@ -1701,7 +1702,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainWindowFunctionWithCharConstantFrameBounds() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( key int, value double, ts timestamp) timestamp(ts)");
+            execute("create table tab ( key int, value double, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab", """
                     Window
@@ -1952,7 +1953,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                   side SYMBOL,
                   price DOUBLE,
                   amount DOUBLE,
-                  timestamp TIMESTAMP
+                  timestamp TIMESTAMP NOT NULL
                 ) timestamp (timestamp) PARTITION BY DAY""", "((select last(timestamp) as x, last(price) as btcusd " + "from trades " + "where symbol = 'BTC-USD' " + "and timestamp > dateadd('m', -30, now())) " + "timestamp(x))", """
                 SelectedRecord
                     Async JIT Group By workers: 1
@@ -1970,7 +1971,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("drop table if exists trips");
-            execute("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP) " + "timestamp(ts) partition by month");
+            execute("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP NOT NULL) " + "timestamp(ts) partition by month");
 
             assertPlanNoLeakCheck("select s, count() from trips where s is not null order by count desc", """
                     Encode sort light
@@ -2098,7 +2099,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testFilterOnExcludedNonIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("drop table if exists trips");
-            execute("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP) " + "timestamp(ts) partition by month");
+            execute("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP NOT NULL) " + "timestamp(ts) partition by month");
 
             assertPlanNoLeakCheck("select s, count() from trips where s is not null", """
                     Async JIT Group By workers: 1
@@ -2220,7 +2221,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       instrumentType SYMBOL index,
                       referencePriceType SYMBOL index,
                       resolutionType SYMBOL ,
-                      ts TIMESTAMP,
+                      ts TIMESTAMP NOT NULL,
                       referencePrice DOUBLE
                     ) timestamp (ts)""");
 
@@ -2803,7 +2804,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // special case
     public void testGroupByHour() throws Exception {
-        assertPlan("create table a (ts timestamp, d double)", "select hour(ts), min(d) from a group by hour(ts)", """
+        assertPlan("create table a (ts timestamp NOT NULL, d double)", "select hour(ts), min(d) from a group by hour(ts)", """
                 GroupBy vectorized: true workers: 1
                   keys: [ts]
                   values: [min(d)]
@@ -2815,7 +2816,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByHourAndFilterIsParallel() throws Exception {
-        assertPlan("create table a (ts timestamp, d double)", "select hour(ts), min(d) from a where d > 0 group by hour(ts)", """
+        assertPlan("create table a (ts timestamp NOT NULL, d double)", "select hour(ts), min(d) from a where d > 0 group by hour(ts)", """
                 Async JIT Group By workers: 1
                   keys: [hour]
                   keyFunctions: [hour(ts)]
@@ -2830,14 +2831,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByHourNonTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (ts timestamp, d double)");
+            execute("create table a (ts timestamp NOT NULL, d double)");
             assertException("select hour(d), min(d) from a", 12, "argument type mismatch for function `hour` at #1 expected: TIMESTAMP, actual: DOUBLE");
         });
     }
 
     @Test
     public void testGroupByHourUnorderedColumns() throws Exception {
-        assertPlan("create table a (ts timestamp, d double)", "select min(d), hour(ts) from a group by hour(ts)", """
+        assertPlan("create table a (ts timestamp NOT NULL, d double)", "select min(d), hour(ts) from a group by hour(ts)", """
                 VirtualRecord
                   functions: [min,hour]
                     GroupBy vectorized: true workers: 1
@@ -2907,7 +2908,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByKeyedAliased() throws Exception {
-        assertPlan("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;", "select s as symbol, count() from a", """
+        assertPlan("create table a (s symbol, ts timestamp NOT NULL) timestamp(ts) partition by year;", "select s as symbol, count() from a", """
                 GroupBy vectorized: true workers: 1
                   keys: [s]
                   values: [count(*)]
@@ -2919,7 +2920,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByKeyedNoAlias() throws Exception {
-        assertPlan("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;", "select s, count() from a", """
+        assertPlan("create table a (s symbol, ts timestamp NOT NULL) timestamp(ts) partition by year;", "select s, count() from a", """
                 GroupBy vectorized: true workers: 1
                   keys: [s]
                   values: [count(*)]
@@ -3477,7 +3478,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit15() throws Exception {
-        assertPlan("create table di (y long, ts timestamp)", "select y, c from (select ts, y, count(*) c from di) order by ts limit 13", """
+        assertPlan("create table di (y long, ts timestamp NOT NULL)", "select y, c from (select ts, y, count(*) c from di) order by ts limit 13", """
                 SelectedRecord
                     Long Top K lo: 13
                       keys: [ts asc]
@@ -3493,7 +3494,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit16() throws Exception {
-        assertPlan("create table di (ts timestamp)", "select ts, 42, count(*) c from di order by ts limit 2", """
+        assertPlan("create table di (ts timestamp NOT NULL)", "select ts, 42, count(*) c from di order by ts limit 2", """
                 Long Top K lo: 2
                   keys: [ts asc]
                     VirtualRecord
@@ -3634,7 +3635,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit8() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10", """
+        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10", """
                 Long Top K lo: 10
                   keys: [ts desc]
                     Async JIT Group By workers: 1
@@ -3672,9 +3673,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // inner hash join maintains order metadata and can be part of asof join
     public void testHashInnerJoinWithAsOf() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
+            execute("create table taba (a1 int, ts1 timestamp NOT NULL) timestamp(ts1)");
             execute("create table tabb (b1 int, b2 long)");
-            execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
+            execute("create table tabc (c1 int, c2 long, ts3 timestamp NOT NULL) timestamp(ts3)");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
@@ -3761,7 +3762,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testInUuid() throws Exception {
-        assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);", "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')", """
+        assertPlan("create table a (u uuid, ts timestamp NOT NULL) timestamp(ts);", "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')", """
                 Async JIT Filter workers: 1
                   filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']
                     PageFrame
@@ -3817,7 +3818,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc", """
                     Intersect
@@ -3836,7 +3837,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc", """
                     Intersect
@@ -3855,7 +3856,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc", """
                     Encode sort light
@@ -3876,7 +3877,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc", """
                     Encode sort light
@@ -3917,7 +3918,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("""
                     create table maps
                     (
-                      timestamp timestamp,\s
+                      timestamp timestamp NOT NULL,\s
                       cluster symbol,\s
                       alias symbol,\s
                       octets int,\s
@@ -3988,7 +3989,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn0() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select i from a latest on ts partition by i", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select i from a latest on ts partition by i", """
                 LatestByAllFiltered
                     Row backward scan
                     Frame backward scan on: a
@@ -3997,7 +3998,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn0a() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select i from (select * from a where i = 10 union select * from a where i =20) latest on ts partition by i", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select i from (select * from a where i = 10 union select * from a where i =20) latest on ts partition by i", """
                 SelectedRecord
                     LatestBy
                         Union
@@ -4016,7 +4017,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn0b() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select ts,i from a where s in ('ABC') and i > 0 latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select ts,i from a where s in ('ABC') and i > 0 latest on ts partition by s", """
                 SelectedRecord
                     LatestByValueDeferredFiltered
                       filter: 0<i
@@ -4028,7 +4029,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn0c() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
+            execute("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select ts,i from a where s in ('a1') and i > 0 latest on ts partition by s", """
@@ -4045,7 +4046,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn0d() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
+            execute("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select ts,i from a where s in ('a1') latest on ts partition by s", """
@@ -4061,7 +4062,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn0e() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select ts,i, s from a where s in ('a1') and i > 0 latest on ts partition by s", """
@@ -4075,7 +4076,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn1() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select * from a latest on ts partition by i", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select * from a latest on ts partition by i", """
                 LatestByAllFiltered
                     Row backward scan
                     Frame backward scan on: a
@@ -4084,7 +4085,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should use index
     public void testLatestOn10() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s", """
                 LatestByDeferredListValuesFiltered
                   filter: (s='S1' or s='S2')
                     Frame backward scan on: a
@@ -4093,7 +4094,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn11() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, i, ts from a where s in ('S1', 'S2') latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s in ('S1', 'S2') latest on ts partition by s", """
                 LatestByDeferredListValuesFiltered
                   includedSymbols: ['S1','S2']
                     Frame backward scan on: a
@@ -4102,7 +4103,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn12() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s", """
                 LatestBySubQuery
                     Subquery
                         GroupBy vectorized: true workers: 1
@@ -4119,7 +4120,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn12a() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s", """
                 LatestBySubQuery
                     Subquery
                         GroupBy vectorized: true workers: 1
@@ -4135,7 +4136,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn13() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s", """
                 LatestBySubQuery
                     Subquery
                         GroupBy vectorized: true workers: 1
@@ -4152,7 +4153,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn13a() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s", """
                 LatestBySubQuery
                     Subquery
                         GroupBy vectorized: true workers: 1
@@ -4168,7 +4169,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should use one or two indexes
     public void testLatestOn14() throws Exception {
-        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);", "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2", """
+        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp NOT NULL) timestamp(ts);", "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2", """
                 LatestByAllSymbolsFiltered
                   filter: (s1 in [S1,S2] and s2='S3' and 0<i)
                     Row backward scan
@@ -4179,7 +4180,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should use one or two indexes
     public void testLatestOn15() throws Exception {
-        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);", "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2", """
+        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp NOT NULL) timestamp(ts);", "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2", """
                 LatestByAllSymbolsFiltered
                   filter: (s1 in [S1,S2] and s2='S3')
                     Row backward scan
@@ -4190,7 +4191,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn16() throws Exception {
-        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);", "select s1, s2, i, ts from a where s1 = 'S1' and ts > 0::timestamp latest on ts partition by s1,s2", """
+        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp NOT NULL) timestamp(ts);", "select s1, s2, i, ts from a where s1 = 'S1' and ts > 0::timestamp latest on ts partition by s1,s2", """
                 LatestByAllSymbolsFiltered
                   filter: s1='S1'
                     Row backward scan
@@ -4202,7 +4203,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn1a() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1", """
                 LatestBy light order_by_timestamp: true
                     SelectedRecord
                         Async JIT Filter workers: 1
@@ -4215,7 +4216,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn1b() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i", """
                 SelectedRecord
                     LatestByAllFiltered
                         Row backward scan
@@ -4226,7 +4227,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn2() throws Exception {
-        assertPlan("create table a ( i int, d double, ts timestamp) timestamp(ts);", "select ts, d from a latest on ts partition by i", """
+        assertPlan("create table a ( i int, d double, ts timestamp NOT NULL) timestamp(ts);", "select ts, d from a latest on ts partition by i", """
                 SelectedRecord
                     LatestByAllFiltered
                         Row backward scan
@@ -4236,7 +4237,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn3() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select * from a latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select * from a latest on ts partition by s", """
                 LatestByAllIndexed
                     Async index backward scan on: s workers: 2
                     Frame backward scan on: a
@@ -4245,7 +4246,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn4() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  = 'S1' latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s  = 'S1' latest on ts partition by s", """
                 PageFrame
                     Index backward scan on: s deferred: true
                       filter: s='S1'
@@ -4256,7 +4257,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn5a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
             assertPlanNoLeakCheck("select s, i, ts from a where s  in ('def1', 'def2') latest on ts partition by s", """
@@ -4270,7 +4271,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn5b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
             assertPlanNoLeakCheck("select s, i, ts from a where s  in ('1', 'deferred') latest on ts partition by s", """
@@ -4284,7 +4285,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn5c() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
             assertPlanNoLeakCheck("select s, i, ts from a where s  in ('1', '2') latest on ts partition by s", """
@@ -4297,7 +4298,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn6() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  in ('S1', 'S2') and i > 0 latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s  in ('S1', 'S2') and i > 0 latest on ts partition by s", """
                 Index backward scan on: s
                   filter: 0<i
                   symbolFilter: s in ['S1','S2']
@@ -4307,7 +4308,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn7() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  in ('S1', 'S2') and length(s)<10 latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s  in ('S1', 'S2') and length(s)<10 latest on ts partition by s", """
                 Index backward scan on: s
                   filter: length(s)<10
                   symbolFilter: s in ['S1','S2']
@@ -4318,7 +4319,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn8() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
             assertPlanNoLeakCheck("select s, i, ts from a where s  in ('s1') latest on ts partition by s", """
@@ -4333,7 +4334,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // key outside list of symbols
     public void testLatestOn8a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
             assertPlanNoLeakCheck("select s, i, ts from a where s in ('bogus_key') latest on ts partition by s", """
@@ -4347,7 +4348,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // columns in order different to table's
     public void testLatestOn9() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
                 Index backward scan on: s
                   filter: length(s)=10
                   symbolFilter: s='S1'
@@ -4357,7 +4358,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // columns in table's order
     public void testLatestOn9a() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select i, s, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select i, s, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
                 Index backward scan on: s
                   filter: length(s)=10
                   symbolFilter: s='S1'
@@ -4368,7 +4369,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn9b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);");
             execute("insert into a select x::int, 'S' || x, x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
@@ -4483,7 +4484,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
+            execute("CREATE TABLE tab ( created timestamp NOT NULL, value int ) timestamp(created)");
 
             String[] joinTypes = {"LEFT", "RIGHT", "FULL", "LT", "ASOF"};
             String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light", "Lt Join Fast", "AsOf Join Fast"};
@@ -4537,8 +4538,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2", """
                     SelectedRecord
@@ -4557,8 +4558,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a lt join b on ts", """
                     SelectedRecord
@@ -4578,8 +4579,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // lt join guarantees that a.ts > b.ts [join cond is not an equality predicate]
         // CONCLUSION: a join b on X can't always be translated to a join b on a.X = b.X
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a lt join b on ts where a.i = b.ts", """
                     SelectedRecord
@@ -4598,8 +4599,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin1b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a lt join b on ts where a.i = b.ts", """
                     SelectedRecord
@@ -4618,8 +4619,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin1c() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a lt join b where a.i = b.ts", """
                     SelectedRecord
@@ -4638,8 +4639,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a lt join (select * from b limit 10) on ts", """
                     SelectedRecord
@@ -4658,8 +4659,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
@@ -4681,8 +4682,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp) timestamp(ts)");
-            execute("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a lt join b where a.i > 0", """
                     SelectedRecord
@@ -4702,8 +4703,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp) timestamp(ts)");
-            execute("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a lt join b", """
                     SelectedRecord
@@ -4721,8 +4722,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp) timestamp(ts)");
-            execute("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a lt join b on(ts)", """
                     SelectedRecord
@@ -4740,8 +4741,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (ts timestamp, i int) timestamp(ts)");
-            execute("create table b (i int, ts timestamp) timestamp(ts)");
+            execute("create table a (ts timestamp NOT NULL, i int) timestamp(ts)");
+            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a lt join b on(ts)", """
                     SelectedRecord
@@ -4759,8 +4760,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts", """
                     SelectedRecord
@@ -4780,8 +4781,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtOfJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * " + "from a " + "lt join b on ts " + "lt join a c on ts", """
                     SelectedRecord
@@ -4875,7 +4876,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNestedLoopLeftJoinWithSort1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
             String[] queries = {"select * from t t1 left join t t2 on t1.x*t2.x>0 order by t1.ts", "select * from (select * from t order by ts desc) t1 left join t t2 on t1.x*t2.x>0 order by t1.ts"};
             for (String query : queries) {
@@ -4905,7 +4906,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNestedLoopLeftJoinWithSort2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
 
             String query = "select * from " + "((select * from t order by ts desc) limit 10) t1 " + "left join t t2 on t1.x*t2.x > 0 " + "order by t1.ts desc";
@@ -4928,7 +4929,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNoArgFalseConstantExpressionUsedInJoinIsOptimizedAway() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (b boolean, ts timestamp)");
+            execute("create table tab (b boolean, ts timestamp NOT NULL)");
             // true
             assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b", """
                     Update table: tab
@@ -4960,7 +4961,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // the optimizer keeps the compile-time false in constWhereClause and the
         // code generator folds it to Empty table.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (b BOOLEAN, ts TIMESTAMP)");
+            execute("CREATE TABLE tab (b BOOLEAN, ts TIMESTAMP NOT NULL)");
             assertPlanNoLeakCheck(
                     "SELECT * FROM tab T1 INNER JOIN tab T2 ON T1.b = T2.b WHERE 1 > 10 AND NOW() = NOW()",
                     """
@@ -4974,7 +4975,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testNoArgNonConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
-        assertPlan("create table tab (b boolean, ts timestamp)", "update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b", """
+        assertPlan("create table tab (b boolean, ts timestamp NOT NULL)", "update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b", """
                 Update table: tab
                     VirtualRecord
                       functions: [true]
@@ -4994,7 +4995,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNoArgRuntimeConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (b boolean, ts timestamp)");
+            execute("create table tab (b boolean, ts timestamp NOT NULL)");
 
             // true
             assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where now()::long > -1 and t1.b = t2.b", """
@@ -5035,11 +5036,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedGroupByMinMaxTimestamp() throws Exception {
         assertPlan(
-                "create table x (ts timestamp, ts1 timestamp) timestamp(ts) partition by day;",
+                "create table x (ts timestamp NOT NULL, ts1 timestamp NOT NULL) timestamp(ts) partition by day;",
                 "select min(ts), max(ts), min(ts1), max(ts1) from x",
                 """
-                        GroupBy vectorized: true workers: 1
-                          values: [min_designated(ts),max_designated(ts),min(ts1),max(ts1)]
+                        Async Group By workers: 1
+                          vectorized: false
+                          values: [min(ts),max(ts),min(ts1),max(ts1)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: x
@@ -5055,7 +5058,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // if order by is via alias of designated timestamp
 
         assertMemoryLeak(() -> {
-            execute("create table device_data " + "( " + "  timestamp timestamp, " + "  val double, " + "  id symbol " + ") timestamp(timestamp)");
+            execute("create table device_data " + "( " + "  timestamp timestamp NOT NULL, " + "  val double, " + "  id symbol " + ") timestamp(timestamp)");
 
             execute("insert into device_data select x::timestamp, x, '12345678' from long_sequence(10)");
 
@@ -5221,7 +5224,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testOrderByIsMaintainedInLtAndAsofSubqueries() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
+            execute("create table gas_prices (timestamp TIMESTAMP NOT NULL, galon_price DOUBLE ) timestamp (timestamp);");
 
             for (String joinType : Arrays.asList("AsOf", "Lt")) {
                 String query = "with gp as \n" + "(\n" + "selecT * from (\n" + "selecT * from gas_prices order by timestamp asc, galon_price desc\n" + ") timestamp(timestamp))\n" + "selecT * from gp gp1 \n" + joinType + " join gp gp2 \n" + "order by gp1.timestamp; ";
@@ -5236,7 +5239,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testOrderByIsMaintainedInSpliceSubqueries() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
+            execute("create table gas_prices (timestamp TIMESTAMP NOT NULL, galon_price DOUBLE ) timestamp (timestamp);");
 
             String query = """
                     with gp as (
@@ -5271,7 +5274,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testOrderByIsMaintainedInSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table gas_prices " + "(timestamp TIMESTAMP, " + "galon_price DOUBLE) " + "timestamp (timestamp);");
+            execute("create table gas_prices " + "(timestamp TIMESTAMP NOT NULL, " + "galon_price DOUBLE) " + "timestamp (timestamp);");
 
             String query = """
                     WITH full_range AS ( \s
@@ -5311,7 +5314,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByTimestampAndOtherColumns1() throws Exception {
-        assertPlan("create table tab (i int, ts timestamp) timestamp(ts)", "select * from (select * from tab order by ts, i desc limit 10) order by ts", """
+        assertPlan("create table tab (i int, ts timestamp NOT NULL) timestamp(ts)", "select * from (select * from tab order by ts, i desc limit 10) order by ts", """
                 Sort light lo: 10 partiallySorted: true
                   keys: [ts, i desc]
                     PageFrame
@@ -5322,7 +5325,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByTimestampAndOtherColumns2() throws Exception {
-        assertPlan("create table tab (i int, ts timestamp) timestamp(ts)", "select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc", """
+        assertPlan("create table tab (i int, ts timestamp NOT NULL) timestamp(ts)", "select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc", """
                 Sort light lo: 10 partiallySorted: true
                   keys: [ts desc, i]
                     PageFrame
@@ -5549,7 +5552,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     JOIN ( SELECT * FROM test ) as T2 ON T1.event < T2.event
                     JOIN test as T3 ON T2.created = T3.created""";
 
-            execute("create table test (event int, created timestamp)");
+            execute("create table test (event int, created timestamp NOT NULL)");
             execute("insert into test values (1, 1), (2, 2)");
 
             assertPlanNoLeakCheck(query, """
@@ -6183,7 +6186,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE hits
                     (
-                        EventTime timestamp,
+                        EventTime timestamp NOT NULL,
                         ResolutionWidth int,
                         ResolutionHeight int
                     ) TIMESTAMP(EventTime) PARTITION BY DAY;""");
@@ -6203,7 +6206,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregatesOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE hits1" + "(" + "    EventTime timestamp, " + "    ResolutionWidth int, " + "    ResolutionHeight int, " + "    id int" + ")");
+            execute("CREATE TABLE hits1" + "(" + "    EventTime timestamp NOT NULL, " + "    ResolutionWidth int, " + "    ResolutionHeight int, " + "    id int" + ")");
             execute("create table hits2 as (select * from hits1)");
 
             assertPlanNoLeakCheck("SELECT sum(h1.resolutIONWidth), count(h1.resolutionwIDTH), SUM(h2.ResolutionWidth), sum(h2.ResolutionWidth) + count(), " + "SUM(h1.ResolutionWidth+1),SUM(h2.ResolutionWidth*2),sUM(h1.ResolutionWidth), count()\n" + "FROM hits1 h1 " + "join hits2 h2 on (id)", """
@@ -6228,7 +6231,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteSelectCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test(s string, x long, ts timestamp, substring string) timestamp(ts) partition by day");
+            execute("create table test(s string, x long, ts timestamp NOT NULL, substring string) timestamp(ts) partition by day");
             execute("insert into test " + "select 's' || (x%10), " + " x, " + " (x*86400000000)::timestamp, " + " 'substring' " + "from long_sequence(10)");
 
             // multiple count_distinct, no re-write
@@ -6385,7 +6388,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h align to first observation", """
+            assertPlanNoLeakCheck("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select first(i) from a sample by 1h align to first observation", """
                     Sample By
                       fill: none
                       values: [first(i)]
@@ -6413,7 +6416,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByAliasesAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 sample by 2m align to first observation order by x1.a", """
                     Encode sort
@@ -6546,7 +6549,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByDuplicateKeys() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table x ( a double, b symbol, k timestamp, ts timestamp) timestamp(ts);", "select b, sum(a), k k1, k from x sample by 3h", """
+            assertPlanNoLeakCheck("create table x ( a double, b symbol, k timestamp, ts timestamp NOT NULL) timestamp(ts);", "select b, sum(a), k k1, k from x sample by 3h", """
                     SelectedRecord
                         Encode sort light
                           keys: [ts]
@@ -6581,7 +6584,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(linear) align to first observation", """
+            assertPlanNoLeakCheck("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select first(i) from a sample by 1h fill(linear) align to first observation", """
                     Sample By
                       fill: linear
                       values: [first(i)]
@@ -6604,7 +6607,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillNull() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(null) align to first observation", """
+            assertPlanNoLeakCheck("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select first(i) from a sample by 1h fill(null) align to first observation", """
                     Sample By
                       fill: null
                       values: [first(i)]
@@ -6653,7 +6656,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillPrevKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, first(i) from a sample by 1h fill(prev) align to first observation", """
+            assertPlanNoLeakCheck("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select s, first(i) from a sample by 1h fill(prev) align to first observation", """
                     Sample By
                       fill: prev
                       keys: [s]
@@ -6678,7 +6681,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillPrevNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(prev) align to first observation", """
+            assertPlanNoLeakCheck("create table a (i int, ts timestamp NOT NULL) timestamp(ts);", "select first(i) from a sample by 1h fill(prev) align to first observation", """
                     Sample By
                       fill: prev
                       values: [first(i)]
@@ -6715,7 +6718,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillValueKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, first(i) from a sample by 1h fill(1) align to first observation", """
+            assertPlanNoLeakCheck("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select s, first(i) from a sample by 1h fill(1) align to first observation", """
                     Sample By
                       fill: value
                       keys: [s]
@@ -6740,7 +6743,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillValueNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(1) align to first observation", """
+            assertPlanNoLeakCheck("create table a (i int, ts timestamp NOT NULL) timestamp(ts);", "select first(i) from a sample by 1h fill(1) align to first observation", """
                     Sample By
                       fill: value
                       values: [first(i)]
@@ -6789,7 +6792,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLast() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( l long, s symbol, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;", "select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to first observation", """
+            assertPlanNoLeakCheck("create table a ( l long, s symbol, sym symbol index, i int, ts timestamp NOT NULL) timestamp(ts) partition by day;", "select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to first observation", """
                     SampleByFirstLast
                       keys: [sym]
                       values: [first(i), last(s), first(l)]
@@ -6819,7 +6822,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByJoinAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to first observation order by x1.a", """
                     Encode sort
@@ -6963,7 +6966,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed0() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, i, first(i) from a sample by 1h align to first observation", """
+            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, i, first(i) from a sample by 1h align to first observation", """
                     Sample By
                       keys: [l,i]
                       values: [first(i)]
@@ -6991,7 +6994,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed1() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, i, first(i) from a sample by 1h align to first observation", """
+            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, i, first(i) from a sample by 1h align to first observation", """
                     Sample By
                       keys: [l,i]
                       values: [first(i)]
@@ -7019,7 +7022,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed2() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i) from a sample by 1h fill(null) align to first observation", """
+            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, first(i) from a sample by 1h fill(null) align to first observation", """
                     Sample By
                       fill: null
                       keys: [l]
@@ -7044,7 +7047,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed3() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, l long, ts timestamp) timestamp(ts);", "select l, first(i) from a sample by 1d fill(linear) align to first observation", """
+            assertPlanNoLeakCheck("create table a (i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, first(i) from a sample by 1d fill(linear) align to first observation", """
                     Sample By
                       fill: linear
                       keys: [l]
@@ -7069,7 +7072,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed4() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation", """
+            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation", """
                     Sample By
                       fill: value
                       keys: [l]
@@ -7094,7 +7097,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed5() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation", """
+            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation", """
                     Sample By
                       fill: value
                       keys: [l]
@@ -7119,7 +7122,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
 
             assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to first observation order by a", """
                     Encode sort
@@ -7253,7 +7256,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByOrderByTimestampFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
 
             assertPlanNoLeakCheck("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc", """
                     Encode sort light
@@ -7319,7 +7322,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelect0() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a", """
                 PageFrame
                     Row forward scan
                     Frame forward scan on: a
@@ -7360,7 +7363,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should return count on first table instead
     public void testSelectCount11() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)", "select count(*) from (select * from a lt join a b) ", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL ) timestamp(ts)", "select count(*) from (select * from a lt join a b) ", """
                 Count
                     SelectedRecord
                         Lt Join Fast
@@ -7375,7 +7378,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should return count on first table instead
     public void testSelectCount12() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)", "select count(*) from (select * from a asof join a b) ", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL ) timestamp(ts)", "select count(*) from (select * from a asof join a b) ", """
                 Count
                     SelectedRecord
                         AsOf Join Fast
@@ -7390,7 +7393,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should return count(first table)*count(second_table) instead
     public void testSelectCount13() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)", "select count(*) from (select * from a cross join a b) ", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL ) timestamp(ts)", "select count(*) from (select * from a cross join a b) ", """
                 Count
                     SelectedRecord
                         Cross Join
@@ -7405,7 +7408,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount14() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)", "select * from a where s = 'S1' order by ts desc ", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts)", "select * from a where s = 'S1' order by ts desc ", """
                 DeferredSingleSymbolFilterPageFrame
                     Index backward scan on: s deferred: true
                       filter: s='S1'
@@ -7415,7 +7418,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount15() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)", "select * from a where s = 'S1' order by ts asc", """
+        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts)", "select * from a where s = 'S1' order by ts asc", """
                 DeferredSingleSymbolFilterPageFrame
                     Index forward scan on: s deferred: true
                       filter: s='S1'
@@ -7550,7 +7553,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol, ts timestamp);", "select count_distinct(s) from tab", expected);
+        assertPlan("create table tab (s symbol, ts timestamp NOT NULL);", "select count_distinct(s) from tab", expected);
         assertPlan("select count(distinct s) from tab", expected);
     }
 
@@ -7563,7 +7566,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol index, ts timestamp);", "select count_distinct(s) from tab", expected);
+        assertPlan("create table tab (s symbol index, ts timestamp NOT NULL);", "select count_distinct(s) from tab", expected);
         assertPlan("select count(distinct s) from tab", expected);
     }
 
@@ -7638,7 +7641,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol, ts timestamp);", "select count_distinct(s) from tab where s = 'foobar'", expected);
+        assertPlan("create table tab (s symbol, ts timestamp NOT NULL);", "select count_distinct(s) from tab where s = 'foobar'", expected);
         assertPlan("select count(distinct s) from tab where s = 'foobar'", expected);
     }
 
@@ -7653,13 +7656,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol, ts timestamp);", "select count_distinct(s), first(s) from tab", expected);
+        assertPlan("create table tab (s symbol, ts timestamp NOT NULL);", "select count_distinct(s), first(s) from tab", expected);
         assertPlan("select count(distinct s), first(s) from tab", expected);
     }
 
     @Test
     public void testSelectDesc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts desc", """
                 PageFrame
                     Row backward scan
                     Frame backward scan on: a
@@ -7668,7 +7671,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDesc2() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) ;", "select * from a order by ts desc", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) ;", "select * from a order by ts desc", """
                 Encode sort light
                   keys: [ts desc]
                     PageFrame
@@ -7679,7 +7682,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDescMaterialized() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) ;", "select * from (select i, ts from a union all select 1, null ) order by ts desc", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) ;", "select * from (select i, ts from a union all select 1, null ) order by ts desc", """
                 Encode sort
                   keys: [ts desc]
                     Union All
@@ -7694,7 +7697,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinct0() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select distinct l, ts from tab", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select distinct l, ts from tab", """
                 Async Group By workers: 1
                   keys: [l,ts]
                   filter: null
@@ -7707,7 +7710,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Ignore
     @Test // FIXME: somehow only ts gets included, pg returns record type
     public void testSelectDistinct0a() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select distinct (l, ts) from tab", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select distinct (l, ts) from tab", """
                 DistinctTimeSeries
                   keys: l,ts
                     PageFrame
@@ -7718,7 +7721,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinct1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select distinct(l) from tab", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select distinct(l) from tab", """
                 Async Group By workers: 1
                   keys: [l]
                   filter: null
@@ -7730,7 +7733,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinct2() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp);", "select distinct(s) from tab", """
+        assertPlan("create table tab ( s symbol, ts timestamp NOT NULL);", "select distinct(s) from tab", """
                 GroupBy vectorized: true workers: 1
                   keys: [s]
                   values: [count(*)]
@@ -7742,7 +7745,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinct3() throws Exception {
-        assertPlan("create table tab ( s symbol index, ts timestamp);", "select distinct(s) from tab", """
+        assertPlan("create table tab ( s symbol index, ts timestamp NOT NULL);", "select distinct(s) from tab", """
                 GroupBy vectorized: true workers: 1
                   keys: [s]
                   values: [count(*)]
@@ -7754,7 +7757,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinct4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select distinct ts, l  from tab", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select distinct ts, l  from tab", """
                 Async Group By workers: 1
                   keys: [ts,l]
                   filter: null
@@ -7789,7 +7792,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // there's no interval scan because sysdate is evaluated per-row
     public void testSelectDynamicTsInterval1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > sysdate()", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > sysdate()", """
                 Async Filter workers: 1
                   filter: sysdate()<ts
                     PageFrame
@@ -7800,7 +7803,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // there's no interval scan because systimestamp is evaluated per-row
     public void testSelectDynamicTsInterval2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > systimestamp()", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > systimestamp()", """
                 Async Filter workers: 1
                   filter: systimestamp()<ts
                     PageFrame
@@ -7811,7 +7814,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDynamicTsInterval3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > now()", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > now()", """
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -7821,7 +7824,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDynamicTsInterval4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > dateadd('d', -1, now()) and ts < now()", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > dateadd('d', -1, now()) and ts < now()", """
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -7831,7 +7834,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDynamicTsInterval5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > '2022-01-01' and ts > now()", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > '2022-01-01' and ts > now()", """
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -7841,7 +7844,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDynamicTsInterval6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > '2022-01-01' and ts > now() order by ts desc", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > '2022-01-01' and ts > now() order by ts desc", """
                 PageFrame
                     Row backward scan
                     Interval backward scan on: tab
@@ -7866,12 +7869,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectFromTableColumns() throws Exception {
-        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp)", "select * from table_columns('tab')", "show_columns of: tab\n");
+        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp NOT NULL)", "select * from table_columns('tab')", "show_columns of: tab\n");
     }
 
     @Test
     public void testSelectFromTablePartitions() throws Exception {
-        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp)", "select * from table_partitions('tab')", "show_partitions of: tab\n");
+        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp NOT NULL)", "select * from table_partitions('tab')", "show_partitions of: tab\n");
     }
 
     @Test
@@ -7881,7 +7884,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsAscNotPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
                 Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
@@ -7892,7 +7895,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsAscPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
                 Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
@@ -7903,7 +7906,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsDescNotPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
                 Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
@@ -7914,7 +7917,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsDescPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
                 Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
@@ -7937,7 +7940,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectIndexedSymbols01b() throws Exception {
         // if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan
         assertMemoryLeak(() -> {
-            execute("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
+            execute("create table a ( s symbol index, ts timestamp NOT NULL)  timestamp(ts) partition by hour");
             execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
             String queryDesc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
@@ -7980,13 +7983,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01c() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1", "Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1", "Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
                 "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S2'\n" + "              filter: length(s)=2\n" + "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S1'\n" + "              filter: length(s)=2\n" + "        Frame forward scan on: a\n");
     }
 
     @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols02() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = $1 or s = $2 order by ts desc limit 1", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s = $1 or s = $2 order by ts desc limit 1", """
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: (s=$0::string or s=$1::string)
@@ -7998,7 +8001,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols03() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1", """
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: (s='S1' or s='S2')
@@ -8010,7 +8013,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols04() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1", """
                 Limit value: 1 skip-rows: 0 take-rows: 0
                     Encode sort
                       keys: [ts desc]
@@ -8020,7 +8023,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols05() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1", """
                 Sort light lo: 1
                   keys: [ts desc]
                     FilterOnSubQuery
@@ -8037,7 +8040,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols05a() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1", """
                 Sort light lo: 1
                   keys: [ts desc]
                     FilterOnSubQuery
@@ -8066,7 +8069,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols06a() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day", "select * from a where s = 'S1' order by s asc limit 10", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) partition by day", "select * from a where s = 'S1' order by s asc limit 10", """
                 Sort light lo: 10
                   keys: [s]
                     DeferredSingleSymbolFilterPageFrame
@@ -8095,7 +8098,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols07Partitioned() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day");
+            execute("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) partition by day");
 
             String query = "select * from a where s != 'S1' and length(s) = 2 and ts in '2023-03-15' order by s #ORDER#";
             String expectedPlan = """
@@ -8183,7 +8186,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols09() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;", "select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) partition by year ;", "select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc", """
                 SortedSymbolIndex
                     Index forward scan on: s
                       symbolOrder: asc
@@ -8194,7 +8197,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols10() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in ('S1', 'S2') limit 1", """
+        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s in ('S1', 'S2') limit 1", """
                 Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                     FilterOnValues
                         Table-order scan
@@ -8217,7 +8220,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols11() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s symbol index, ts timestamp) timestamp(ts)");
+            execute("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select * from a where s in ('S1', 'S2') and length(s) = 2 limit 1", """
@@ -8236,7 +8239,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols12() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
+            execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck("select * from a where s1 in ('S1', 'S2') and s2 in ('S2') limit 1", """
                     Limit value: 1 skip-rows-max: 0 take-rows-max: 1
@@ -8251,7 +8254,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols13() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
+            execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck("select * from a where s1 in ('S1')  order by ts desc", """
                     DeferredSingleSymbolFilterPageFrame
@@ -8265,7 +8268,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols14() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            execute("create table a ( s1 symbol index, ts timestamp NOT NULL) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck("select * from a where s1 = 'S1'  order by ts desc", """
                     DeferredSingleSymbolFilterPageFrame
@@ -8279,7 +8282,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // backward index scan is triggered only if query uses a single partition and orders by key column and ts desc
     public void testSelectIndexedSymbols15() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            execute("create table a ( s1 symbol index, ts timestamp NOT NULL) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck("select * from a " + "where s1 = 'S1' " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc", """
                     DeferredSingleSymbolFilterPageFrame
@@ -8294,7 +8297,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols16() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            execute("create table a ( s1 symbol index, ts timestamp NOT NULL) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck("select * from a " + "where s1 in ('S1', 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc", """
                     FilterOnValues symbolOrder: asc
@@ -8312,7 +8315,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: should use the same plan as above
     public void testSelectIndexedSymbols17() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            execute("create table a ( s1 symbol index, ts timestamp NOT NULL) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck("select * from a " + "where (s1 = 'S1' or s1 = 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc", """
                     Encode sort light
@@ -8330,7 +8333,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols18() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by hour;");
+            execute("create table a ( s1 symbol index, ts timestamp NOT NULL) timestamp(ts) partition by hour;");
             execute("insert into a select 'S' || (6-x), dateadd('m', 20*x::int, 0::timestamp) from long_sequence(5)");
             String query = "select * from " + "(" + "  select * from a " + "  where s1 not in ('S1', 'S2') " + "  order by ts asc " + "  limit 5" + ") order by ts asc";
             assertPlanNoLeakCheck(query, """
@@ -8358,7 +8361,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols7b() throws Exception {
-        assertPlan("create table a ( ts timestamp, s symbol index) timestamp(ts);", "select s from a where s != 'S1' and length(s) = 2 order by s ", """
+        assertPlan("create table a ( ts timestamp NOT NULL, s symbol index) timestamp(ts);", "select s from a where s != 'S1' and length(s) = 2 order by s ", """
                 FilterOnExcludedValues symbolOrder: asc
                   symbolFilter: s not in ['S1']
                   filter: length(s)=2
@@ -8393,7 +8396,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectNoOrderByWithNegativeLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select * from a limit -5", """
@@ -8408,7 +8411,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectNoOrderByWithNegativeLimitArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select * from a limit -10+2", """
@@ -8422,7 +8425,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsAsIndexDescNegativeLimit() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select * from a order by 2 desc limit -10", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select * from a order by 2 desc limit -10", """
                 Limit value: -10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row backward scan
@@ -8432,7 +8435,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsAsc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts asc", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts asc", """
                 PageFrame
                     Row forward scan
                     Frame forward scan on: a
@@ -8442,7 +8445,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderByTsAscAndDesc() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 5) order by ts desc", """
@@ -8459,7 +8462,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderByTsDescAndAsc() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 5) order by ts asc", """
@@ -8495,7 +8498,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsDescNegativeLimit() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc limit -10", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts desc limit -10", """
                 Limit value: -10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row backward scan
@@ -8505,7 +8508,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsWithNegativeLimit() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts)", "select * from a order by ts  limit -5", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)", "select * from a order by ts  limit -5", """
                 Limit value: -5 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -8516,7 +8519,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderByTsWithNegativeLimit1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5", """
@@ -8563,7 +8566,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderedAsc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i asc", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by i asc", """
                 Encode sort light
                   keys: [i]
                     PageFrame
@@ -8574,7 +8577,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderedDesc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i desc", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by i desc", """
                 Encode sort light
                   keys: [i desc]
                     PageFrame
@@ -8585,7 +8588,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderedWithLimitLoHi() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i limit 10, 100", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by i limit 10, 100", """
                 Sort light lo: 10 hi: 100
                   keys: [i]
                     PageFrame
@@ -8606,7 +8609,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > '2020-03-01'", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > '2020-03-01'", """
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -8616,7 +8619,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval10() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ", """
                 Encode sort light
                   keys: [l desc]
                     PageFrame
@@ -8628,7 +8631,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval10a() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ", """
                 Encode sort light
                   keys: [l desc, ts desc]
                     PageFrame
@@ -8640,7 +8643,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01'", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-03-01'", """
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -8650,7 +8653,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
                 """
                         PageFrame
                             Row forward scan
@@ -8661,12 +8664,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // ranges don't overlap so result is empty
     public void testSelectStaticTsInterval4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01' and ts in '2020-03-10'", "Empty table\n");
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-03-01' and ts in '2020-03-10'", "Empty table\n");
     }
 
     @Test // only 2020-03-10->2020-03-31 needs to be scanned
     public void testSelectStaticTsInterval5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03' and ts > '2020-03-10'", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-03' and ts > '2020-03-10'", """
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -8676,7 +8679,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ", """
                 Async JIT Filter workers: 1
                   filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z))
                     PageFrame
@@ -8687,7 +8690,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval7() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ", """
                 Async Filter workers: 1
                   filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000)
                     PageFrame
@@ -8698,7 +8701,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval8() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' ", """
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -8708,7 +8711,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval9() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc", """
                 PageFrame
                     Row backward scan
                     Interval backward scan on: tab
@@ -8718,7 +8721,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsIntervalOnTabWithoutDesignatedTimestamp() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where ts > '2020-03-01'", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where ts > '2020-03-01'", """
                 Async JIT Filter workers: 1
                   filter: 2020-03-01T00:00:00.000000Z<ts
                     PageFrame
@@ -8729,7 +8732,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWalTransactions() throws Exception {
-        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL", "select * from wal_transactions('tab')", "wal_transactions of: tab\n");
+        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp NOT NULL) timestamp(ts) partition by day WAL", "select * from wal_transactions('tab')", "wal_transactions of: tab\n");
     }
 
     @Test
@@ -8770,7 +8773,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l > 100 ", """
                 Async JIT Filter workers: 1
                   filter: 100<l
                     PageFrame
@@ -8781,7 +8784,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter10() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where s in ( 'A', 'B' )", """
+        assertPlan("create table tab ( s symbol, ts timestamp NOT NULL);", "select * from tab where s in ( 'A', 'B' )", """
                 Async JIT Filter workers: 1
                   filter: s in [A,B]
                     PageFrame
@@ -8792,7 +8795,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: this one should interval scan without filter
     public void testSelectWithJittedFilter11() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where ts in ( '2020-01-01', '2020-01-02' )", """
+        assertPlan("create table tab ( s symbol, ts timestamp NOT NULL);", "select * from tab where ts in ( '2020-01-01', '2020-01-02' )", """
                 Async JIT Filter workers: 1
                   filter: ts in [1577836800000000,1577923200000000]
                     PageFrame
@@ -8803,7 +8806,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter12() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'", """
+        assertPlan("create table tab ( s symbol, ts timestamp NOT NULL);", "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'", """
                 Async JIT Filter workers: 1
                   filter: (ts in [1577836800000000,1578009600000000] and s='ABC')
                     PageFrame
@@ -8814,7 +8817,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter13() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'", """
+        assertPlan("create table tab ( s symbol, ts timestamp NOT NULL);", "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'", """
                 Async JIT Filter workers: 1
                   filter: (ts in [1577836800000000,1577923199999999] and s='ABC')
                     PageFrame
@@ -8825,7 +8828,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter14() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12 or l = 15 ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = 12 or l = 15 ", """
                 Async JIT Filter workers: 1
                   filter: (l=12 or l=15)
                     PageFrame
@@ -8836,7 +8839,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter15() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12.345 ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = 12.345 ", """
                 Async JIT Filter workers: 1
                   filter: l=12.345
                     PageFrame
@@ -8847,7 +8850,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter16() throws Exception {
-        assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where b = false ", """
+        assertPlan("create table tab ( b boolean, ts timestamp NOT NULL);", "select * from tab where b = false ", """
                 Async JIT Filter workers: 1
                   filter: b=false
                     PageFrame
@@ -8858,7 +8861,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter17() throws Exception {
-        assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where not(b = false or ts = 123) ", """
+        assertPlan("create table tab ( b boolean, ts timestamp NOT NULL);", "select * from tab where not(b = false or ts = 123) ", """
                 Async JIT Filter workers: 1
                   filter: (b!=false and 123!=ts)
                     PageFrame
@@ -8891,7 +8894,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l > 100 and l < 1000 ", """
                 Async JIT Filter workers: 1
                   filter: (100<l and l<1000)
                     PageFrame
@@ -8913,7 +8916,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter21() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = $1 ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = $1 ", """
                 Async JIT Filter workers: 1
                   filter: l=$0::long
                     PageFrame
@@ -8924,7 +8927,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter22() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = 1024.1 + 1 ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL);", "select * from tab where d = 1024.1 + 1 ", """
                 Async JIT Filter workers: 1
                   filter: d=1025.1
                     PageFrame
@@ -8935,7 +8938,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter23() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = null ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL);", "select * from tab where d = null ", """
                 Async JIT Filter workers: 1
                   filter: d is null
                     PageFrame
@@ -8946,7 +8949,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter24a() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit 1 ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit 1 ", """
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -8958,7 +8961,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter24b() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit -1 ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit -1 ", """
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -8970,7 +8973,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter24b2() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 limit -1 ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 limit -1 ", """
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -8982,7 +8985,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter24c() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts desc limit 1 ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 order by ts desc limit 1 ", """
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -8994,7 +8997,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter24d() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 limit -1 ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 limit -1 ", """
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9008,7 +9011,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithJittedFilter24e() throws Exception {
         bindVariableService.setInt("maxRows", -1);
 
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 limit :maxRows ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 limit :maxRows ", """
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9020,7 +9023,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter25() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts desc limit 1 ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 order by ts desc limit 1 ", """
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9032,7 +9035,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter26() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit -1 ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit -1 ", """
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9044,7 +9047,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter27() throws Exception {
-        assertPlan("create table tab (s string, ts timestamp);", "select * from tab where s = null ", """
+        assertPlan("create table tab (s string, ts timestamp NOT NULL);", "select * from tab where s = null ", """
                 Async JIT Filter workers: 1
                   filter: s is null
                     PageFrame
@@ -9055,7 +9058,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter28() throws Exception {
-        assertPlan("create table tab (v varchar, ts timestamp);", "select * from tab where v = null ", """
+        assertPlan("create table tab (v varchar, ts timestamp NOT NULL);", "select * from tab where v = null ", """
                 Async JIT Filter workers: 1
                   filter: v is null
                     PageFrame
@@ -9066,7 +9069,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select /*+ ENABLE_PRE_TOUCH(tab) */ * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select /*+ ENABLE_PRE_TOUCH(tab) */ * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ", """
                 Async JIT Filter workers: 1
                   filter: (100<l and l<1000 and 2022-01-01T00:00:00.000000Z=ts) [pre-touch]
                     PageFrame
@@ -9077,7 +9080,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 and l = 20", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l > 100 and l < 1000 and l = 20", """
                 Async JIT Filter workers: 1
                   filter: (100<l and l<1000 and l=20)
                     PageFrame
@@ -9088,7 +9091,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 or l = 20", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l > 100 and l < 1000 or l = 20", """
                 Async JIT Filter workers: 1
                   filter: ((100<l and l<1000) or l=20)
                     PageFrame
@@ -9099,7 +9102,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 or ts = 123", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l > 100 and l < 1000 or ts = 123", """
                 Async JIT Filter workers: 1
                   filter: ((100<l and l<1000) or 123=ts)
                     PageFrame
@@ -9110,7 +9113,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter7() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp (ts);", "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp (ts);", "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'", """
                 Async JIT Filter workers: 1
                   filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts)
                     PageFrame
@@ -9121,7 +9124,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter8() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp (ts);", "select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp (ts);", "select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'", """
                 Async JIT Filter workers: 1
                   filter: (100<l and l<1000)
                     PageFrame
@@ -9133,7 +9136,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter9() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l in ( 100, 200 )", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l in ( 100, 200 )", """
                 Async JIT Filter workers: 1
                   filter: l in [100,200]
                     PageFrame
@@ -9144,7 +9147,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithLimitLo() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit 10", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a limit 10", """
                 Limit value: 10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -9154,7 +9157,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithLimitLoHi() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit 10, 100", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a limit 10, 100", """
                 Limit left: 10 right: 100 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -9164,7 +9167,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithLimitLoHiNegative() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit -10, -100", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a limit -10, -100", """
                 Limit left: -10 right: -100 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -9174,7 +9177,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithLimitLoNegative() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit -10", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a limit -10", """
                 Limit value: -10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -9184,7 +9187,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::short ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = 12::short ", """
                 Async Filter workers: 1
                   filter: l=12
                     PageFrame
@@ -9195,7 +9198,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter10() throws Exception {
-        assertPlan("create table tab ( s short, ts timestamp);", "select * from tab where s = 1::short ", """
+        assertPlan("create table tab ( s short, ts timestamp NOT NULL);", "select * from tab where s = 1::short ", """
                 Async Filter workers: 1
                   filter: s=1
                     PageFrame
@@ -9206,7 +9209,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should run with jitted filter just like b = true
     public void testSelectWithNonJittedFilter11() throws Exception {
-        assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where b = true::boolean ", """
+        assertPlan("create table tab ( b boolean, ts timestamp NOT NULL);", "select * from tab where b = true::boolean ", """
                 Async Filter workers: 1
                   filter: b=true
                     PageFrame
@@ -9217,7 +9220,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should run with jitted filter just like l = 1024
     public void testSelectWithNonJittedFilter12() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 1024::long ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = 1024::long ", """
                 Async Filter workers: 1
                   filter: l=1024L
                     PageFrame
@@ -9228,7 +9231,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should run with jitted filter just like d = 1024.1
     public void testSelectWithNonJittedFilter13() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = 1024.1::double ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL);", "select * from tab where d = 1024.1::double ", """
                 Async Filter workers: 1
                   filter: d=1024.1
                     PageFrame
@@ -9239,7 +9242,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should run with jitted filter just like d = null
     public void testSelectWithNonJittedFilter14() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = null::double ", """
+        assertPlan("create table tab ( d double, ts timestamp NOT NULL);", "select * from tab where d = null::double ", """
                 Async Filter workers: 1
                   filter: d is null
                     PageFrame
@@ -9250,7 +9253,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter15() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l | l) > 0  ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where (l | l) > 0  ", """
                 Async Filter workers: 1
                   filter: 0<l|l
                     PageFrame
@@ -9261,7 +9264,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter16() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l & l) > 0  ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where (l & l) > 0  ", """
                 Async Filter workers: 1
                   filter: 0<l&l
                     PageFrame
@@ -9272,7 +9275,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter17() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l ^ l) > 0  ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where (l ^ l) > 0  ", """
                 Async Filter workers: 1
                   filter: 0<l^l
                     PageFrame
@@ -9283,7 +9286,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithNonJittedFilter18() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l ^ l) > 0 limit -1", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where (l ^ l) > 0 limit -1", """
                 Async Filter workers: 1
                   limit: 1
                   filter: 0<l^l
@@ -9298,7 +9301,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setLong("maxRows", -1);
 
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l ^ l) > 0 limit :maxRows", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where (l ^ l) > 0 limit :maxRows", """
                 Async Filter workers: 1
                   limit: 1
                   filter: 0<l^l
@@ -9310,7 +9313,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::byte ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = 12::byte ", """
                 Async Filter workers: 1
                   filter: l=12
                     PageFrame
@@ -9321,7 +9324,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = '123' ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = '123' ", """
                 Async Filter workers: 1
                   filter: l='123'
                     PageFrame
@@ -9333,7 +9336,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // jit is not because rnd_long() value is not stable
     public void testSelectWithNonJittedFilter4() throws Exception {
         // Async filter function doesn't support memoization.
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = rnd_long() ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = rnd_long() ", """
                 Async Filter workers: 1
                   filter: l=rnd_long()
                     PageFrame
@@ -9344,7 +9347,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithNonJittedFilter5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ", """
                 Async Filter workers: 1
                   filter: l=case([0<l,1,l=0,0,-1])
                     PageFrame
@@ -9355,7 +9358,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // interval scan is not used because of type mismatch
     public void testSelectWithNonJittedFilter6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = $1::string ", """
+        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = $1::string ", """
                 Async Filter workers: 1
                   filter: l=$0::string
                     PageFrame
@@ -9366,7 +9369,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit filter doesn't work for string type
     public void testSelectWithNonJittedFilter7() throws Exception {
-        assertPlan("create table tab ( s string, ts timestamp);", "select * from tab where s = 'test' ", """
+        assertPlan("create table tab ( s string, ts timestamp NOT NULL);", "select * from tab where s = 'test' ", """
                 Async Filter workers: 1
                   filter: s='test'
                     PageFrame
@@ -9377,7 +9380,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter9() throws Exception {
-        assertPlan("create table tab ( b byte, ts timestamp);", "select * from tab where b = 1::byte ", """
+        assertPlan("create table tab ( b byte, ts timestamp NOT NULL);", "select * from tab where b = 1::byte ", """
                 Async Filter workers: 1
                   filter: b=1
                     PageFrame
@@ -9388,7 +9391,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithNotOperator() throws Exception {
-        assertPlan("CREATE TABLE tst ( timestamp TIMESTAMP );", "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ", """
+        assertPlan("CREATE TABLE tst ( timestamp TIMESTAMP NOT NULL );", "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ", """
                 Async Filter workers: 1
                   filter: not (timestamp between 1609459200000000 and 1610236800000000)
                     PageFrame
@@ -9399,7 +9402,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithOrderByTsDescLimitLo() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc limit 10", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts desc limit 10", """
                 Limit value: 10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row backward scan
@@ -9409,7 +9412,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithOrderByTsDescLimitLoNegative1() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc limit -10", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts desc limit -10", """
                 Limit value: -10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row backward scan
@@ -9419,7 +9422,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithOrderByTsDescLimitLoNegative2() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select i from a order by ts desc limit -10", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select i from a order by ts desc limit -10", """
                 SelectedRecord
                     Limit value: -10 skip-rows: 0 take-rows: 0
                         PageFrame
@@ -9430,7 +9433,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithOrderByTsLimitLoNegative1() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts limit -10", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts limit -10", """
                 Limit value: -10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -9440,7 +9443,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithOrderByTsLimitLoNegative2() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select i from a order by ts limit -10", """
+        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select i from a order by ts limit -10", """
                 SelectedRecord
                     Limit value: -10 skip-rows: 0 take-rows: 0
                         PageFrame
@@ -9451,7 +9454,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder1() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select ts, l, i from a where l<i", """
+        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select ts, l, i from a where l<i", """
                 Async JIT Filter workers: 1
                   filter: l<i
                     PageFrame
@@ -9462,7 +9465,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select ts, l, i from a where l::short<i", """
+        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select ts, l, i from a where l::short<i", """
                 Async Filter workers: 1
                   filter: l::short<i
                     PageFrame
@@ -9473,7 +9476,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2a() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "where l::short<i " + "limit 100) " + "where l1*i2 != 0", """
+        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "where l::short<i " + "limit 100) " + "where l1*i2 != 0", """
                 SelectedRecord
                     Filter filter: l1*i2!=0
                         SelectedRecord
@@ -9488,7 +9491,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2b() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0", """
+        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0", """
                 Filter filter: i1*i2!=0
                     SelectedRecord
                         Sort light lo: 100 partiallySorted: true
@@ -9502,7 +9505,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2c() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0", """
+        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0", """
                 SelectedRecord
                     Filter filter: i1*i2!=0
                         Sort light lo: 100 partiallySorted: true
@@ -9516,7 +9519,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2d() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 1, 3 " + "limit 100 ) " + "where i1*i2 != 0", """
+        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 1, 3 " + "limit 100 ) " + "where i1*i2 != 0", """
                 SelectedRecord
                     Filter filter: i1*i2!=0
                         Sort light lo: 100 partiallySorted: true
@@ -9530,7 +9533,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2e() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 2, 3 " + "limit 100 ) " + "where i1*i2 != 0", """
+        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 2, 3 " + "limit 100 ) " + "where i1*i2 != 0", """
                 SelectedRecord
                     Filter filter: i1*i2!=0
                         Sort light lo: 100 partiallySorted: true
@@ -9544,7 +9547,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder3() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select k, max(ts) from ( select ts, l as k, i from a where l::short<i ) where k < 0 ", """
+        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select k, max(ts) from ( select ts, l as k, i from a where l::short<i ) where k < 0 ", """
                 GroupBy vectorized: false
                   keys: [k]
                   values: [max(ts)]
@@ -9559,7 +9562,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder4() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select mil, k, minl, mini from " + "( select ts as k, max(i*l) as mil, min(i) as mini, min(l) as minl  " + "from a where l::short<i ) " + "where mil + mini> 1 ", """
+        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select mil, k, minl, mini from " + "( select ts as k, max(i*l) as mil, min(i) as mini, min(l) as minl  " + "from a where l::short<i ) " + "where mil + mini> 1 ", """
                 Filter filter: 1<mil+mini
                     Async Group By workers: 1
                       keys: [k]
@@ -9574,7 +9577,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain1a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) order by ts asc", """
                     Limit value: 10 skip-rows: 0 take-rows: 0
@@ -9588,7 +9591,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain1b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc, l desc limit 10) order by ts desc", """
                     Sort light lo: 10 partiallySorted: true
@@ -9603,7 +9606,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc", """
                     SelectedRecord
@@ -9623,7 +9626,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain3a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from " + "(select * from (select * from a order by ts asc, l) limit 10) " + "lt join " + "(select * from a) order by ts asc", """
                     SelectedRecord
@@ -9644,7 +9647,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain3b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from " + "(select * from (select * from a order by ts desc, l desc) limit 10) " + "order by ts asc", """
                     Encode sort light
@@ -9662,7 +9665,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain4a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from " + "(select * from " + "   (select * from a) " + "    cross join " + "   (select * from a) " + " order by ts asc, l  " + " limit 10" + ") " + "lt join (select * from a) " + "order by ts asc", """
                     SelectedRecord
@@ -9688,7 +9691,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain4b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from " + "(select * from " + "   (select * from a) " + "    cross join " + "   (select * from a) " + " order by ts desc " + " limit 10" + ") " + "order by ts desc", """
                     Limit value: 10 skip-rows: 0 take-rows: 0
@@ -9707,7 +9710,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortDesc() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) order by ts desc", """
                     Encode sort light
@@ -9723,7 +9726,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortDescLimitAndSortAgain() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) order by ts desc", """
                     Limit value: 10 skip-rows: 0 take-rows: 0
@@ -9737,7 +9740,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortDescLimitAndSortAsc1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) order by ts asc", """
                     Encode sort light
@@ -9753,7 +9756,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: sorting by ts, l again is not necessary
     public void testSortDescLimitAndSortAsc2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts, l limit 10) order by ts, l", """
                     Encode sort light
@@ -9771,7 +9774,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: sorting by ts, l again is not necessary
     public void testSortDescLimitAndSortAsc3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts, l limit 10,-10) order by ts, l", """
                     Encode sort light
@@ -9789,8 +9792,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a splice join b on ts where a.i = b.ts", """
                     SelectedRecord
@@ -9810,8 +9813,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin0a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a splice join b on ts where a.i + b.i = 1", """
                     SelectedRecord
@@ -9831,8 +9834,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a splice join b on ts", """
                     SelectedRecord
@@ -9851,8 +9854,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a splice join (select * from b limit 10) on ts", """
                     SelectedRecord
@@ -9872,8 +9875,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a splice join ((select * from b order by ts, i ) timestamp(ts))  on ts", """
                     SelectedRecord
@@ -9894,8 +9897,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from a splice join b where a.i = b.i", """
                     SelectedRecord
@@ -9931,11 +9934,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampEqSubQueryFilter1() throws Exception {
-        assertPlan("create table x (l long, ts timestamp)", "select * from x where ts = (select min(ts) from x)", """
+        assertPlan("create table x (l long, ts timestamp NOT NULL)", "select * from x where ts = (select min(ts) from x)", """
                 Async Filter workers: 1
                   filter: ts=cursor\s
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
+                      vectorized: false
                       values: [min(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x
@@ -9947,7 +9952,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampEqSubQueryFilter2() throws Exception {
-        assertPlan("create table x (l long, ts timestamp) timestamp(ts) partition by day", "select * from x where ts = (select min(ts) from x)", """
+        assertPlan("create table x (l long, ts timestamp NOT NULL) timestamp(ts) partition by day", "select * from x where ts = (select min(ts) from x)", """
                 PageFrame
                     Row forward scan
                     Interval forward scan on: x
@@ -9957,11 +9962,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampGtSubQueryFilter1() throws Exception {
-        assertPlan("create table x (l long, ts timestamp)", "select * from x where ts > (select min(ts) from x)", """
+        assertPlan("create table x (l long, ts timestamp NOT NULL)", "select * from x where ts > (select min(ts) from x)", """
                 Async Filter workers: 1
                   filter: ts [thread-safe] > cursor\s
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
+                      vectorized: false
                       values: [min(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x
@@ -9973,7 +9980,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampGtSubQueryFilter2() throws Exception {
-        assertPlan("create table x (l long, ts timestamp) timestamp(ts) partition by day", "select * from x where ts > (select min(ts) from x)", """
+        assertPlan("create table x (l long, ts timestamp NOT NULL) timestamp(ts) partition by day", "select * from x where ts > (select min(ts) from x)", """
                 PageFrame
                     Row forward scan
                     Interval forward scan on: x
@@ -9983,11 +9990,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampLtSubQueryFilter1() throws Exception {
-        assertPlan("create table x (l long, ts timestamp)", "select * from x where ts < (select max(ts) from x)", """
+        assertPlan("create table x (l long, ts timestamp NOT NULL)", "select * from x where ts < (select max(ts) from x)", """
                 Async Filter workers: 1
                   filter: ts [thread-safe] < cursor\s
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
+                      vectorized: false
                       values: [max(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x
@@ -9999,7 +10008,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampLtSubQueryFilter2() throws Exception {
-        assertPlan("create table x (l long, ts timestamp) timestamp(ts) partition by day", "select * from x where ts < (select max(ts) from x)", """
+        assertPlan("create table x (l long, ts timestamp NOT NULL) timestamp(ts) partition by day", "select * from x where ts < (select max(ts) from x)", """
                 PageFrame
                     Row forward scan
                     Interval forward scan on: x
@@ -10036,7 +10045,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWhereOrderByTsLimit1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t ( x long, ts timestamp) timestamp(ts)");
+            execute("create table t ( x long, ts timestamp NOT NULL) timestamp(ts)");
 
             String query = "select * from t where x < 100 order by ts desc limit -5";
             assertPlanNoLeakCheck(query, """
@@ -10063,7 +10072,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testWhereUuid() throws Exception {
-        assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);", "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'", """
+        assertPlan("create table a (u uuid, ts timestamp NOT NULL) timestamp(ts);", "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'", """
                 Async JIT Filter workers: 1
                   filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')
                     PageFrame
@@ -10114,7 +10123,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindow3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, i long, j long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select ts, i, j, " + "avg(j) over (order by i, j rows unbounded preceding), " + "sum(j) over (order by i, j rows unbounded preceding), " + "first_value(j) over (order by i, j rows unbounded preceding), " + "from tab", """
                     CachedWindow
@@ -10163,7 +10172,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowJoinAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
 
             assertPlanNoLeakCheck(
                     "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by x1.a",
@@ -10310,7 +10319,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowModelOrderByIsNotIgnored() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp NOT NULL ) timestamp(ts);");
 
             assertPlanNoLeakCheck("""
                     select sum(avg), sum(sum), sum(first_value) from (
@@ -10372,7 +10381,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowOrderByUnderWindowModelIsPreserved() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp NOT NULL ) timestamp(ts);");
 
             assertPlanNoLeakCheck("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts desc" + ") ", """
                     GroupBy vectorized: false
@@ -10425,7 +10434,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowParentModelOrderPushdownIsBlockedWhenWindowModelSpecifiesOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp NOT NULL ) timestamp(ts);");
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " + "from cpu_ts " + "order by ts desc " + ") order by ts asc", """
                     Encode sort
@@ -10554,7 +10563,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowParentModelOrderPushdownIsDoneWhenNestedModelsSpecifyNoneOrMatchingOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp NOT NULL ) timestamp(ts);");
 
             String expectedForwardPlan = """
                     Window
@@ -10829,7 +10838,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     create table table_1 (
-                              ts timestamp,
+                              ts timestamp NOT NULL,
                               name string,
                               age int,
                               member boolean
@@ -10841,7 +10850,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             execute("""
                     create table table_2 (
-                              ts timestamp,
+                              ts timestamp NOT NULL,
                               name string,
                               age int,
                               address string
@@ -10854,9 +10863,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     // left join maintains order metadata and can be part of asof join
     private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight, boolean isFastAsOfJoin) throws Exception {
-        execute("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
-        execute("create table tabb (b1 int, b2 long, ts2 timestamp) timestamp(ts2)");
-        execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
+        execute("create table taba (a1 int, ts1 timestamp NOT NULL) timestamp(ts1)");
+        execute("create table tabb (b1 int, b2 long, ts2 timestamp NOT NULL) timestamp(ts2)");
+        execute("create table tabc (c1 int, c2 long, ts3 timestamp NOT NULL) timestamp(ts3)");
 
         String asofJoinType = isFastAsOfJoin ? " Fast" : (isLight ? "Light" : "");
         assertPlanNoLeakCheck(compiler, "select * " + "from taba " + "left join tabb on a1=b1 " + "asof join tabc on b1=c1", "SelectedRecord\n" + "    AsOf Join" + asofJoinType + "\n" + "      condition: c1=b1\n" + "        Hash Left Outer Join" + (isLight ? " Light" : "") + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: tabc\n", sqlExecutionContext);
@@ -10866,7 +10875,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     private void testSelectIndexedSymbol(String timestampAndPartitionByClause) throws Exception {
         execute("drop table if exists a");
-        execute("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
+        execute("create table a ( s symbol index, ts timestamp NOT NULL) " + timestampAndPartitionByClause);
         execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
         String query = "select * from a where s in (:s1, :s2) order by s desc limit 5";
@@ -10919,7 +10928,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @SuppressWarnings("SameParameterValue")
     private void testSelectIndexedSymbolWithIntervalFilter() throws Exception {
         execute("drop table if exists a");
-        execute("create table a ( s symbol index, ts timestamp) " + "timestamp(ts) partition by day");
+        execute("create table a ( s symbol index, ts timestamp NOT NULL) " + "timestamp(ts) partition by day");
         execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
         String query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
@@ -10973,7 +10982,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     private void testSelectIndexedSymbols10WithOrder(String partitionByClause) throws Exception {
         execute("drop table if exists a");
-        execute("create table a ( s symbol index, ts timestamp) timestamp(ts)" + partitionByClause);
+        execute("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts)" + partitionByClause);
         execute("insert into a values ('S2', 1), ('S3', 2),('S1', 3+3600000000),('S2', 4+3600000000), ('S1', 5+3600000000);");
 
         bindVariableService.clear();

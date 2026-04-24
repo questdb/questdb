@@ -109,7 +109,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
     @Test
     public void testRenameColumnAndCheckOpenReader() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp NOT NULL) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals("b", reader.getMetadata().getColumnName(1));

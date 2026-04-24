@@ -36,9 +36,9 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForMultipleTablesPartitionByHour() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP NOT NULL, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
-            execute("create table trades_2(timestamp TIMESTAMP, " +
+            execute("create table trades_2(timestamp TIMESTAMP NOT NULL, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             execute(
                     "INSERT INTO trades_1\n" +
@@ -75,9 +75,9 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForMultipleTablesWithNoPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP NOT NULL, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
-            execute("create table trades_2(timestamp TIMESTAMP, " +
+            execute("create table trades_2(timestamp TIMESTAMP NOT NULL, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
             execute(
                     "INSERT INTO trades_1\n" +
@@ -114,7 +114,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForSingleTablePartitionByHour() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP NOT NULL, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             execute(
                     "INSERT INTO trades_1\n" +
@@ -142,7 +142,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForSingleTableWithNoPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP NOT NULL, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
             execute(
                     "INSERT INTO trades_1\n" +
@@ -169,7 +169,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testFetchNonExistingColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP NOT NULL, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             execute(
                     "INSERT INTO trades_1\n" +

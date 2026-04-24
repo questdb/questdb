@@ -99,7 +99,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
     @Test
     public void testSymbolNullFlagIsRefreshedOnReaderReload() throws Exception {
         assertMemoryLeak(ff, () -> {
-            execute("create table x (sym symbol, ts timestamp) timestamp(ts) partition by year;");
+            execute("create table x (sym symbol, ts timestamp NOT NULL) timestamp(ts) partition by year;");
 
             TableToken tableToken = engine.verifyTableName("x");
             try (TableReader reader = engine.getReader(tableToken)) {

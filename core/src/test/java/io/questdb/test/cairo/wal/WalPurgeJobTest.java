@@ -142,7 +142,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + "("
                     + "x long,"
-                    + "ts timestamp"
+                    + "ts timestamp NOT NULL"
                     + ") timestamp(ts) partition by DAY WAL");
             execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
             execute("alter table " + tableName + " add column s1 string");
@@ -203,7 +203,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             final String tableName = testName.getMethodName();
             execute("create table " + tableName + "("
                     + "x long,"
-                    + "ts timestamp"
+                    + "ts timestamp NOT NULL"
                     + ") timestamp(ts) partition by DAY WAL");
 
             execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
@@ -505,7 +505,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             final String tableName = testName.getMethodName();
             execute("create table " + tableName + "("
                     + "x long,"
-                    + "ts timestamp"
+                    + "ts timestamp NOT NULL"
                     + ") timestamp(ts) partition by DAY WAL");
 
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
@@ -821,7 +821,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + "("
                     + "x long,"
-                    + "ts timestamp"
+                    + "ts timestamp NOT NULL"
                     + ") timestamp(ts) partition by DAY WAL");
 
             execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
@@ -846,7 +846,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         String tableName = testName.getMethodName();
         execute("create table " + tableName + "("
                 + "x long,"
-                + "ts timestamp"
+                + "ts timestamp NOT NULL"
                 + ") timestamp(ts) partition by DAY WAL");
 
         execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
@@ -882,7 +882,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         String tableName = testName.getMethodName();
         execute("create table " + tableName + "("
                 + "x long,"
-                + "ts timestamp"
+                + "ts timestamp NOT NULL"
                 + ") timestamp(ts) partition by DAY WAL");
 
         execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
@@ -921,7 +921,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + "("
                     + "x long,"
-                    + "ts timestamp"
+                    + "ts timestamp NOT NULL"
                     + ") timestamp(ts) partition by DAY WAL");
             execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
@@ -995,7 +995,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             final String tableName = testName.getMethodName();
             execute("create table " + tableName + "("
                     + "x long,"
-                    + "ts timestamp"
+                    + "ts timestamp NOT NULL"
                     + ") timestamp(ts) partition by DAY WAL");
 
             execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
@@ -1073,7 +1073,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             execute(
                     "create table " + tableName + "("
                             + "x long,"
-                            + "ts timestamp"
+                            + "ts timestamp NOT NULL"
                             + ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -1185,7 +1185,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + "("
                     + "x long,"
-                    + "ts timestamp"
+                    + "ts timestamp NOT NULL"
                     + ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(false, tableName, 1);
             getTableWriterAPI(tableName).close();
@@ -1211,7 +1211,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + "("
                     + "x long,"
-                    + "ts timestamp"
+                    + "ts timestamp NOT NULL"
                     + ") timestamp(ts) partition by DAY WAL");
 
             CharSequence root = engine.getConfiguration().getDbRoot();

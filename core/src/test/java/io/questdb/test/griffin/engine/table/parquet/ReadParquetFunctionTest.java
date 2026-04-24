@@ -719,7 +719,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         // read_parquet() converts SYMBOL to VARCHAR in its metadata, so the Rust decoder
         // must resolve dictionary entries to UTF-8 strings rather than returning INT32 keys.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (id SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (id SYMBOL, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES ('AAA', 1, '2024-01-01T00:00:00.000000Z')");
             execute("INSERT INTO x VALUES ('BBB', 2, '2024-01-01T01:00:00.000000Z')");
             execute("INSERT INTO x VALUES ('AAA', 3, '2024-01-01T02:00:00.000000Z')");

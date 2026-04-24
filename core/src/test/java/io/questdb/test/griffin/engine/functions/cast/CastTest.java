@@ -6918,7 +6918,7 @@ public class CastTest extends AbstractCairoTest {
                 "SELECT cast(timestamp as LONG) AS timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
                         "FROM 'trades'" +
                         "ORDER BY 1",
-                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                "create table trades (timestamp timestamp NOT NULL, symbol symbol, price double) timestamp(timestamp)",
                 null,
                 "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
                 """
@@ -6947,7 +6947,7 @@ public class CastTest extends AbstractCairoTest {
                 "SELECT cast(symbol as SYMBOL), avg(price) " +
                         "FROM 'trades' " +
                         "ORDER BY avg(price)",
-                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                "create table trades (timestamp timestamp NOT NULL, symbol symbol, price double) timestamp(timestamp)",
                 null,
                 "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
                 """
@@ -6976,7 +6976,7 @@ public class CastTest extends AbstractCairoTest {
                 "SELECT coalesce(cast(symbol as SYMBOL), 'foobar'), avg(price)" +
                         "FROM 'trades' " +
                         "ORDER BY coalesce(cast(symbol as SYMBOL), 'foobar')",
-                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                "create table trades (timestamp timestamp NOT NULL, symbol symbol, price double) timestamp(timestamp)",
                 null,
                 "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
                 """
@@ -7005,7 +7005,7 @@ public class CastTest extends AbstractCairoTest {
                 "SELECT i::int i, symbol::symbol s, max(price)" +
                         "FROM 'trades'" +
                         "ORDER BY 1",
-                "create table trades (timestamp timestamp, i int, symbol symbol, price double) timestamp(timestamp)",
+                "create table trades (timestamp timestamp NOT NULL, i int, symbol symbol, price double) timestamp(timestamp)",
                 null,
                 "insert into trades select x::timestamp, x, x::string, x from long_sequence(10)",
                 """
@@ -7034,7 +7034,7 @@ public class CastTest extends AbstractCairoTest {
                 "SELECT timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
                         "FROM 'trades'" +
                         "SAMPLE BY 1h",
-                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                "create table trades (timestamp timestamp NOT NULL, symbol symbol, price double) timestamp(timestamp)",
                 "timestamp",
                 "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
                 """

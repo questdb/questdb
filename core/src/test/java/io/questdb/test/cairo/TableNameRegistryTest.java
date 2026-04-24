@@ -100,7 +100,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         for (int j = 0; j < iterations; j++) {
                             try {
                                 execute(
-                                        "create table tab" + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
+                                        "create table tab" + " (x int, ts timestamp NOT NULL) timestamp(ts) Partition by DAY "
                                                 + " WAL ",
                                         executionContext
                                 );
@@ -222,7 +222,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 boolean isWal = r.nextBoolean();
                                 try {
                                     execute(
-                                            "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
+                                            "create table tab" + j + " (x int, ts timestamp NOT NULL) timestamp(ts) Partition by DAY "
                                                     + (!isWal ? "BYPASS" : "")
                                                     + " WAL ",
                                             executionContext
@@ -453,7 +453,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         for (int j = 0; j < iterations; j++) {
                             try {
                                 execute(
-                                        "create table tab" + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
+                                        "create table tab" + " (x int, ts timestamp NOT NULL) timestamp(ts) Partition by DAY "
                                                 + " WAL ",
                                         executionContext
                                 );
@@ -529,7 +529,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     if (j % 2 == 0) {
                         tableName = "Tab" + j;
                     }
-                    execute("create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL", executionContext);
+                    execute("create table " + tableName + " (x int, ts timestamp NOT NULL) timestamp(ts) Partition by DAY WAL", executionContext);
                 }
             }
 
@@ -1040,7 +1040,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     private static void createTableNonWal(String tableName) throws SqlException {
-        execute("create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY BYPASS WAL");
+        execute("create table " + tableName + " (x int, ts timestamp NOT NULL) timestamp(ts) Partition by DAY BYPASS WAL");
     }
 
     @NotNull
@@ -1215,7 +1215,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     try {
                         switch (step) {
                             case FUZZ_CREATE:
-                                execute("create table " + tableName + "(a int, t timestamp) timestamp(t) partition by day wal");
+                                execute("create table " + tableName + "(a int, t timestamp NOT NULL) timestamp(t) partition by day wal");
                                 break;
                             case FUZZ_RENAME:
                                 execute("rename table " + oldTableName + " to " + tableName);

@@ -132,7 +132,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    sym symbol index,\n" +
                         "    bid int,\n" +
                         "    ask int,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -160,7 +160,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -187,7 +187,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -209,7 +209,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -244,7 +244,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -264,7 +264,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 create table trades (
                     sym symbol,
                     price double,
-                    ts timestamp
+                    ts timestamp NOT NULL
                 ) timestamp(ts) partition by DAY
                 """);
         execute("""
@@ -285,7 +285,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 create table prices (
                     sym symbol,
                     price double,
-                    ts timestamp
+                    ts timestamp NOT NULL
                 ) timestamp(ts) partition by DAY
                 """);
         execute("""
@@ -454,7 +454,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table tab (\n" +
                         "    sym symbol index,\n" +
                         "    price int,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
@@ -682,7 +682,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    sym symbol index,\n" +
                         "    bid int,\n" +
                         "    ask int,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 "ts###DESC",
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
@@ -716,7 +716,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    sym symbol index,\n" +
                         "    bid int,\n" +
                         "    ask int,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 "ts###desc",
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
@@ -770,7 +770,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -822,7 +822,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -845,7 +845,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                     "create table x (\n" +
                             "    sym symbol index,\n" +
                             "    price double,\n" +
-                            "    ts timestamp\n" +
+                            "    ts timestamp NOT NULL\n" +
                             ") timestamp(ts) partition by DAY",
                     null,
                     true,
@@ -958,7 +958,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -1047,7 +1047,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -1136,7 +1136,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -1225,7 +1225,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -1247,7 +1247,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                     "create table x (\n" +
                             "    sym symbol index,\n" +
                             "    price double,\n" +
-                            "    ts timestamp\n" +
+                            "    ts timestamp NOT NULL\n" +
                             ") timestamp(ts) partition by DAY",
                     null,
                     true,
@@ -1334,7 +1334,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -1423,7 +1423,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -1544,7 +1544,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "select sym k, price, ts from x where ts<'1970-01-04T10:30:00.000Z'", "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -1577,7 +1577,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    sym symbol index,\n" +
                         "    bid int,\n" +
                         "    ask int,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
@@ -1609,7 +1609,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    sym symbol index,\n" +
                         "    bid int,\n" +
                         "    ask int,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +

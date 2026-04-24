@@ -622,7 +622,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         queryBuilder.$(" investmentMill LONG,").$('\n');
         queryBuilder.$(" ticketThous INT,").$('\n');
         queryBuilder.$(" broker SYMBOL INDEX CAPACITY 32,").$('\n');
-        queryBuilder.$(" ts TIMESTAMP").$('\n');
+        queryBuilder.$(" ts TIMESTAMP NOT NULL").$('\n');
         queryBuilder.$(") TIMESTAMP(ts) PARTITION BY DAY");
         if (isWal) {
             queryBuilder.$(" WAL");

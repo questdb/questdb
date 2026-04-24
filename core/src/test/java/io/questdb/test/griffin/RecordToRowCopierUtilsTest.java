@@ -65,7 +65,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             int rowCount = 5 + rnd.nextInt(15);  // 5-20 rows
 
             // Build column definitions
-            StringBuilder cols = new StringBuilder("ts timestamp");
+            StringBuilder cols = new StringBuilder("ts timestamp NOT NULL");
             for (int i = 0; i < colCount; i++) {
                 cols.append(", col").append(i).append(" int");
             }
@@ -240,8 +240,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             int copierType = randomCopierType(rnd);
             setCopierType(copierType);
 
-            execute("create table src (ts timestamp, b binary) timestamp(ts) partition by DAY");
-            execute("create table dst (ts timestamp, b binary) timestamp(ts) partition by DAY");
+            execute("create table src (ts timestamp NOT NULL, b binary) timestamp(ts) partition by DAY");
+            execute("create table dst (ts timestamp NOT NULL, b binary) timestamp(ts) partition by DAY");
 
             execute("insert into src select x::timestamp, rnd_bin(10, 20, 1) from long_sequence(5)");
             execute("insert into dst select * from src");
@@ -257,11 +257,11 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             int copierType1 = randomCopierType(rnd);
             int copierType2 = randomCopierType(rnd);
 
-            execute("create table src (ts timestamp, c char) timestamp(ts) partition by DAY");
-            execute("create table dst1 (ts timestamp, s string) timestamp(ts) partition by DAY");
-            execute("create table dst1_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
-            execute("create table dst2 (ts timestamp, s string) timestamp(ts) partition by DAY");
-            execute("create table dst2_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
+            execute("create table src (ts timestamp NOT NULL, c char) timestamp(ts) partition by DAY");
+            execute("create table dst1 (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
+            execute("create table dst1_vc (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by DAY");
+            execute("create table dst2 (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
+            execute("create table dst2_vc (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by DAY");
 
             execute("insert into src values (0, 'A'), (1000, 'Z'), (2000, null)");
 
@@ -287,8 +287,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             setCopierType(copierType);
 
             // Timestamp to Date (loses microseconds)
-            execute("create table src_ts (ts timestamp, t timestamp) timestamp(ts) partition by DAY");
-            execute("create table dst_date (ts timestamp, d date) timestamp(ts) partition by DAY");
+            execute("create table src_ts (ts timestamp NOT NULL, t timestamp) timestamp(ts) partition by DAY");
+            execute("create table dst_date (ts timestamp NOT NULL, d date) timestamp(ts) partition by DAY");
 
             execute("insert into src_ts values (0, '2023-06-15T14:30:00.123456Z')");
             execute("insert into dst_date select * from src_ts");
@@ -299,8 +299,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     """, "dst_date");
 
             // Date to Timestamp
-            execute("create table src_date (ts timestamp, d date) timestamp(ts) partition by DAY");
-            execute("create table dst_ts (ts timestamp, t timestamp) timestamp(ts) partition by DAY");
+            execute("create table src_date (ts timestamp NOT NULL, d date) timestamp(ts) partition by DAY");
+            execute("create table dst_ts (ts timestamp NOT NULL, t timestamp) timestamp(ts) partition by DAY");
 
             execute("insert into src_date values (0, '2023-06-15T14:30:00.000Z')");
             execute("insert into dst_ts select * from src_date");
@@ -319,8 +319,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             int copierType = randomCopierType(rnd);
             setCopierType(copierType);
 
-            execute("create table src_dec (ts timestamp, d decimal(18,3)) timestamp(ts) partition by DAY");
-            execute("create table dst_dec (ts timestamp, d decimal(18,3)) timestamp(ts) partition by DAY");
+            execute("create table src_dec (ts timestamp NOT NULL, d decimal(18,3)) timestamp(ts) partition by DAY");
+            execute("create table dst_dec (ts timestamp NOT NULL, d decimal(18,3)) timestamp(ts) partition by DAY");
 
             // Insert using cast to decimal
             execute("insert into src_dec select 0::timestamp, 123.456::decimal(18,3)");
@@ -340,8 +340,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             setCopierType(copierType);
 
             // Use geohash sizes that match the bit counts exactly
-            execute("create table src (ts timestamp, g4 geohash(4b), g10 geohash(10b), g20 geohash(20b), g40 geohash(40b)) timestamp(ts) partition by DAY");
-            execute("create table dst (ts timestamp, g4 geohash(4b), g10 geohash(10b), g20 geohash(20b), g40 geohash(40b)) timestamp(ts) partition by DAY");
+            execute("create table src (ts timestamp NOT NULL, g4 geohash(4b), g10 geohash(10b), g20 geohash(20b), g40 geohash(40b)) timestamp(ts) partition by DAY");
+            execute("create table dst (ts timestamp NOT NULL, g4 geohash(4b), g10 geohash(10b), g20 geohash(20b), g40 geohash(40b)) timestamp(ts) partition by DAY");
 
             // Insert nulls
             execute("insert into src values (0, null, null, null, null)");
@@ -361,8 +361,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             setCopierType(copierType);
 
             // String to IPv4
-            execute("create table src_str (ts timestamp, s string) timestamp(ts) partition by DAY");
-            execute("create table dst_ipv4 (ts timestamp, ip ipv4) timestamp(ts) partition by DAY");
+            execute("create table src_str (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
+            execute("create table dst_ipv4 (ts timestamp NOT NULL, ip ipv4) timestamp(ts) partition by DAY");
 
             execute("insert into src_str values (0, '192.168.1.1'), (1000, '10.0.0.1')");
             execute("insert into dst_ipv4 select * from src_str");
@@ -374,8 +374,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     """, "dst_ipv4");
 
             // Varchar to IPv4
-            execute("create table src_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
-            execute("create table dst_ipv4_2 (ts timestamp, ip ipv4) timestamp(ts) partition by DAY");
+            execute("create table src_vc (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by DAY");
+            execute("create table dst_ipv4_2 (ts timestamp NOT NULL, ip ipv4) timestamp(ts) partition by DAY");
 
             execute("insert into src_vc values (0, '172.16.0.1'), (1000, '8.8.8.8')");
             execute("insert into dst_ipv4_2 select * from src_vc");
@@ -395,8 +395,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             int copierType = randomCopierType(rnd);
             setCopierType(copierType);
 
-            execute("create table src (ts timestamp, l long128) timestamp(ts) partition by DAY");
-            execute("create table dst (ts timestamp, l long128) timestamp(ts) partition by DAY");
+            execute("create table src (ts timestamp NOT NULL, l long128) timestamp(ts) partition by DAY");
+            execute("create table dst (ts timestamp NOT NULL, l long128) timestamp(ts) partition by DAY");
 
             // Long128 can only be inserted via ILP or API, test with nulls
             execute("insert into src values (0, null), (1000, null)");
@@ -414,8 +414,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             setCopierType(copierType);
 
             // Long256 copy
-            execute("create table src (ts timestamp, l long256) timestamp(ts) partition by DAY");
-            execute("create table dst (ts timestamp, l long256) timestamp(ts) partition by DAY");
+            execute("create table src (ts timestamp NOT NULL, l long256) timestamp(ts) partition by DAY");
+            execute("create table dst (ts timestamp NOT NULL, l long256) timestamp(ts) partition by DAY");
 
             execute("insert into src values (0, '0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20'), (1000, null)");
             execute("insert into dst select * from src");
@@ -423,8 +423,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src order by ts", "dst order by ts", LOG);
 
             // Varchar to Long256
-            execute("create table src_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
-            execute("create table dst_l256 (ts timestamp, l long256) timestamp(ts) partition by DAY");
+            execute("create table src_vc (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by DAY");
+            execute("create table dst_l256 (ts timestamp NOT NULL, l long256) timestamp(ts) partition by DAY");
 
             execute("insert into src_vc values (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'), (1000, null)");
             execute("insert into dst_l256 select * from src_vc");
@@ -432,8 +432,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             assertSql("count\n2\n", "select count(*) from dst_l256");
 
             // Varchar expression (cast) to Long256 - tests non-DirectUtf8Sequence path
-            execute("create table src_str (ts timestamp, s string) timestamp(ts) partition by DAY");
-            execute("create table dst_l256_cast (ts timestamp, l long256) timestamp(ts) partition by DAY");
+            execute("create table src_str (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
+            execute("create table dst_l256_cast (ts timestamp NOT NULL, l long256) timestamp(ts) partition by DAY");
 
             execute("insert into src_str values (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'), (1000, null)");
             execute("insert into dst_l256_cast select ts, s::varchar from src_str");
@@ -441,8 +441,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "dst_l256 order by ts", "dst_l256_cast order by ts", LOG);
 
             // Negative test: non-ASCII varchar to Long256 should fail
-            execute("create table src_non_ascii (ts timestamp, s string) timestamp(ts) partition by DAY");
-            execute("create table dst_l256_fail (ts timestamp, l long256) timestamp(ts) partition by DAY");
+            execute("create table src_non_ascii (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
+            execute("create table dst_l256_fail (ts timestamp NOT NULL, l long256) timestamp(ts) partition by DAY");
             execute("insert into src_non_ascii values (0, '0xкириллица')");
 
             assertException(
@@ -467,8 +467,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             setCopierType(copierType);
 
             // Symbol to String
-            execute("create table src_sym (ts timestamp, sym symbol) timestamp(ts) partition by DAY");
-            execute("create table dst_str (ts timestamp, s string) timestamp(ts) partition by DAY");
+            execute("create table src_sym (ts timestamp NOT NULL, sym symbol) timestamp(ts) partition by DAY");
+            execute("create table dst_str (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
 
             execute("insert into src_sym values (0, 'apple'), (1000, 'banana'), (2000, null)");
             execute("insert into dst_str select * from src_sym");
@@ -481,7 +481,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     """, "dst_str");
 
             // Symbol to Varchar
-            execute("create table dst_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
+            execute("create table dst_vc (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by DAY");
             execute("insert into dst_vc select * from src_sym");
 
             assertSql("""
@@ -492,8 +492,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     """, "dst_vc");
 
             // String to Symbol
-            execute("create table src_str2 (ts timestamp, s string) timestamp(ts) partition by DAY");
-            execute("create table dst_sym (ts timestamp, sym symbol) timestamp(ts) partition by DAY");
+            execute("create table src_str2 (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
+            execute("create table dst_sym (ts timestamp NOT NULL, sym symbol) timestamp(ts) partition by DAY");
 
             execute("insert into src_str2 values (0, 'foo'), (1000, 'bar')");
             execute("insert into dst_sym select * from src_str2");
@@ -525,9 +525,9 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             int copierType = randomCopierType(rnd);
             setCopierType(copierType);
 
-            execute("create table src (ts timestamp, u uuid) timestamp(ts) partition by DAY");
-            execute("create table dst_str (ts timestamp, s string) timestamp(ts) partition by DAY");
-            execute("create table dst_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
+            execute("create table src (ts timestamp NOT NULL, u uuid) timestamp(ts) partition by DAY");
+            execute("create table dst_str (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
+            execute("create table dst_vc (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by DAY");
 
             execute("insert into src values (0, '550e8400-e29b-41d4-a716-446655440000'), (1000, null)");
             execute("insert into dst_str select * from src");
@@ -554,13 +554,13 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             int copierType = randomCopierType(rnd);
             setCopierType(copierType);
 
-            execute("create table src (ts timestamp, v varchar) timestamp(ts) partition by DAY");
-            execute("create table dst_byte (ts timestamp, b byte) timestamp(ts) partition by DAY");
-            execute("create table dst_short (ts timestamp, s short) timestamp(ts) partition by DAY");
-            execute("create table dst_int (ts timestamp, i int) timestamp(ts) partition by DAY");
-            execute("create table dst_long (ts timestamp, l long) timestamp(ts) partition by DAY");
-            execute("create table dst_float (ts timestamp, f float) timestamp(ts) partition by DAY");
-            execute("create table dst_double (ts timestamp, d double) timestamp(ts) partition by DAY");
+            execute("create table src (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by DAY");
+            execute("create table dst_byte (ts timestamp NOT NULL, b byte) timestamp(ts) partition by DAY");
+            execute("create table dst_short (ts timestamp NOT NULL, s short) timestamp(ts) partition by DAY");
+            execute("create table dst_int (ts timestamp NOT NULL, i int) timestamp(ts) partition by DAY");
+            execute("create table dst_long (ts timestamp NOT NULL, l long) timestamp(ts) partition by DAY");
+            execute("create table dst_float (ts timestamp NOT NULL, f float) timestamp(ts) partition by DAY");
+            execute("create table dst_double (ts timestamp NOT NULL, d double) timestamp(ts) partition by DAY");
 
             execute("insert into src values (0, '42'), (1000, '-17'), (2000, '100')");
 
@@ -588,8 +588,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             setCopierType(copierType);
 
             // VARCHAR column to STRING column
-            execute("create table src_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
-            execute("create table dst_str (ts timestamp, s string) timestamp(ts) partition by DAY");
+            execute("create table src_vc (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by DAY");
+            execute("create table dst_str (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
 
             execute("insert into src_vc values (0, 'hello'), (1000, 'world'), (2000, null), (3000, 'über'), (4000, '日本語')");
             execute("insert into dst_str select * from src_vc");
@@ -604,8 +604,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     """, "dst_str order by ts");
 
             // STRING column to VARCHAR column
-            execute("create table src_str (ts timestamp, s string) timestamp(ts) partition by DAY");
-            execute("create table dst_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
+            execute("create table src_str (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
+            execute("create table dst_vc (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by DAY");
 
             execute("insert into src_str values (0, 'foo'), (1000, 'bar'), (2000, null), (3000, 'café'), (4000, '日本語'), (5000, 'Привет'), (6000, '🎉emoji🚀')");
             execute("insert into dst_vc select * from src_str");
@@ -622,14 +622,14 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     """, "dst_vc order by ts");
 
             // STRING expression (cast) to VARCHAR column with non-ASCII
-            execute("create table dst_vc2 (ts timestamp, v varchar) timestamp(ts) partition by DAY");
+            execute("create table dst_vc2 (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by DAY");
             execute("insert into dst_vc2 select ts, v::string from src_vc");
 
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src_vc order by ts", "dst_vc2 order by ts", LOG);
 
             // VARCHAR expression (cast) to STRING column - tests function result path
             // This exercises the transferVarcharToStrCol helper with non-DirectUtf8Sequence values
-            execute("create table dst_str2 (ts timestamp, s string) timestamp(ts) partition by DAY");
+            execute("create table dst_str2 (ts timestamp NOT NULL, s string) timestamp(ts) partition by DAY");
             execute("insert into dst_str2 select ts, s::varchar from src_str");
 
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src_str order by ts", "dst_str2 order by ts", LOG);
@@ -758,7 +758,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
 
             // Create source table with all supported types
             execute("create table src (" +
-                    "ts timestamp, " +
+                    "ts timestamp NOT NULL, " +
                     "col_boolean boolean, " +
                     "col_byte byte, " +
                     "col_short short, " +
@@ -808,7 +808,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
 
             // Create destination tables
             execute("create table dst1 (" +
-                    "ts timestamp, " +
+                    "ts timestamp NOT NULL, " +
                     "col_boolean boolean, " +
                     "col_byte byte, " +
                     "col_short short, " +
@@ -832,7 +832,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             execute("create table dst2 (" +
-                    "ts timestamp, " +
+                    "ts timestamp NOT NULL, " +
                     "col_boolean boolean, " +
                     "col_byte byte, " +
                     "col_short short, " +
@@ -874,7 +874,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
 
             // Create table with high null rate
             execute("create table src_nulls (" +
-                    "ts timestamp, " +
+                    "ts timestamp NOT NULL, " +
                     "col_int int, " +
                     "col_long long, " +
                     "col_double double, " +
@@ -885,7 +885,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             execute("create table dst1_nulls (" +
-                    "ts timestamp, " +
+                    "ts timestamp NOT NULL, " +
                     "col_int int, " +
                     "col_long long, " +
                     "col_double double, " +
@@ -896,7 +896,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             execute("create table dst2_nulls (" +
-                    "ts timestamp, " +
+                    "ts timestamp NOT NULL, " +
                     "col_int int, " +
                     "col_long long, " +
                     "col_double double, " +
@@ -933,9 +933,9 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             int rowCount = 10 + rnd.nextInt(40); // 10-50 rows
 
             // Test numeric widening conversions: byte -> short -> int -> long -> float -> double
-            execute("create table src_numeric (ts timestamp, b byte, s short, i int, l long) timestamp(ts) partition by DAY");
-            execute("create table dst1_numeric (ts timestamp, b long, s long, i long, l double) timestamp(ts) partition by DAY");
-            execute("create table dst2_numeric (ts timestamp, b long, s long, i long, l double) timestamp(ts) partition by DAY");
+            execute("create table src_numeric (ts timestamp NOT NULL, b byte, s short, i int, l long) timestamp(ts) partition by DAY");
+            execute("create table dst1_numeric (ts timestamp NOT NULL, b long, s long, i long, l double) timestamp(ts) partition by DAY");
+            execute("create table dst2_numeric (ts timestamp NOT NULL, b long, s long, i long, l double) timestamp(ts) partition by DAY");
 
             execute("insert into src_numeric select x::timestamp, rnd_byte(), rnd_short(), rnd_int(), rnd_long() from long_sequence(" + rowCount + ")");
 
@@ -948,9 +948,9 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "dst1_numeric order by ts", "dst2_numeric order by ts", LOG);
 
             // Test string/varchar/symbol conversions
-            execute("create table src_text (ts timestamp, str string, vc varchar, sym symbol) timestamp(ts) partition by DAY");
-            execute("create table dst1_text (ts timestamp, str varchar, vc string, sym varchar) timestamp(ts) partition by DAY");
-            execute("create table dst2_text (ts timestamp, str varchar, vc string, sym varchar) timestamp(ts) partition by DAY");
+            execute("create table src_text (ts timestamp NOT NULL, str string, vc varchar, sym symbol) timestamp(ts) partition by DAY");
+            execute("create table dst1_text (ts timestamp NOT NULL, str varchar, vc string, sym varchar) timestamp(ts) partition by DAY");
+            execute("create table dst2_text (ts timestamp NOT NULL, str varchar, vc string, sym varchar) timestamp(ts) partition by DAY");
 
             execute("insert into src_text select x::timestamp, rnd_str(3,8,1), rnd_varchar(3,8,1), rnd_symbol('X','Y','Z') from long_sequence(" + rowCount + ")");
 
@@ -963,9 +963,9 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "dst1_text order by ts", "dst2_text order by ts", LOG);
 
             // Test geohash same-size copy
-            execute("create table src_geo (ts timestamp, g4 geohash(4b), g8 geohash(8b)) timestamp(ts) partition by DAY");
-            execute("create table dst1_geo (ts timestamp, g4 geohash(4b), g8 geohash(8b)) timestamp(ts) partition by DAY");
-            execute("create table dst2_geo (ts timestamp, g4 geohash(4b), g8 geohash(8b)) timestamp(ts) partition by DAY");
+            execute("create table src_geo (ts timestamp NOT NULL, g4 geohash(4b), g8 geohash(8b)) timestamp(ts) partition by DAY");
+            execute("create table dst1_geo (ts timestamp NOT NULL, g4 geohash(4b), g8 geohash(8b)) timestamp(ts) partition by DAY");
+            execute("create table dst2_geo (ts timestamp NOT NULL, g4 geohash(4b), g8 geohash(8b)) timestamp(ts) partition by DAY");
 
             execute("insert into src_geo select x::timestamp, rnd_geohash(4), rnd_geohash(8) from long_sequence(" + rowCount + ")");
 

@@ -88,7 +88,7 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
     @Test
     public void testAlterColumnTypeToNanos() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango(id INT, micro_time TIMESTAMP, time TIMESTAMP_NS) TIMESTAMP(time) PARTITION BY DAY");
+            execute("CREATE TABLE tango(id INT, micro_time TIMESTAMP NOT NULL, time TIMESTAMP_NS) TIMESTAMP(time) PARTITION BY DAY");
             execute("INSERT INTO tango VALUES(1, '2021-01-01T00:00:00.123456Z'::TIMESTAMP, '2021-01-01T00:00:00.000000100Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(2, '2021-01-01T00:00:00.789123Z'::TIMESTAMP, '2021-01-01T00:00:00.000000200Z'::TIMESTAMP_NS)");
 
@@ -361,7 +361,7 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
     @Test
     public void testConversionFromMicros() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE micro_table(id INT, time TIMESTAMP) TIMESTAMP(time) PARTITION BY DAY");
+            execute("CREATE TABLE micro_table(id INT, time TIMESTAMP NOT NULL) TIMESTAMP(time) PARTITION BY DAY");
             execute("INSERT INTO micro_table VALUES(1, '2021-01-01T00:00:00.123456Z'::TIMESTAMP)");
 
             String expected = """
@@ -391,7 +391,7 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
     @Test
     public void testCrossPrecisionAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE micro_events(id INT, micro_time TIMESTAMP, price DOUBLE) TIMESTAMP(micro_time) PARTITION BY DAY");
+            execute("CREATE TABLE micro_events(id INT, micro_time TIMESTAMP NOT NULL, price DOUBLE) TIMESTAMP(micro_time) PARTITION BY DAY");
             execute("CREATE TABLE nano_trades(trade_id INT, nano_time TIMESTAMP_NS, quantity LONG) TIMESTAMP(nano_time) PARTITION BY DAY");
 
             execute("INSERT INTO micro_events VALUES(1, '2021-01-01T09:00:00.123456Z'::TIMESTAMP, 100.5)");
@@ -730,7 +730,7 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampEqualityWithBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE mixed_ts(id INT, nano_time TIMESTAMP_NS, micro_time TIMESTAMP) TIMESTAMP(nano_time) PARTITION BY DAY");
+            execute("CREATE TABLE mixed_ts(id INT, nano_time TIMESTAMP_NS, micro_time TIMESTAMP NOT NULL) TIMESTAMP(nano_time) PARTITION BY DAY");
             execute("INSERT INTO mixed_ts VALUES(1, '2021-01-01T09:00:00.000100000Z', '2021-01-01T09:00:00.000100Z')");
             execute("INSERT INTO mixed_ts VALUES(2, '2021-01-01T10:00:00.000200000Z', '2021-01-01T10:00:00.000200Z')");
             execute("INSERT INTO mixed_ts VALUES(3, '2021-01-02T09:00:00.000300000Z', '2021-01-02T09:00:00.000300Z')");

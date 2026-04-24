@@ -48,7 +48,7 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testKeyedCountAllColumnTypesOnDataWithColTops() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour");
+            execute("create table x ( tstmp timestamp NOT NULL ) timestamp (tstmp) partition by hour");
             execute("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ");
             execute("alter table x add column k int");
             execute("insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ");
@@ -503,7 +503,7 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testVectorizedKeyedCountWithColTops() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour");
+            execute("create table x ( tstmp timestamp NOT NULL ) timestamp (tstmp) partition by hour");
             execute("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ");
             execute("alter table x add column k int");
             execute("insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ");

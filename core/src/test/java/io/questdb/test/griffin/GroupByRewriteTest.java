@@ -32,8 +32,8 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateDoesNotCreateDuplicateKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (sym symbol, price double, amount double, ts timestamp) timestamp(ts) partition by day;");
-            execute("CREATE TABLE trades2 (sym symbol, price double, amount double, ts timestamp) timestamp(ts) partition by day;");
+            execute("CREATE TABLE trades (sym symbol, price double, amount double, ts timestamp NOT NULL) timestamp(ts) partition by day;");
+            execute("CREATE TABLE trades2 (sym symbol, price double, amount double, ts timestamp NOT NULL) timestamp(ts) partition by day;");
 
             // key first
             assertPlanNoLeakCheck(
@@ -230,7 +230,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateExtractsConstantKeys() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price double, amount double, ts timestamp) timestamp(ts) partition by day;");
+            execute("CREATE TABLE trades (price double, amount double, ts timestamp NOT NULL) timestamp(ts) partition by day;");
             assertPlanNoLeakCheck(
                     "SELECT 42, 'foobar', amount, sum(price) FROM trades;",
                     """

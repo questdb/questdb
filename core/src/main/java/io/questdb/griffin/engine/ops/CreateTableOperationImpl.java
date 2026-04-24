@@ -189,6 +189,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.isIndexed(),
                     model.getIndexValueBlockSize(),
                     model.isDedupKey(),
+                    model.isNotNull(),
                     model.getParquetEncodingConfig()
             );
         }
@@ -499,6 +500,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getSymbolCacheFlag(),
                     symbolCapacity
             );
+            columnMetadata.setNotNullFlag(model.isNotNull());
             columnMetadata.setParquetEncodingConfig(model.getParquetEncodingConfig());
             augmentedColumnMetadata.put(columnNameStr, columnMetadata);
         }
@@ -512,6 +514,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public boolean isIndexed(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
+    }
+
+    @Override
+    public boolean isNotNull(int index) {
+        return index == timestampIndex || (getLowAt(index * 2 + 1) & COLUMN_FLAG_NOT_NULL) != 0;
     }
 
     @Override
@@ -573,6 +580,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     colMeta.isSymbolIndexFlag(),
                     colMeta.getIndexValueBlockCapacity(),
                     colMeta.isDedupKeyFlag(),
+                    colMeta.isNotNull(),
                     colMeta.getParquetEncodingConfig()
             );
             columnNames.add(colMeta.getColumnName());
@@ -679,6 +687,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             boolean symbolCacheFlag;
             boolean symbolIndexed;
             boolean isDedupKey;
+            boolean isNotNull;
             int indexBlockCapacity;
             int parquetEncodingConfig;
             if (augMeta != null) {
@@ -694,6 +703,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 symbolCacheFlag = augMeta.isSymbolCacheFlag();
                 symbolIndexed = augMeta.isSymbolIndexFlag();
                 isDedupKey = augMeta.isDedupKeyFlag();
+                isNotNull = augMeta.isNotNull();
                 indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
                 parquetEncodingConfig = augMeta.getParquetEncodingConfig();
             } else {
@@ -707,6 +717,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 symbolCacheFlag = true;
                 symbolIndexed = false;
                 isDedupKey = false;
+                isNotNull = false;
                 indexBlockCapacity = 0;
                 parquetEncodingConfig = 0;
             }
@@ -728,6 +739,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     symbolIndexed,
                     indexBlockCapacity,
                     isDedupKey,
+                    isNotNull,
                     parquetEncodingConfig
             );
         }
@@ -752,11 +764,13 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             boolean indexFlag,
             int indexBlockCapacity,
             boolean dedupFlag,
+            boolean notNullFlag,
             int parquetEncodingConfig
     ) {
         int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
                 | (indexFlag ? COLUMN_FLAG_INDEXED : 0)
-                | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0);
+                | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0)
+                | (notNullFlag ? COLUMN_FLAG_NOT_NULL : 0);
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
                 Numbers.encodeLowHighInts(flags, indexBlockCapacity)

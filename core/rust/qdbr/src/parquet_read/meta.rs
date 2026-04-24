@@ -85,6 +85,12 @@ impl ParquetDecoder {
             let mut name = AcVec::with_capacity_in(name_str.len() * 2, allocator.clone())?;
             name.extend(name_str.encode_utf16())?;
 
+            let not_null = qdb_meta
+                .as_ref()
+                .and_then(|m| m.schema.get(index))
+                .map(|c| c.not_null)
+                .unwrap_or(false);
+
             if let Some(mut column_type) =
                 Self::descriptor_to_column_type(column, index, qdb_meta.as_ref())
             {
@@ -100,6 +106,7 @@ impl ParquetDecoder {
                     id: base_field.id.unwrap_or(-1_i32),
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
+                    not_null,
                     name_vec: name,
                 })?;
             } else {
@@ -109,6 +116,7 @@ impl ParquetDecoder {
                     id: -1,
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
+                    not_null: false,
                     name_vec: name,
                 })?;
             }

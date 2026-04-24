@@ -180,39 +180,40 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         int columnType = metadata.getColumnType(index);
+        final boolean isNotNull = metadata.isNotNull(index);
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN -> BooleanColumn.newInstance(index);
             case ColumnType.BYTE -> ByteColumn.newInstance(index);
             case ColumnType.SHORT -> ShortColumn.newInstance(index);
-            case ColumnType.CHAR -> new CharColumn(index);
-            case ColumnType.INT -> IntColumn.newInstance(index);
-            case ColumnType.LONG -> LongColumn.newInstance(index);
-            case ColumnType.FLOAT -> FloatColumn.newInstance(index);
-            case ColumnType.DOUBLE -> DoubleColumn.newInstance(index);
+            case ColumnType.CHAR -> new CharColumn(index, isNotNull);
+            case ColumnType.INT -> IntColumn.newInstance(index, isNotNull);
+            case ColumnType.LONG -> LongColumn.newInstance(index, isNotNull);
+            case ColumnType.FLOAT -> FloatColumn.newInstance(index, isNotNull);
+            case ColumnType.DOUBLE -> DoubleColumn.newInstance(index, isNotNull);
             case ColumnType.STRING ->
                 // we cannot use a pooled StrColumn instance, because it is not thread-safe
-                    new StrColumn(index);
+                    new StrColumn(index, isNotNull);
             case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE ->
                 // we cannot use a pooled VarcharColumn instance, because it is not thread-safe
-                    new VarcharColumn(index);
-            case ColumnType.SYMBOL -> new SymbolColumn(index, metadata.isSymbolTableStatic(index));
-            case ColumnType.BINARY -> BinColumn.newInstance(index);
-            case ColumnType.DATE -> DateColumn.newInstance(index);
-            case ColumnType.TIMESTAMP -> TimestampColumn.newInstance(index, columnType);
+                    new VarcharColumn(index, isNotNull);
+            case ColumnType.SYMBOL -> new SymbolColumn(index, metadata.isSymbolTableStatic(index), isNotNull);
+            case ColumnType.BINARY -> BinColumn.newInstance(index, isNotNull);
+            case ColumnType.DATE -> DateColumn.newInstance(index, isNotNull);
+            case ColumnType.TIMESTAMP -> TimestampColumn.newInstance(index, columnType, isNotNull);
             case ColumnType.RECORD -> new RecordColumn(index, metadata.getMetadata(index));
-            case ColumnType.GEOBYTE -> GeoByteColumn.newInstance(index, columnType);
-            case ColumnType.GEOSHORT -> GeoShortColumn.newInstance(index, columnType);
-            case ColumnType.GEOINT -> GeoIntColumn.newInstance(index, columnType);
-            case ColumnType.GEOLONG -> GeoLongColumn.newInstance(index, columnType);
+            case ColumnType.GEOBYTE -> GeoByteColumn.newInstance(index, columnType, isNotNull);
+            case ColumnType.GEOSHORT -> GeoShortColumn.newInstance(index, columnType, isNotNull);
+            case ColumnType.GEOINT -> GeoIntColumn.newInstance(index, columnType, isNotNull);
+            case ColumnType.GEOLONG -> GeoLongColumn.newInstance(index, columnType, isNotNull);
             case ColumnType.NULL -> NullConstant.NULL;
-            case ColumnType.LONG256 -> Long256Column.newInstance(index);
-            case ColumnType.LONG128 -> Long128Column.newInstance(index);
-            case ColumnType.UUID -> UuidColumn.newInstance(index);
-            case ColumnType.IPv4 -> IPv4Column.newInstance(index);
-            case ColumnType.INTERVAL -> IntervalColumn.newInstance(index, columnType);
-            case ColumnType.ARRAY -> new ArrayColumn(index, columnType);
+            case ColumnType.LONG256 -> Long256Column.newInstance(index, isNotNull);
+            case ColumnType.LONG128 -> Long128Column.newInstance(index, isNotNull);
+            case ColumnType.UUID -> UuidColumn.newInstance(index, isNotNull);
+            case ColumnType.IPv4 -> IPv4Column.newInstance(index, isNotNull);
+            case ColumnType.INTERVAL -> IntervalColumn.newInstance(index, columnType, isNotNull);
+            case ColumnType.ARRAY -> new ArrayColumn(index, columnType, isNotNull);
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> new DecimalColumn(index, columnType);
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> new DecimalColumn(index, columnType, isNotNull);
             default -> throw SqlException.position(position)
                     .put("unsupported column type ")
                     .put(ColumnType.nameOf(columnType));

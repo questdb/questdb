@@ -1057,7 +1057,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             create table tab (
                                 tag symbol index,
                                 seq int,
-                                ts timestamp
+                                ts timestamp NOT NULL
                             ) timestamp(ts) partition by DAY""",
                     leftTableTimestampType.getTypeName()
             );
@@ -3030,7 +3030,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                 side SYMBOL,
                                 price DOUBLE,
                                 amount DOUBLE,
-                                timestamp TIMESTAMP
+                                timestamp TIMESTAMP NOT NULL
                             ) timestamp(timestamp) PARTITION BY HOUR
                             """,
                     leftTableTimestampType.getTypeName());
@@ -5447,7 +5447,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
                         joinType +
                         "(select * from x order by ts limit 5) b",
-                "create table x (ts timestamp, y int) timestamp(ts)",
+                "create table x (ts timestamp NOT NULL, y int) timestamp(ts)",
                 timestamp,
                 false
         );

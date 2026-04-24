@@ -3655,7 +3655,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (a INT, b LONG, ts TIMESTAMP)
+                            CREATE TABLE x (a INT, b LONG, ts TIMESTAMP NOT NULL)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3789,7 +3789,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (a INT, sym SYMBOL INDEX CAPACITY 4, b LONG, ts TIMESTAMP)
+                            CREATE TABLE x (a INT, sym SYMBOL INDEX CAPACITY 4, b LONG, ts TIMESTAMP NOT NULL)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3850,7 +3850,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             execute(
                     """
-                            CREATE TABLE x (a INT, sym SYMBOL INDEX CAPACITY 4, b LONG, ts TIMESTAMP)
+                            CREATE TABLE x (a INT, sym SYMBOL INDEX CAPACITY 4, b LONG, ts TIMESTAMP NOT NULL)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );

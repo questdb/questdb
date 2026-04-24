@@ -231,7 +231,7 @@ public class PGDecimalsTest extends BasePGTest {
     public void testDecimalBind() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("CREATE TABLE tango(dec decimal(2, 0), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+                statement.executeUpdate("CREATE TABLE tango(dec decimal(2, 0), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR");
             }
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tango VALUES (?, ?)")) {
                 statement.setLong(1, 10);
@@ -261,7 +261,7 @@ public class PGDecimalsTest extends BasePGTest {
     public void testDecimalBindBigDecimal() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("CREATE TABLE tango(dec decimal(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+                statement.executeUpdate("CREATE TABLE tango(dec decimal(18, 5), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR");
             }
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tango VALUES (?, ?)")) {
                 statement.setObject(1, new BigDecimal("12345670.890"));
@@ -301,7 +301,7 @@ public class PGDecimalsTest extends BasePGTest {
     public void testDecimalBindOverflow() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("CREATE TABLE tango(dec decimal(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+                statement.executeUpdate("CREATE TABLE tango(dec decimal(18, 5), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR");
             }
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tango VALUES (?, ?)")) {
                 statement.setObject(1, new BigDecimal("10e80"));
@@ -325,7 +325,7 @@ public class PGDecimalsTest extends BasePGTest {
     public void testDecimalBindScaleOverflow() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("CREATE TABLE tango(dec decimal(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+                statement.executeUpdate("CREATE TABLE tango(dec decimal(18, 5), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR");
             }
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tango VALUES (?, ?)")) {
                 statement.setObject(1, new BigDecimal("1e-80"));

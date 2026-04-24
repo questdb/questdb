@@ -44,11 +44,17 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function floatFunc = args.getQuick(0);
         if (floatFunc.isConstant()) {
+            if (floatFunc.isNullConstant()) {
+                return StrConstant.NULL;
+            }
             final StringSink sink = Misc.getThreadLocalSink();
             sink.put(floatFunc.getFloat(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (floatFunc.isNotNull()) {
+            return new FuncNotNull(floatFunc);
+        }
+        return new Func(floatFunc);
     }
 
     public static class Func extends AbstractCastToStrFunction {
@@ -78,6 +84,29 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
             }
             sinkB.clear();
             sinkB.put(value);
+            return sinkB;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            sinkA.put(arg.getFloat(rec));
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            sinkB.put(arg.getFloat(rec));
             return sinkB;
         }
     }

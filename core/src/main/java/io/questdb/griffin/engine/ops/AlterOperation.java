@@ -76,8 +76,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
+    public final static short SET_COLUMN_NOT_NULL = SET_PARQUET_ENCODING + 1; // 27
+    public final static short DROP_COLUMN_NOT_NULL = SET_COLUMN_NOT_NULL + 1; // 28
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
+    private static final long BIT_NOT_NULL = BIT_DEDUP_KEY << 1;
     private static final Log LOG = LogFactory.getLog(AlterOperation.class);
     private final ObjList<CharSequence> authColumnNames = new ObjList<>();
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
@@ -100,13 +103,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.command = DO_NOTHING;
     }
 
-    public static long getFlags(boolean indexed, boolean dedupKey) {
+    public static long getFlags(boolean indexed, boolean dedupKey, boolean notNull) {
         long flags = 0;
         if (indexed) {
             flags |= BIT_INDEXED;
         }
         if (dedupKey) {
             flags |= BIT_DEDUP_KEY;
+        }
+        if (notNull) {
+            flags |= BIT_NOT_NULL;
         }
         return flags;
     }
@@ -179,6 +185,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableConvertPartitionToParquet(tableToken);
             case CONVERT_PARTITION_TO_NATIVE -> securityContext.authorizeAlterTableConvertPartitionToNative(tableToken);
             case SET_PARQUET_ENCODING -> securityContext.authorizeAlterTableSetParquetSettings(tableToken);
+            case SET_COLUMN_NOT_NULL, DROP_COLUMN_NOT_NULL ->
+                    securityContext.authorizeAlterTableAlterColumnNotNull(tableToken, getAuthColumnNames());
             case SET_MAT_VIEW_REFRESH_LIMIT -> securityContext.authorizeAlterMatViewSetRefreshLimit(tableToken);
             case SET_MAT_VIEW_REFRESH_TIMER, SET_MAT_VIEW_REFRESH ->
                     securityContext.authorizeAlterMatViewSetRefreshType(tableToken);
@@ -281,7 +289,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public boolean isStructural() {
         return switch (command) {
             case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, SET_DEDUP_DISABLE, SET_DEDUP_ENABLE,
-                 CHANGE_COLUMN_TYPE -> true;
+                 CHANGE_COLUMN_TYPE, SET_COLUMN_NOT_NULL, DROP_COLUMN_NOT_NULL -> true;
             default -> false;
         };
     }
@@ -333,7 +341,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             boolean cache,
             boolean indexed,
             int indexValueBlockCapacity,
-            boolean dedupKey
+            boolean dedupKey,
+            boolean notNull
     ) {
         of(TableWriterTask.CMD_ALTER_TABLE, AlterOperation.ADD_COLUMN, tableToken, tableId, tableNamePosition);
         assert columnName != null && !columnName.isEmpty();
@@ -341,7 +350,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.add(columnType);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, dedupKey));
+        extraInfo.add(getFlags(indexed, dedupKey, notNull));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -405,6 +414,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             long flags = extraInfo.get(lParam++);
             boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
             boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
+            boolean isNotNull = (flags & BIT_NOT_NULL) == BIT_NOT_NULL;
             assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
             int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
             int columnNamePosition = (int) extraInfo.get(lParam++);
@@ -418,6 +428,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         indexValueBlockCapacity,
                         false,
                         isDedupKey,
+                        isNotNull,
                         securityContext
                 );
             } catch (CairoException e) {
@@ -584,6 +595,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.renameTable(activeExtraStrInfo.getStrA(0), activeExtraStrInfo.getStrB(1));
     }
 
+    private void applySetColumnNotNull(MetadataService svc, boolean isNotNull) {
+        CharSequence columnName = activeExtraStrInfo.getStrA(0);
+        svc.setColumnNotNull(columnName, isNotNull);
+    }
+
     private void applySetSymbolCache(MetadataService svc, boolean isCacheOn) {
         CharSequence columnName = activeExtraStrInfo.getStrA(0);
         svc.changeCacheFlag(
@@ -736,6 +752,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 break;
             case SET_PARQUET_ENCODING:
                 setParquetEncoding(svc);
+                break;
+            case SET_COLUMN_NOT_NULL:
+                applySetColumnNotNull(svc, true);
+                break;
+            case DROP_COLUMN_NOT_NULL:
+                applySetColumnNotNull(svc, false);
                 break;
             default:
                 LOG.error()

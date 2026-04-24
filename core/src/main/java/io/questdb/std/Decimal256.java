@@ -775,6 +775,21 @@ public class Decimal256 implements Sinkable, Decimal {
         if (isNull(hh, hl, lh, ll)) {
             return;
         }
+        toSinkBits(sink, hh, hl, lh, ll, scale, precision);
+    }
+
+    /**
+     * Format the raw bit pattern, including the DECIMAL256 null sentinel
+     * {@code (Long.MIN_VALUE, 0, 0, 0)}. Used by {@link Decimals#appendNonNull(long, long, long, long, int, int, CharSink)}
+     * on the NOT NULL path; nullable callers must do their own null check first.
+     */
+    public static void toSinkBits(@NotNull CharSink<?> sink, long hh, long hl, long lh, long ll, int scale, int precision) {
+        if (isNull(hh, hl, lh, ll)) {
+            // Two's-complement negation of (Long.MIN_VALUE, 0, 0, 0) overflows; format
+            // via canonical absolute string and splice in the decimal point.
+            appendDecimal256MinAsDecimal(sink, scale);
+            return;
+        }
 
         if (hh < 0) {
             ll = ~ll + 1;
@@ -840,6 +855,34 @@ public class Decimal256 implements Sinkable, Decimal {
 
         if (!printed) {
             sink.put('0');
+        }
+    }
+
+    // abs((Long.MIN_VALUE, 0, 0, 0)) as 256-bit unsigned = 2^255.
+    private static final String DEC256_NULL_ABS =
+            "57896044618658097711785492504343953926634992332820282019728792003956564819968";
+
+    private static void appendDecimal256MinAsDecimal(@NotNull CharSink<?> sink, int scale) {
+        sink.put('-');
+        if (scale <= 0) {
+            sink.putAscii(DEC256_NULL_ABS);
+            return;
+        }
+        if (scale >= DEC256_NULL_ABS.length()) {
+            sink.putAscii("0.");
+            for (int i = 0, n = scale - DEC256_NULL_ABS.length(); i < n; i++) {
+                sink.put('0');
+            }
+            sink.putAscii(DEC256_NULL_ABS);
+            return;
+        }
+        final int dotPos = DEC256_NULL_ABS.length() - scale;
+        for (int i = 0; i < dotPos; i++) {
+            sink.put(DEC256_NULL_ABS.charAt(i));
+        }
+        sink.put('.');
+        for (int i = dotPos; i < DEC256_NULL_ABS.length(); i++) {
+            sink.put(DEC256_NULL_ABS.charAt(i));
         }
     }
 

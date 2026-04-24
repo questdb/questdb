@@ -208,9 +208,13 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 FROM long_sequence(11)
                             )"""
             );
+            // -Infinity and Infinity are now preserved as distinct values.
+            // Sort order: -Infinity < finite < Infinity < NaN.
+            // All non-finite values display as "null" in nullable columns.
             assertQueryNoLeakCheck(
                     """
                             d
+                            null
                             -1.0000000000000004
                             -1.0000000000000002
                             -0.0
@@ -218,7 +222,6 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             0.5
                             1.0000000000000002
                             1.0000000000000004
-                            null
                             null
                             null
                             null
@@ -231,7 +234,6 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             null
                             null
                             null
-                            null
                             1.0000000000000004
                             1.0000000000000002
                             0.5
@@ -239,6 +241,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             -0.0
                             -1.0000000000000002
                             -1.0000000000000004
+                            null
                             """,
                     "SELECT * FROM x ORDER BY d DESC"
             );

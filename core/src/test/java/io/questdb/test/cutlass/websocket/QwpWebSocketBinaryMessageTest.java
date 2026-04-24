@@ -77,7 +77,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                 // Pre-create the table so the zero-row message targets an existing table
                 serverMain.execute("CREATE TABLE zero_row_test (" +
                         "value LONG, " +
-                        "ts TIMESTAMP" +
+                        "ts TIMESTAMP NOT NULL" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 // Step 1: send a crafted zero-row QWP message

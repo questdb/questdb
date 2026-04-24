@@ -77,6 +77,7 @@ public interface MetadataService {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
+            boolean isNotNull,
             SecurityContext securityContext
     );
 
@@ -167,6 +168,8 @@ public interface MetadataService {
      * @param parquetEncodingConfig packed encoding/compression config
      */
     void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig);
+
+    void setColumnNotNull(CharSequence columnName, boolean isNotNull);
 
     /**
      * Sets refresh type and settings for materialized view.

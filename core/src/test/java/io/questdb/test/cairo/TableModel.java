@@ -36,6 +36,7 @@ public class TableModel implements TableStructure {
     private static final long COLUMN_FLAG_CACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
     private static final long COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
+    private static final long COLUMN_FLAG_NOT_NULL = COLUMN_FLAG_DEDUP_KEY << 1;
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CairoConfiguration configuration;
@@ -160,6 +161,19 @@ public class TableModel implements TableStructure {
     @Override
     public boolean isIndexed(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
+    }
+
+    @Override
+    public boolean isNotNull(int index) {
+        return index == timestampIndex
+                || (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_NOT_NULL) == COLUMN_FLAG_NOT_NULL;
+    }
+
+    public TableModel notNull() {
+        int pos = columnBits.size() - 1;
+        assert pos > -1;
+        columnBits.setQuick(pos, columnBits.getQuick(pos) | COLUMN_FLAG_NOT_NULL);
+        return this;
     }
 
     @Override

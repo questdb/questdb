@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public final class EqUuidFunctionFactory implements FunctionFactory {
@@ -76,7 +77,15 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        return new ConstCheckFunc(varFunc, constFunc.getLong128Hi(null), constFunc.getLong128Lo(null));
+        long constHi = constFunc.getLong128Hi(null);
+        long constLo = constFunc.getLong128Lo(null);
+        // `x = NULL` / `x IS NULL`. On a NOT NULL column, this is always false.
+        // NegatingFunctionFactory flips BooleanConstant.FALSE to TRUE for the
+        // IS NOT NULL path.
+        if (constHi == Numbers.LONG_NULL && constLo == Numbers.LONG_NULL && varFunc.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        return new ConstCheckFunc(varFunc, constHi, constLo);
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {

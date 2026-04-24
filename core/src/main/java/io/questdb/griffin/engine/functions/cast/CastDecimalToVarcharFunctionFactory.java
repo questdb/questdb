@@ -63,11 +63,14 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
             sink.put(d);
             return new VarcharConstant(sink);
         }
+        boolean notNull = arg.isNotNull();
         return switch (ColumnType.tagOf(arg.getType())) {
-            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
-                    new Func64(Decimal64LoaderFunctionFactory.getInstance(arg));
-            case ColumnType.DECIMAL128 -> new Func128(arg);
-            default -> new Func(arg);
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 -> {
+                Function loader = Decimal64LoaderFunctionFactory.getInstance(arg);
+                yield notNull ? new Func64NotNull(loader) : new Func64(loader);
+            }
+            case ColumnType.DECIMAL128 -> notNull ? new Func128NotNull(arg) : new Func128(arg);
+            default -> notNull ? new FuncNotNull(arg) : new Func(arg);
         };
     }
 
@@ -161,6 +164,37 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
+    public static class Func128NotNull extends AbstractCastNotNullToVarcharFunction {
+        private final Decimal128 decimal128 = new Decimal128();
+        private final int fromPrecision;
+        private final int fromScale;
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public Func128NotNull(Function arg) {
+            super(arg);
+            int type = arg.getType();
+            this.fromScale = ColumnType.getDecimalScale(type);
+            this.fromPrecision = ColumnType.getDecimalPrecision(type);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            arg.getDecimal128(rec, decimal128);
+            sinkA.clear();
+            Decimal128.toSink(sinkA, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            arg.getDecimal128(rec, decimal128);
+            sinkB.clear();
+            Decimal128.toSink(sinkB, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
+            return sinkB;
+        }
+    }
+
     public static class Func64 extends AbstractCastToVarcharFunction {
         private final int fromPrecision;
         private final int fromScale;
@@ -194,6 +228,81 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
                 return sinkB;
             }
             return null;
+        }
+    }
+
+    public static class Func64NotNull extends AbstractCastNotNullToVarcharFunction {
+        private final int fromPrecision;
+        private final int fromScale;
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public Func64NotNull(Function arg) {
+            super(arg);
+            int type = arg.getType();
+            this.fromPrecision = ColumnType.getDecimalPrecision(type);
+            this.fromScale = ColumnType.getDecimalScale(type);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            sinkA.clear();
+            Decimal64.toSink(sinkA, arg.getDecimal64(rec), fromScale, fromPrecision);
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            sinkB.clear();
+            Decimal64.toSink(sinkB, arg.getDecimal64(rec), fromScale, fromPrecision);
+            return sinkB;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
+        private final Decimal256 decimal256 = new Decimal256();
+        private final int fromPrecision;
+        private final int fromScale;
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+            int type = arg.getType();
+            this.fromScale = ColumnType.getDecimalScale(type);
+            this.fromPrecision = ColumnType.getDecimalPrecision(type);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            arg.getDecimal256(rec, decimal256);
+            sinkA.clear();
+            Decimal256.toSink(
+                    sinkA,
+                    decimal256.getHh(),
+                    decimal256.getHl(),
+                    decimal256.getLh(),
+                    decimal256.getLl(),
+                    fromScale,
+                    fromPrecision
+            );
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            arg.getDecimal256(rec, decimal256);
+            sinkB.clear();
+            Decimal256.toSink(
+                    sinkB,
+                    decimal256.getHh(),
+                    decimal256.getHl(),
+                    decimal256.getLh(),
+                    decimal256.getLl(),
+                    fromScale,
+                    fromPrecision
+            );
+            return sinkB;
         }
     }
 }

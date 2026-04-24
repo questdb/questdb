@@ -55,7 +55,7 @@ public class R2DBCTest extends AbstractTest {
     public void testCachedAsyncFilterAfterTableTruncate() {
         assertWithR2DBC(conn -> {
             String createTableSQL = "CREATE TABLE tab (" +
-                    "timestamp TIMESTAMP, " +
+                    "timestamp TIMESTAMP NOT NULL, " +
                     "status SYMBOL " +
                     ") timestamp(timestamp) partition by day";
 

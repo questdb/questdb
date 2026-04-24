@@ -211,7 +211,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         String projection;
-        // (ts TIMESTAMP, i INT, s SYMBOL)
+        // (ts TIMESTAMP NOT NULL, i INT, s SYMBOL)
         String slaveTimestampColumnName = "ts1";
         switch (projectionType) {
             case NONE:

@@ -333,11 +333,12 @@ pub struct Column {
     pub secondary_data: &'static [u8],
     pub symbol_offsets: &'static [u64],
     pub designated_timestamp: bool,
-    /// Hint from QuestDB indicating that the column currently contains no null values.
-    /// Only Symbol columns use this flag. It does NOT affect the parquet schema
-    /// Repetition (symbols are always Optional) — it only lets the encoder take a
-    /// fast path that writes an all-ones RLE run for definition levels instead of
-    /// computing per-row values.
+    /// Hint from QuestDB indicating that the column is NOT NULL and currently
+    /// contains no null values. Used by Symbol and all primitive type encoders.
+    /// It does NOT affect the parquet schema Repetition (columns stay Optional
+    /// for O3 merge stability) — it only lets the encoder take a fast path that
+    /// writes an all-ones RLE run for definition levels and skips null filtering
+    /// when `column_top == 0`.
     pub not_null_hint: bool,
     pub designated_timestamp_ascending: bool,
     pub parquet_encoding_config: ParquetEncodingConfig,
@@ -477,6 +478,7 @@ pub fn to_parquet_schema(
             column_top: column.column_top,
             format,
             ascii,
+            not_null: column.not_null_hint,
         });
     }
 

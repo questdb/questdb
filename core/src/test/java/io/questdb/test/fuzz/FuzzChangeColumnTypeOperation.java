@@ -173,7 +173,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                 wApi.getMetadata().getTableId()
         );
         builder.addColumnToList(columName, 0, newColumnType, symbolCapacity, cacheSymbolMap,
-                indexFlag, indexValueBlockCapacity, false);
+                indexFlag, indexValueBlockCapacity, false, false);
         AlterOperation alterOp = builder.build();
         try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
         ) {

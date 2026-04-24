@@ -49,6 +49,7 @@ public class PartitionDecoder implements QuietCloseable {
     private final static long COLUMN_IDS_OFFSET;
     private static final long COLUMN_RECORD_NAME_PTR_OFFSET;
     private static final long COLUMN_RECORD_NAME_SIZE_OFFSET;
+    private static final long COLUMN_RECORD_NOT_NULL_OFFSET;
     private static final long COLUMN_RECORD_TYPE_OFFSET;
     private static final long COLUMN_STRUCT_SIZE;
     private static final Log LOG = LogFactory.getLog(PartitionDecoder.class);
@@ -347,6 +348,8 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long columnRecordNameSizeOffset();
 
+    private static native long columnRecordNotNullOffset();
+
     private static native long columnRecordSize();
 
     private static native long columnRecordTypeOffset();
@@ -484,26 +487,32 @@ public class PartitionDecoder implements QuietCloseable {
                     continue;
                 }
 
+                final boolean columnIsNotNull = isNotNull(i);
+                final TableColumnMetadata added;
                 if (ColumnType.isSymbol(columnType)) {
                     if (treatSymbolsAsVarchar) {
-                        dest.add(new TableColumnMetadata(columnName, ColumnType.VARCHAR));
+                        added = new TableColumnMetadata(columnName, ColumnType.VARCHAR);
                     } else {
-                        dest.add(new TableColumnMetadata(
+                        added = new TableColumnMetadata(
                                 columnName,
                                 columnType,
                                 false,
                                 64,
                                 true,
                                 null
-                        ));
+                        );
                     }
                 } else {
-                    dest.add(new TableColumnMetadata(columnName, columnType));
+                    added = new TableColumnMetadata(columnName, columnType);
                     // Determine designated timestamp's index within the copy.
                     if (ColumnType.isTimestamp(columnType) && i == timestampIndex) {
-                        copyTimestampIndex = dest.getColumnCount() - 1;
+                        copyTimestampIndex = dest.getColumnCount();
                     }
                 }
+                if (columnIsNotNull) {
+                    added.setNotNullFlag(true);
+                }
+                dest.add(added);
             }
 
             dest.setTimestampIndex(copyTimestampIndex);
@@ -558,6 +567,12 @@ public class PartitionDecoder implements QuietCloseable {
             return Unsafe.getLong(ptr + UNUSED_BYTES_OFFSET);
         }
 
+        public boolean isNotNull(int columnIndex) {
+            // not_null is written by the Rust encoder from QdbMeta JSON; defaults to false
+            // for files produced by older QuestDB versions or external Parquet tools.
+            return Unsafe.getUnsafe().getByte(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_RECORD_NOT_NULL_OFFSET) != 0;
+        }
+
         private void init() {
             columnNames.clear();
             directStringPool.clear();
@@ -590,6 +605,7 @@ public class PartitionDecoder implements QuietCloseable {
         COLUMN_RECORD_TYPE_OFFSET = columnRecordTypeOffset();
         COLUMN_RECORD_NAME_SIZE_OFFSET = columnRecordNameSizeOffset();
         COLUMN_RECORD_NAME_PTR_OFFSET = columnRecordNamePtrOffset();
+        COLUMN_RECORD_NOT_NULL_OFFSET = columnRecordNotNullOffset();
         ROW_GROUP_SIZES_PTR_OFFSET = rowGroupSizesPtrOffset();
         ROW_GROUP_COUNT_OFFSET = rowGroupCountOffset();
         TIMESTAMP_INDEX_OFFSET = timestampIndexOffset();

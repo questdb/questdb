@@ -36,7 +36,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.SingleCharCharSequence;
@@ -70,6 +72,11 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         if (chrFunc.isConstant()) {
             final char constValue = chrFunc.getChar(null);
+            // `symCol = NULL` on a NOT NULL SYMBOL column is always false.
+            // NegatingFunctionFactory flips the constant for IS NOT NULL.
+            if (constValue == Numbers.CHAR_NULL && symFunc.isNotNull()) {
+                return BooleanConstant.FALSE;
+            }
             if (symFunc.getStaticSymbolTable() != null) {
                 return new ConstCheckColumnFunc(symFunc, constValue);
             } else {

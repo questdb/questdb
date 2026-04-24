@@ -84,7 +84,7 @@ public class BitmapIndexFuzzTest extends AbstractFuzzTest {
             execute(
                     "CREATE TABLE " + TABLE_NAME + " (" +
                             "  symbol SYMBOL INDEX," +
-                            "  ts TIMESTAMP" +
+                            "  ts TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY HOUR"
             );
 

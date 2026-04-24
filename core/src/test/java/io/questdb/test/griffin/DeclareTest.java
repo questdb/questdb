@@ -31,7 +31,7 @@ import org.junit.Test;
 public class DeclareTest extends AbstractSqlParserTest {
     private static final String AAPL_DDL = """
             CREATE TABLE 'AAPL_orderbook' (
-              timestamp TIMESTAMP,
+              timestamp TIMESTAMP NOT NULL,
               ts_recv VARCHAR,
               ts_event VARCHAR,
               rtype LONG,
@@ -214,7 +214,7 @@ public class DeclareTest extends AbstractSqlParserTest {
               side SYMBOL,
               price DOUBLE,
               amount DOUBLE,
-              timestamp TIMESTAMP
+              timestamp TIMESTAMP NOT NULL
             ) timestamp (timestamp) PARTITION BY DAY WAL;""";
 
     @Test
@@ -325,8 +325,8 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareSelectAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
-            execute("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
+            execute("create table foo (ts timestamp NOT NULL, x int) timestamp(ts) partition by day wal;");
+            execute("create table bah (ts timestamp NOT NULL, y int) timestamp(ts) partition by day wal;");
             drainWalQueue();
             assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) asof join bah timestamp (ts))",
                     "DECLARE @foo := foo, @bah := bah SELECT foo.ts, foo.x FROM @foo ASOF JOIN @bah", ExecutionModel.QUERY);
@@ -450,8 +450,8 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareSelectJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
-            execute("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
+            execute("create table foo (ts timestamp NOT NULL, x int) timestamp(ts) partition by day wal;");
+            execute("create table bah (ts timestamp NOT NULL, y int) timestamp(ts) partition by day wal;");
             drainWalQueue();
             assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) join select [y] from bah timestamp (ts) on bah.y = foo.x)",
                     "DECLARE @x := foo.x, @y := bah.y SELECT foo.ts, foo.x FROM foo JOIN bah on @x = @y", ExecutionModel.QUERY);
@@ -659,7 +659,7 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareSelectTableNameInFrom() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
+            execute("create table foo (ts timestamp NOT NULL, x int) timestamp(ts) partition by day wal;");
             drainWalQueue();
             assertModel("select-choose ts, x from (select [ts, x] from foo timestamp (ts))",
                     "DECLARE @table_name := foo, @ts := ts, @x := x, SELECT @ts, @x FROM @table_name", ExecutionModel.QUERY);

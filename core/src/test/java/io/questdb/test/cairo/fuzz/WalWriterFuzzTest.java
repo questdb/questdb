@@ -134,7 +134,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             execute("""
                     create table chunk_seq (
                       x long,
-                      ts timestamp
+                      ts timestamp NOT NULL
                     ) timestamp(ts) PARTITION by day WAL""");
             execute("insert batch 2 into chunk_seq \n" +
                     "  select x, timestamp_sequence('2024-01-01', 312312) from long_sequence(1000)");

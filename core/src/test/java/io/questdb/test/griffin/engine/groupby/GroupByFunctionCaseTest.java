@@ -181,7 +181,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                               quote_ccy SYMBOL capacity 256 CACHE,
                               symbol SYMBOL capacity 256 CACHE index capacity 256,
                               created_timestamp TIMESTAMP,
-                              trade_timestamp TIMESTAMP,
+                              trade_timestamp TIMESTAMP NOT NULL,
                               side SYMBOL capacity 256 CACHE,
                               qty DOUBLE,
                               price DOUBLE,

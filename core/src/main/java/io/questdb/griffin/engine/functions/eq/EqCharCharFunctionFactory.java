@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqCharCharFunctionFactory implements FunctionFactory {
@@ -53,6 +55,14 @@ public class EqCharCharFunctionFactory implements FunctionFactory {
         Function chrFunc1 = args.getQuick(0);
         Function chrFunc2 = args.getQuick(1);
 
+        // `x = NULL` / `x IS NULL` on a NOT NULL CHAR column is always false.
+        // NegatingFunctionFactory flips the constant for IS NOT NULL.
+        if (chrFunc1.isConstant() && chrFunc1.getChar(null) == Numbers.CHAR_NULL && chrFunc2.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        if (chrFunc2.isConstant() && chrFunc2.getChar(null) == Numbers.CHAR_NULL && chrFunc1.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
         return new Func(chrFunc1, chrFunc2);
     }
 

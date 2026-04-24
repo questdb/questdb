@@ -25,6 +25,8 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -123,14 +125,16 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int writerIndex,
             boolean isDedupKey,
             boolean symbolIsCached,
-            int symbolCapacity
+            int symbolCapacity,
+            boolean isNotNull
     ) {
         addColumn0(
                 columnName,
                 columnType,
                 symbolCapacity,
                 symbolIsCached,
-                isDedupKey
+                isDedupKey,
+                isNotNull
         );
     }
 
@@ -146,7 +150,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 columnType,
                 symbolCapacity,
                 symbolIsCached,
-                isDedupKey
+                isDedupKey,
+                false
         );
         structureVersion++;
     }
@@ -241,6 +246,16 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
+    public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.nonCritical().put("column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+        columnMetadata.getQuick(columnIndex).setNotNullFlag(isNotNull);
+        structureVersion++;
+    }
+
     public void renameTable(TableToken toTableToken) {
         assert toTableToken != null;
         tableToken = toTableToken;
@@ -260,7 +275,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean isNotNull
     ) {
         final String name = columnName.toString();
         if (columnType > 0) {
@@ -269,21 +285,21 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         // sequencer metadata is servicing WALs, and it does not have
         // information about symbol indexing and index storage parameters
         // therefore we ignore the incoming parameters and assume defaults
-        columnMetadata.add(
-                new TableColumnMetadata(
-                        name,
-                        columnType,
-                        false,
-                        0,
-                        false,
-                        null,
-                        columnMetadata.size(),
-                        isDedupKey,
-                        0,
-                        symbolCacheFlag,
-                        symbolCapacity
-                )
+        var colMeta = new TableColumnMetadata(
+                name,
+                columnType,
+                false,
+                0,
+                false,
+                null,
+                columnMetadata.size(),
+                isDedupKey,
+                0,
+                symbolCacheFlag,
+                symbolCapacity
         );
+        colMeta.setNotNullFlag(isNotNull);
+        columnMetadata.add(colMeta);
         columnCount++;
     }
 

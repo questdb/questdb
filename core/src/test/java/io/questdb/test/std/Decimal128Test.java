@@ -1398,10 +1398,27 @@ public class Decimal128Test {
 
     @Test
     public void testSinkNull() {
-        // Sinking a null value shouldn't print anything
+        // Sinking a null value via toSink shouldn't print anything — toSink is the
+        // null-aware entry point. For raw bit-pattern printing on NOT NULL columns
+        // see Decimal128.toSinkBits.
         StringSink sink = new StringSink();
         Decimal128.NULL_VALUE.toSink(sink);
         Assert.assertEquals("", sink.toString());
+    }
+
+    @Test
+    public void testSinkBitsNullSentinelAppliesScale() {
+        // toSinkBits surfaces the raw bit pattern of the DECIMAL128 null sentinel
+        // (Long.MIN_VALUE, 0). Two's-complement negation of that pair overflows, so
+        // toSinkBits formats via a canonical absolute-value string (abs = 2^127 =
+        // 170141183460469231731687303715884105728) with the scale applied.
+        StringSink sink = new StringSink();
+        Decimal128.toSinkBits(sink, Long.MIN_VALUE, 0L, 0, 38);
+        Assert.assertEquals("-170141183460469231731687303715884105728", sink.toString());
+
+        sink.clear();
+        Decimal128.toSinkBits(sink, Long.MIN_VALUE, 0L, 2, 38);
+        Assert.assertEquals("-1701411834604692317316873037158841057.28", sink.toString());
     }
 
     @Test

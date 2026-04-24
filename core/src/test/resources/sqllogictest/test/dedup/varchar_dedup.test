@@ -5,7 +5,7 @@ control iso_timestamp on
 
 # A؆solute path
 statement ok
-create table x (s varchar, x int, ts timestamp)
+create table x (s varchar, x int, ts timestamp NOT NULL)
 timestamp(ts) partition by DAY WAL DEDUP UPSERT KEYS(ts, s);
 
 # Insert some data with dups in the single commit

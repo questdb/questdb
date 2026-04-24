@@ -102,7 +102,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
     }
 
     static void createNonPartitionedTable(String tableName) throws SQLException {
-        runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts)");
+        runSqlViaPG("create table " + tableName + " (ts timestamp NOT NULL, x long) timestamp(ts)");
         LOG.info().$("created table: ").$safe(tableName).$();
     }
 
@@ -117,7 +117,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
     }
 
     static void createTable(String tableName, String walMode) throws SQLException {
-        runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts) PARTITION BY DAY " + walMode);
+        runSqlViaPG("create table " + tableName + " (ts timestamp NOT NULL, x long) timestamp(ts) PARTITION BY DAY " + walMode);
         LOG.info().$("created table: ").$safe(tableName).$();
     }
 

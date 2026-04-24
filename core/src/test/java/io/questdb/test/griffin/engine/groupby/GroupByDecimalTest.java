@@ -225,7 +225,7 @@ public class GroupByDecimalTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByDecimalTimeSeries() throws Exception {
-        execute("create table timeseries (ts timestamp, price decimal(10, 2), volume long) timestamp(ts)");
+        execute("create table timeseries (ts timestamp NOT NULL, price decimal(10, 2), volume long) timestamp(ts)");
         execute("insert into timeseries values " +
                 "('2024-01-01T00:00:00.000000Z', 100.50m, 1000), " +
                 "('2024-01-01T01:00:00.000000Z', 100.50m, 2000), " +

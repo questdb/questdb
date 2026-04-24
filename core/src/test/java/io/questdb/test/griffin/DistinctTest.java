@@ -371,7 +371,7 @@ public class DistinctTest extends AbstractCairoTest {
                     "create table sensors (" +
                             "  sensor_id SYMBOL," +
                             "  apptype INT," +
-                            "  ts TIMESTAMP" +
+                            "  ts TIMESTAMP NOT NULL" +
                             ") timestamp (ts) partition by day;"
             );
 
@@ -396,13 +396,13 @@ public class DistinctTest extends AbstractCairoTest {
                     "create table sensors (" +
                             "  sensor_id SYMBOL," +
                             "  apptype INT," +
-                            "  ts TIMESTAMP" +
+                            "  ts TIMESTAMP NOT NULL" +
                             ") timestamp (ts) partition by day;"
             );
             execute(
                     "create table samples (" +
                             "  sensor_id SYMBOL," +
-                            "  ts TIMESTAMP" +
+                            "  ts TIMESTAMP NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
 
@@ -429,14 +429,14 @@ public class DistinctTest extends AbstractCairoTest {
                     "create table sensors (" +
                             "  sensor_id SYMBOL," +
                             "  apptype INT," +
-                            "  ts TIMESTAMP" +
+                            "  ts TIMESTAMP NOT NULL" +
                             ") timestamp (ts) partition by day;"
             );
             execute(
                     "create table samples (" +
                             "  sensor_id SYMBOL," +
                             "  apptype INT," +
-                            "  ts TIMESTAMP" +
+                            "  ts TIMESTAMP NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
 

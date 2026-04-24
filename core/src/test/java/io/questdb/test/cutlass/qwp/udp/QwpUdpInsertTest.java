@@ -125,7 +125,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testAutoCreatedMultiDimArrayColumnReadsBack() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE qwp_udp_array_exec (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE qwp_udp_array_exec (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -581,7 +581,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testCommitIntervalDelaysSparseDatagramCommit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table timer_commit (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=1000, o3MaxLag=1s");
+            execute("create table timer_commit (ts timestamp NOT NULL, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=1000, o3MaxLag=1s");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(TIMER_COMMIT_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -644,7 +644,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(() -> {
-            execute("create table datagram_trigger_reset (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=2, o3MaxLag=1s");
+            execute("create table datagram_trigger_reset (ts timestamp NOT NULL, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=2, o3MaxLag=1s");
 
             try (InspectingQwpUdpReceiver receiver = new InspectingQwpUdpReceiver(conf, engine)) {
                 sendSingleRow("datagram_trigger_reset", 1L, 1_000_000L);
@@ -674,7 +674,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testDeferredArrayColumnDimensionalityMismatchRejected() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE qwp_udp_array_deferred_schema_mismatch (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE qwp_udp_array_deferred_schema_mismatch (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -730,7 +730,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testExistingArrayColumnDimensionalityMismatchRejected() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE qwp_udp_array_schema_mismatch (arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE qwp_udp_array_schema_mismatch (arr DOUBLE[], ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -777,7 +777,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testMixedArrayDimensionalityBatchRejected() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE qwp_udp_array_mixed_dims (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE qwp_udp_array_mixed_dims (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -833,7 +833,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testMixedNullAndNonNullArrayRowsExistingTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE qwp_udp_array_mixed_batch_existing (arr DOUBLE[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE qwp_udp_array_mixed_batch_existing (arr DOUBLE[][][], ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -1135,7 +1135,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testNullOnlyArrayColumnCreationIsDeferredUntilFirstNonNullBatch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE qwp_udp_array_deferred (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE qwp_udp_array_deferred (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {

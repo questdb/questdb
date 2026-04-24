@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
@@ -54,6 +55,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable {
+    private static final long NOT_NULL_SECTION_SEED = 0x4E4F544E554C4CL; // "NOTNULL" as ASCII long
     private final int commitMode;
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
@@ -87,9 +89,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean isNotNull
     ) {
         addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isDedupKey);
+        columnMetadata.getQuick(columnMetadata.size() - 1).setNotNullFlag(isNotNull);
         readColumnOrder.add(columnMetadata.size() - 1);
         structureVersion.incrementAndGet();
     }
@@ -249,6 +253,16 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
+    public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.nonCritical().put("column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+        columnMetadata.getQuick(columnIndex).setNotNullFlag(isNotNull);
+        structureVersion.incrementAndGet();
+    }
+
     public void renameColumn(CharSequence columnName, CharSequence newName) {
         TableUtils.renameColumnInMetadata(columnName, newName, columnNameIndexMap, columnMetadata);
         structureVersion.incrementAndGet();
@@ -321,6 +335,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.getIndexBlockCapacity(i),
                     tableStruct.isDedupKey(i)
             );
+            columnMetadata.getQuick(i).setNotNullFlag(tableStruct.isNotNull(i));
             readColumnOrder.add(i);
         }
 
@@ -353,11 +368,14 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     columnNameIndexMap.put(name, i);
                 }
 
+                TableColumnMetadata colMeta;
                 if (ColumnType.isSymbol(Math.abs(type))) {
-                    columnMetadata.add(new TableColumnMetadata(name, type, true, 1024, true, null));
+                    colMeta = new TableColumnMetadata(name, type, true, 1024, true, null);
                 } else {
-                    columnMetadata.add(new TableColumnMetadata(name, type));
+                    colMeta = new TableColumnMetadata(name, type);
                 }
+                colMeta.setNotNullFlag(false);
+                columnMetadata.add(colMeta);
                 readColumnOrder.add(i);
                 checkSum = checkSum * 31 + type;
                 checkSum = checkSum * 31 + name.hashCode();
@@ -384,6 +402,24 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                         for (int i = 0; i < records; i++) {
                             readColumnOrder.add(metaMem.getInt(offset));
                             offset += Integer.BYTES;
+                        }
+                    }
+                }
+            }
+
+            // Read NOT NULL flags (optional section, backward compatible)
+            long notNullMagic = checkSum * 31 + NOT_NULL_SECTION_SEED;
+            if (memSize > offset + Long.BYTES + Integer.BYTES) {
+                long sectionMagic = metaMem.getLong(offset);
+                offset += Long.BYTES;
+                if (sectionMagic == notNullMagic) {
+                    int flagCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (memSize - offset >= flagCount * Byte.BYTES) {
+                        for (int i = 0; i < Math.min(flagCount, columnMetadata.size()); i++) {
+                            boolean isNotNull = metaMem.getBool(offset);
+                            offset += Byte.BYTES;
+                            columnMetadata.getQuick(i).setNotNullFlag(isNotNull);
                         }
                     }
                 }
@@ -436,6 +472,14 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.putInt(readColumnOrder.size());
         for (int i = 0, n = readColumnOrder.size(); i < n; i++) {
             metaMem.putInt(readColumnOrder.get(i));
+        }
+
+        // write NOT NULL flags (optional section, backward compatible)
+        long notNullMagic = checkSum * 31 + NOT_NULL_SECTION_SEED; // "NOTNULL" as long seed
+        metaMem.putLong(notNullMagic);
+        metaMem.putInt(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            metaMem.putBool(getColumnMetadata(i).isNotNull());
         }
 
         // update metadata size

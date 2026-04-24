@@ -236,7 +236,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
                 "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4",
                 "DROP TABLE " + TABLE1,
                 "create table if not exists " + TABLE1 +
-                        " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                        " (ts timestamp NOT NULL, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
                         " timestamp(ts) partition by day wal",
                 "table does not exist [table=" + TABLE1 + "]"
         );
@@ -296,7 +296,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             // fixing view
             execute("create table if not exists " + TABLE1.toUpperCase() +
-                    " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                    " (ts timestamp NOT NULL, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
                     " timestamp(ts) partition by day wal");
             drainWalQueue();
 

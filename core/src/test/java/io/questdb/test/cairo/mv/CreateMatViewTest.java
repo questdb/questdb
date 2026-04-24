@@ -81,7 +81,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
-                            "  sym varchar, price double, ts timestamp" +
+                            "  sym varchar, price double, ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -698,7 +698,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table stocks_d1_ohlcv (" +
-                    "ts timestamp, ticker symbol, close double" +
+                    "ts timestamp NOT NULL, ticker symbol, close double" +
                     ") timestamp(ts) partition by day WAL");
 
             final String query =
@@ -1322,7 +1322,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE2, 4, 'h', null, null);
 
             assertExceptionNoLeakCheck(
-                    "create table test(ts timestamp, col varchar) timestamp(ts) partition by day wal",
+                    "create table test(ts timestamp NOT NULL, col varchar) timestamp(ts) partition by day wal",
                     13,
                     "materialized view with the requested name already exists"
             );
@@ -1532,7 +1532,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
-                            "  sym varchar, price double, ts timestamp" +
+                            "  sym varchar, price double, ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 

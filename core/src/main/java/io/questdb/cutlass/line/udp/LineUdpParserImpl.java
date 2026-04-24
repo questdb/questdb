@@ -639,6 +639,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
+        public boolean isNotNull(int columnIndex) {
+            return columnIndex == getTimestampIndex();
+        }
+
+        @Override
         public boolean isWalEnabled() {
             return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
         }

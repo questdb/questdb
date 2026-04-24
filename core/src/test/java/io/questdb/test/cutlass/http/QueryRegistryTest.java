@@ -59,7 +59,7 @@ public class QueryRegistryTest extends AbstractTest {
     @Test
     public void testCreateTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
             assertGet(
                     "{\"query\":\"tab\"," +
                             "\"columns\":[{\"name\":\"value\",\"type\":\"INT\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}]," +

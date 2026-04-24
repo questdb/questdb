@@ -93,7 +93,7 @@ public class QwpSenderBenchmark {
             st.execute("DROP TABLE IF EXISTS " + TABLE_NAME);
             st.execute("""
                     CREATE TABLE complex_types (
-                        ts TIMESTAMP,
+                        ts TIMESTAMP NOT NULL,
                         d_val DOUBLE,
                         v_text VARCHAR,
                         ts_event TIMESTAMP,

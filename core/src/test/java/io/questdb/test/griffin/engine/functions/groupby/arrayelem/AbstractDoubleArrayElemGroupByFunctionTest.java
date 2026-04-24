@@ -105,7 +105,7 @@ public abstract class AbstractDoubleArrayElemGroupByFunctionTest extends Abstrac
 
     protected void assertSampleByTyped(String columnType, String expected, String[][] timestampedRows) throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, arr " + columnType + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, arr " + columnType + ") TIMESTAMP(ts) PARTITION BY DAY");
             for (String[] row : timestampedRows) {
                 execute("INSERT INTO tab VALUES ('" + row[0] + "', " + row[1] + ")");
             }

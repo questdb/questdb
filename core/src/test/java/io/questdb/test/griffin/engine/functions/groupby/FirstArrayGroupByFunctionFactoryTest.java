@@ -175,7 +175,7 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testSampleByFillLinearRejectsArrayColumns() throws Exception {
         assertException(
                 "SELECT ts, first(arr) arr FROM tab SAMPLE BY 10s FILL(LINEAR)",
-                "CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
+                "CREATE TABLE tab (ts TIMESTAMP NOT NULL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
                 11,
                 "support for LINEAR fill is not yet implemented"
         );
@@ -185,7 +185,7 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testSampleByFillValueRejectsArrayColumns() throws Exception {
         assertException(
                 "SELECT ts, grp, first(arr) arr FROM tab SAMPLE BY 10s FILL(42)",
-                "CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
+                "CREATE TABLE tab (ts TIMESTAMP NOT NULL, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
                 16,
                 "support for VALUE fill is not yet implemented"
         );

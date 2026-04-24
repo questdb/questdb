@@ -345,6 +345,7 @@ fn bench_decode_rle(c: &mut Criterion) {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             };
 
             group.throughput(Throughput::Elements(ROW_COUNT as u64));

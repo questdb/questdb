@@ -1977,12 +1977,16 @@ public class SqlParser {
                 tok = tok(lexer, "'NOT' or 'NULL' or ',' or ')'");
             }
 
-            // ignore `NULL` and `NOT NULL`
             if (isNotKeyword(tok)) {
+                int notPos = lexer.lastTokenPosition();
                 tok = tok(lexer, "'NULL'");
-            }
-
-            if (isNullKeyword(tok)) {
+                if (isNullKeyword(tok)) {
+                    model.setNotNullFlag(true);
+                    tok = tok(lexer, "','");
+                } else {
+                    throw SqlException.$(notPos, "'NULL' expected after 'NOT'");
+                }
+            } else if (isNullKeyword(tok)) {
                 tok = tok(lexer, "','");
             }
 
@@ -2033,9 +2037,9 @@ public class SqlParser {
     }
 
     private CharSequence parseCreateTableInlineIndexDef(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {
-        CharSequence tok = tok(lexer, "')', 'index' or 'parquet'");
+        CharSequence tok = tok(lexer, "')', 'index', 'parquet', 'not' or 'null'");
 
-        if (isFieldTerm(tok) || isParquetKeyword(tok)) {
+        if (isFieldTerm(tok) || isParquetKeyword(tok) || isNotKeyword(tok) || isNullKeyword(tok) || isPrecisionKeyword(tok)) {
             model.setIndexed(false, -1, configuration.getIndexValueBlockSize());
             return tok;
         }
@@ -2043,7 +2047,8 @@ public class SqlParser {
         expectTok(lexer, tok, "index");
         int indexColumnPosition = lexer.lastTokenPosition();
 
-        if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
+        tok = tok(lexer, ") | , expected");
+        if (isFieldTerm(tok) || isParquetKeyword(tok) || isNotKeyword(tok) || isNullKeyword(tok) || isPrecisionKeyword(tok)) {
             model.setIndexed(true, indexColumnPosition, configuration.getIndexValueBlockSize());
             return tok;
         }

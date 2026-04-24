@@ -35,7 +35,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
-                    "  ts TIMESTAMP " +
+                    "  ts TIMESTAMP NOT NULL " +
                     ") timestamp (ts) PARTITION BY HOUR");
             execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
@@ -88,7 +88,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
-                    "  ts TIMESTAMP " +
+                    "  ts TIMESTAMP NOT NULL " +
                     ") timestamp (ts) PARTITION BY HOUR");
             execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
@@ -116,7 +116,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
-                    "  ts TIMESTAMP " +
+                    "  ts TIMESTAMP NOT NULL " +
                     ") timestamp (ts) PARTITION BY HOUR");
             execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
@@ -161,7 +161,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
-                    "  ts TIMESTAMP " +
+                    "  ts TIMESTAMP NOT NULL " +
                     ") timestamp (ts) PARTITION BY HOUR");
             execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
@@ -206,7 +206,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
-                    "  ts TIMESTAMP " +
+                    "  ts TIMESTAMP NOT NULL " +
                     ") timestamp (ts) PARTITION BY HOUR");
             execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
@@ -251,7 +251,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
-                    "  ts TIMESTAMP " +
+                    "  ts TIMESTAMP NOT NULL " +
                     ") timestamp (ts) PARTITION BY HOUR");
             execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T01:30:00.000000Z') " +
@@ -271,7 +271,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
-                    "  ts TIMESTAMP " +
+                    "  ts TIMESTAMP NOT NULL " +
                     ") timestamp (ts) PARTITION BY HOUR");
             execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T01:29:00.000000Z') " +
@@ -294,7 +294,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
-                    "  ts TIMESTAMP " +
+                    "  ts TIMESTAMP NOT NULL " +
                     ") timestamp (ts) PARTITION BY HOUR");
             execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T01:28:00.000000Z') " +

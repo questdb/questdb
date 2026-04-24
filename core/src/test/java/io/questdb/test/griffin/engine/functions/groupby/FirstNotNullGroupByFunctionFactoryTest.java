@@ -82,9 +82,10 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFirstNotNull() throws Exception {
-        UUID firstUuid = UUID.randomUUID();
+        assertMemoryLeak(() -> {
+            UUID firstUuid = UUID.randomUUID();
 
-        execute("create table tab (a0 char," +
+            execute("create table tab (a0 char," +
                 "a1 date," +
                 "a2 double," +
                 "a3 float," +
@@ -158,7 +159,8 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "     first_not_null(a13) a13, " +
                         "     first_not_null(a14) a14 " +
                         "from tab"
-        );
+            );
+        });
     }
 
     @Test
@@ -192,7 +194,7 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                                             a_uuid UUID,
                                             a_str STRING,
                                             a_varchar VARCHAR,
-                                            ts TIMESTAMP
+                                            ts TIMESTAMP NOT NULL
                                         ) TIMESTAMP(ts) PARTITION BY DAY""",
                                 sqlExecutionContext
                         );

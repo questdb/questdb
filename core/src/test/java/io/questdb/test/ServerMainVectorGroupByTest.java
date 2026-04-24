@@ -154,7 +154,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         sink.put(tableName).put('(');
         sink.put(" l LONG,");
         sink.put(" s SYMBOL,");
-        sink.put(" ts TIMESTAMP");
+        sink.put(" ts TIMESTAMP NOT NULL");
         sink.put(") TIMESTAMP(ts) PARTITION BY DAY");
         engine.execute(sink, context);
         TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)

@@ -45,7 +45,7 @@ public class TablesBootstrapTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
-                serverMain.execute("CREATE TABLE tab (sym SYMBOL, bar VARCHAR, ts TIMESTAMP, foo INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE tab (sym SYMBOL, bar VARCHAR, ts TIMESTAMP NOT NULL, foo INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 assertTables(serverMain);
 
                 serverMain.execute("ALTER TABLE tab DROP COLUMN foo");

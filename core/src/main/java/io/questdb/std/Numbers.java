@@ -516,7 +516,11 @@ public final class Numbers {
     }
 
     public static void appendLong256(long a, long b, long c, long d, CharSink<?> sink) {
-        if (a == Numbers.LONG_NULL && b == Numbers.LONG_NULL && c == Numbers.LONG_NULL && d == Numbers.LONG_NULL) {
+        appendLong256(a, b, c, d, sink, true);
+    }
+
+    public static void appendLong256(long a, long b, long c, long d, CharSink<?> sink, boolean checkNull) {
+        if (checkNull && a == Numbers.LONG_NULL && b == Numbers.LONG_NULL && c == Numbers.LONG_NULL && d == Numbers.LONG_NULL) {
             return;
         }
         sink.putAscii("0x");

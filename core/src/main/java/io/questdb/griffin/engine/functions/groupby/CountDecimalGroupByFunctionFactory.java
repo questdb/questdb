@@ -81,7 +81,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal128(record, decimal128);
-            if (!decimal128.isNull()) {
+            if (isArgNotNull || !decimal128.isNull()) {
                 mapValue.putLong(valueIndex, 1);
             } else {
                 mapValue.putLong(valueIndex, 0);
@@ -91,7 +91,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal128(record, decimal128);
-            if (!decimal128.isNull()) {
+            if (isArgNotNull || !decimal128.isNull()) {
                 mapValue.addLong(valueIndex, 1);
             }
         }
@@ -111,7 +111,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final short value = arg.getDecimal16(record);
-            if (value != Decimals.DECIMAL16_NULL) {
+            if (isArgNotNull || value != Decimals.DECIMAL16_NULL) {
                 mapValue.putLong(valueIndex, 1);
             } else {
                 mapValue.putLong(valueIndex, 0);
@@ -121,7 +121,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final short value = arg.getDecimal16(record);
-            if (value != Decimals.DECIMAL16_NULL) {
+            if (isArgNotNull || value != Decimals.DECIMAL16_NULL) {
                 mapValue.addLong(valueIndex, 1);
             }
         }
@@ -137,7 +137,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal256(record, decimal256);
-            if (!decimal256.isNull()) {
+            if (isArgNotNull || !decimal256.isNull()) {
                 mapValue.putLong(valueIndex, 1);
             } else {
                 mapValue.putLong(valueIndex, 0);
@@ -147,7 +147,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal256(record, decimal256);
-            if (!decimal256.isNull()) {
+            if (isArgNotNull || !decimal256.isNull()) {
                 mapValue.addLong(valueIndex, 1);
             }
         }
@@ -167,7 +167,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final int value = arg.getDecimal32(record);
-            if (value != Decimals.DECIMAL32_NULL) {
+            if (isArgNotNull || value != Decimals.DECIMAL32_NULL) {
                 mapValue.putLong(valueIndex, 1);
             } else {
                 mapValue.putLong(valueIndex, 0);
@@ -177,7 +177,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final int value = arg.getDecimal32(record);
-            if (value != Decimals.DECIMAL32_NULL) {
+            if (isArgNotNull || value != Decimals.DECIMAL32_NULL) {
                 mapValue.addLong(valueIndex, 1);
             }
         }
@@ -217,7 +217,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final byte value = arg.getDecimal8(record);
-            if (value != Decimals.DECIMAL8_NULL) {
+            if (isArgNotNull || value != Decimals.DECIMAL8_NULL) {
                 mapValue.putLong(valueIndex, 1);
             } else {
                 mapValue.putLong(valueIndex, 0);
@@ -227,7 +227,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final byte value = arg.getDecimal8(record);
-            if (value != Decimals.DECIMAL8_NULL) {
+            if (isArgNotNull || value != Decimals.DECIMAL8_NULL) {
                 mapValue.addLong(valueIndex, 1);
             }
         }

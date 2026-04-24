@@ -384,6 +384,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     sink.put(columnName);
                     sink.putAscii(' ');
                     sink.put(ColumnType.nameOf(model.getColumnType()));
+                    if (model.isNotNull()) {
+                        sink.putAscii(" NOT NULL");
+                    }
                     if (ColumnType.isSymbol(model.getColumnType())) {
                         symbolClauseToSink(sink, model);
                     }

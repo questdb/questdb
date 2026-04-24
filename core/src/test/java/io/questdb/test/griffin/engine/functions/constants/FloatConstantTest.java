@@ -35,4 +35,38 @@ public class FloatConstantTest {
         Assert.assertTrue(constant.isConstant());
         Assert.assertEquals(123.45f, constant.getFloat(null), 0.00001);
     }
+
+    @Test
+    public void testIsEquivalentToDistinguishesPositiveAndNegativeZero() {
+        // Bit-pattern equality: +0.0 and -0.0 differ even though == returns true.
+        FloatConstant posZero = new FloatConstant(0.0f);
+        FloatConstant negZero = new FloatConstant(-0.0f);
+        Assert.assertFalse(posZero.isEquivalentTo(negZero));
+        Assert.assertFalse(negZero.isEquivalentTo(posZero));
+        // But each is equivalent to itself.
+        Assert.assertTrue(posZero.isEquivalentTo(new FloatConstant(0.0f)));
+        Assert.assertTrue(negZero.isEquivalentTo(new FloatConstant(-0.0f)));
+    }
+
+    @Test
+    public void testIsEquivalentToTreatsNaNAsEqual() {
+        // Bit-pattern equality: NaN == NaN at the bit level, whereas `Float.NaN == Float.NaN`
+        // returns false. Using raw bits lets the expression engine dedupe NaN constants.
+        FloatConstant nan1 = new FloatConstant(Float.NaN);
+        FloatConstant nan2 = new FloatConstant(Float.NaN);
+        Assert.assertTrue(nan1.isEquivalentTo(nan2));
+    }
+
+    @Test
+    public void testIsEquivalentToReflexiveIdentity() {
+        FloatConstant c = new FloatConstant(42f);
+        Assert.assertTrue(c.isEquivalentTo(c));
+    }
+
+    @Test
+    public void testIsEquivalentToDifferentTypeReturnsFalse() {
+        FloatConstant c = new FloatConstant(1.0f);
+        // Non-FloatConstant argument — the instanceof check returns false.
+        Assert.assertFalse(c.isEquivalentTo(null));
+    }
 }

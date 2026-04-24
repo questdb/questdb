@@ -216,7 +216,7 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
     @Test
     public void testMultiLeastFunctionInSingleQuery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (timestamp TIMESTAMP, symbol SYMBOL, price DOUBLE, amount DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE x (timestamp TIMESTAMP NOT NULL, symbol SYMBOL, price DOUBLE, amount DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x VALUES " +
                             "('2021-10-05T11:31:35.878Z', 'AAPL', 245, 123.4), " +

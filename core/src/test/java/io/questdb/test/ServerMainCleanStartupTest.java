@@ -57,8 +57,8 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 serverMain.start();
-                serverMain.getEngine().execute("create table x (a int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
-                serverMain.getEngine().execute("create table y (b int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
+                serverMain.getEngine().execute("create table x (a int, t timestamp NOT NULL) timestamp(t) partition by day wal", sqlExecutionContext);
+                serverMain.getEngine().execute("create table y (b int, t timestamp NOT NULL) timestamp(t) partition by day wal", sqlExecutionContext);
 
                 CairoEngine cairoEngine1 = serverMain.getEngine();
                 cairoEngine1.execute("insert into y values(100, 1)", sqlExecutionContext);

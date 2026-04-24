@@ -269,6 +269,23 @@ public class Decimal64 implements Sinkable, Decimal {
         if (value == Decimals.DECIMAL64_NULL) {
             return;
         }
+        toSinkBits(sink, value, scale, precision);
+    }
+
+    /**
+     * Format the raw bit pattern, including the DECIMAL64_NULL sentinel. Used by
+     * {@link Decimals#appendNonNull(long, int, int, CharSink)} on the NOT NULL path,
+     * where the sentinel is a valid stored value that must surface as the scaled
+     * decimal representation of {@code Long.MIN_VALUE}. Callers on a nullable path
+     * must do their own null check first — prefer {@link #toSink(CharSink, long, int, int)}.
+     */
+    public static void toSinkBits(@NotNull CharSink<?> sink, long value, int scale, int precision) {
+        if (value == Long.MIN_VALUE) {
+            // Negating Long.MIN_VALUE overflows; format via canonical absolute string
+            // and splice in the decimal point per scale.
+            appendLongMinValueAsDecimal(sink, scale);
+            return;
+        }
 
         if (value < 0) {
             value = -value;
@@ -304,6 +321,35 @@ public class Decimal64 implements Sinkable, Decimal {
 
         if (!printed) {
             sink.put('0');
+        }
+    }
+
+    // Canonical digits of Math.abs(Long.MIN_VALUE) — negating Long.MIN_VALUE overflows
+    // so we format it via its known absolute string and apply the scale manually.
+    private static final String LONG_MIN_ABS = "9223372036854775808";
+
+    private static void appendLongMinValueAsDecimal(@NotNull CharSink<?> sink, int scale) {
+        sink.put('-');
+        if (scale <= 0) {
+            sink.putAscii(LONG_MIN_ABS);
+            return;
+        }
+        if (scale >= LONG_MIN_ABS.length()) {
+            // The entire integer part fits after the decimal point — emit leading zeros.
+            sink.putAscii("0.");
+            for (int i = 0, n = scale - LONG_MIN_ABS.length(); i < n; i++) {
+                sink.put('0');
+            }
+            sink.putAscii(LONG_MIN_ABS);
+            return;
+        }
+        final int dotPos = LONG_MIN_ABS.length() - scale;
+        for (int i = 0; i < dotPos; i++) {
+            sink.put(LONG_MIN_ABS.charAt(i));
+        }
+        sink.put('.');
+        for (int i = dotPos; i < LONG_MIN_ABS.length(); i++) {
+            sink.put(LONG_MIN_ABS.charAt(i));
         }
     }
 

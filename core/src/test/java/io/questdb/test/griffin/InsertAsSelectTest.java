@@ -56,7 +56,7 @@ public class InsertAsSelectTest extends AbstractCairoTest {
             );
 
             execute("create table target (" +
-                    "ts timestamp," +
+                    "ts timestamp NOT NULL," +
                     "d decimal(15, 3)" +
                     ") timestamp (ts) partition by DAY WAL"
             );
@@ -101,7 +101,7 @@ public class InsertAsSelectTest extends AbstractCairoTest {
             );
 
             execute("create table target (" +
-                    "ts timestamp," +
+                    "ts timestamp NOT NULL," +
                     "c varchar," +
                     "d string," +
                     "t varchar" +
@@ -130,8 +130,8 @@ public class InsertAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectWithConcurrentSchemaChange() throws Exception {
-        execute("create table source (ts timestamp) timestamp (ts) partition by DAY");
-        execute("create table target (ts timestamp) timestamp (ts) partition by DAY");
+        execute("create table source (ts timestamp NOT NULL) timestamp (ts) partition by DAY");
+        execute("create table target (ts timestamp NOT NULL) timestamp (ts) partition by DAY");
 
         execute("insert into source select timestamp_sequence(0, 1000000L) from long_sequence(10)");
         drainWalQueue();

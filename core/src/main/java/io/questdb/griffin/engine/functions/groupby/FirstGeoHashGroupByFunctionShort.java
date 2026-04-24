@@ -38,11 +38,13 @@ import io.questdb.std.Unsafe;
 
 public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
+    private final boolean isArgNotNull;
     protected int valueIndex;
 
     public FirstGeoHashGroupByFunctionShort(int type, Function arg) {
         super(type);
         this.arg = arg;
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -133,7 +135,10 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        // NOT NULL columns take the per-row compute path; the native batch
+        // kernel treats the type sentinel as null and under-counts / skips
+        // values the NOT NULL contract declares to be real data.
+        return !isArgNotNull;
     }
 
     @Override

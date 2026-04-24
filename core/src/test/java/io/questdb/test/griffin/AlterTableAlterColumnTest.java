@@ -166,7 +166,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     "CREATE TABLE y (" +
                             "a INT," +
                             " b DOUBLE PARQUET(default, ZSTD(3))," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -188,7 +188,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     "CREATE TABLE y (" +
                             "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                             " b DOUBLE," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -218,7 +218,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     "CREATE TABLE y (" +
                             "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                             " b DOUBLE," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -240,7 +240,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     "CREATE TABLE y (" +
                             "a INT PARQUET(DELTA_BINARY_PACKED)," +
                             " b DOUBLE," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -260,7 +260,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     "CREATE TABLE y (" +
                             "a VARCHAR PARQUET(BLOOM_FILTER)," +
                             " b INT," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -284,7 +284,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
             execute(
                     "CREATE TABLE y (" +
                             "a INT PARQUET(DELTA_BINARY_PACKED, BLOOM_FILTER)," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -304,7 +304,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
             execute(
                     "CREATE TABLE y (" +
                             "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER)," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -326,7 +326,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
             execute(
                     "CREATE TABLE y (" +
                             "a INT PARQUET(DELTA_BINARY_PACKED, BLOOM_FILTER)," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -364,7 +364,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     "CREATE TABLE y (" +
                             "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                             " b DOUBLE," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -386,7 +386,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     @Test
     public void testResetParquetEncodingShowCreateTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE y (a INT, b DOUBLE, t TIMESTAMP) TIMESTAMP(t) PARTITION BY DAY");
+            execute("CREATE TABLE y (a INT, b DOUBLE, t TIMESTAMP NOT NULL) TIMESTAMP(t) PARTITION BY DAY");
 
             execute("ALTER TABLE y ALTER COLUMN a SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3))");
 
@@ -395,7 +395,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                             CREATE TABLE 'y' (\s
                             \ta INT PARQUET(delta_binary_packed, zstd(3)),
                             \tb DOUBLE,
-                            \tt TIMESTAMP
+                            \tt TIMESTAMP NOT NULL
                             ) timestamp(t) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE y");
@@ -407,7 +407,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                             CREATE TABLE 'y' (\s
                             \ta INT,
                             \tb DOUBLE,
-                            \tt TIMESTAMP
+                            \tt TIMESTAMP NOT NULL
                             ) timestamp(t) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE y");
@@ -421,7 +421,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     "CREATE TABLE y (" +
                             "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                             " b DOUBLE," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -448,7 +448,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     "CREATE TABLE y (" +
                             "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                             " b DOUBLE," +
-                            " t TIMESTAMP" +
+                            " t TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
@@ -473,7 +473,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
             inputRoot = root;
             execute("CREATE TABLE x (" +
                     "val INT PARQUET(DELTA_BINARY_PACKED)," +
-                    " ts TIMESTAMP" +
+                    " ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("INSERT INTO x SELECT" +
@@ -536,7 +536,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     public void testQuotedColumnNameAddDropIndex() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    execute("CREATE TABLE test_quoted (\"MY_COL\" SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("CREATE TABLE test_quoted (\"MY_COL\" SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP (ts)");
 
                     execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" ADD INDEX");
                     try (TableReader reader = getReader("test_quoted")) {
@@ -558,7 +558,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     public void testQuotedColumnNameAlterType() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    execute("CREATE TABLE test_quoted (\"MY_COL\" LONG, ts TIMESTAMP) TIMESTAMP (ts) PARTITION BY DAY");
+                    execute("CREATE TABLE test_quoted (\"MY_COL\" LONG, ts TIMESTAMP NOT NULL) TIMESTAMP (ts) PARTITION BY DAY");
                     execute("INSERT INTO test_quoted VALUES (123456789, '2021-01-01T00:00:00.000000Z')");
 
                     execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" TYPE TIMESTAMP_NS");
@@ -581,7 +581,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     public void testQuotedColumnNameCacheNocache() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    execute("CREATE TABLE test_quoted (\"MY_COL\" SYMBOL NOCACHE, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("CREATE TABLE test_quoted (\"MY_COL\" SYMBOL NOCACHE, ts TIMESTAMP NOT NULL) TIMESTAMP (ts)");
 
                     execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" CACHE");
                     engine.releaseAllReaders();
@@ -604,7 +604,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     public void testQuotedColumnNameNonExistent() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    execute("CREATE TABLE test_quoted (col SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("CREATE TABLE test_quoted (col SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP (ts)");
                     assertExceptionNoLeakCheck(
                             "ALTER TABLE test_quoted ALTER COLUMN \"nonexistent\" ADD INDEX",
                             37,
@@ -619,7 +619,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // space in column name
-                    execute("CREATE TABLE test_space (\"my col\" SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("CREATE TABLE test_space (\"my col\" SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP (ts)");
                     execute("ALTER TABLE test_space ALTER COLUMN \"my col\" ADD INDEX");
                     try (TableReader reader = getReader("test_space")) {
                         int colIndex = reader.getMetadata().getColumnIndex("my col");
@@ -627,7 +627,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     }
 
                     // SQL keyword as column name
-                    execute("CREATE TABLE test_keyword (\"select\" SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("CREATE TABLE test_keyword (\"select\" SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP (ts)");
                     execute("ALTER TABLE test_keyword ALTER COLUMN \"select\" ADD INDEX");
                     try (TableReader reader = getReader("test_keyword")) {
                         int colIndex = reader.getMetadata().getColumnIndex("select");
@@ -635,7 +635,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     }
 
                     // mixed case column name
-                    execute("CREATE TABLE test_mixed (\"MyColumn\" SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("CREATE TABLE test_mixed (\"MyColumn\" SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP (ts)");
                     execute("ALTER TABLE test_mixed ALTER COLUMN \"MyColumn\" ADD INDEX");
                     try (TableReader reader = getReader("test_mixed")) {
                         int colIndex = reader.getMetadata().getColumnIndex("MyColumn");
@@ -914,7 +914,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 execute(
                         "CREATE TABLE y (" +
                                 "a INT PARQUET(BLOOM_FILTER, PLAIN)," +
-                                " t TIMESTAMP" +
+                                " t TIMESTAMP NOT NULL" +
                                 ") TIMESTAMP(t) PARTITION BY DAY"
                 );
                 Assert.fail();
@@ -931,7 +931,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 execute(
                         "CREATE TABLE y (" +
                                 "a INT PARQUET(BLOOM_FILTER, ZSTD)," +
-                                " t TIMESTAMP" +
+                                " t TIMESTAMP NOT NULL" +
                                 ") TIMESTAMP(t) PARTITION BY DAY"
                 );
                 Assert.fail();
@@ -948,7 +948,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 execute(
                         "CREATE TABLE y (" +
                                 "a INT PARQUET(PLAIN, BLOOM_FILTER, BLOOM_FILTER)," +
-                                " t TIMESTAMP" +
+                                " t TIMESTAMP NOT NULL" +
                                 ") TIMESTAMP(t) PARTITION BY DAY"
                 );
                 Assert.fail();
@@ -1098,7 +1098,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
             inputRoot = root;
             execute("CREATE TABLE x2 (" +
                     "val LONG," +
-                    " ts TIMESTAMP" +
+                    " ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("INSERT INTO x2 SELECT" +

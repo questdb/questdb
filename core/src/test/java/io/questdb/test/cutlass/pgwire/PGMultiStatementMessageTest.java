@@ -497,7 +497,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
             boolean hasResult =
                     statement.execute(
-                            "CREATE TABLE mytable(l long, t timestamp) timestamp(t) partition by hour wal; " +
+                            "CREATE TABLE mytable(l long, t timestamp NOT NULL) timestamp(t) partition by hour wal; " +
                                     "BEGIN; " +
                                     "INSERT INTO mytable VALUES(27, 0); " +
                                     "ALTER TABLE mytable ADD COLUMN s string; " +
@@ -572,7 +572,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute(
-                    "CREATE TABLE test(l long,ts timestamp); " +
+                    "CREATE TABLE test(l long,ts timestamp NOT NULL); " +
                             "INSERT INTO test VALUES(1989, 0); " +
                             "SELECT l from test;");
             assertResults(statement, hasResult, Result.ZERO, count(1), data(row(1989L)));
@@ -985,7 +985,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, Integer.MAX_VALUE - 1);
-            engine.execute("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
+            engine.execute("create table x (ts timestamp NOT NULL, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
 
             CyclicBarrier barrier = new CyclicBarrier(2);
             long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);

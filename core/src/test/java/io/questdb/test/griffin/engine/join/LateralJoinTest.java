@@ -33,8 +33,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -62,8 +62,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testEliminateOuterRefIntermediateWhere() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
@@ -102,8 +102,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testEliminateOuterRefLiftExpressionWithOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
@@ -143,8 +143,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testEliminateOuterRefLiftPureOuterColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
@@ -185,8 +185,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testEliminateOuterRefNoExtraColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
@@ -226,8 +226,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testEliminateOuterRefOrCondition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
@@ -268,8 +268,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralRequiresSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             assertException(
                     "SELECT * FROM orders o JOIN LATERAL trades t",
@@ -283,8 +283,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralStandalone() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -313,8 +313,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralUnsupportedJoinType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z')");
             execute("INSERT INTO trades VALUES (1, 1, '2024-01-01T00:30:00.000000Z')");
 
@@ -332,9 +332,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralWithCorrelatedJoinModelSubqueries() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t_a (oid INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t_b (oid INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_a (oid INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_b (oid INT, qty INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t_outer VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -378,9 +378,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralWithCorrelatedLeftJoinCriteria() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t_left (id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t_right (id INT, ref_id INT, info STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_left (id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_right (id INT, ref_id INT, info STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t_outer VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -423,8 +423,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralWithUnionAllBuckets() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -474,8 +474,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralWithUnionAndLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t_data (oid INT, val INT, src STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_data (oid INT, val INT, src STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t_outer VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -520,9 +520,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralWithUnionDeepAggregate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (x INT, a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (x INT, b INT, cat STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (x INT, a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (x INT, b INT, cat STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -569,9 +569,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralWithUnionDeepNesting() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (x INT, a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (x INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (x INT, a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (x INT, b INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -617,8 +617,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralWithUnionOnNonJoinLayer() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t_data (oid INT, val INT, src STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_data (oid INT, val INT, src STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t_outer VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -661,7 +661,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountMixedPrefixColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE fx_trades (timestamp TIMESTAMP, symbol SYMBOL, price DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE fx_trades (timestamp TIMESTAMP NOT NULL, symbol SYMBOL, price DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
             execute("""
                     INSERT INTO fx_trades VALUES
                     ('2024-01-01T00:00:00.000000Z', 'EUR/USD', 1.10),
@@ -728,9 +728,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testPerSidePushInnerBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -777,9 +777,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testPerSidePushIntermediateLayerProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -835,8 +835,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         // because LEFT preserves unmatched rows. This test verifies the normal
         // decorrelation still works for LEFT JOIN LATERAL.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -874,10 +874,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testPerSidePushMultipleBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE returns (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE returns (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -938,8 +938,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         // Per-side push is NOT applicable here since the main chain has correlation.
         // This test ensures normal decorrelation still works correctly.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1002,8 +1002,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT02ScanLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'Alice', '2024-01-01T00:00:00.000000Z'),
@@ -1062,8 +1062,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT04GroupByCountLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1128,8 +1128,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT06WindowWithFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE mm (mm_id INT, symbol STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE fills (id INT, mm_id INT, symbol STRING, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE mm (mm_id INT, symbol STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (id INT, mm_id INT, symbol STRING, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO mm VALUES
                     (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
@@ -1171,8 +1171,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT07LimitInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'Alice', '2024-01-01T00:00:00.000000Z'),
@@ -1211,8 +1211,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT08DistinctInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, category STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1249,9 +1249,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT09UnionAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("INSERT INTO trades_a VALUES (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'), (2, 2, 20.0, '2024-01-01T01:10:00.000000Z')");
             execute("INSERT INTO trades_b VALUES (1, 1, 30.0, '2024-01-01T00:20:00.000000Z'), (2, 2, 40.0, '2024-01-01T01:20:00.000000Z')");
@@ -1283,8 +1283,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100LeftCountInExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1323,9 +1323,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100RightJoinBranchInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1373,9 +1373,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100bFullOuterJoinBranchInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1422,10 +1422,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100cMixedLeftRightJoinBranchesInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1478,9 +1478,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT102WindowJoinInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE instruments (id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE instruments (id INT, tag SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO instruments VALUES
                     (1, 'A', '2024-01-01T00:00:00.000000Z'),
@@ -1528,9 +1528,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT102aHorizonJoinInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE instruments (id INT, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE quotes (symbol SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE instruments (id INT, symbol SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (symbol SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO instruments VALUES
                     (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
@@ -1579,9 +1579,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT102bHorizonJoinRangeInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE instruments (id INT, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE quotes (symbol SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE instruments (id INT, symbol SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (symbol SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO instruments VALUES
                     (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
@@ -1629,9 +1629,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT102cLeftLateralHorizonJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE instruments (id INT, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE quotes (symbol SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE instruments (id INT, symbol SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (symbol SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO instruments VALUES
                     (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
@@ -1677,8 +1677,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT103ReplaceColumnRefBinaryExpr() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1712,8 +1712,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT103bReplaceColumnRefMultiArgFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, qty2 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, qty2 DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1748,8 +1748,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT103cReplaceColumnRefNestedExpr() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1785,7 +1785,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT104SelfJoinLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, parent_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, parent_id INT, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 0, 100.0, '2024-01-01T00:00:00.000000Z'),
@@ -1820,8 +1820,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT105UnsupportedJoinLateralError() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             assertException(
                     "SELECT * FROM t1 ASOF JOIN LATERAL (SELECT * FROM t2 WHERE x = t1.x) t",
@@ -1847,9 +1847,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106LeftJoinCorrelatedOnSemantics() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1894,9 +1894,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106bRightJoinCorrelatedOnSemantics() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1944,9 +1944,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106cFullOuterJoinCorrelatedOnSemantics() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1992,9 +1992,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106dRightJoinSubqueryBranchCorrelatedOn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, active INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, active INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2039,9 +2039,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106eLeftJoinNonEqCorrelatedOn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE bonuses (trade_order_id INT, bonus DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE bonuses (trade_order_id INT, bonus DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
@@ -2088,9 +2088,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT107CorrelatedJoinAboveDataSourceLevel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2136,9 +2136,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT108aTerminateNonCorrelatedUnionBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE returns (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE returns (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2181,8 +2181,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT108bTerminateDeepCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
@@ -2221,8 +2221,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT108cWhereCorrelatedOverNonCorrelatedSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2266,8 +2266,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT109CorrelatedLimitWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, max_categories INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, max_categories INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 1, '2024-01-01T00:00:00.000000Z'),
@@ -2314,9 +2314,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT10Intersect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2414,9 +2414,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT110OuterAliasSaveStackTwoBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE fees (order_id INT, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fees (order_id INT, fee DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2460,10 +2460,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT110bOuterAliasSaveStackThreeBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE fees (order_id INT, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fees (order_id INT, fee DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2512,9 +2512,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT110cOuterAliasSaveStackMultipleOuterCols() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, cat SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE limits (order_id INT, cat SYMBOL, max_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, cat SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE limits (order_id INT, cat SYMBOL, max_qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'A', '2024-01-01T00:00:00.000000Z'),
@@ -2558,8 +2558,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT111LatestByPartitionByCorrelationColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2601,9 +2601,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT112CorrelatedSubqueryJoinBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, tag_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE tags (id INT, order_id INT, label STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, tag_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tags (id INT, order_id INT, label STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2676,8 +2676,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT114CaseExprWithOuterRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, lo DOUBLE, hi DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, lo DOUBLE, hi DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 10.0, 20.0, '2024-01-01T00:00:00.000000Z'),
@@ -2728,8 +2728,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT115LeftLateralCountInCoalesce() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2777,8 +2777,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT116WindowFunctionCorrelatedPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'A', '2024-01-01T00:00:00.000000Z'),
@@ -2819,9 +2819,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT11InnerJoinInLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE products (id INT, order_id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE prices (id INT, product_id INT, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE products (id INT, order_id INT, name STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (id INT, product_id INT, price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO products VALUES
@@ -2860,8 +2860,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT12LatestByInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -2900,8 +2900,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT13ScanRewritableNonEq() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
@@ -2941,8 +2941,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT14MultipleCorrelationCols() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (mm_id INT, symbol STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE detail (id INT, mm_id INT, symbol STRING, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (mm_id INT, symbol STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE detail (id INT, mm_id INT, symbol STRING, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO master VALUES
                     (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
@@ -2981,8 +2981,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT15EmptyResultLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3010,8 +3010,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT17LimitAndWindowLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3058,8 +3058,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT18NullJoinKeyInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3093,8 +3093,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT19NullJoinKeyLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3130,8 +3130,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT20UncorrelatedLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3166,8 +3166,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT21CorrelatedLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, n INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 2, '2024-01-01T00:00:00.000000Z'),
@@ -3204,8 +3204,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT21bCorrelatedOffset() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, n INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 1, '2024-01-01T00:00:00.000000Z'),
@@ -3243,9 +3243,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT22NestedLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (id INT, t1_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (id INT, t2_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (id INT, t1_id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (id INT, t2_id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t1 VALUES (1, '2024-01-01T00:00:00.000000Z')");
             execute("INSERT INTO t2 VALUES (1, 1, '2024-01-01T00:30:00.000000Z')");
             execute("INSERT INTO t3 VALUES (1, 1, '2024-01-01T01:00:00.000000Z')");
@@ -3275,8 +3275,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT23SampleByInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -3316,8 +3316,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT23bKeyedSampleByInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -3360,9 +3360,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT23cUnion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3408,8 +3408,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT25MultiLevelSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -3444,8 +3444,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT26OrderByOuterRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, priority INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, priority INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 2, '2024-01-01T00:00:00.000000Z'),
@@ -3479,8 +3479,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT27GroupByOuterRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, category STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'X', '2024-01-01T00:00:00.000000Z'),
@@ -3520,8 +3520,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28PivotInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -3560,8 +3560,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28bPivotInsideLateralLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3604,8 +3604,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28c2SampleByCountLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3648,8 +3648,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28cSampleByLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3691,8 +3691,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28dSampleByAlignToFirstObservation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -3729,8 +3729,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28eSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -3777,8 +3777,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28fSampleByWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -3820,8 +3820,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28gOrderByFunctionWrapper() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -3861,8 +3861,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28hPivotMultiCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (mm_id INT, symbol STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE fills (id INT, mm_id INT, symbol STRING, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (mm_id INT, symbol STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (id INT, mm_id INT, symbol STRING, side SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO master VALUES
                     (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
@@ -3904,8 +3904,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28iGroupByWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, category STRING, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, category STRING, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -3972,8 +3972,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28jDistinctWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, category STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -4014,8 +4014,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT29CteInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
@@ -4050,8 +4050,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT30UngroupedCountInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -4087,8 +4087,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT31UngroupedCountLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -4123,8 +4123,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT32UngroupedSumLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -4159,8 +4159,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT34ScanNonRewritableNonEqSimple() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, start_ts TIMESTAMP, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:15:00.000000Z', '2024-01-01T00:00:00.000000Z'),
@@ -4202,8 +4202,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT35ComplexEquality() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, group_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, group_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (10, '2024-01-01T00:00:00.000000Z'),
@@ -4241,9 +4241,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT36InnerJoinOnCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t1 (id INT, val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (id INT, order_id INT, t1_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, val STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (id INT, order_id INT, t1_id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("INSERT INTO t1 VALUES (1, 'X', '2024-01-01T00:10:00.000000Z'), (2, 'Y', '2024-01-01T01:10:00.000000Z')");
             execute("""
@@ -4278,8 +4278,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT37GroupByRewritableNonEq() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
@@ -4407,8 +4407,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT41OnlyNonEqCorrelatedPredicate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE sensors (id INT, threshold DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE readings (sensor_id INT, value DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE sensors (id INT, threshold DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE readings (sensor_id INT, value DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO sensors VALUES
                     (1, 50.0, '2024-01-01T00:00:00.000000Z'),
@@ -4448,9 +4448,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT42NestedLateralBasic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (b INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (c INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -4497,9 +4497,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT43NestedLateralWithCorrelatedWhere() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE departments (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE employees (dept_id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE tasks (emp_name STRING, dept_id INT, priority INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE departments (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE employees (dept_id INT, name STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tasks (emp_name STRING, dept_id INT, priority INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO departments VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -4549,9 +4549,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT44NestedLateralWithAggregate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE categories (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE products (cat_id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE sales (product_name STRING, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE categories (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE products (cat_id INT, name STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE sales (product_name STRING, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO categories VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -4601,8 +4601,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT45NestedLateralOuterRefOnlyInSelect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (b INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (10, '2024-01-01T00:00:00.000000Z'),
@@ -4644,9 +4644,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT46Except() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -4692,9 +4692,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT47IntersectAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z')
@@ -4737,9 +4737,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT48ExceptAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z')
@@ -4780,9 +4780,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT49ExceptLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -4830,9 +4830,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT50UnionMultiGroup() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -4882,8 +4882,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT51WrapperSelectCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (id INT, t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, b INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (id INT, t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (10, 100, '2024-01-01T00:00:00.000000Z'),
@@ -4923,8 +4923,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT52WrapperWhereCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, threshold INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 5, '2024-01-01T00:00:00.000000Z'),
@@ -4964,8 +4964,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT53WrapperSelectAndWhereCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
@@ -5091,8 +5091,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT54WrapperCorrelationWithAggregate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, multiplier INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, multiplier INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 10, '2024-01-01T00:00:00.000000Z'),
@@ -5133,8 +5133,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT55SubqueryOuterNonEqCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, status STRING, total DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE items (order_id INT, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, status STRING, total DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE items (order_id INT, price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'active', 50.0, '2024-01-01T00:00:00.000000Z'),
@@ -5177,8 +5177,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT56LeftLateralCountWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -5216,8 +5216,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT56bLeftLateralSampleByCountWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -5258,9 +5258,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT57LeftJoinInLateralPreservesNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE items (id INT, order_id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE tags (item_id INT, order_id INT, tag STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE items (id INT, order_id INT, name STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tags (item_id INT, order_id INT, tag STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -5306,8 +5306,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT58LimitWithFunctionOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -5353,8 +5353,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT59LeftLateralLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -5398,8 +5398,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT60LimitWithOffset() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -5444,9 +5444,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT61MultipleLateralJoinsOnSameOuter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE fills (id INT, order_id INT, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (id INT, order_id INT, price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -5490,9 +5490,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT62CorrelationFromTwoOuterTables() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE customers (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE products (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE sales (customer_id INT, product_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE customers (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE products (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE sales (customer_id INT, product_id INT, qty INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO customers VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -5537,8 +5537,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT62bLateralOnNonEqualityFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, n INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 2, '2024-01-01T00:00:00.000000Z'),
@@ -5586,8 +5586,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT62c2LeftLateralOnFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, n INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 2, '2024-01-01T00:00:00.000000Z'),
@@ -5634,8 +5634,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT62cLateralOnMixedConditions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, cat SYMBOL, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, cat SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, cat SYMBOL, n INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, cat SYMBOL, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 'A', 2, '2024-01-01T00:00:00.000000Z'),
@@ -5684,8 +5684,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT62dLateralOnEqualityFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, cat SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, cat SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, cat SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, cat SYMBOL, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 'A', '2024-01-01T00:00:00.000000Z'),
@@ -5729,14 +5729,14 @@ public class LateralJoinTest extends AbstractCairoTest {
                     CREATE TABLE mm_book (
                         mm_id SYMBOL, symbol SYMBOL, side SYMBOL,
                         price DOUBLE, qty DOUBLE,
-                        ts TIMESTAMP
+                        ts TIMESTAMP NOT NULL
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
                     CREATE TABLE mm_obligations (
                         mm_id SYMBOL, symbol SYMBOL, obligation_id INT,
                         min_qty DOUBLE, max_spread DOUBLE, spread_type SYMBOL,
-                        ts TIMESTAMP
+                        ts TIMESTAMP NOT NULL
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
 
@@ -5882,14 +5882,14 @@ public class LateralJoinTest extends AbstractCairoTest {
                     CREATE TABLE mm_book (
                         mm_id SYMBOL, symbol SYMBOL, side SYMBOL,
                         price DOUBLE, qty DOUBLE,
-                        ts TIMESTAMP
+                        ts TIMESTAMP NOT NULL
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
             execute("""
                     CREATE TABLE mm_obligations (
                         mm_id SYMBOL, symbol SYMBOL, obligation_id INT,
                         min_qty DOUBLE, max_spread DOUBLE, spread_type SYMBOL,
-                        ts TIMESTAMP
+                        ts TIMESTAMP NOT NULL
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
 
@@ -6016,9 +6016,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT64CascadingLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE fees (order_id INT, qty_threshold DOUBLE, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fees (order_id INT, qty_threshold DOUBLE, fee DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6075,9 +6075,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT64bCascadingLateralWithWindow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE bonuses (min_rank LONG, bonus DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE bonuses (min_rank LONG, bonus DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6135,10 +6135,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT65ThreeLevelNestedLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (b INT, t1_a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (c INT, t2_b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t4 (d INT, t3_c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (b INT, t1_a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (c INT, t2_b INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t4 (d INT, t3_c INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t1 VALUES (1, '2024-01-01T00:00:00.000000Z')");
             execute("INSERT INTO t2 VALUES (10, 1, '2024-01-01T00:10:00.000000Z')");
             execute("INSERT INTO t3 VALUES (100, 10, '2024-01-01T00:20:00.000000Z')");
@@ -6175,10 +6175,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT66ThreeWayUnionAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_c (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (order_id INT, qty INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (order_id INT, qty INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_c (order_id INT, qty INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6217,8 +6217,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT67UnionHeterogeneousBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6262,9 +6262,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT68NestedLateralSkipLevel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (b INT, t1_a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (c INT, t1_a INT, t2_b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (b INT, t1_a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (c INT, t1_a INT, t2_b INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t1 VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO t2 VALUES
@@ -6310,9 +6310,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT69CascadingLateralLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE discounts (min_qty DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE discounts (min_qty DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6363,9 +6363,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT70MultipleCorrelatedJoinsInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE items (order_id INT, product STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE payments (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE items (order_id INT, product STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE payments (order_id INT, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6410,8 +6410,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT71PostJoinFilterAndAggregateFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6458,8 +6458,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT72FunctionLimitExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z')
@@ -6495,8 +6495,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT73EmbeddedWindowExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6537,9 +6537,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT74WindowInUnionBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6588,8 +6588,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT75WildcardWithOuterRefElimination() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_a INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_a INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6627,9 +6627,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT76UnionBranchBlocksElimination() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (threshold INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (threshold INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6679,9 +6679,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77LatestByInUnionBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6732,8 +6732,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77bLatestByLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6778,8 +6778,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77cLatestByMultiCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE markets (mm_id SYMBOL, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE quotes (mm_id SYMBOL, symbol SYMBOL, side SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE markets (mm_id SYMBOL, symbol SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (mm_id SYMBOL, symbol SYMBOL, side SYMBOL, price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO markets VALUES
                     ('mm1', 'AAPL', '2024-01-01T00:00:00.000000Z'),
@@ -6825,8 +6825,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77dLatestByNonEqFallback() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, start_ts TIMESTAMP, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:15:00.000000Z', '2024-01-01T00:00:00.000000Z'),
@@ -6874,8 +6874,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77e1LatestByPartitionByOuterCol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -6917,8 +6917,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77eLatestByMixedCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, min_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, min_ts TIMESTAMP, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:15:00.000000Z', '2024-01-01T00:00:00.000000Z'),
@@ -6967,8 +6967,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77fLatestByLeftNonEqFallback() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, start_ts TIMESTAMP, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:15:00.000000Z', '2024-01-01T00:00:00.000000Z'),
@@ -7009,8 +7009,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT78EmptyOuterTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t2 VALUES (1, 10, '2024-01-01T00:10:00.000000Z')");
 
             // Empty outer with INNER → 0 rows
@@ -7047,8 +7047,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT79CorrelatedRefInOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, sort_dir INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, sort_dir INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 1, '2024-01-01T00:00:00.000000Z'),
@@ -7091,8 +7091,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT80WindowCompensation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7139,8 +7139,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT80bComplexWindowFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'A', '2024-01-01T00:00:00.000000Z'),
@@ -7195,8 +7195,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT80cWindowWithPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7245,10 +7245,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT81JoinInsideUnion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE labels (order_id INT, label SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE labels (order_id INT, label SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7304,10 +7304,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT82UnionInsideJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_a (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades_b (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE tags (order_id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tags (order_id INT, tag SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7353,9 +7353,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT83JoinMixedCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, product_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE products (id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, product_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE products (id INT, name STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7402,8 +7402,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT84UnionMixedCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7444,9 +7444,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT85AsofJoinInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE prices (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7517,9 +7517,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT86CorrelatedJoinOnUncorrelatedBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE limits (category SYMBOL, max_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE limits (category SYMBOL, max_qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'A', '2024-01-01T00:00:00.000000Z'),
@@ -7566,9 +7566,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT87CorrelatedJoinOnAndBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE factors (trade_order_id INT, factor DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE factors (trade_order_id INT, factor DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
@@ -7634,8 +7634,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT88UnqualifiedCorrelatedRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_a INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_a INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t1 VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO t2 VALUES
@@ -7667,9 +7667,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT89GroupByInUnionBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE refunds (order_id INT, category SYMBOL, amt DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE refunds (order_id INT, category SYMBOL, amt DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7718,8 +7718,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT90LimitOffsetWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7767,8 +7767,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT91SubqueryOuter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'active', '2024-01-01T00:00:00.000000Z'),
@@ -7807,8 +7807,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT92WildcardMixedCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, threshold INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 15, '2024-01-01T00:00:00.000000Z'),
@@ -7851,9 +7851,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT93CorrelatedSubqueryInLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE valid_orders (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE valid_orders (order_id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7893,8 +7893,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT94DistinctWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -7937,8 +7937,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT95LeftCountAliasClashWithOuterColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, cnt INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, cnt INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 100, '2024-01-01T00:00:00.000000Z'),
@@ -7978,8 +7978,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT95bLeftCountAliasClashWithOuterColumnWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, cnt INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, cnt INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 100, '2024-01-01T00:00:00.000000Z'),
@@ -8019,8 +8019,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT96LeftMultipleCountColumnsWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, category SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, category SYMBOL, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -8062,8 +8062,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT96bLeftCountExplicitColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -8104,8 +8104,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT97LeftCountAndSumWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -8146,8 +8146,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT97LimitZero() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -8184,8 +8184,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT98NullInNonEqualityCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, threshold DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, threshold DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
@@ -8222,8 +8222,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT98OuterWhereFilterWithNonEqLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'ACTIVE', '2024-01-01T00:00:00.000000Z'),
@@ -8269,8 +8269,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT98bOuterWhereUnqualifiedColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'ACTIVE', '2024-01-01T00:00:00.000000Z'),
@@ -8341,8 +8341,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT98cOuterWhereWithFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -8413,9 +8413,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT98dMultiSourceOuterWhere() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (a INT, b SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, status SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, category SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (a INT, b SYMBOL, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 'ACTIVE', '2024-01-01T00:00:00.000000Z'),
@@ -8511,9 +8511,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT98eWhereAcrossMultipleSources() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (a INT, b INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 10, '2024-01-01T00:00:00.000000Z'),
@@ -8602,8 +8602,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT99BetweenWithOuterRefs() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE windows (id INT, start_ts TIMESTAMP, end_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE events (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE windows (id INT, start_ts TIMESTAMP, end_ts TIMESTAMP, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE events (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO windows VALUES
                     (1, '2024-01-01T00:00:00.000000Z', '2024-01-01T01:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
@@ -8644,9 +8644,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT99CorrelatedOnJoinBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -8696,9 +8696,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT99bLeftJoinBranchCorrelatedOn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -8745,10 +8745,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT99cMultipleCorrelatedJoinBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -8796,8 +8796,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     private void createOrdersAndTrades() throws Exception {
-        execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-        execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
         execute("""
                 INSERT INTO orders VALUES
                 (1, 'Alice', '2024-01-01T00:00:00.000000Z'),

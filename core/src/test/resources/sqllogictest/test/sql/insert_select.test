@@ -9,7 +9,7 @@ insert into basic_csv values
                   	('2022-02-24T03', 4);
 
 statement ok
-create table result(timestamp timestamp, x int) timestamp(timestamp) partition by HOUR BYPASS WAL;
+create table result(timestamp timestamp NOT NULL, x int) timestamp(timestamp) partition by HOUR BYPASS WAL;
 
 statement ok
 insert into result select * from basic_csv;

@@ -42,12 +42,14 @@ import org.jetbrains.annotations.NotNull;
 
 public class MinTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     private int valueIndex;
 
     public MinTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
         super(timestampType);
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         // The factory derives timestampType from arg.getType(), so this check also
         // filters out non-direct args (e.g., CASTs) that happen to produce timestamps.
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, timestampType);
@@ -57,7 +59,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
             final long batchMin = Vect.minLong(dataAddr, rowCount);
-            if (batchMin != Numbers.LONG_NULL) {
+            if (isArgNotNull || batchMin != Numbers.LONG_NULL) {
                 final long existing = mapValue.getTimestamp(valueIndex);
                 if (batchMin < existing || existing == Numbers.LONG_NULL) {
                     mapValue.putTimestamp(valueIndex, batchMin);
@@ -89,7 +91,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
                     Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
@@ -100,7 +102,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getTimestamp(record);
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
                     Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
@@ -171,7 +173,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

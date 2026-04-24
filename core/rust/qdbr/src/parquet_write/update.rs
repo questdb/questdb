@@ -534,9 +534,13 @@ impl ParquetUpdater {
                 col.data_type
             };
 
-            qdb_meta
-                .schema
-                .push(QdbMetaCol { column_type, column_top: 0, format, ascii: None });
+            qdb_meta.schema.push(QdbMetaCol {
+                column_type,
+                column_top: 0,
+                format,
+                ascii: None,
+                not_null: false,
+            });
         }
 
         // Cache column_id → target schema position map for use during
@@ -1593,6 +1597,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             });
         qdb_meta
             .schema
@@ -1601,6 +1606,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             });
         let qdb_json = qdb_meta.serialize().expect("serialize qdb meta");
         let kv = parquet2::metadata::KeyValue {

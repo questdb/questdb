@@ -32,12 +32,12 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testHappyPath() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
-            execute("CREATE TABLE 'b' ( ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'a' ( ts timestamp NOT NULL) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'b' ( ts timestamp NOT NULL) timestamp(ts) partition by day wal");
             assertSql("hydrate_table_metadata\ntrue\n", "select hydrate_table_metadata('a', 'b')");
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\n",
                     "table_columns('a')"
             );
         });
@@ -51,7 +51,7 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNoValidArgsGiven() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'a' ( ts timestamp NOT NULL) timestamp(ts) partition by day wal");
             assertException("select hydrate_table_metadata('foo')", 7, "no valid table names provided");
         });
     }
@@ -59,7 +59,7 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNotAllTablesAreValid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'a' ( ts timestamp NOT NULL) timestamp(ts) partition by day wal");
             assertSql("hydrate_table_metadata\ntrue\n", "select hydrate_table_metadata('a', 'b')");
         });
     }

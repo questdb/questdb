@@ -117,8 +117,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void tesFailOnNonBooleanJoinCondition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( ts timestamp, i int) timestamp(ts) ");
-            execute("create table b ( ts timestamp, i int) timestamp(ts) ");
+            execute("create table a ( ts timestamp NOT NULL, i int) timestamp(ts) ");
+            execute("create table b ( ts timestamp NOT NULL, i int) timestamp(ts) ");
 
             String booleanError = "boolean expression expected";
 
@@ -164,7 +164,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testACBadOffsetParsing() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trips (a double, b int, ts timestamp ) timestamp(ts)");
+            execute("create table trips (a double, b int, ts timestamp NOT NULL ) timestamp(ts)");
 
             String prefix = "select avg(a) over(partition by b order by ts ";
 
@@ -2118,10 +2118,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testColumnNameWithDot() throws Exception {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck(
                 "create table x (" +
-                        "t TIMESTAMP, " +
+                        "t TIMESTAMP NOT NULL, " +
                         "`bool.flag` BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by MONTH", 29, "new column name contains invalid characters"
+                        "partition by MONTH", 38, "new column name contains invalid characters"
         ));
     }
 
@@ -3615,7 +3615,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "f DOUBLE, " +
                             "g DATE, " +
                             "h BINARY, " +
-                            "t TIMESTAMP, " +
+                            "t TIMESTAMP NOT NULL, " +
                             "x SYMBOL capacity 16 cache, " +
                             "z STRING, " +
                             "y BOOLEAN) " +
@@ -3654,7 +3654,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "f DOUBLE, " +
                             "g DATE, " +
                             "h BINARY, " +
-                            "t TIMESTAMP, " +
+                            "t TIMESTAMP NOT NULL, " +
                             "x SYMBOL capacity 16 cache, " +
                             "z STRING, " +
                             "y BOOLEAN) "
@@ -3692,7 +3692,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "f DOUBLE, " +
                             "g DATE, " +
                             "h BINARY, " +
-                            "t TIMESTAMP, " +
+                            "t TIMESTAMP NOT NULL, " +
                             "x SYMBOL capacity 16 cache, " +
                             "z STRING, " +
                             "y BOOLEAN) " +
@@ -3732,7 +3732,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "f DOUBLE, " +
                             "g DATE, " +
                             "h BINARY, " +
-                            "t TIMESTAMP, " +
+                            "t TIMESTAMP NOT NULL, " +
                             "x SYMBOL capacity 16 nocache, " +
                             "z STRING, " +
                             "y BOOLEAN) " +
@@ -3772,7 +3772,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "f DOUBLE, " +
                             "g DATE, " +
                             "h BINARY, " +
-                            "t TIMESTAMP, " +
+                            "t TIMESTAMP NOT NULL, " +
                             "x SYMBOL capacity 16 cache index capacity 2048, " +
                             "z STRING, " +
                             "y BOOLEAN) " +
@@ -3883,7 +3883,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute(
                     "create table x (" +
                             "a INT, " +
-                            "t TIMESTAMP, " +
+                            "t TIMESTAMP NOT NULL, " +
                             "y BOOLEAN) " +
                             "timestamp(t) " +
                             "partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
@@ -3996,7 +3996,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     """
                             create table tab (
                               x1 int,
-                              ts TIMESTAMP
+                              ts TIMESTAMP NOT NULL
                             ) timestamp(ts);
                             """
             );
@@ -4022,7 +4022,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     """
                             create table tab (
                               x1 int,
-                              ts TIMESTAMP
+                              ts TIMESTAMP NOT NULL
                             ) timestamp(ts);
                             """
             );
@@ -4039,7 +4039,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
-                            "t TIMESTAMP, " +
+                            "t TIMESTAMP NOT NULL, " +
                             "y BOOLEAN) " +
                             "timestamp(t) " +
                             "partition by MONTH"
@@ -4048,7 +4048,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "create table x (" +
-                            "t TIMESTAMP, " +
+                            "t TIMESTAMP NOT NULL, " +
                             "y BOOLEAN) " +
                             "timestamp(t) " +
                             "partition by MONTH", 13, "table already exists"
@@ -4123,7 +4123,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFailOnEmptyColumnName() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( ts timestamp)");
+            execute("create table tab ( ts timestamp NOT NULL)");
 
             assertExceptionNoLeakCheck("SELECT * FROM tab WHERE SUM(\"\", \"\")", 32, "Invalid column: ");
             assertExceptionNoLeakCheck("SELECT * FROM tab WHERE SUM(\"\", \"ts\")", 28, "Invalid column: ");
@@ -4162,7 +4162,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFullJoinPostMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("create table tab ( created timestamp NOT NULL, value long ) timestamp(created) ");
             execute("insert into tab values (0, 0), (1, 1)");
 
             String query = "SELECT count(1) FROM " +
@@ -4212,7 +4212,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFunctionNotIn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( timestamp timestamp, col string, id symbol index) timestamp(timestamp);");
+            execute("create table tab ( timestamp timestamp NOT NULL, col string, id symbol index) timestamp(timestamp);");
             execute("insert into tab values (1, 'foo', 'A'), (2, 'bah', 'B'), (3, 'dee', 'C')");
 
             assertSql(
@@ -4341,7 +4341,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table if not exists test(ts timestamp)");
+            execute("create table if not exists test(ts timestamp NOT NULL)");
             execute("insert into test select (x*3600000)::timestamp from long_sequence(2999)");
 
             assertSql(
@@ -4447,7 +4447,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInnerJoinConditionPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("create table tab ( created timestamp NOT NULL, value long ) timestamp(created) ");
             execute("insert into tab values (0, 0), (1, 1), (2,2)");
 
             for (String join : new String[]{"", "LEFT", "LT", "ASOF",}) {
@@ -4610,7 +4610,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             try {
                 testInsertAsSelect(
                         "",
-                        "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n) partition by DAY",
+                        "create table x (a INT, n TIMESTAMP NOT NULL, o BYTE, p BINARY) timestamp(n) partition by DAY",
                         "insert into x (a) " +
                                 "select * from (select" +
                                 " rnd_int()" +
@@ -4658,7 +4658,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> testInsertAsSelect(
                 expectedData,
-                "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, h SHORT, i DATE, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP, o BYTE, p BINARY) timestamp(n)",
+                "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, h SHORT, i DATE, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP NOT NULL, o BYTE, p BINARY) timestamp(n)",
                 "insert into x (a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p) " +
                         "select * from (select" +
                         " rnd_int()," +
@@ -4695,7 +4695,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> testInsertAsSelect(
                 expectedData,
-                "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n) partition by DAY",
+                "create table x (a INT, n TIMESTAMP NOT NULL, o BYTE, p BINARY) timestamp(n) partition by DAY",
                 "insert into x (a, n) " +
                         "select * from (select" +
                         " rnd_int()," +
@@ -4711,7 +4711,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             try {
                 testInsertAsSelect(
                         "",
-                        "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n)",
+                        "create table x (a INT, n TIMESTAMP NOT NULL, o BYTE, p BINARY) timestamp(n)",
                         "insert into x (a, n) " +
                                 "select * from (select" +
                                 " rnd_int(), " +
@@ -5006,7 +5006,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE tab (" +
-                            "  ts TIMESTAMP, " +
+                            "  ts TIMESTAMP NOT NULL, " +
                             "  x INT" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
@@ -5022,7 +5022,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE tabula (" +
-                            "  ts TIMESTAMP, " +
+                            "  ts TIMESTAMP NOT NULL, " +
                             "  龜 INT" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
@@ -5287,7 +5287,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectTimestampNotSelected() throws Exception {
         assertMemoryLeak(() -> testInsertAsSelectError(
-                "create table x (a INT, b INT, n TIMESTAMP) timestamp(n)",
+                "create table x (a INT, b INT, n TIMESTAMP NOT NULL) timestamp(n)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -5688,13 +5688,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE t1 (" +
-                            "  ts TIMESTAMP, " +
+                            "  ts TIMESTAMP NOT NULL, " +
                             "  x INT" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
             execute(
                     "CREATE TABLE t2 (" +
-                            "  ts TIMESTAMP, " +
+                            "  ts TIMESTAMP NOT NULL, " +
                             "  x INT" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
@@ -5751,7 +5751,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testLargeQueryDoesntHitIncreasedMaxRecursionLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades (symbol symbol, timestamp timestamp) timestamp(timestamp)");
+            execute("create table trades (symbol symbol, timestamp timestamp NOT NULL) timestamp(timestamp)");
 
             assertSql(
                     "symbol\ttimestamp\tsymbol1\ttimestamp1\tsymbol11\ttimestamp11\tsymbol111\ttimestamp111\tsymbol1111\ttimestamp1111\tsymbol11111\ttimestamp11111\tsymbol111111\ttimestamp111111\tsymbol1111111\ttimestamp1111111\tsymbol11111111\ttimestamp11111111\tsymbol111111111\ttimestamp111111111\tsymbol1111111111\ttimestamp1111111111\tsymbol11111111111\ttimestamp11111111111\tsymbol111111111111\ttimestamp111111111111\tsymbol1111111111111\ttimestamp1111111111111\tsymbol11111111111111\ttimestamp11111111111111\tsymbol111111111111111\ttimestamp111111111111111\tsymbol1111111111111111\ttimestamp1111111111111111\tsymbol11111111111111111\ttimestamp11111111111111111\tsymbol111111111111111111\ttimestamp111111111111111111\tsymbol1111111111111111111\ttimestamp1111111111111111111\tsymbol11111111111111111111\ttimestamp11111111111111111111\tsymbol111111111111111111111\ttimestamp111111111111111111111\tsymbol1111111111111111111111\ttimestamp1111111111111111111111\tsymbol11111111111111111111111\ttimestamp11111111111111111111111\tsymbol111111111111111111111111\ttimestamp111111111111111111111111\tsymbol1111111111111111111111111\ttimestamp1111111111111111111111111\tsymbol11111111111111111111111111\ttimestamp11111111111111111111111111\tsymbol111111111111111111111111111\ttimestamp111111111111111111111111111\tsymbol1111111111111111111111111111\ttimestamp1111111111111111111111111111\tsymbol11111111111111111111111111111\ttimestamp11111111111111111111111111111\tsymbol111111111111111111111111111111\ttimestamp111111111111111111111111111111\tsymbol1111111111111111111111111111111\ttimestamp1111111111111111111111111111111\tsymbol11111111111111111111111111111111\ttimestamp11111111111111111111111111111111\tsymbol111111111111111111111111111111111\ttimestamp111111111111111111111111111111111\tsymbol1111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111\tsymbol11111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111\tsymbol111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111111\n",
@@ -5766,7 +5766,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinPostMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("create table tab ( created timestamp NOT NULL, value long ) timestamp(created) ");
             execute("insert into tab values (0, 0), (1, 1)");
 
             String query = "SELECT count(1) FROM " +
@@ -5816,7 +5816,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinReorder() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("create table tab ( created timestamp NOT NULL, value long ) timestamp(created) ");
             execute("insert into tab values (0, 0), (1, 1), (2,2)");
 
             String query1 = "SELECT T1.created FROM " +
@@ -6054,7 +6054,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testNonEqualityJoinCondition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("create table tab ( created timestamp NOT NULL, value long ) timestamp(created) ");
             execute("insert into tab values (0, 0), (1, 1)");
 
             assertQueryNoLeakCheck(
@@ -6408,7 +6408,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRemoveColumnShiftTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp NOT NULL) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
@@ -6428,7 +6428,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRemoveTimestampAndReplace() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp NOT NULL) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
@@ -6450,7 +6450,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRemoveTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp NOT NULL) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
@@ -6470,7 +6470,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRenameTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table table_old_name (a int, b double, t timestamp) timestamp(t)");
+            execute("create table table_old_name (a int, b double, t timestamp NOT NULL) timestamp(t)");
             execute("rename table table_old_name to table_new_name");
             try (TableReader reader = getReader("table_new_name")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
@@ -6494,7 +6494,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRightJoinPostMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("create table tab ( created timestamp NOT NULL, value long ) timestamp(created) ");
             execute("insert into tab values (0, 0), (1, 1)");
 
             String query = "SELECT count(1) FROM " +
@@ -6544,7 +6544,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRightJoinReorder() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("create table tab ( created timestamp NOT NULL, value long ) timestamp(created) ");
             execute("insert into tab values (0, 0), (1, 1), (2,2)");
 
             String query1 = "SELECT T1.created FROM " +
@@ -7538,7 +7538,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
 
                 try {
-                    execute(compiler, "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create table base_price (sym varchar, price double, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
                     execute(compiler, "create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY foobar", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -7546,7 +7546,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
 
                 try {
-                    execute(compiler, "create table price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create table price (sym varchar, price double, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
                     execute(compiler, "create view price_view as (select sym, last(price) as price, ts from price sample by 1h) foobar", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -7741,7 +7741,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws Exception {
         // create source table
-        execute("create table X (a int, b int, t timestamp) timestamp(t)");
+        execute("create table X (a int, b int, t timestamp NOT NULL) timestamp(t)");
         engine.releaseAllWriters();
 
         try (CairoEngine engine = new CairoEngine(configuration) {

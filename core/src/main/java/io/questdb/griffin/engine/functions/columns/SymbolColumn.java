@@ -35,14 +35,20 @@ import org.jetbrains.annotations.Nullable;
 
 public class SymbolColumn extends SymbolFunction implements ColumnFunction {
     private final int columnIndex;
+    private final boolean isNotNull;
     private final boolean symbolTableStatic;
     private boolean ownSymbolTable;
     private SymbolTable symbolTable;
     private SymbolTableSource symbolTableSource;
 
     public SymbolColumn(int columnIndex, boolean symbolTableStatic) {
+        this(columnIndex, symbolTableStatic, false);
+    }
+
+    public SymbolColumn(int columnIndex, boolean symbolTableStatic, boolean isNotNull) {
         this.columnIndex = columnIndex;
         this.symbolTableStatic = symbolTableStatic;
+        this.isNotNull = isNotNull;
     }
 
     @Override
@@ -98,6 +104,11 @@ public class SymbolColumn extends SymbolFunction implements ColumnFunction {
         }
         // static symbol table must be non-null
         assert !symbolTableStatic || getStaticSymbolTable() != null;
+    }
+
+    @Override
+    public boolean isNotNull() {
+        return isNotNull;
     }
 
     @Override

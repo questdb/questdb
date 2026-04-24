@@ -47,7 +47,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 JavaEnable byte,
                 Title varchar,
                 GoodEvent byte,
-                EventTime timestamp,
+                EventTime timestamp NOT NULL,
                 EventDate date,
                 CounterID int,
                 ClientIP ipv4,
@@ -231,8 +231,10 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q6",
                         "SELECT MIN(EventTime), MAX(EventTime) FROM hits;",
                         """
-                                GroupBy vectorized: true workers: 1
-                                  values: [min_designated(EventTime),max_designated(EventTime)]
+                                Async Group By workers: 1
+                                  vectorized: false
+                                  values: [min(EventTime),max(EventTime)]
+                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits

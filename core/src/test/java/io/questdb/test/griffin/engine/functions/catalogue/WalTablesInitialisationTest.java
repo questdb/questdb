@@ -51,7 +51,7 @@ public class WalTablesInitialisationTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
                 for (int i = 0; i < tableCount; i++) {
-                    serverMain.getEngine().execute("create table A" + i + "(b byte, ts timestamp) timestamp(ts) partition by DAY WAL");
+                    serverMain.getEngine().execute("create table A" + i + "(b byte, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
                 }
             }
 

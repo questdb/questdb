@@ -44,6 +44,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public class ArgMaxVarcharDoubleGroupByFunction extends VarcharFunction implements GroupByFunction, BinaryFunction {
     private final Function keyArg;
+    private final boolean isArgNotNull;
     private final StableAwareUtf8StringHolder sink = new StableAwareUtf8StringHolder();
     private final Function valueArg;
     private int valueIndex;
@@ -51,6 +52,7 @@ public class ArgMaxVarcharDoubleGroupByFunction extends VarcharFunction implemen
     public ArgMaxVarcharDoubleGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg) {
         this.valueArg = valueArg;
         this.keyArg = keyArg;
+        this.isArgNotNull = keyArg != null && keyArg.isNotNull();
     }
 
     @Override
@@ -61,7 +63,7 @@ public class ArgMaxVarcharDoubleGroupByFunction extends VarcharFunction implemen
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         double key = keyArg.getDouble(record);
-        if (Numbers.isNull(key)) {
+        if (!isArgNotNull && Numbers.isNull(key)) {
             mapValue.putDouble(valueIndex, Double.NaN);
             mapValue.putLong(valueIndex + 1, 0);
             mapValue.putBool(valueIndex + 2, true);
@@ -82,7 +84,7 @@ public class ArgMaxVarcharDoubleGroupByFunction extends VarcharFunction implemen
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double nextKey = keyArg.getDouble(record);
-        if (Numbers.isNull(nextKey)) {
+        if (!isArgNotNull && Numbers.isNull(nextKey)) {
             return;
         }
         double maxKey = mapValue.getDouble(valueIndex);
@@ -166,7 +168,7 @@ public class ArgMaxVarcharDoubleGroupByFunction extends VarcharFunction implemen
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcMaxKey = srcValue.getDouble(valueIndex);
-        if (Numbers.isNull(srcMaxKey)) {
+        if (!isArgNotNull && Numbers.isNull(srcMaxKey)) {
             return;
         }
         double destMaxKey = destValue.getDouble(valueIndex);

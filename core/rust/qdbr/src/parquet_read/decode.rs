@@ -2480,6 +2480,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             };
             for row_group_index in 0..row_group_count {
                 decoder
@@ -2539,6 +2540,7 @@ mod tests {
                         column_top: 0,
                         format: None,
                         ascii: None,
+                        not_null: false,
                     };
                     for row_group_index in 0..row_group_count {
                         decoder
@@ -2611,6 +2613,7 @@ mod tests {
                                 column_top: 0,
                                 format: None,
                                 ascii: None,
+                                not_null: false,
                             },
                         )
                         .unwrap();
@@ -2845,7 +2848,13 @@ mod tests {
                         0,
                         row_group_size,
                         column_index,
-                        QdbMetaCol { column_type, column_top: 0, format, ascii: None },
+                        QdbMetaCol {
+                            column_type,
+                            column_top: 0,
+                            format,
+                            ascii: None,
+                            not_null: false,
+                        },
                     )
                     .unwrap();
 
@@ -4022,6 +4031,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4064,6 +4074,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
         };
 
         let rows_filter = vec![1i64];
@@ -4114,6 +4125,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, 1).unwrap();
@@ -4158,6 +4170,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             };
             decode_page(
                 &page,
@@ -4214,6 +4227,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -4260,6 +4274,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4307,6 +4322,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -4345,6 +4361,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4384,6 +4401,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             };
 
             decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4434,6 +4452,7 @@ mod tests {
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    not_null: false,
                 };
 
                 decode_page_filtered::<false>(
@@ -4492,6 +4511,7 @@ mod tests {
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    not_null: false,
                 };
                 decode_page(
                     &page,
@@ -4546,6 +4566,7 @@ mod tests {
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    not_null: false,
                 };
                 decode_page_filtered::<true>(
                     &page,
@@ -4610,6 +4631,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             };
 
             decode_page(
@@ -4661,6 +4683,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             };
 
             decode_page_filtered::<false>(
@@ -4719,6 +4742,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
             };
 
             decode_page_filtered::<true>(

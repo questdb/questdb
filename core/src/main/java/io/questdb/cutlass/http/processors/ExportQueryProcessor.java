@@ -1204,23 +1204,27 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 double d = rec.getDouble(columnIndex);
                 if (Numbers.isFinite(d)) {
                     response.put(d);
+                } else if (state.metadata.isNotNull(columnIndex)) {
+                    Numbers.append(response, d);
                 }
                 break;
             case ColumnType.FLOAT:
                 float f = rec.getFloat(columnIndex);
                 if (Numbers.isFinite(f)) {
                     response.put(f);
+                } else if (state.metadata.isNotNull(columnIndex)) {
+                    Numbers.append(response, f);
                 }
                 break;
             case ColumnType.INT:
                 final int i = rec.getInt(columnIndex);
-                if (i != Numbers.INT_NULL) {
+                if (i != Numbers.INT_NULL || state.metadata.isNotNull(columnIndex)) {
                     response.put(i);
                 }
                 break;
             case ColumnType.LONG:
                 l = rec.getLong(columnIndex);
-                if (l != Numbers.LONG_NULL) {
+                if (l != Numbers.LONG_NULL || state.metadata.isNotNull(columnIndex)) {
                     response.put(l);
                 }
                 break;
@@ -1228,12 +1232,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 l = rec.getDate(columnIndex);
                 if (l != Numbers.LONG_NULL) {
                     response.putAscii('"').putISODateMillis(l).putAscii('"');
+                } else if (state.metadata.isNotNull(columnIndex)) {
+                    response.put(l);
                 }
                 break;
             case ColumnType.TIMESTAMP:
                 l = rec.getTimestamp(columnIndex);
                 if (l != Numbers.LONG_NULL) {
                     response.putAscii('"').putISODate(ColumnType.getTimestampDriver(columnType), l).putAscii('"');
+                } else if (state.metadata.isNotNull(columnIndex)) {
+                    response.put(l);
                 }
                 break;
             case ColumnType.SHORT:
@@ -1241,7 +1249,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 break;
             case ColumnType.CHAR:
                 char c = rec.getChar(columnIndex);
-                if (c > 0) {
+                if (c > 0 || state.metadata.isNotNull(columnIndex)) {
                     response.put(c);
                 }
                 break;
@@ -1273,17 +1281,31 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case ColumnType.GEOLONG:
                 putGeoHashStringValue(response, rec.getGeoLong(columnIndex), columnType);
                 break;
-            case ColumnType.UUID:
-                putUuidOrNull(response, rec.getLong128Lo(columnIndex), rec.getLong128Hi(columnIndex));
+            case ColumnType.UUID: {
+                long uLo = rec.getLong128Lo(columnIndex);
+                long uHi = rec.getLong128Hi(columnIndex);
+                if (!Uuid.isNull(uLo, uHi) || state.metadata.isNotNull(columnIndex)) {
+                    Numbers.appendUuid(uLo, uHi, response);
+                }
                 break;
+            }
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();
-            case ColumnType.IPv4:
-                putIPv4Value(response, rec, columnIndex);
+            case ColumnType.IPv4: {
+                final int ip = rec.getIPv4(columnIndex);
+                if (ip != Numbers.IPv4_NULL || state.metadata.isNotNull(columnIndex)) {
+                    Numbers.intToIPv4Sink(response, ip);
+                }
                 break;
-            case ColumnType.INTERVAL:
-                putInterval(response, rec, columnIndex, columnType);
+            }
+            case ColumnType.INTERVAL: {
+                final Interval interval = rec.getInterval(columnIndex);
+                if (!Interval.NULL.equals(interval) || state.metadata.isNotNull(columnIndex)) {
+                    interval.toSink(response.putQuote(), columnType);
+                    response.putQuote();
+                }
                 break;
+            }
             case ColumnType.ARRAY:
                 putArrayValue(response, state, rec, columnIndex, columnType);
                 break;

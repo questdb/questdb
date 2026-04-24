@@ -202,7 +202,7 @@ public class Long128Tests extends AbstractCairoTest {
 
     @Test
     public void testLatestOn() throws Exception {
-        execute("create table x (ts timestamp, l long128, i int) timestamp(ts) partition by DAY");
+        execute("create table x (ts timestamp NOT NULL, l long128, i int) timestamp(ts) partition by DAY");
         execute("insert into x values ('2020-01-01T00:00:00.000000Z', to_long128(0, 0), 0)");
         execute("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(1, 1), 2)");
         execute("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(2, 2), 0)");

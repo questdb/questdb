@@ -40,6 +40,7 @@ public class TableColumnMetadata implements Plannable {
     private int columnType;
     private boolean dedupKeyFlag;
     private int indexValueBlockCapacity;
+    private volatile boolean notNullFlag;
     private int parquetEncodingConfig;
     private boolean symbolCacheFlag;
     private boolean symbolIndexFlag;
@@ -182,6 +183,10 @@ public class TableColumnMetadata implements Plannable {
         return columnType < 0;
     }
 
+    public boolean isNotNull() {
+        return notNullFlag;
+    }
+
     public boolean isSymbolCacheFlag() {
         return symbolCacheFlag;
     }
@@ -208,6 +213,10 @@ public class TableColumnMetadata implements Plannable {
 
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {
         this.indexValueBlockCapacity = indexValueBlockCapacity;
+    }
+
+    public void setNotNullFlag(boolean notNullFlag) {
+        this.notNullFlag = notNullFlag;
     }
 
     public void setParquetEncodingConfig(int parquetEncodingConfig) {

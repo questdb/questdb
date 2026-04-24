@@ -226,7 +226,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     @Test
     public void testMixedNullAndNonNullArrayRowsExistingTable() throws Exception {
         runInContext((port) -> {
-            execute("CREATE TABLE ws_mixed_null_array_existing (arr DOUBLE[][][], timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("CREATE TABLE ws_mixed_null_array_existing (arr DOUBLE[][][], timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.getTableBuffer("ws_mixed_null_array_existing")
@@ -284,7 +284,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     "i INT, " +
                     "f FLOAT, " +
                     "c CHAR, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -403,7 +403,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     public void testAtNowWithCustomTimestampColumnName() throws Exception {
         runInContext((port) -> {
             // Create table with custom designated timestamp column named 'ts'
-            execute("CREATE TABLE ws_custom_ts_table (sym SYMBOL, value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE ws_custom_ts_table (sym SYMBOL, value LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             // Ingest data using atNow()
             try (Sender sender = createSender(port)) {
@@ -437,7 +437,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     public void testAtWithCustomTimestampColumnName() throws Exception {
         runInContext((port) -> {
             // Create table with custom designated timestamp column named 'ts'
-            execute("CREATE TABLE ws_custom_ts_at_table (sym SYMBOL, value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE ws_custom_ts_at_table (sym SYMBOL, value LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             // Ingest data using at() with explicit timestamp
             long explicitTimestamp = 1_700_000_000_000_000L; // 2023-11-14T22:13:20Z in micros
@@ -493,7 +493,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     "tag SYMBOL, " +
                     "col_a LONG, " +
                     "col_b LONG, " +
-                    "timestamp TIMESTAMP" +
+                    "timestamp TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             // Insert initial data to establish the table
@@ -547,7 +547,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_autocreate_test (" +
                     "tag SYMBOL, " +
                     "existing_col LONG, " +
-                    "timestamp TIMESTAMP" +
+                    "timestamp TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             // Send ILP data with a NEW column (new_col) - this triggers auto-create
@@ -729,7 +729,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_byte_direct (" +
                     "value BYTE, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -824,7 +824,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_char_test (" +
                     "tag SYMBOL, " +
                     "x CHAR, " +
-                    "timestamp TIMESTAMP" +
+                    "timestamp TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -850,7 +850,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_char_direct (" +
                     "value CHAR, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -966,7 +966,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_test_date (" +
                     "event_date DATE, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -1935,7 +1935,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_float_direct (" +
                     "value FLOAT, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -2042,7 +2042,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_geohash_byte (" +
                     "geo GEOHASH(1c), " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
@@ -2079,7 +2079,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_geohash_int (" +
                     "geo GEOHASH(6c), " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
@@ -2117,7 +2117,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_geohash_long (" +
                     "geo GEOHASH(12c), " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
@@ -2156,7 +2156,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_geohash_multi (" +
                     "geo GEOHASH(6c), " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
@@ -2199,7 +2199,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_geohash_null (" +
                     "geo GEOHASH(6c), " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
@@ -2242,7 +2242,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_geohash_short (" +
                     "geo GEOHASH(4c), " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
@@ -2389,7 +2389,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_int_direct (" +
                     "value INT, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -2903,7 +2903,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     "short_val SHORT, " +
                     "int_val INT, " +
                     "float_val FLOAT, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -2943,7 +2943,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // Pre-create table with FLOAT column
             execute("CREATE TABLE ws_narrow_float (" +
                     "value FLOAT, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -2982,7 +2982,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // Pre-create table with BYTE column
             execute("CREATE TABLE ws_narrow_byte (" +
                     "value BYTE, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -3020,7 +3020,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // Pre-create table with INT column
             execute("CREATE TABLE ws_narrow_int (" +
                     "value INT, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -3058,7 +3058,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // Pre-create table with SHORT column
             execute("CREATE TABLE ws_narrow_short (" +
                     "value SHORT, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -3117,7 +3117,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE non_wal_table (" +
                     "tag SYMBOL, " +
                     "value LONG, " +
-                    "timestamp TIMESTAMP" +
+                    "timestamp TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
 
             // Verify the table exists and is non-WAL
@@ -3380,7 +3380,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE ws_short_direct (" +
                     "value SHORT, " +
-                    "ts TIMESTAMP" +
+                    "ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -3462,7 +3462,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     "v SHORT, " +
                     "w SHORT, " +
                     "m BOOLEAN, " +
-                    "T TIMESTAMP" +
+                    "T TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(T) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -4592,7 +4592,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_ts_convert_nano (" +
                     "tag SYMBOL, " +
                     "ts_field TIMESTAMP_NS, " +
-                    "timestamp TIMESTAMP" +
+                    "timestamp TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             // Send microsecond timestamp to nanos column
@@ -4633,7 +4633,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_ts_convert (" +
                     "tag SYMBOL, " +
                     "ts_field TIMESTAMP, " +  // micros precision
-                    "timestamp TIMESTAMP" +   // designated timestamp
+                    "timestamp TIMESTAMP NOT NULL" +   // designated timestamp
                     ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             // Send nanosecond timestamp to micros column
@@ -4666,7 +4666,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     @Test
     public void testTimestampOnlyRows() throws Exception {
         runInContext((port) -> {
-            execute("CREATE TABLE ts_only_ws (ts TIMESTAMP, val LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE TABLE ts_only_ws (ts TIMESTAMP NOT NULL, val LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
                 // Row with user-supplied timestamp, no other columns
@@ -4704,7 +4704,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_varchar_large_test (" +
                     "tag SYMBOL, " +
                     "v VARCHAR, " +
-                    "timestamp TIMESTAMP" +
+                    "timestamp TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -4751,7 +4751,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_varchar_multi_test (" +
                     "tag SYMBOL, " +
                     "v VARCHAR, " +
-                    "timestamp TIMESTAMP" +
+                    "timestamp TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -4787,7 +4787,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_varchar_unicode_test (" +
                     "tag SYMBOL, " +
                     "v VARCHAR, " +
-                    "timestamp TIMESTAMP" +
+                    "timestamp TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             // 10 distinct unicode templates, each used 3 times for 30 total rows

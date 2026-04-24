@@ -173,7 +173,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testAccessConstantIndexMultiPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP, arr1d DOUBLE[], arr2d DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL, arr1d DOUBLE[], arr2d DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tango VALUES
                     ('2025-01-01', ARRAY[10.0, 20, 30], ARRAY[[1.0, 2], [3.0, 4]]),
@@ -706,7 +706,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testArrayFirstFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp, x int, v double[]) timestamp(ts) partition by DAY");
+            execute("create table test (ts timestamp NOT NULL, x int, v double[]) timestamp(ts) partition by DAY");
             execute("insert into test(ts,x,v) values ('2022-02-24', 1, ARRAY[1.0,1.0]), ('2022-02-24', 2, null), ('2022-02-24', 3, ARRAY[2.0,2.0])");
 
             assertQuery(
@@ -743,7 +743,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testArrayFunctionInAggregation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tango (ts timestamp, a double, arr double[]) timestamp(ts) partition by DAY");
+            execute("create table tango (ts timestamp NOT NULL, a double, arr double[]) timestamp(ts) partition by DAY");
             execute("insert into tango values " +
                     "('2025-06-26', 1.0, ARRAY[1.0,2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])," +
                     "('2025-06-26', 10.0, null)," +
@@ -1230,7 +1230,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testCaseWhen() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP, i int, a DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL, i int, a DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO tango VALUES " +
                     "('2020-01-01T00:00:00.000Z', 0, ARRAY[]), " +
                     "('2021-01-01T00:00:00.000Z', 1, ARRAY[-1.0]), " +
@@ -1483,7 +1483,7 @@ public class ArrayTest extends AbstractCairoTest {
         // this validates that dedup works with table with array columns
         // as long as the array columns are not part of the dedup key
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP, uniq LONG, arr DOUBLE[])" +
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL, uniq LONG, arr DOUBLE[])" +
                     " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
                     " DEDUP UPSERT KEYS (ts, uniq)");
             execute("INSERT INTO tango VALUES (1, 1, ARRAY[1.0, 2, 3, 4, 5])");
@@ -1537,10 +1537,10 @@ public class ArrayTest extends AbstractCairoTest {
     public void testDudupArrayAsKey() throws Exception {
         // when an array is part of the dedup key
         // it fails gracefully and with an informative error message
-        assertException("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[])" +
+        assertException("CREATE TABLE tango (ts TIMESTAMP NOT NULL, arr DOUBLE[])" +
                         " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
                         " DEDUP UPSERT KEYS (ts, arr)",
-                107,
+                116,
                 "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"
         );
     }
@@ -2190,7 +2190,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testMatView() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp, x int, v double[]) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, x) ");
+            execute("create table test (ts timestamp NOT NULL, x int, v double[]) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, x) ");
             execute("create materialized view test_mv as select ts, x, first(v) as v from test sample by 1s");
             execute("insert into test(ts,x,v) values ('2022-02-24', 1, ARRAY[1.0,1.0]), ('2022-02-24', 2, null), ('2022-02-24', 3, ARRAY[2.0,2.0])");
 
@@ -2429,7 +2429,7 @@ public class ArrayTest extends AbstractCairoTest {
         // this test is to ensure that we can order results set containing arrays
         // but array column is NOT used as part of the ORDER BY clause
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts timestamp, i int, arr double[]) timestamp(ts) partition by DAY");
+            execute("CREATE TABLE tango (ts timestamp NOT NULL, i int, arr double[]) timestamp(ts) partition by DAY");
             execute("INSERT INTO tango VALUES ('2001-01', 1, '{1.0, 2.0}')");
             execute("INSERT INTO tango VALUES ('2001-02', 2, '{3.0, 4.0}')");
             execute("INSERT INTO tango VALUES ('2001-03', 3, '{5.0, 6.0, 7.0}')");
@@ -2472,7 +2472,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testParquet() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts timestamp, i int, arr double[]) timestamp(ts) partition by DAY");
+            execute("CREATE TABLE tango (ts timestamp NOT NULL, i int, arr double[]) timestamp(ts) partition by DAY");
             execute("INSERT INTO tango VALUES ('2001-01', 1, '{1.0, 2.0}')");
             execute("INSERT INTO tango VALUES ('2001-02', 1, '{1.0, 2.0}')");
 
@@ -2712,7 +2712,7 @@ public class ArrayTest extends AbstractCairoTest {
         execute(
                 """
                         CREATE TABLE 'market_data' (
-                          timestamp TIMESTAMP,
+                          timestamp TIMESTAMP NOT NULL,
                           symbol SYMBOL CAPACITY 16384 CACHE,
                           bids DOUBLE[][],
                           asks DOUBLE[][]

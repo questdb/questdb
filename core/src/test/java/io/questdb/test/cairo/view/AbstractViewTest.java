@@ -233,7 +233,7 @@ class AbstractViewTest extends AbstractCairoTest {
     void createTable(String tableName) throws SqlException {
         execute(
                 "create table if not exists " + tableName +
-                        " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                        " (ts timestamp NOT NULL, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
                         " timestamp(ts) partition by day wal"
         );
         for (int i = 0; i < 9; i++) {

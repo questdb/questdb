@@ -26,6 +26,7 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -105,24 +106,25 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                 int writerIndex,
                 boolean isDedupKey,
                 boolean symbolIsCached,
-                int symbolCapacity
+                int symbolCapacity,
+                boolean isNotNull
         ) {
             if (columnType > -1L) {
-                add(
-                        new TableColumnMetadata(
-                                columnName,
-                                columnType,
-                                columnIndexed,
-                                indexValueBlockCapacity,
-                                symbolTableStatic,
-                                null,
-                                writerIndex,
-                                isDedupKey,
-                                0,
-                                symbolIsCached,
-                                symbolCapacity
-                        )
+                var colMeta = new TableColumnMetadata(
+                        columnName,
+                        columnType,
+                        columnIndexed,
+                        indexValueBlockCapacity,
+                        symbolTableStatic,
+                        null,
+                        writerIndex,
+                        isDedupKey,
+                        0,
+                        symbolIsCached,
+                        symbolCapacity
                 );
+                colMeta.setNotNullFlag(isNotNull);
+                add(colMeta);
             }
         }
 

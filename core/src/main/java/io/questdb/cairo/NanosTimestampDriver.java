@@ -203,9 +203,9 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public boolean append(long fixedAddr, CharSink<?> sink) {
+    public boolean append(long fixedAddr, CharSink<?> sink, boolean notNull) {
         long value = Unsafe.getLong(fixedAddr);
-        if (value != Numbers.LONG_NULL) {
+        if (notNull || value != Numbers.LONG_NULL) {
             NanosFormatUtils.appendDateTimeNSec(sink, value);
             return true;
         }

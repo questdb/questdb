@@ -63,7 +63,7 @@ public class EmbeddedApiTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 // Create table upfront, so that reader sees it
                 try (final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
-                    engine.execute("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
+                    engine.execute("create table if not exists abc (a int, b byte, ts timestamp NOT NULL) timestamp(ts)", ctx);
                 }
 
                 // Now start single reader and writer
@@ -103,7 +103,7 @@ public class EmbeddedApiTest {
                             SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 2)
                     ) {
 
-                        engine.execute("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
+                        engine.execute("create table abc (g double, ts timestamp NOT NULL) timestamp(ts) partition by DAY", ctx);
 
                         long timestamp = 0;
                         try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
@@ -144,7 +144,7 @@ public class EmbeddedApiTest {
                     final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                     final SqlCompiler compiler = engine.getSqlCompiler()
             ) {
-                engine.execute("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
+                engine.execute("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp NOT NULL) timestamp(ts)", ctx);
                 try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
                     for (int i = 0; i < 10; i++) {
                         TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
@@ -244,7 +244,7 @@ public class EmbeddedApiTest {
                             final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                             final SqlCompiler compiler = engine.getSqlCompiler()
                     ) {
-                        compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts) partition by HOUR", ctx);
+                        compiler.compile("create table if not exists abc (a int, b byte, ts timestamp NOT NULL) timestamp(ts) partition by HOUR", ctx);
                         try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
                             for (int j = 0; j < 100; j++) {
                                 TableWriter.Row row = writer.newRow(Os.currentTimeMicros());

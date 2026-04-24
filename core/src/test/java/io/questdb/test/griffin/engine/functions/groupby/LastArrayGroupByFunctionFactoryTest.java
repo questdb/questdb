@@ -70,7 +70,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillNoneWithSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, sym SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, sym SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tab VALUES
                     ('1970-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]),
@@ -89,7 +89,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillNone() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tab VALUES
                     ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
@@ -107,7 +107,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tab VALUES
                     ('1970-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]),
@@ -126,7 +126,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillNullAlignToCalendar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tab VALUES
                     ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
@@ -145,7 +145,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillNullFromTo() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tab VALUES
                     ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
@@ -165,7 +165,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillNullNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tab VALUES
                     ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
@@ -184,7 +184,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillPrev() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tab VALUES
                     ('1970-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]),
@@ -203,7 +203,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillPrevLeadingGapNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tab VALUES
                     ('1970-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]),
@@ -224,7 +224,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillNullMultipleArrayColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, arr1 DOUBLE[], arr2 DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, arr1 DOUBLE[], arr2 DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tab VALUES
                     ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0], ARRAY[10.0]),
@@ -244,7 +244,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testSampleByFillLinearRejectsArrayColumns() throws Exception {
         assertException(
                 "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(LINEAR)",
-                "CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
+                "CREATE TABLE tab (ts TIMESTAMP NOT NULL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
                 11,
                 "support for LINEAR fill is not yet implemented"
         );
@@ -254,7 +254,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testSampleByFillValueRejectsArrayColumns() throws Exception {
         assertException(
                 "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)",
-                "CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
+                "CREATE TABLE tab (ts TIMESTAMP NOT NULL, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
                 16,
                 "support for VALUE fill is not yet implemented"
         );

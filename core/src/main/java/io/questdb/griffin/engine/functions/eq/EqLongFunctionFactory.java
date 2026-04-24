@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqLongFunctionFactory implements FunctionFactory {
@@ -45,7 +47,17 @@ public class EqLongFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        final Function a = args.getQuick(0);
+        final Function b = args.getQuick(1);
+        // `x = NULL` / `x IS NULL` on a NOT NULL LONG column is always false.
+        // NegatingFunctionFactory flips the constant for IS NOT NULL.
+        if (a.isConstant() && a.getLong(null) == Numbers.LONG_NULL && b.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        if (b.isConstant() && b.getLong(null) == Numbers.LONG_NULL && a.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        return new Func(a, b);
     }
 
     private static class Func extends AbstractEqBinaryFunction {

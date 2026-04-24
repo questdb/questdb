@@ -160,7 +160,7 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
             assertQuery(
                     "a\ts\tts\n",
                     "select * from x",
-                    "create table x ( a SYMBOL, s UUID, ts TIMESTAMP ) timestamp(ts)",
+                    "create table x ( a SYMBOL, s UUID, ts TIMESTAMP NOT NULL ) timestamp(ts)",
                     "ts",
                     true
             );

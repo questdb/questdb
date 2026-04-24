@@ -1575,7 +1575,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         // Reproduces the exact scenario from issue #6869: nested JSON array
         // extracted via json_extract, unnested, and filtered by an id field.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE events (ts TIMESTAMP, payload VARCHAR) TIMESTAMP(ts)");
+            execute("CREATE TABLE events (ts TIMESTAMP NOT NULL, payload VARCHAR) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO events VALUES (
                         '2026-01-01',
