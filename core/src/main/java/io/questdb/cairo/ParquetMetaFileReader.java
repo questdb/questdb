@@ -321,16 +321,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return addr;
     }
 
-    /**
-     * Returns the absolute byte offset of the column chunk inside the
-     * parquet file, as recorded in the {@code _pm} metadata.
-     */
-    public long getChunkByteRangeStart(int rowGroupIndex, int columnIndex) {
-        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
-        assert columnIndex >= 0 && columnIndex < columnCount;
-        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_BYTE_RANGE_START_OFF);
-    }
-
     public long getChunkMaxStat(int rowGroupIndex, int columnIndex) {
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert columnIndex >= 0 && columnIndex < columnCount;
@@ -355,16 +345,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert columnIndex >= 0 && columnIndex < columnCount;
         return Unsafe.getByte(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_STAT_FLAGS_OFF) & 0xFF;
-    }
-
-    /**
-     * Returns the compressed byte length of the column chunk, as recorded
-     * in the {@code _pm} metadata.
-     */
-    public long getChunkTotalCompressed(int rowGroupIndex, int columnIndex) {
-        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
-        assert columnIndex >= 0 && columnIndex < columnCount;
-        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_TOTAL_COMPRESSED_OFF);
     }
 
     public int getColumnCount() {

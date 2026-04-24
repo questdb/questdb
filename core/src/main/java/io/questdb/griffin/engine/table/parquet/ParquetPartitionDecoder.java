@@ -283,11 +283,6 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         return parquetMetaReader.getRowGroupMinTimestamp(rowGroupIndex, timestampColumnIndex);
     }
 
-    /**
-     * Shim over the {@code decodeRowGroupFromBuffers} private native for use
-     * by the enterprise cold-storage subclass, which assembles the chunk
-     * buffers itself rather than reading the parquet file directly.
-     */
     protected static int decodeRowGroupFromBuffersShim(
             long decodeContextPtr,
             long parquetMetaReaderPtr,
