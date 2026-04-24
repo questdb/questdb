@@ -664,6 +664,16 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // to the offset so round() matches timestamp_floor_utc buckets.
                     timestampSampler.setOffset(calendarOffset);
                     nextBucketTimestamp = timestampSampler.round(nextBucketTimestamp);
+                } else if (calendarOffset != 0 && firstTs < fromTs) {
+                    // firstTs is already a bucket on the floor grid (grid is
+                    // anchored at effectiveOffset = fromTs + calendarOffset).
+                    // With a non-zero offset the grid can place buckets strictly
+                    // below fromTs -- e.g. FROM='05:00' WITH OFFSET '-00:30' and
+                    // data at 05:00 floors to 04:30. Anchor the sampler at
+                    // effectiveOffset; keep nextBucketTimestamp at firstTs so the
+                    // first emitted bucket matches the data row.
+                    timestampSampler.setStart(fromTs + calendarOffset);
+                    // nextBucketTimestamp intentionally unchanged (== firstTs).
                 } else {
                     // FROM exists or no offset: anchor sampler at fromTs + offset.
                     // timestamp_floor_utc uses effectiveOffset = from + offset,

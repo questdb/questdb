@@ -271,6 +271,126 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillFromNegativeOffsetAtFromBoundary() throws Exception {
+        // Regression for PR #6946 C1. With FROM + negative OFFSET, the
+        // floor grid is anchored at effectiveOffset = FROM + OFFSET, which
+        // lies strictly below FROM. Data at/near FROM floors to a bucket
+        // below FROM, making firstTs < fromTs on the first hasNext() call.
+        // Before the fix, initialize() anchored the sampler at
+        // firstTs + calendarOffset (double-shift) and the next hasNext()
+        // tripped the "data row timestamp precedes next bucket" guard.
+        //
+        // With stride=1h, effectiveOffset=04:30, data rows at 05:00 (floors
+        // to 04:30) and 05:30 (floors to 05:30) map to two distinct buckets.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T05:00:00.000000Z')," +
+                    "(2.0, '2024-01-01T05:30:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsum
+                            2024-01-01T04:30:00.000000Z\t1.0
+                            2024-01-01T05:30:00.000000Z\t2.0
+                            """,
+                    "SELECT ts, sum(val) FROM t " +
+                            "SAMPLE BY 1h FROM '2024-01-01T05:00:00.000000Z' TO '2024-01-01T06:30:00.000000Z' " +
+                            "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-00:30'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillFromNegativeOffsetKeyed() throws Exception {
+        // Keyed variant of testFillFromNegativeOffsetAtFromBoundary -- exercises
+        // the keyed pass-2 emission path with the corrected grid anchor.
+        // Two keys ('A', 'B'); at 05:30 A has no data so FILL(PREV) carries its
+        // 04:30 value (1.0) forward. Wrapped in ORDER BY ts, k for stable
+        // within-bucket ordering independent of AsyncGroupBy's hash-merge
+        // interleave (see class javadoc).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('A', 1.0, '2024-01-01T05:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-01T05:00:00.000000Z')," +
+                    "('B', 3.0, '2024-01-01T05:30:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tk\tsum
+                            2024-01-01T04:30:00.000000Z\tA\t1.0
+                            2024-01-01T04:30:00.000000Z\tB\t2.0
+                            2024-01-01T05:30:00.000000Z\tA\t1.0
+                            2024-01-01T05:30:00.000000Z\tB\t3.0
+                            """,
+                    "SELECT * FROM (" +
+                            "SELECT ts, k, sum(val) FROM t " +
+                            "SAMPLE BY 1h FROM '2024-01-01T05:00:00.000000Z' TO '2024-01-01T06:30:00.000000Z' " +
+                            "FILL(PREV) ALIGN TO CALENDAR WITH OFFSET '-00:30'" +
+                            ") ORDER BY ts, k",
+                    "ts", true, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillFromNegativeOffsetNoTo() throws Exception {
+        // FROM + negative OFFSET without TO -- covers the hasExplicitTo=false
+        // termination path with the corrected grid anchor. Data at 05:00
+        // floors to 04:30; data at 05:30 floors to 05:30. Without TO, no
+        // trailing fills beyond the last data row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T05:00:00.000000Z')," +
+                    "(2.0, '2024-01-01T05:30:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsum
+                            2024-01-01T04:30:00.000000Z\t1.0
+                            2024-01-01T05:30:00.000000Z\t2.0
+                            """,
+                    "SELECT ts, sum(val) FROM t " +
+                            "SAMPLE BY 1h FROM '2024-01-01T05:00:00.000000Z' " +
+                            "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-00:30'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillFromPositiveOffsetAtFromBoundary() throws Exception {
+        // Positive OFFSET sibling of testFillFromNegativeOffsetAtFromBoundary.
+        // effectiveOffset = FROM + OFFSET = 05:30 sits ABOVE FROM; data below
+        // effectiveOffset clamps up via the `if (micros < offset) return offset`
+        // branch in Micros.floor*. So firstTs = 05:30 >= fromTs = 05:00,
+        // the C1-fixed branch is not taken, and this path hits the standard
+        // else branch. Test pins the positive-offset behavior alongside the
+        // negative-offset regression.
+        //
+        // Data at 05:00 clamps up to 05:30. Data at 05:30 floors to 05:30.
+        // Data at 06:00 floors to 05:30 (within [05:30, 06:30)).
+        // All three rows aggregate into the 05:30 bucket.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T05:00:00.000000Z')," +
+                    "(2.0, '2024-01-01T05:30:00.000000Z')," +
+                    "(3.0, '2024-01-01T06:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsum
+                            2024-01-01T05:30:00.000000Z\t6.0
+                            """,
+                    "SELECT ts, sum(val) FROM t " +
+                            "SAMPLE BY 1h FROM '2024-01-01T05:00:00.000000Z' TO '2024-01-01T06:30:00.000000Z' " +
+                            "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '+00:30'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testFillIPv4Keyed() throws Exception {
         assertMemoryLeak(() -> {
             // Keyed SAMPLE BY with an IPv4 key column and FILL(NULL).
