@@ -16060,6 +16060,272 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionAsArgumentToAggregateWithBaseColumnAndGroupBy() throws Exception {
+        // Base column mixed with window function inside aggregate argument with GROUP BY.
+        // max(x - avg(x) OVER (...)) computes max deviation from the moving average per category.
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        category\tmax_dev
+                        A\t0.5
+                        B\t0.5
+                        """,
+                "SELECT category, max(x - avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS max_dev " +
+                        "FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        ));
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithBaseColumnImplicitGroupBy() throws Exception {
+        // Base column mixed with window function inside aggregate, no GROUP BY clause.
+        // sum triggers implicit grouping; x needs pass-through in the inner window model.
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        result
+                        20.0
+                        """,
+                "SELECT sum(x + avg(x) OVER ()) AS result FROM tab",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        ));
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithBasicGroupBy() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        category\tresult
+                        A\t5.0
+                        B\t5.0
+                        """,
+                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        ));
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithGroupBy() throws Exception {
+        // Window function inside aggregate argument with explicit GROUP BY.
+        // max(avg(x) OVER (PARTITION BY cat ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW))
+        // computes a 3-row moving average per category, then picks the peak per category.
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        category\tpeak_ma
+                        A\t1.5
+                        B\t3.5
+                        """,
+                "SELECT category, max(avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS peak_ma " +
+                        "FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        ));
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithGroupByAndNulls() throws Exception {
+        // NULL values in the data should not break pass-through column propagation.
+        // avg(x) OVER () computes over non-null values: (1+2+3+4)/4 = 2.5
+        // Row 5 has x=NULL, category=B; avg(x) OVER () still returns 2.5 for that row.
+        // sum per category: A(2 rows)=5.0, B(3 rows)=7.5
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        category\tresult
+                        A\t5.0
+                        B\t7.5
+                        """,
+                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT CASE WHEN x = 5 THEN NULL ELSE x::DOUBLE END AS x, " +
+                        "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        ));
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithGroupByExpression() throws Exception {
+        // GROUP BY on a non-aggregate expression (upper(cat)) combined with a nested
+        // window inside an aggregate. The inner window model must expose the underlying
+        // literal (cat), not the GROUP BY alias (upper_cat).
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        upper_cat\tresult
+                        A\t5.0
+                        B\t5.0
+                        """,
+                "SELECT upper(cat) AS upper_cat, sum(avg(x) OVER ()) AS result " +
+                        "FROM tab GROUP BY upper(cat) ORDER BY upper_cat",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'a' ELSE 'b' END AS cat, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        ));
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithMultipleAggregatesAndGroupBy() throws Exception {
+        // Multiple aggregates, each wrapping a different nested window function, with GROUP BY.
+        // Extraction creates two inner window models (one per nested window). Pass-through of
+        // one window's alias must only reach outer models that have the owning model in their
+        // nested chain, not the deeper one (which would produce an unresolvable column).
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        category\tmax_avg\tmin_sum
+                        A\t1.5\t3.0
+                        B\t3.5\t7.0
+                        """,
+                "SELECT category, " +
+                        "max(avg(x) OVER (PARTITION BY category)) AS max_avg, " +
+                        "min(sum(x) OVER (PARTITION BY category)) AS min_sum " +
+                        "FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        ));
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithMultipleGroupByKeys() throws Exception {
+        // Multiple GROUP BY keys must all get pass-through columns in the inner window model.
+        // avg(x) OVER () = (1+2+3+4)/4 = 2.5, each (cat1, cat2) group has 1 row → sum(2.5) = 2.5
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        cat1\tcat2\tresult
+                        A\tX\t2.5
+                        A\tY\t2.5
+                        B\tX\t2.5
+                        B\tY\t2.5
+                        """,
+                "SELECT cat1, cat2, sum(avg(x) OVER ()) AS result FROM tab GROUP BY cat1, cat2 ORDER BY cat1, cat2",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, " +
+                        "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
+                        "CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END AS cat2, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        ));
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithMultipleGroupByKeysAndThreeInnerWindows() throws Exception {
+        // Three aggregates, each with a distinct nested window, stressing the chain when
+        // nInner > 2: pass-through must reach intermediate models without leaking window
+        // aliases into models that can't resolve them.
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        category\tmax_avg\tmin_sum\tavg_cnt
+                        A\t1.5\t3.0\t2.0
+                        B\t3.5\t7.0\t2.0
+                        """,
+                "SELECT category, " +
+                        "max(avg(x) OVER (PARTITION BY category)) AS max_avg, " +
+                        "min(sum(x) OVER (PARTITION BY category)) AS min_sum, " +
+                        "avg(count(x) OVER (PARTITION BY category)) AS avg_cnt " +
+                        "FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        ));
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithPartitionByNotInGroupBy() throws Exception {
+        // Window PARTITION BY uses a column (cat2) that is NOT a GROUP BY key (cat1).
+        // Inner window model must expose both columns so the chain resolves them.
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        cat1\tpeak
+                        A\t3.0
+                        B\t3.0
+                        """,
+                "SELECT cat1, max(avg(x) OVER (PARTITION BY cat2)) AS peak " +
+                        "FROM tab GROUP BY cat1 ORDER BY cat1",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, " +
+                        "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
+                        "CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END AS cat2, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        ));
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithSymbolGroupBy() throws Exception {
+        // Reproduces the shape from issue #6954: the original bug report used a SYMBOL
+        // column as the GROUP BY key. SYMBOL resolution goes through a distinct code path
+        // from STRING, so this guards against a regression specific to that type.
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        category\tresult
+                        A\t5.0
+                        B\t5.0
+                        """,
+                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, " +
+                        "(CASE WHEN x <= 2 THEN 'A' ELSE 'B' END)::SYMBOL AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        ));
+    }
+
+    @Test
     public void testWindowFunctionAsArgumentToCast() throws Exception {
         // Test window function as direct argument to cast() function
         assertQuery(
