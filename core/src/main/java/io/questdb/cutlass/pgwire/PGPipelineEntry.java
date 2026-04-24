@@ -1737,8 +1737,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal256 decimal256, int type) {
-        if (decimal256.isNull()) {
+    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal256 decimal256, int type, boolean notNull) {
+        if (!notNull && decimal256.isNull()) {
             utf8Sink.setNullValue();
             return;
         }
@@ -1818,8 +1818,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
     }
 
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal128 decimal128, int type) {
-        if (decimal128.isNull()) {
+    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal128 decimal128, int type, boolean notNull) {
+        if (!notNull && decimal128.isNull()) {
             utf8Sink.setNullValue();
             return;
         }
@@ -1899,8 +1899,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
     }
 
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal64 decimal64, int type) {
-        if (decimal64.isNull()) {
+    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal64 decimal64, int type, boolean notNull) {
+        if (!notNull && decimal64.isNull()) {
             utf8Sink.setNullValue();
             return;
         }
@@ -2694,7 +2694,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             utf8Sink.setNullValue();
                         } else {
                             decimal64.ofRaw(v);
-                            outColBinDecimal(utf8Sink, decimal64, columnType);
+                            outColBinDecimal(utf8Sink, decimal64, columnType, isColumnNotNull[colIndex]);
                         }
                         break;
                     }
@@ -2705,7 +2705,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             utf8Sink.setNullValue();
                         } else {
                             decimal64.ofRaw(v);
-                            outColBinDecimal(utf8Sink, decimal64, columnType);
+                            outColBinDecimal(utf8Sink, decimal64, columnType, isColumnNotNull[colIndex]);
                         }
                         break;
                     }
@@ -2716,25 +2716,25 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             utf8Sink.setNullValue();
                         } else {
                             decimal64.ofRaw(v);
-                            outColBinDecimal(utf8Sink, decimal64, columnType);
+                            outColBinDecimal(utf8Sink, decimal64, columnType, isColumnNotNull[colIndex]);
                         }
                         break;
                     }
                     case BINARY_TYPE_DECIMAL64: {
                         var decimal64 = sqlExecutionContext.getDecimal64();
                         decimal64.ofRaw(record.getDecimal64(colIndex));
-                        outColBinDecimal(utf8Sink, decimal64, columnType);
+                        outColBinDecimal(utf8Sink, decimal64, columnType, isColumnNotNull[colIndex]);
                         break;
                     }
                     case BINARY_TYPE_DECIMAL128:
                         var decimal128 = sqlExecutionContext.getDecimal128();
                         record.getDecimal128(colIndex, decimal128);
-                        outColBinDecimal(utf8Sink, decimal128, columnType);
+                        outColBinDecimal(utf8Sink, decimal128, columnType, isColumnNotNull[colIndex]);
                         break;
                     case BINARY_TYPE_DECIMAL256:
                         var decimal256 = sqlExecutionContext.getDecimal256();
                         record.getDecimal256(colIndex, decimal256);
-                        outColBinDecimal(utf8Sink, decimal256, columnType);
+                        outColBinDecimal(utf8Sink, decimal256, columnType, isColumnNotNull[colIndex]);
                         break;
                     default:
                         assert false;

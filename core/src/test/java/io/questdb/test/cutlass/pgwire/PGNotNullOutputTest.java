@@ -109,13 +109,10 @@ public class PGNotNullOutputTest extends BasePGTest {
         // The NOT NULL branch uses `Decimals.appendNonNull` which formats the raw
         // sentinel bits as a decimal with the column's scale. With the Decimal64
         // Long.MIN_VALUE fix, the d64 sentinel surfaces as "-92233720368547758.08"
-        // (scale 2) rather than an empty token.
-        //
-        // Binary mode (BINARY_TYPE_DECIMAL{64,128,256}) still has a latent bug:
-        // `outColBinDecimal` checks `decimal.isNull()` without a notNull parameter
-        // and wire-NULLs the sentinel. This test uses SIMPLE (text) mode only; the
-        // binary path needs its own fix (see bug note in PGPipelineEntry).
-        assertWithPgServer(CONN_AWARE_SIMPLE, (connection, binary, mode, port) -> {
+        // (scale 2) rather than an empty token. Binary mode now threads the
+        // notNull flag through outColBinDecimal, so the sentinel is rendered
+        // as a concrete numeric rather than wired as NULL.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("""
                         CREATE TABLE t (
