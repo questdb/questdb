@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -3216,32 +3215,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
                     final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
 
-                    // Get index type first for file name generation
                     byte indexType = tableWriterMetadata.getColumnIndexType(columnIndex);
 
-                    long kFd = 0;
-                    long vFd = 0;
-                    try {
-                        kFd = openRW(
-                                ff,
-                                IndexFactory.keyFileName(indexType, path.trimTo(pLen), columnName, columnNameTxn),
-                                LOG,
-                                tableWriter.getConfiguration().getWriterFileOpenOpts()
-                        );
-                        long valueTxn = O3OpenColumnJob.resolvePostingValueFileTxn(ff, kFd, indexType, columnNameTxn);
-                        vFd = openRW(
-                                ff,
-                                IndexFactory.valueFileName(indexType, path.trimTo(pLen), columnName, columnNameTxn, valueTxn),
-                                LOG,
-                                tableWriter.getConfiguration().getWriterFileOpenOpts()
-                        );
-                    } catch (Throwable th) {
-                        O3Utils.close(ff, kFd);
-                        O3Utils.close(ff, vFd);
-                        throw th;
-                    }
-
-                    // Get new writer when type changes to support different index types per column
+                    // Get a fresh writer when index type changes so different index
+                    // types can coexist across columns in the same partition.
                     if (currentWriterType != indexType || indexWriter == null) {
                         indexWriter = o3Basket.nextIndexer(indexType);
                         currentWriterType = indexType;
@@ -3266,8 +3243,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             continue;
                         }
 
-                        indexWriter.of(tableWriter.getConfiguration(), kFd, vFd, true, indexBlockCapacity);
-                        vFd = kFd = -1;
+                        indexWriter.of(path.trimTo(pLen), columnName, columnNameTxn, indexBlockCapacity);
 
                         // In rewrite mode all columns exist in the new parquet file
                         // (the Rust encoder fills missing columns with NULLs),
@@ -3308,11 +3284,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
 
                         indexWriter.commit();
+                        indexWriter.seal();
                     } finally {
                         Misc.free(indexWriter);
                         indexWriter = null;
-                        O3Utils.close(ff, kFd);
-                        O3Utils.close(ff, vFd);
                     }
                 }
             }
