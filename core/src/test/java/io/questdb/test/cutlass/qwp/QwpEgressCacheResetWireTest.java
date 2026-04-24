@@ -322,7 +322,7 @@ public class QwpEgressCacheResetWireTest extends AbstractBootstrapTest {
         });
     }
 
-/**
+    /**
      * Reset only triggers at query boundaries -- a stream that runs over many
      * batches and hits the cap mid-stream keeps using its in-flight dict until
      * the stream ends. Verifies in-flight queries aren't disrupted by caps
