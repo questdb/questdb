@@ -707,14 +707,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        try {
-            return compileBooleanFilter(expr, metadata, executionContext);
-        } catch (Throwable t) {
-            if (metadata instanceof JoinRecordMetadata that) {
-                Misc.free(that);
-            }
-            throw t;
-        }
+        // Caller owns metadata cleanup. Every call site in generateJoins
+        // has an outer catch that frees the relevant join metadata (or the
+        // master factory whose metadata it is), so freeing it here would
+        // either double-free a JoinRecordMetadata or close a master
+        // factory's still-in-use metadata.
+        return compileBooleanFilter(expr, metadata, executionContext);
     }
 
     public RecordCursorFactory generate(@Transient IQueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {

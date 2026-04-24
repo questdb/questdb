@@ -8249,6 +8249,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testLeftOuterJoinSlaveOnlyPredicateInOnPreserved() throws Exception {
+        // Regression: when a LEFT OUTER ON clause contains a predicate whose
+        // both sides reference only the slave table (e.g. y.a = y.b), the
+        // join optimiser used to drop the predicate silently. With it dropped,
+        // y.id=1 would match both y(1,1,1) AND y(1,1,2). The predicate must
+        // be preserved as an outer-join post predicate so that y(1,1,2) is
+        // excluded.
+        assertMemoryLeak(() -> {
+            execute("create table x (id int)");
+            execute("insert into x values (1), (2)");
+            execute("create table y (id int, a int, b int)");
+            execute("insert into y values (1, 1, 1), (1, 1, 2)");
+            assertSql(
+                    "id\tid1\ta\tb\n" +
+                            "1\t1\t1\t1\n" +
+                            "2\tnull\tnull\tnull\n",
+                    "select x.id, y.id, y.a, y.b from x left join y on x.id = y.id and y.a = y.b order by x.id"
+            );
+        });
+    }
+
+    @Test
     public void testLexerReset() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 0; i < 10; i++) {
@@ -8807,6 +8829,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a, b from (select [a, b] from tab where a < b)",
                 "select a, b from tab where not (a >= b)",
                 modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOptimiseNotInUnionAll() throws SqlException {
+        // optimiseBooleanNot must descend into the union branch so that NOT(a > b)
+        // is rewritten to (a <= b) on BOTH sides of the union.
+        assertQuery(
+                "select-choose a, b from (select [a, b] from t1 where a <= b) " +
+                        "union all " +
+                        "select-choose a, b from (select [a, b] from t2 where a <= b)",
+                "select a, b from t1 where not (a > b) " +
+                        "union all " +
+                        "select a, b from t2 where not (a > b)",
+                modelOf("t1")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT),
+                modelOf("t2")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
         );

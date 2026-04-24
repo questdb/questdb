@@ -1566,8 +1566,14 @@ public class SqlOptimiser implements Mutable {
                             } else {
                                 addWhereNode(parent, lhi, node);
                             }
-                            return;
+                        } else {
+                            // For an outer/asof barrier, both sides reference the same
+                            // table so there's no equi-join to extract; route the predicate
+                            // to the join's outer-join expression clause to keep its
+                            // filtering effect (mirror of the bSize == 0 branch below).
+                            addOuterJoinExpression(parent, joinModel, joinIndex, node);
                         }
+                        return;
                     } else if (lhi < rhi) {
                         // we must align "a" nodes with slave index
                         // compiler will always be checking "a" columns
@@ -5386,8 +5392,8 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(joinModels.getQuick(i));
         }
 
-        if (model.getUnionModel() != null && model.getNestedModel() != null) {
-            optimiseBooleanNot(model.getNestedModel());
+        if (model.getUnionModel() != null) {
+            optimiseBooleanNot(model.getUnionModel());
         }
     }
 
