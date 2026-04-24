@@ -670,6 +670,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(" to ").$substr(pathRootSize, path)
                 .$();
 
+        // ADD COLUMN NOT NULL on a populated table back-fills existing rows
+        // via column_top, which reads as the type's null sentinel. Under the
+        // NOT NULL contract those sentinels are valid data, so the backfill
+        // is indistinguishable from rows the user wrote. Warn so operators
+        // migrating schemas see the behavioural detail.
+        if (isNotNull && txWriter.getRowCount() > 0) {
+            LOG.info()
+                    .$("ADD COLUMN NOT NULL on populated table, existing rows back-fill with type sentinel [table=")
+                    .$(tableToken).$(", column=").$safe(columnName)
+                    .$(", existingRowCount=").$(txWriter.getRowCount()).I$();
+        }
+
         addColumnToMeta(
                 columnName,
                 columnType,
