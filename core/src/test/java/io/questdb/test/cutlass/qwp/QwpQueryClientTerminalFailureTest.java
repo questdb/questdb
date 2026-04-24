@@ -136,44 +136,6 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
         });
     }
 
-    @Test
-    public void testRecordTerminalFailureKeepsFirstFailure() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
-                try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")) {
-                    client.connect();
-
-                    invokeRecordTerminalFailure(client, (byte) 1, "first failure");
-                    // Second call must not overwrite the first -- the user needs the
-                    // original root cause, not the last error the I/O thread saw as
-                    // it wound down.
-                    invokeRecordTerminalFailure(client, (byte) 2, "later failure");
-
-                    AtomicReference<String> msg = new AtomicReference<>();
-                    AtomicReference<Byte> status = new AtomicReference<>();
-                    client.execute("SELECT 1", new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                        }
-
-                        @Override
-                        public void onEnd(long totalRows) {
-                        }
-
-                        @Override
-                        public void onError(byte s, String m) {
-                            status.set(s);
-                            msg.set(m);
-                        }
-                    });
-                    Assert.assertEquals(Byte.valueOf((byte) 1), status.get());
-                    Assert.assertEquals("first failure", msg.get());
-                }
-            }
-        });
-    }
-
     /**
      * When the failover ceiling hits, {@link QwpQueryClient#execute} must
      * surface an {@code onError} whose message identifies the ceiling (not a
@@ -225,6 +187,44 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
                     // Explicit ceiling phrasing -- monitoring filters on this.
                     TestUtils.assertContains(errMsg.get(), "transport failure after 1 execute attempt");
                     TestUtils.assertContains(errMsg.get(), "synthetic transport failure");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecordTerminalFailureKeepsFirstFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain ignored = startWithEnvVariables()) {
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")) {
+                    client.connect();
+
+                    invokeRecordTerminalFailure(client, (byte) 1, "first failure");
+                    // Second call must not overwrite the first -- the user needs the
+                    // original root cause, not the last error the I/O thread saw as
+                    // it wound down.
+                    invokeRecordTerminalFailure(client, (byte) 2, "later failure");
+
+                    AtomicReference<String> msg = new AtomicReference<>();
+                    AtomicReference<Byte> status = new AtomicReference<>();
+                    client.execute("SELECT 1", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte s, String m) {
+                            status.set(s);
+                            msg.set(m);
+                        }
+                    });
+                    Assert.assertEquals(Byte.valueOf((byte) 1), status.get());
+                    Assert.assertEquals("first failure", msg.get());
                 }
             }
         });
