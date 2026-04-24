@@ -876,9 +876,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } catch (NumericException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
                 }
-                SqlUtil.fetchNext(lexer);
+                tok = SqlUtil.fetchNext(lexer);
             } else {
                 indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+            }
+
+            if (tok != null && isNotKeyword(tok)) {
+                int notPos = lexer.lastTokenPosition();
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && isNullKeyword(tok)) {
+                    isNotNull = true;
+                    SqlUtil.fetchNext(lexer);
+                } else {
+                    throw SqlException.$(notPos, "'NULL' expected after 'NOT'");
+                }
+            } else if (tok != null && isNullKeyword(tok)) {
+                SqlUtil.fetchNext(lexer);
             }
         } else { // set defaults
             if (tok != null && isNotKeyword(tok)) {

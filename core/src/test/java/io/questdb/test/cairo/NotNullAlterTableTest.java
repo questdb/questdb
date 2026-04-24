@@ -356,4 +356,84 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testAlterAddColumnSymbolNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL NOT NULL");
+            assertTrue(getNotNull("t", "s"));
+
+            try {
+                execute("INSERT INTO t (id, ts) VALUES (1, '2024-01-01')");
+                fail("Expected NOT NULL violation for omitted SYMBOL column");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=s");
+            }
+
+            execute("INSERT INTO t VALUES (1, '2024-01-01', 'a')");
+        });
+    }
+
+    @Test
+    public void testAlterAddColumnSymbolWithCapacityAndNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL CAPACITY 1024 CACHE INDEX CAPACITY 256 NOT NULL");
+            assertTrue(getNotNull("t", "s"));
+        });
+    }
+
+    @Test
+    public void testAlterAddColumnSymbolNocacheAndNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL NOCACHE NOT NULL");
+            assertTrue(getNotNull("t", "s"));
+        });
+    }
+
+    @Test
+    public void testAlterAddColumnSymbolNotNullRejectsExplicitNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL NOT NULL");
+
+            try {
+                execute("INSERT INTO t VALUES (1, '2024-01-01', NULL)");
+                fail("Expected rejection of explicit NULL into NOT NULL SYMBOL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=s");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterAddColumnSymbolNotWithoutNullFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("ALTER TABLE t ADD COLUMN s SYMBOL NOT junk");
+                fail("Expected parse error for 'NOT' without following 'NULL'");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), "'NULL' expected after 'NOT'");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterAddColumnSymbolOnWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (1, '2024-01-01')");
+            drainWalQueue();
+
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL NOT NULL");
+            drainWalQueue();
+
+            assertTrue(getNotNull("t", "s"));
+        });
+    }
 }
