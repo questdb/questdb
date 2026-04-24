@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -51,7 +53,12 @@ public class ArrayAggDoubleArrayGroupByFunctionFactory implements FunctionFactor
             @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
-        return new ArrayAggDoubleArrayGroupByFunction(args.getQuick(0), configuration.maxArrayElementCount());
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        final int dims = ColumnType.decodeWeakArrayDimensionality(arg.getType());
+        if (dims > 0 && dims != 1) {
+            throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
+        }
+        return new ArrayAggDoubleArrayGroupByFunction(arg, configuration.maxArrayElementCount());
     }
 }

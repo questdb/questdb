@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -326,9 +327,17 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
                 Unsafe.getUnsafe().putDouble(destAddr + (long) i * ENTRY_SIZE + 8, v);
             }
         } else {
+            // Non-vanilla 1D view (e.g., a column slice of a 2D array). Apply the
+            // stride when reading from the flat backing store so elements come out
+            // in logical order; arr.getDouble(flatIndex) reads physical memory and
+            // would silently drop the stride.
+            final FlatArrayView flatView = arr.flatView();
+            final int flatOffset = arr.getFlatViewOffset();
+            final int stride = arr.getStride(0);
             for (int i = 0; i < len; i++) {
+                final double v = flatView.getDoubleAtAbsIndex(flatOffset + i * stride);
                 Unsafe.getUnsafe().putLong(destAddr + (long) i * ENTRY_SIZE, rowId);
-                Unsafe.getUnsafe().putDouble(destAddr + (long) i * ENTRY_SIZE + 8, arr.getDouble(i));
+                Unsafe.getUnsafe().putDouble(destAddr + (long) i * ENTRY_SIZE + 8, v);
             }
         }
     }

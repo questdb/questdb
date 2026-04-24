@@ -309,47 +309,59 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
-    public void testMultiDim2DInputFlattened() throws Exception {
-        // The array_agg(D[]) signature matches any-dimensional DOUBLE array input because
-        // the factory checks only the element type, not dimensionality. A vanilla 2D input
-        // silently flattens via appendPlainDoubleValue because the output type is hardcoded
-        // to 1D. This test pins down the observable behavior; changing it to reject
-        // multi-dim inputs (cleaner) is a deliberate decision that must update this test.
+    public void testRejects2DInput() throws Exception {
+        // array_agg(D[]) accepts only 1D input; the factory signature matches any
+        // DOUBLE array dimensionality (element-type-only match), so the factory
+        // must reject non-1D arrays explicitly.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[][])");
             execute("""
                     INSERT INTO tab VALUES
                     (ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
                     """);
-            assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "[1.0,2.0,3.0,4.0,5.0,6.0]\n",
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(arr) FROM tab",
+                    17,
+                    "array is not one-dimensional"
             );
         });
     }
 
     @Test
-    public void testMultiDim2DTransposedInputIgnoresStrides() throws Exception {
-        // transpose() produces a non-vanilla 2D view. copyArrayElements falls into the
-        // else branch that iterates via arr.getDouble(flatIndex), which reads the
-        // underlying flat memory without applying strides. The result matches the
-        // non-transposed flattening, i.e. transpose semantics are silently dropped.
-        // Pinned here as current behavior; any fix (reject multi-dim, or loop via
-        // shape/strides like ArrayView.appendToMemRecursive) must update this test.
+    public void testRejects2DTransposedInput() throws Exception {
+        // transpose() preserves dimensionality, so a transposed 2D is still 2D
+        // and must be rejected at factory bind time just like a direct 2D input.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[][])");
             execute("""
                     INSERT INTO tab VALUES
                     (ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
                     """);
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(transpose(arr)) FROM tab",
+                    17,
+                    "array is not one-dimensional"
+            );
+        });
+    }
+
+    @Test
+    public void testNonVanilla1DInput() throws Exception {
+        // transpose(m)[1] selects the first row of a transposed 2x2 matrix, which
+        // is a non-vanilla 1D view (stride=2 over the 4-element backing store).
+        // copyArrayElements must apply the stride when reading; otherwise it
+        // reads physical memory in order and silently drops the semantics.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (m DOUBLE[][])");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (ARRAY[[10.0, 20.0], [30.0, 40.0]]),
+                    (ARRAY[[50.0, 60.0], [70.0, 80.0]])
+                    """);
             assertQueryNoLeakCheck(
                     "agg\n" +
-                            "[1.0,2.0,3.0,4.0,5.0,6.0]\n",
-                    "SELECT array_agg(transpose(arr)) agg FROM tab",
+                            "[10.0,30.0,50.0,70.0]\n",
+                    "SELECT array_agg(transpose(m)[1]) agg FROM tab",
                     null,
                     false,
                     true
