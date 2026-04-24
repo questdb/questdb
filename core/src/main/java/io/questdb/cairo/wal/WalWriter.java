@@ -767,17 +767,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         try {
             lastSegmentTxn = events.appendSql(op.getCmdType(), op.getSqlText(), op.getSqlExecutionContext());
-            // Non-structural ALTERs that change metadata flags consumed during
-            // rowAppend (NOT NULL, parquet encoding) must update the WalWriter's
-            // local metadata immediately. Otherwise this writer keeps using the
-            // pre-ALTER metadata for new rows until reload, even though the
-            // WAL apply step on the receiver side will use the post-ALTER flag.
-            if (op instanceof AlterOperation) {
-                short cmd = ((AlterOperation) op).getCommand();
-                if (cmd == AlterOperation.SET_COLUMN_NOT_NULL || cmd == AlterOperation.DROP_COLUMN_NOT_NULL) {
-                    ((AlterOperation) op).apply(metaWriterSvc, true);
-                }
-            }
             return getSequencerTxn();
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
@@ -2259,6 +2248,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             structureVersion++;
         }
 
+        @Override
+        public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+            validateExistingColumnName(columnName, "cannot set NOT NULL");
+            structureVersion++;
+        }
+
         public void startAlterValidation() {
             structureVersion = getColumnStructureVersion();
         }
@@ -2616,15 +2611,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         @Override
         public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
-            int columnIndex = metadata.getColumnIndexQuiet(columnName);
-            if (columnIndex < 0) {
-                throw CairoException.nonCritical().put("column does not exist [column=").put(columnName).put(']');
-            }
-            // Refresh the WalWriter's local metadata so subsequent rowAppend
-            // uses the new flag. The persistent meta update happens later when
-            // ApplyWal2TableJob materializes the ALTER through TableWriter; both
-            // paths must agree on the flag value.
-            metadata.getColumnMetadata(columnIndex).setNotNullFlag(isNotNull);
+            // Route through WalWriterMetadata so the local structure version bumps
+            // alongside the flag. Structural ALTER replay relies on the version
+            // delta to confirm each change landed.
+            metadata.setColumnNotNull(columnName, isNotNull);
         }
     }
 

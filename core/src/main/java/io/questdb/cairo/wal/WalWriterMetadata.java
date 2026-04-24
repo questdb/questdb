@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -242,6 +243,16 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {
         TableUtils.renameColumnInMetadata(columnName, newName, columnNameIndexMap, columnMetadata);
+        structureVersion++;
+    }
+
+    public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.nonCritical().put("column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+        columnMetadata.getQuick(columnIndex).setNotNullFlag(isNotNull);
         structureVersion++;
     }
 

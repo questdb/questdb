@@ -131,6 +131,11 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
+    public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        metadata.setColumnNotNull(columnName, isNotNull);
+    }
+
+    @Override
     public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
         metadata.renameTable(toTableName);
         tableToken = metadata.getTableToken();

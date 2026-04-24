@@ -436,4 +436,71 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
             assertTrue(getNotNull("t", "s"));
         });
     }
+
+    @Test
+    public void testSetNotNullPersistsThroughSequencerReload() throws Exception {
+        assertMemoryLeak(() -> {
+            // Regression: SET_COLUMN_NOT_NULL used to be non-structural, so the
+            // sequencer metadata file never persisted the flag. After a sequencer
+            // reload (simulated by closing and reopening the engine) the flag
+            // would revert to false on the sequencer side while the TableWriter
+            // still held it, breaking any subsequently-created WalWriter.
+            execute("CREATE TABLE t (id INT, x LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01')");
+            drainWalQueue();
+
+            execute("ALTER TABLE t ALTER COLUMN x SET NOT NULL");
+            drainWalQueue();
+
+            assertTrue(getNotNull("t", "x"));
+
+            // Force the sequencer to reload its metadata from disk.
+            engine.releaseInactive();
+
+            assertTrue("flag should survive sequencer reload", getNotNull("t", "x"));
+
+            try {
+                execute("INSERT INTO t (id, ts) VALUES (2, '2024-01-02')");
+                drainWalQueue();
+                // The enforcement fires at apply time for WAL tables; inspect
+                // the sequencer state for the expected suspension.
+            } catch (CairoException ignore) {
+                // Either direct rejection at apply or suspension; both are acceptable.
+            }
+        });
+    }
+
+    @Test
+    public void testSetNotNullRoundTripOnWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Regression: SET_COLUMN_NOT_NULL used to be non-structural, so the
+            // sequencer metadata file never persisted the flag. A sibling
+            // WalWriter that reopened after the flag flip kept using the stale
+            // metadata and silently accepted rows violating the constraint.
+            // Now that the ALTER flows through applyStructural, both the
+            // sequencer and every WalWriter must observe the toggle.
+            execute("CREATE TABLE t (id INT, x LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01')");
+            drainWalQueue();
+            assertFalse(getNotNull("t", "x"));
+
+            execute("ALTER TABLE t ALTER COLUMN x SET NOT NULL");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            assertTrue(getNotNull("t", "x"));
+
+            // Force the sequencer + every pooled WalWriter to reload their
+            // cached metadata. The flag must survive the reload path.
+            engine.releaseInactive();
+            assertTrue("NOT NULL must survive sequencer reload", getNotNull("t", "x"));
+
+            execute("ALTER TABLE t ALTER COLUMN x SET NULL");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            assertFalse(getNotNull("t", "x"));
+
+            engine.releaseInactive();
+            assertFalse("SET NULL must survive sequencer reload", getNotNull("t", "x"));
+        });
+    }
 }

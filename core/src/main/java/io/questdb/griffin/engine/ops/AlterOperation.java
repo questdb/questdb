@@ -289,7 +289,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public boolean isStructural() {
         return switch (command) {
             case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, SET_DEDUP_DISABLE, SET_DEDUP_ENABLE,
-                 CHANGE_COLUMN_TYPE -> true;
+                 CHANGE_COLUMN_TYPE, SET_COLUMN_NOT_NULL, DROP_COLUMN_NOT_NULL -> true;
             default -> false;
         };
     }

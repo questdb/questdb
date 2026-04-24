@@ -2861,7 +2861,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
         columnMetadata.setNotNullFlag(isNotNull);
-        writeMetadataToDisk();
+        // SET/DROP NOT NULL is a structural change: the sequencer increments
+        // structureVersion on every toggle so concurrent WalWriters pick up
+        // the metadata refresh. The TableWriter must match by bumping
+        // columnStructureVersion alongside metadataVersion; otherwise the
+        // WAL apply loop rejects the change with
+        // "unexpected new WAL structure version".
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMetaStructureVersion();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
     }
 
     @Override

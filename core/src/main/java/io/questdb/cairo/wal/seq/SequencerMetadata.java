@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
@@ -249,6 +250,16 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     public void removeColumn(CharSequence columnName) {
         removeColumnFromMetadata(columnName, columnNameIndexMap, columnMetadata);
+        structureVersion.incrementAndGet();
+    }
+
+    public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.nonCritical().put("column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+        columnMetadata.getQuick(columnIndex).setNotNullFlag(isNotNull);
         structureVersion.incrementAndGet();
     }
 
