@@ -4097,6 +4097,54 @@ public class SqlOptimiser implements Mutable {
         return 0;
     }
 
+    // Walks the AST of a SELECT column and returns the position of the first
+    // window function that is NOT wrapped inside an aggregate function.
+    // Returns -1 if no such window function exists.
+    //
+    // Window functions inside aggregates (e.g. max(avg(x) OVER (...))) are
+    // handled by the inner window model propagation pipeline and must not be
+    // flagged here. Window functions outside aggregates mixed with aggregates
+    // or GROUP BY (e.g. avg(x) - avg(x) OVER ()) have no valid execution plan
+    // and must be rejected by the caller.
+    private int findWindowFunctionOutsideAggregatePos(ExpressionNode node) {
+        sqlNodeStack.clear();
+        final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
+        while (node != null) {
+            if (node.windowExpression != null) {
+                return node.position;
+            }
+            // Skip subtrees rooted at an aggregate function.
+            // An aggregate never has windowExpression set (checkForChildAggregates
+            // enforces this invariant), so the order of checks is safe.
+            if (node.type == FUNCTION && cache.isGroupBy(node.token)) {
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+                continue;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                if (node.lhs != null) {
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                // Variadic nodes (e.g. CASE expressions) store children in args.
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+            }
+        }
+        return -1;
+    }
+
     private void fixTimestampAndCollectMissingTokens(
             ExpressionNode node,
             CharSequence timestampColumn,
@@ -9320,6 +9368,23 @@ public class SqlOptimiser implements Mutable {
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
+            // Detect window functions mixed with aggregation that have no valid plan.
+            // A window function nested inside an aggregate (e.g. max(avg(x) OVER ())) is
+            // lowered into an inner window model and handled by the rewrite pipeline.
+            // A window function sitting outside any aggregate alongside a GROUP BY or
+            // a sibling aggregate (e.g. avg(x) - avg(x) OVER ()) has no such plan and
+            // previously bypassed the top-level REWRITE_STATUS check, silently producing
+            // wrong results. Walk the AST, skipping aggregate subtrees, and reject the
+            // query when such a window function appears.
+            //
+            // Skip top-level window columns: they are already caught below by the
+            // REWRITE_STATUS_USE_WINDOW_MODEL + REWRITE_STATUS_USE_GROUP_BY_MODEL check.
+            if ((explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) && !qc.isWindowExpression()) {
+                int windowFnPos = findWindowFunctionOutsideAggregatePos(qc.getAst());
+                if (windowFnPos >= 0) {
+                    throw SqlException.$(windowFnPos, "Window function is not allowed in context of aggregation. Use sub-query.");
+                }
+            }
             IQueryModel translatingModel0 = isWindowJoin ? windowJoinModel : (isHorizonJoin ? horizonJoinModel : translatingModel);
             switch (qc.getAst().type) {
                 case LITERAL:

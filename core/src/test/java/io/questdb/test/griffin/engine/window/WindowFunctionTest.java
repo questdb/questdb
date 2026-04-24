@@ -9599,6 +9599,63 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedWindowFunctionInGroupByContextFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x DOUBLE, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 'A', 1000000), (2, 'A', 2000000), (3, 'B', 3000000)");
+
+            // Window function nested inside arithmetic expression combined with GROUP BY
+            assertExceptionNoLeakCheck(
+                    "SELECT category, avg(x), (avg(x) - avg(x) OVER ()) AS diff FROM t GROUP BY category",
+                    35,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Deeper nesting
+            assertExceptionNoLeakCheck(
+                    "SELECT category, 1 + (2 + avg(x) OVER ()) FROM t GROUP BY category",
+                    26,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // CASE expression (paramCount >= 3 branch)
+            assertExceptionNoLeakCheck(
+                    "SELECT category, CASE WHEN avg(x) > 0 THEN avg(x) OVER () END FROM t GROUP BY category",
+                    43,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Single-argument function wrapping a window function (paramCount == 1 branch)
+            assertExceptionNoLeakCheck(
+                    "SELECT category, abs(avg(x) OVER ()) FROM t GROUP BY category",
+                    21,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Implicit GROUP BY: aggregate + nested window function without GROUP BY clause
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) + avg(x) OVER () FROM t",
+                    16,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Nested window function WITHOUT GROUP BY should still work
+            assertQueryNoLeakCheck(
+                    """
+                            diff
+                            -1.0
+                            0.0
+                            1.0
+                            """,
+                    "SELECT (x - avg(x) OVER ()) AS diff FROM t",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNestedWindowFunctionWithColumnAliasReference() throws Exception {
         // Test nested window function where inner function references an output column alias.
         // SELECT x as x0, sum(sum(x0) OVER ()) OVER () FROM x
