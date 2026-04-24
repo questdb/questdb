@@ -436,7 +436,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
                     \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, indexType=NONE, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
-                    \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, indexType=BITMAP, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
+                    \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, indexType=POSTING, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
         });
