@@ -595,6 +595,71 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueIntCastsToDecimalAggregate() throws Exception {
+        // IntFunction has no typed DECIMAL accessor, so FillRange would crash at runtime with
+        // UnsupportedOperationException. The compiler wraps the fill value in an INT -> DECIMAL
+        // implicit cast so it reads correctly at runtime.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_dec_i (d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_dec_i VALUES (1.5::DECIMAL(10,2), 0), (2.5::DECIMAL(10,2), 300_000_000)");
+            execute("CREATE TABLE t_fv_dec_i_out AS (SELECT ts, avg(d) AS avg FROM t_fv_dec_i SAMPLE BY 1m FILL(0))");
+        });
+    }
+
+    @Test
+    public void testFillValueIntWidensToLongAggregate() throws Exception {
+        // Sanity check: INT -> LONG is a built-in widening cast, no wrapper needed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_long (n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_long VALUES (1, 0), (2, 300_000_000)");
+            execute("CREATE TABLE t_fv_long_out AS (SELECT ts, sum(n) AS s FROM t_fv_long SAMPLE BY 1m FILL(0))");
+        });
+    }
+
+    @Test
+    public void testFillValueRejectedForArrayAggregate() throws Exception {
+        // first(array) returns DOUBLE[]; no INT -> ARRAY implicit cast exists.
+        assertException(
+                "SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForStringAggregate() throws Exception {
+        // first(string) returns STRING; no INT -> STRING implicit cast exists.
+        assertException(
+                "SELECT ts, first(s) FROM t_fv_str SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_str (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForUuidAggregate() throws Exception {
+        // first(uuid) returns UUID; no INT -> UUID implicit cast exists.
+        assertException(
+                "SELECT ts, first(u) FROM t_fv_uuid SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_uuid (u UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                53,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueStringCastsToDecimalAggregate() throws Exception {
+        // STRING -> DECIMAL implicit cast exists via CastStrToDecimalFunctionFactory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_dec_s (d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_dec_s VALUES (1.5::DECIMAL(10,2), 0), (2.5::DECIMAL(10,2), 300_000_000)");
+            execute("CREATE TABLE t_fv_dec_s_out AS (SELECT ts, avg(d) AS avg FROM t_fv_dec_s SAMPLE BY 1m FILL('1.5'))");
+        });
+    }
+
+    @Test
     public void testFillValueException() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table telem (created timestamp, event_type int, table_id int, latency double) timestamp(created) partition by DAY");

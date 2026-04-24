@@ -3302,8 +3302,46 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
-            int timestampType = groupByFactory.getMetadata().getColumnType(timestampIndex);
+            final RecordMetadata baseMeta = groupByFactory.getMetadata();
+            int timestampIndex = baseMeta.getColumnIndexQuiet(alias);
+            int timestampType = baseMeta.getColumnType(timestampIndex);
+
+            // FillRangeRecord.getXxx(col) reads fillValues[col] through the target column's
+            // typed accessor. Constant functions from bare literals (IntFunction, DoubleFunction,
+            // ...) only implement a narrow set of accessors; e.g. IntFunction.getDecimal64()
+            // throws UnsupportedOperationException at runtime. Validate each fill value against
+            // the target column type here so we fail fast with a typed SqlException and, when
+            // the types are implicitly castable, wrap the fill value in a cast so it reads
+            // correctly at runtime. initValueFuncs() at cursor start inserts a NullConstant at
+            // timestampIndex, so fillValues[i] maps to column i for i < timestampIndex and to
+            // column i+1 for i >= timestampIndex. Walk the list in reverse so the indexing
+            // remains correct if we wrap an element.
+            for (int i = fillValues.size() - 1; i >= 0; i--) {
+                final int targetColumn = i < timestampIndex ? i : i + 1;
+                if (targetColumn >= baseMeta.getColumnCount()) {
+                    // Trailing fill values beyond the projection are validated by the existing
+                    // "not enough fill values" logic at cursor start.
+                    continue;
+                }
+                final Function fillValueFunc = fillValues.getQuick(i);
+                if (fillValueFunc.isNullConstant()) {
+                    continue;
+                }
+                final int targetType = baseMeta.getColumnType(targetColumn);
+                final int fromType = fillValueFunc.getType();
+                if (fromType == targetType || ColumnType.isBuiltInWideningCast(fromType, targetType)) {
+                    continue;
+                }
+                final int fillPos = fillValuesExprs.getQuick(i).position;
+                final Function cast = functionParser.createImplicitCast(fillPos, fillValueFunc, targetType);
+                if (cast == null) {
+                    throw SqlException.$(fillPos, "support for VALUE fill is not yet implemented [column=")
+                            .put(baseMeta.getColumnName(targetColumn))
+                            .put(", type=").put(ColumnType.nameOf(targetType))
+                            .put(']');
+                }
+                fillValues.setQuick(i, cast);
+            }
             TimestampDriver driver = getTimestampDriver(timestampType);
             fillFromFunc = driver.getTimestampConstantNull();
             fillToFunc = driver.getTimestampConstantNull();
