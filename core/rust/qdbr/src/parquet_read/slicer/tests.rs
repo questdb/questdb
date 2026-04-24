@@ -402,6 +402,29 @@ fn test_rle_dictionary_slicer_skip_repeated_values() {
 }
 
 #[test]
+fn test_rle_dictionary_slicer_zero_values_positive_bit_width() {
+    // Regression: the writer can emit ``[bits_per_key, 0x01]`` for a
+    // data page with zero non-null values but a non-empty global
+    // dictionary (``bits_per_key > 0``). ``try_new`` must not surface
+    // an "Unexpected end of rle iterator" error for this valid
+    // payload -- eager decoding would do so because the hybrid-RLE
+    // stream returns ``None`` after the bitpacked-zero-groups header.
+    // Found on QuestDB-written ClickBench hits.parquet for mostly-null
+    // SYMBOL columns split across multiple data pages.
+    let dict = TestDictDecoder::new(vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+    let buffer = encode_rle_data(&[], 6);
+    assert_eq!(
+        buffer,
+        vec![6, 0x01],
+        "encoder emits bits_per_key byte + bitpacked-zero-groups header",
+    );
+
+    // Must succeed without eager decoding.
+    let _ = RleDictionarySlicer::try_new(&buffer, dict, 0, 0)
+        .expect("try_new must not fail on a valid zero-values stream");
+}
+
+#[test]
 fn test_rle_dictionary_slicer_zero_bit_width() {
     let dict = TestDictDecoder::new(vec![b"only_value".to_vec()]);
     let buffer: Vec<u8> = vec![0];

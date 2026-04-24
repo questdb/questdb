@@ -287,7 +287,8 @@ where
         if num_bits > 0 {
             buffer = &buffer[1..];
             let decoder = Decoder::new(buffer, num_bits as usize);
-            let mut res = Self {
+            // We musn't eagerly decode here, a page may have zero non-null values.
+            Ok(Self {
                 dict,
                 inner: Slicer::new(Some(decoder), RleIterator::Rle(RepeatN::new(0, 0))),
                 _phantom: std::marker::PhantomData,
@@ -295,9 +296,7 @@ where
                 buffers_offset: buffers.data_vec.len() / std::mem::size_of::<U>(),
                 buffers,
                 null_value,
-            };
-            res.decode()?;
-            Ok(res)
+            })
         } else {
             Ok(Self {
                 dict,
@@ -407,6 +406,33 @@ mod tests {
             decoder.push().unwrap();
         }
         assert_eq!(read_i32_results(&buffers), vec![100, 200, 300, 200, 100]);
+    }
+
+    #[test]
+    fn test_rle_dict_decoder_zero_values_positive_bit_width() {
+        // Regression: the writer can emit `[bits_per_key, 0x01]` for a
+        // data page with zero non-null values but a non-empty global
+        // dictionary (bits_per_key > 0). `try_new` must not surface
+        // an "Unexpected end of rle iterator" error for this valid
+        // payload -- eager decoding would do so because the hybrid-RLE
+        // stream returns None after the bitpacked-zero-groups header.
+        // Found on QuestDB-written ClickBench hits.parquet for mostly-null
+        // SYMBOL columns split across multiple data pages.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+        let dict = TestPrimitiveDictDecoder::new(vec![10, 20, 30]);
+        let buffer = encode_rle_data(&[], 6);
+        assert_eq!(buffer, vec![6, 0x01]);
+
+        let mut decoder =
+            RleDictionaryDecoder::try_new(&buffer, dict, 0, I32_NULL, &mut buffers)
+                .expect("try_new must not fail on a valid zero-values stream");
+        // Caller only feeds nulls for this page; push_nulls must not touch
+        // the RLE stream.
+        decoder.reserve(3).unwrap();
+        decoder.push_nulls(3).unwrap();
+        assert_eq!(read_i32_results(&buffers), vec![I32_NULL, I32_NULL, I32_NULL]);
     }
 
     #[test]

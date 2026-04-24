@@ -61,16 +61,15 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
         if num_bits > 0 {
             buffer = &buffer[1..];
             let hybrid_decoder = Decoder::new(buffer, num_bits as usize);
-            let mut res = Self {
+            // We musn't eagerly decode here, a page may have zero non-null values.
+            Ok(Self {
                 buffers,
                 dict_aux,
                 null_entry,
                 dict_len,
                 decoder: Some(hybrid_decoder),
                 data: RleIterator::Rle(RepeatN::new(0, 0)),
-            };
-            res.decode_next_run()?;
-            Ok(res)
+            })
         } else {
             // Zero bit width: single dict entry, all indices are 0.
             // We don't know row_count here, but we use usize::MAX as a
@@ -494,6 +493,39 @@ mod tests {
     const NULL_HEADER: u64 = 4;
 
     // --- Basic push ---
+
+    #[test]
+    fn test_zero_values_positive_bit_width() {
+        // Regression: the writer can emit `[bits_per_key, 0x01]` for a
+        // data page with zero non-null values but a non-empty global
+        // dictionary (bits_per_key > 0). `try_new` must not surface
+        // an "Unexpected end of rle iterator" error for this valid
+        // payload -- eager decoding would do so because the hybrid-RLE
+        // stream returns None after the bitpacked-zero-groups header.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+
+        let dict_strings: &[&[u8]] = &[b"aaa", b"bbb", b"ccc"];
+        let dict_buf = build_dict_page_buffer(dict_strings);
+        let dict_page = make_dict_page(&dict_buf, dict_strings.len());
+
+        let encoded = encode_rle_data(&[], 6);
+        assert_eq!(encoded, vec![6, 0x01]);
+
+        let mut decoder =
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true)
+                .expect("try_new must not fail on a valid zero-values stream");
+
+        // Caller only feeds nulls for this page; push_nulls must not touch
+        // the RLE stream.
+        decoder.reserve(3).unwrap();
+        decoder.push_nulls(3).unwrap();
+        assert_eq!(
+            extract_headers(&read_aux_entries(&buffers)),
+            vec![NULL_HEADER, NULL_HEADER, NULL_HEADER]
+        );
+    }
 
     #[test]
     fn test_push_single_values() {
