@@ -105,8 +105,6 @@ public class SampleByFillPrevPathBenchmark {
     private static final int POSITIVE_CASE_STEP_MICROS = 6_000;
     private static final int POSITIVE_CASE_UNIQUE_KEYS = 1_000;
     private static final String START_TS = "2024-01-01T00:00:00.000000Z";
-    private static final int WORKER_COUNT_DEFAULT = 4;
-    private static final String WORKER_COUNT_PROP = "sample.by.fill.workers";
     // Coprime to WORST_CASE_UNIQUE_KEYS so keys scatter across buckets without
     // structured alignment.
     private static final int WORST_CASE_KEY_MULTIPLIER = 7_919;
@@ -118,11 +116,14 @@ public class SampleByFillPrevPathBenchmark {
     @Param({"LEGACY", "FAST_PATH"})
     public String path;
 
-    @Param({"100000"})
+    @Param({"10000", "100000", "5000000"})
     public int rowCount;
 
     @Param({"WORST_CASE", "POSITIVE_CASE"})
     public String scenario;
+
+    @Param({"1", "4", "10"})
+    public int workers;
 
     private SqlCompilerImpl compiler;
     private SqlExecutionContext ctx;
@@ -241,18 +242,7 @@ public class SampleByFillPrevPathBenchmark {
     }
 
     private int resolveWorkerCount() {
-        if ("WORST_CASE".equals(scenario)) {
-            return 1;
-        }
-        final String configured = System.getProperty(WORKER_COUNT_PROP);
-        if (configured != null) {
-            final int parsed = Integer.parseInt(configured);
-            if (parsed < 1) {
-                throw new IllegalArgumentException(WORKER_COUNT_PROP + " must be >= 1, got " + parsed);
-            }
-            return parsed;
-        }
-        return WORKER_COUNT_DEFAULT;
+        return workers;
     }
 
     private void seedTable() throws SqlException {
