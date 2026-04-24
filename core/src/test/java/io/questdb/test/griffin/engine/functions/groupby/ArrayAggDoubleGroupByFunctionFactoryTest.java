@@ -52,6 +52,35 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testCompactionSentinelSkipPath() throws Exception {
+        // The getArray() compaction step writes -1 into the capacity slot so subsequent
+        // calls on the same group skip re-compaction. Project the aggregate alongside a
+        // derivation so the outer expression reads it more than once on the same group,
+        // forcing the second call to traverse the already-compacted buffer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', 1.0),
+                    ('a', 2.0),
+                    ('a', 3.0),
+                    ('b', 10.0),
+                    ('b', 20.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\tarr\tcnt\tsum\n" +
+                            "a\t[1.0,2.0,3.0]\t3\t6.0\n" +
+                            "b\t[10.0,20.0]\t2\t30.0\n",
+                    "SELECT grp, arr, array_count(arr) cnt, array_sum(arr) sum " +
+                            "FROM (SELECT grp, array_agg(val) arr FROM tab) ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testConstantInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (x INT)");
@@ -477,6 +506,31 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     "SELECT array_agg(val) FROM tab",
                     0,
                     "array_agg: array size exceeds configured maximum [maxArrayElementCount=5]"
+            );
+        });
+    }
+
+    @Test
+    public void testMergeTimeCardinalityExceeded() throws Exception {
+        // Feed enough rows to trigger parallel execution so that per-worker counts stay
+        // below the limit while the merged count crosses it, exercising the capacity
+        // check inside merge(). Sequential execution still hits the identical check in
+        // computeNext.
+        setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 9_999);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+            for (int i = 0; i < 10_000; i++) {
+                if (i > 0) {
+                    sb.append(",\n");
+                }
+                sb.append("(").append(i).append(".0)");
+            }
+            execute(sb.toString());
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(val) FROM tab",
+                    0,
+                    "array_agg: array size exceeds configured maximum [maxArrayElementCount=9999]"
             );
         });
     }

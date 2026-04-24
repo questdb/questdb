@@ -51,6 +51,34 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testCompactionSentinelSkipPath() throws Exception {
+        // The getArray() compaction step writes -1 into the capacity slot so subsequent
+        // calls on the same group skip re-compaction. Project the aggregate alongside a
+        // derivation so the outer expression reads it more than once on the same group,
+        // forcing the second call to traverse the already-compacted buffer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', ARRAY[1.0, 2.0]),
+                    ('a', ARRAY[3.0, 4.0, 5.0]),
+                    ('b', ARRAY[10.0]),
+                    ('b', ARRAY[20.0, 30.0])
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\tagg\tcnt\tsum\n" +
+                            "a\t[1.0,2.0,3.0,4.0,5.0]\t5\t15.0\n" +
+                            "b\t[10.0,20.0,30.0]\t3\t60.0\n",
+                    "SELECT grp, agg, array_count(agg) cnt, array_sum(agg) sum " +
+                            "FROM (SELECT grp, array_agg(arr) agg FROM tab) ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testConcatenation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");
@@ -250,6 +278,79 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     "SELECT array_agg(arr) FROM tab",
                     0,
                     "array_agg: array size exceeds configured maximum [maxArrayElementCount=5]"
+            );
+        });
+    }
+
+    @Test
+    public void testMergeTimeCardinalityExceeded() throws Exception {
+        // Feed enough single-element arrays to trigger parallel execution so that
+        // per-worker counts stay below the limit while the merged count crosses it.
+        // Sequential execution still hits the identical check in computeNext.
+        setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 9_999);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+            for (int i = 0; i < 10_000; i++) {
+                if (i > 0) {
+                    sb.append(",\n");
+                }
+                sb.append("(ARRAY[").append(i).append(".0])");
+            }
+            execute(sb.toString());
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(arr) FROM tab",
+                    0,
+                    "array_agg: array size exceeds configured maximum [maxArrayElementCount=9999]"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiDim2DInputFlattened() throws Exception {
+        // The array_agg(D[]) signature matches any-dimensional DOUBLE array input because
+        // the factory checks only the element type, not dimensionality. A vanilla 2D input
+        // silently flattens via appendPlainDoubleValue because the output type is hardcoded
+        // to 1D. This test pins down the observable behavior; changing it to reject
+        // multi-dim inputs (cleaner) is a deliberate decision that must update this test.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[][])");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+                    """);
+            assertQueryNoLeakCheck(
+                    "agg\n" +
+                            "[1.0,2.0,3.0,4.0,5.0,6.0]\n",
+                    "SELECT array_agg(arr) agg FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiDim2DTransposedInputIgnoresStrides() throws Exception {
+        // transpose() produces a non-vanilla 2D view. copyArrayElements falls into the
+        // else branch that iterates via arr.getDouble(flatIndex), which reads the
+        // underlying flat memory without applying strides. The result matches the
+        // non-transposed flattening, i.e. transpose semantics are silently dropped.
+        // Pinned here as current behavior; any fix (reject multi-dim, or loop via
+        // shape/strides like ArrayView.appendToMemRecursive) must update this test.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[][])");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+                    """);
+            assertQueryNoLeakCheck(
+                    "agg\n" +
+                            "[1.0,2.0,3.0,4.0,5.0,6.0]\n",
+                    "SELECT array_agg(transpose(arr)) agg FROM tab",
+                    null,
+                    false,
+                    true
             );
         });
     }
