@@ -191,7 +191,7 @@ encoding. The approach:
 - **Schema overhead**: computed once per table when `table()` is called
   (table name + column defs are known). Cached on the `QwpTableBuffer`.
 - **Per-row overhead**: fixed-width columns contribute a known constant;
-  variable-width columns (STRING, SYMBOL, arrays) contribute their actual
+  variable-width columns (VARCHAR, SYMBOL, arrays) contribute their actual
   byte count tracked by `QwpTableBuffer.ColumnBuffer`.
 - The sender checks `12 (header) + schemaOverhead + currentDataSize` against
   `maxDatagramSize` inside `at()`/`atNow()`, before committing the row.
