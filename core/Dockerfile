@@ -8,9 +8,12 @@ ENV GOSU_VERSION=1.19-go1.25.9
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 1) Base tools + Maven
+# `git` is required by buildnumber-maven-plugin (core/pom.xml) at build time
+# to embed the HEAD revision; keep it installed even though the sources now
+# come from the build context rather than a `git clone`.
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
-       curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven \
+       git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven \
     && rm -rf /var/lib/apt/lists/*
 
 # 2) Download GraalVM CE archive + SHA256, arch-aware
