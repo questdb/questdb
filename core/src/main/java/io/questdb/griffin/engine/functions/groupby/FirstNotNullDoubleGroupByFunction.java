@@ -88,8 +88,9 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
                 if (isArgNotNull || !Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
+                    final long existingRowId = Unsafe.getUnsafe().getLong(entryBase + rowIdOffset);
                     final double existingValue = Unsafe.getUnsafe().getDouble(entryBase + valueColumnOffset);
-                    if ((!isArgNotNull && Numbers.isNull(existingValue)) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && Numbers.isNull(existingValue))) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putDouble(entryBase + valueColumnOffset, value);
                     }
@@ -106,8 +107,9 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
                 if (isArgNotNull || !Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
+                    final long existingRowId = Unsafe.getUnsafe().getLong(entryBase + rowIdOffset);
                     final double existingValue = Unsafe.getUnsafe().getDouble(entryBase + valueColumnOffset);
-                    if ((!isArgNotNull && Numbers.isNull(existingValue)) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && Numbers.isNull(existingValue))) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putDouble(entryBase + valueColumnOffset, value);
                     }
@@ -120,7 +122,8 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double val = arg.getDouble(record);
         if (isArgNotNull || !Numbers.isNull(val)) {
-            if ((!isArgNotNull && Numbers.isNull(mapValue.getDouble(valueIndex + 1))) || rowId < mapValue.getLong(valueIndex)) {
+            long existingRowId = mapValue.getLong(valueIndex);
+            if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && Numbers.isNull(mapValue.getDouble(valueIndex + 1)))) {
                 mapValue.putLong(valueIndex, rowId);
                 mapValue.putDouble(valueIndex + 1, val);
             }

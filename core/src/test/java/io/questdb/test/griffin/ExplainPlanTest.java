@@ -5040,7 +5040,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select min(ts), max(ts), min(ts1), max(ts1) from x",
                 """
                         Async Group By workers: 1
-                          vectorized: true
+                          vectorized: false
                           values: [min(ts),max(ts),min(ts1),max(ts1)]
                           filter: null
                             PageFrame
@@ -9938,7 +9938,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 Async Filter workers: 1
                   filter: ts=cursor\s
                     Async Group By workers: 1
-                      vectorized: true
+                      vectorized: false
                       values: [min(ts)]
                       filter: null
                         PageFrame
@@ -9966,7 +9966,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 Async Filter workers: 1
                   filter: ts [thread-safe] > cursor\s
                     Async Group By workers: 1
-                      vectorized: true
+                      vectorized: false
                       values: [min(ts)]
                       filter: null
                         PageFrame
@@ -9994,7 +9994,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 Async Filter workers: 1
                   filter: ts [thread-safe] < cursor\s
                     Async Group By workers: 1
-                      vectorized: true
+                      vectorized: false
                       values: [max(ts)]
                       filter: null
                         PageFrame

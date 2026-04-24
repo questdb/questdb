@@ -232,7 +232,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "SELECT MIN(EventTime), MAX(EventTime) FROM hits;",
                         """
                                 Async Group By workers: 1
-                                  vectorized: true
+                                  vectorized: false
                                   values: [min(EventTime),max(EventTime)]
                                   filter: null
                                     PageFrame

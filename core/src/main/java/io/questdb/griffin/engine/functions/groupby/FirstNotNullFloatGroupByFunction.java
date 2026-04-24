@@ -88,8 +88,9 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
                 if (isArgNotNull || !Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
+                    final long existingRowId = Unsafe.getUnsafe().getLong(entryBase + rowIdOffset);
                     final float existingValue = Unsafe.getUnsafe().getFloat(entryBase + valueColumnOffset);
-                    if ((!isArgNotNull && Numbers.isNull(existingValue)) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && Numbers.isNull(existingValue))) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putFloat(entryBase + valueColumnOffset, value);
                     }
@@ -106,8 +107,9 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
                 if (isArgNotNull || !Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
+                    final long existingRowId = Unsafe.getUnsafe().getLong(entryBase + rowIdOffset);
                     final float existingValue = Unsafe.getUnsafe().getFloat(entryBase + valueColumnOffset);
-                    if ((!isArgNotNull && Numbers.isNull(existingValue)) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && Numbers.isNull(existingValue))) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putFloat(entryBase + valueColumnOffset, value);
                     }
@@ -120,7 +122,8 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         float val = arg.getFloat(record);
         if (isArgNotNull || !Numbers.isNull(val)) {
-            if ((!isArgNotNull && Numbers.isNull(mapValue.getFloat(valueIndex + 1))) || rowId < mapValue.getLong(valueIndex)) {
+            long existingRowId = mapValue.getLong(valueIndex);
+            if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && Numbers.isNull(mapValue.getFloat(valueIndex + 1)))) {
                 mapValue.putLong(valueIndex, rowId);
                 mapValue.putFloat(valueIndex + 1, val);
             }

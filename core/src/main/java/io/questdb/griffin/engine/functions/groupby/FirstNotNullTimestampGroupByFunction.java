@@ -86,8 +86,9 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
                 if (isArgNotNull || value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
+                    final long existingRowId = Unsafe.getUnsafe().getLong(entryBase + rowIdOffset);
                     final long existingValue = Unsafe.getUnsafe().getLong(entryBase + valueColumnOffset);
-                    if ((!isArgNotNull && existingValue == Numbers.LONG_NULL) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && existingValue == Numbers.LONG_NULL)) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putLong(entryBase + valueColumnOffset, value);
                     }
@@ -104,8 +105,9 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
                 if (isArgNotNull || value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
+                    final long existingRowId = Unsafe.getUnsafe().getLong(entryBase + rowIdOffset);
                     final long existingValue = Unsafe.getUnsafe().getLong(entryBase + valueColumnOffset);
-                    if ((!isArgNotNull && existingValue == Numbers.LONG_NULL) || rowId < Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                    if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && existingValue == Numbers.LONG_NULL)) {
                         Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.getUnsafe().putLong(entryBase + valueColumnOffset, value);
                     }
