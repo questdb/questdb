@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectSymbolMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectString;
 
 /**
@@ -47,6 +48,8 @@ import io.questdb.std.str.DirectString;
 public class LiveViewRecordCursor implements RecordCursor {
     private final LiveViewRecord record = new LiveViewRecord(null);
     private final LiveViewRecord recordB = new LiveViewRecord(null);
+    // Cached instances read pinnedBuffer on each access, so they stay valid across open/close cycles.
+    private final ObjList<LiveViewSymbolTable> symbolTableCache = new ObjList<>();
     private final LiveViewInstance viewInstance;
     private long currentRow;
     private boolean isOpen;
@@ -88,7 +91,15 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return newSymbolTable(columnIndex);
+        LiveViewSymbolTable st = symbolTableCache.getQuiet(columnIndex);
+        if (st == null) {
+            if (ColumnType.tagOf(pinnedBuffer.getColumnType(columnIndex)) != ColumnType.SYMBOL) {
+                return null;
+            }
+            st = new LiveViewSymbolTable(columnIndex);
+            symbolTableCache.extendAndSet(columnIndex, st);
+        }
+        return st;
     }
 
     @Override
@@ -129,29 +140,13 @@ public class LiveViewRecordCursor implements RecordCursor {
         }
     }
 
-    // TODO(live-view): zero-GC — allocates a fresh anonymous SymbolTable on every call. Parallel queries may call this
-    //  per query per SYMBOL column. Promote to a reusable named inner class held in an ObjList<LiveViewSymbolTable>
-    //  sized to columnCount (mirroring PageFrameRecordCursorFactory).
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        int type = pinnedBuffer.getColumnType(columnIndex);
-        if (ColumnType.tagOf(type) != ColumnType.SYMBOL) {
+        if (ColumnType.tagOf(pinnedBuffer.getColumnType(columnIndex)) != ColumnType.SYMBOL) {
             return null;
         }
-        DirectSymbolMap st = pinnedBuffer.getSymbolTable(columnIndex);
-        DirectString viewA = new DirectString();
-        DirectString viewB = new DirectString();
-        return new SymbolTable() {
-            @Override
-            public CharSequence valueBOf(int key) {
-                return key >= 0 && st != null ? st.valueOf(key, viewB) : null;
-            }
-
-            @Override
-            public CharSequence valueOf(int key) {
-                return key >= 0 && st != null ? st.valueOf(key, viewA) : null;
-            }
-        };
+        // Parallel workers call this to get an isolated DirectString A/B pair, so a fresh instance is required.
+        return new LiveViewSymbolTable(columnIndex);
     }
 
     @Override
@@ -172,5 +167,27 @@ public class LiveViewRecordCursor implements RecordCursor {
     @Override
     public void toTop() {
         currentRow = 0;
+    }
+
+    private final class LiveViewSymbolTable implements SymbolTable {
+        private final int columnIndex;
+        private final DirectString viewA = new DirectString();
+        private final DirectString viewB = new DirectString();
+
+        LiveViewSymbolTable(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            DirectSymbolMap st = pinnedBuffer.getSymbolTable(columnIndex);
+            return key >= 0 && st != null ? st.valueOf(key, viewB) : null;
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            DirectSymbolMap st = pinnedBuffer.getSymbolTable(columnIndex);
+            return key >= 0 && st != null ? st.valueOf(key, viewA) : null;
+        }
     }
 }
