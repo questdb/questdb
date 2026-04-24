@@ -292,6 +292,10 @@ public class TableUpdateDetails implements Closeable {
         return tableToken;
     }
 
+    public TableWriterAPI getWriter() {
+        return writerAPI;
+    }
+
     public int getWriterThreadId() {
         return writerThreadId;
     }
@@ -447,10 +451,6 @@ public class TableUpdateDetails implements Closeable {
 
     int getTimestampIndex() {
         return timestampIndex;
-    }
-
-    TableWriterAPI getWriter() {
-        return writerAPI;
     }
 
     void releaseWriter(boolean commit) {

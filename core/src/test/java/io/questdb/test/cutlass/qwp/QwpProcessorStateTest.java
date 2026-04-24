@@ -784,7 +784,11 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                         1
                 );
                 Assert.assertNotNull(tud);
-                replaceWriterWithNoRowFakeReportingSeqTxn(tud, 42L);
+
+                // Append a real row so isFirstRow() returns false and commitAll
+                // actually advances the sequencer txn, invoking the consumer.
+                tud.getWriter().newRow(0L).append();
+                Assert.assertFalse(tud.isFirstRow());
 
                 ObjList<Utf8String> captured = new ObjList<>();
                 long[] capturedSeq = new long[]{Long.MIN_VALUE};
@@ -805,7 +809,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals("consumer must see dir name", dirName, captured.get(0).toString());
                 Assert.assertNotEquals("dir name and table name must differ for WAL tables",
                         tableName, dirName);
-                Assert.assertEquals(42L, capturedSeq[0]);
+                Assert.assertEquals(tud.getLastSeqTxn(), capturedSeq[0]);
+                Assert.assertTrue("seqTxn must have advanced", capturedSeq[0] > 0);
             }
         });
     }
@@ -962,24 +967,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                         1
                 );
                 Assert.assertNotNull(tud);
-                // Fresh writer reports zero uncommitted rows → isFirstRow() is true.
-                replaceWriterWithNoRowFakeReportingSeqTxn(tud, 99L);
-                Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
-                writerField.setAccessible(true);
-                TableWriterAPI w = (TableWriterAPI) writerField.get(tud);
-                Misc.free(w);
-                writerField.set(tud, Proxy.newProxyInstance(
-                        TableWriterAPI.class.getClassLoader(),
-                        new Class[]{TableWriterAPI.class},
-                        (proxy, method, args) -> switch (method.getName()) {
-                            case "getUncommittedRowCount" -> 0L;
-                            case "getLastSeqTxn" -> 99L;
-                            case "getWalId" -> 1;
-                            case "getSegmentId" -> 0;
-                            case "commit", "close", "rollback" -> null;
-                            default -> null;
-                        }
-                ));
+                // Real writer, no rows ingested → getUncommittedRowCount() == 0 → isFirstRow() is true.
+                Assert.assertTrue(tud.isFirstRow());
 
                 boolean[] invoked = new boolean[]{false};
                 try {
@@ -2025,24 +2014,6 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         FakeConsumerTudCache fake = new FakeConsumerTudCache(engine, lineConfig);
         f.set(state, fake);
         return fake;
-    }
-
-    private static void replaceWriterWithNoRowFakeReportingSeqTxn(WalTableUpdateDetails tud, long seqTxn) throws Exception {
-        Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
-        writerField.setAccessible(true);
-        Misc.free((TableWriterAPI) writerField.get(tud));
-        writerField.set(tud, Proxy.newProxyInstance(
-                TableWriterAPI.class.getClassLoader(),
-                new Class[]{TableWriterAPI.class},
-                (proxy, method, args) -> switch (method.getName()) {
-                    case "getUncommittedRowCount" -> 1L;
-                    case "getLastSeqTxn" -> seqTxn;
-                    case "getWalId" -> 1;
-                    case "getSegmentId" -> 0;
-                    case "commit", "close", "rollback" -> null;
-                    default -> null;
-                }
-        ));
     }
 
     private static void addNativeData(QwpProcessorState state, byte[] data) {
