@@ -308,8 +308,7 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
 
     // Materialize views up front so we can walk them twice without re-running
     // the unsafe page_chunk_views iterator.
-    let views: Vec<PartitionChunkView<'a, T>> =
-        std::iter::once(first).chain(remaining).collect();
+    let views: Vec<PartitionChunkView<'a, T>> = std::iter::once(first).chain(remaining).collect();
 
     // Pass 1: build validity bitmap only (no data writes).
     for view in &views {
