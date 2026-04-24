@@ -1838,11 +1838,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                         ('2024-01-01T00:00:00.000000Z', 1.0, 2.0),
                         ('2024-01-01T02:00:00.000000Z', 3.0, 4.0)""");
             // Two aggregates, single FILL(PREV(a)). PREV(colX) is FUNCTION-typed
-            // and does not broadcast across aggregates, so the under-spec guard
-            // throws at the position of the `P` of PREV inside FILL(...).
+            // and does not broadcast across aggregates; codegen emits a targeted
+            // error at the position of the `P` of PREV inside FILL(...) rather
+            // than falling through to the generic count-mismatch message.
             String sql = "SELECT ts, sum(x) a, sum(y) b FROM t SAMPLE BY 1h FILL(PREV(a)) ALIGN TO CALENDAR";
             int prevLiteralPos = sql.indexOf("PREV(", sql.indexOf("FILL("));
-            assertExceptionNoLeakCheck(sql, prevLiteralPos, "not enough fill values");
+            assertExceptionNoLeakCheck(sql, prevLiteralPos,
+                    "FILL(PREV(a)) cannot be broadcast across aggregates");
         });
     }
 

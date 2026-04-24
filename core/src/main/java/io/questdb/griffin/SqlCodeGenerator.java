@@ -3505,6 +3505,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (!isPrevWithLiteralArg) {
                             throw SqlException.$(only.position, "PREV argument must be a single column name");
                         }
+                        // Well-formed PREV(colX) cannot broadcast across multiple
+                        // aggregates: the cross-column source is column-specific,
+                        // and per-aggregate type validation (DECIMAL precision,
+                        // GEOHASH width, ARRAY element type/dims, TIMESTAMP/INTERVAL
+                        // unit) would need to run per target independently. Emit a
+                        // targeted error instead of falling through to the generic
+                        // "not enough fill values" count-mismatch message.
+                        throw SqlException.$(only.position,
+                                "FILL(PREV(").put(only.rhs.token).put(")) cannot be broadcast across aggregates; ")
+                                .put("specify one fill value per aggregate");
                     }
                     final boolean isBareBroadcastable = only != null
                             && ((isPrevKeyword(only.token) && only.type == ExpressionNode.LITERAL)
