@@ -236,6 +236,111 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOnDurableAckSentPrunesCaughtUpTables() throws Exception {
+        // Regression: per-connection maps tableDirNames and lastDurableSeqTxns
+        // (plus pendingDurableDirNames / pendingDurableSeqTxns) must not grow
+        // one entry per unique table name for the connection's lifetime.
+        // When the durable watermark catches up to the committed seqTxn for a
+        // table, onDurableAckSent prunes ALL four maps for that table. A later
+        // commit to the same table name re-populates via recordCommittedTable;
+        // the drop-recreate check there treats an absent tableDirNames entry
+        // the same as first-sight, which is correct behaviour.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Commit 500 distinct rotating tables. Each one catches up
+                // immediately (durable watermark == committed seqTxn) so
+                // onDurableAckSent should prune each one and leave the maps
+                // empty. Without the fix, all 500 entries would accumulate.
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+                for (int i = 0; i < 500; i++) {
+                    String tableName = "t" + i;
+                    String dirName = tableName + "~1";
+                    long seqTxn = 10L + i;
+                    fake.queueCommit(new String[]{tableName}, new String[]{dirName}, new long[]{seqTxn});
+                    state.setHighestProcessedSequence(i);
+                    state.commit();
+                    registry.set(dirName, seqTxn);
+                    io.questdb.std.CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                    Assert.assertEquals(1, progress.size());
+                    state.onDurableAckSent();
+                }
+
+                Assert.assertEquals(
+                        "pendingDurableDirNames must be empty after all tables caught up",
+                        0, fieldSize(state, "pendingDurableDirNames")
+                );
+                Assert.assertEquals(
+                        "pendingDurableSeqTxns must be empty after all tables caught up",
+                        0, fieldSize(state, "pendingDurableSeqTxns")
+                );
+                Assert.assertEquals(
+                        "tableDirNames must be pruned alongside pending entries",
+                        0, fieldSize(state, "tableDirNames")
+                );
+                Assert.assertEquals(
+                        "lastDurableSeqTxns must be pruned alongside pending entries",
+                        0, fieldSize(state, "lastDurableSeqTxns")
+                );
+
+                // Sanity: a fresh commit to a previously-pruned table name
+                // still produces a durable ack for positive progress.
+                fake.queueCommit(new String[]{"t0"}, new String[]{"t0~1"}, new long[]{999L});
+                state.setHighestProcessedSequence(500);
+                state.commit();
+                registry.set("t0~1", 999L);
+                io.questdb.std.CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(999L, progress.get("t0"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testRecordCommittedTableSkipsDurableMapsWhenDisabled() throws Exception {
+        // Regression: connections that did not opt into durable-ack (no
+        // X-QWP-Request-Durable-Ack header) must not pay the tracking cost.
+        // recordCommittedTable used to populate tableDirNames on every commit
+        // regardless of durableAckEnabled, leaking one entry per unique
+        // table name for the connection's lifetime.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                // durableAckEnabled is false by default
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                for (int i = 0; i < 50; i++) {
+                    String tableName = "t" + i;
+                    String dirName = tableName + "~1";
+                    fake.queueCommit(new String[]{tableName}, new String[]{dirName}, new long[]{10L + i});
+                    state.setHighestProcessedSequence(i);
+                    state.commit();
+                }
+
+                Assert.assertEquals(0, fieldSize(state, "tableDirNames"));
+                Assert.assertEquals(0, fieldSize(state, "lastDurableSeqTxns"));
+                Assert.assertEquals(0, fieldSize(state, "pendingDurableDirNames"));
+                Assert.assertEquals(0, fieldSize(state, "pendingDurableSeqTxns"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testCollectDurableProgressDroppedTableThenRecreated() throws Exception {
         // Regression: when a table is dropped and re-created with the same name
         // on the same connection, lastDurableSeqTxns retains MAX_VALUE from the
@@ -1901,6 +2006,14 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.close();
             }
         });
+    }
+
+    private static int fieldSize(QwpProcessorState state, String fieldName) throws Exception {
+        Field f = QwpProcessorState.class.getDeclaredField(fieldName);
+        f.setAccessible(true);
+        Object map = f.get(state);
+        // Both CharSequenceLongHashMap and CharSequenceObjHashMap expose size().
+        return (int) map.getClass().getMethod("size").invoke(map);
     }
 
     private static FakeConsumerTudCache installFakeTudCache(

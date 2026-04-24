@@ -502,7 +502,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         if (state.hasPendingAck()) {
             trySendAck(context, state);
         }
-        if (state.isDurableAckEnabled()) {
+        if (state.isDurableAckEnabled() && state.isSendReady()) {
             trySendDurableAck(context, state);
         }
     }
@@ -639,12 +639,19 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void handlePing(HttpConnectionContext context, QwpProcessorState state, long payload, int length)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void handlePing(HttpConnectionContext context, QwpProcessorState state, long payload, int length) {
         // PING is a documented flush point for pending ACK/durable-ACK frames.
         // A client may send PING specifically to prod the server into emitting
         // acks for commits whose uploads have completed since the last message.
-        flushPendingAck(context, state);
+        try {
+            flushPendingAck(context, state);
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+            // Best effort — if the ACK/durable-ACK can't be sent, proceed
+            // without throwing so the caller doesn't abort ping handling.
+            // PeerIsSlowToReadException transitions into a resume state,
+            // so the isSendReady() check below skips the pong. The client
+            // may retry ping or the ACK will flush on the next drain.
+        }
 
         // Can only send pong when buffer is clear
         if (!state.isSendReady()) {

@@ -354,8 +354,13 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         for (int i = 0, n = keys.size(); i < n; i++) {
             CharSequence tableName = keys.getQuick(i);
             long durableSeqTxn = durableProgressSnapshot.get(tableName);
-            lastDurableSeqTxns.put(tableName, durableSeqTxn);
             if (durableSeqTxn >= pendingDurableSeqTxns.get(tableName)) {
+                // Watermark caught up — prune all per-table tracking so
+                // these maps don't grow one entry per unique table name
+                // for the connection's lifetime. A later commit to the
+                // same table re-populates via recordCommittedTable; the
+                // drop-recreate check there treats an absent entry the
+                // same as a first-sight and still works correctly.
                 int dirIdx = pendingDurableDirNames.keyIndex(tableName);
                 if (dirIdx < 0) {
                     pendingDurableDirNames.removeAt(dirIdx);
@@ -364,6 +369,19 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
                 if (seqIdx < 0) {
                     pendingDurableSeqTxns.removeAt(seqIdx);
                 }
+                int tdnIdx = tableDirNames.keyIndex(tableName);
+                if (tdnIdx < 0) {
+                    tableDirNames.removeAt(tdnIdx);
+                }
+                int ldsIdx = lastDurableSeqTxns.keyIndex(tableName);
+                if (ldsIdx < 0) {
+                    lastDurableSeqTxns.removeAt(ldsIdx);
+                }
+            } else {
+                // Pending still ahead of durable watermark — remember
+                // what we reported so the next collectDurableProgress
+                // only reports further advances.
+                lastDurableSeqTxns.put(tableName, durableSeqTxn);
             }
         }
     }
@@ -619,15 +637,15 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             return;
         }
         pendingAckSeqTxns.put(tableName, seqTxn);
-        String oldDirName = tableDirNames.get(tableName);
-        if (oldDirName != null && !oldDirName.equals(tableDirName)) {
-            // Table was dropped and re-created with a new dir name.
-            // Reset the durable watermark so the new incarnation's
-            // uploads are properly reported.
-            lastDurableSeqTxns.put(tableName, -1L);
-        }
-        tableDirNames.put(tableName, tableDirName);
         if (durableAckEnabled) {
+            String oldDirName = tableDirNames.get(tableName);
+            if (oldDirName != null && !oldDirName.equals(tableDirName)) {
+                // Table was dropped and re-created with a new dir name.
+                // Reset the durable watermark so the new incarnation's
+                // uploads are properly reported.
+                lastDurableSeqTxns.put(tableName, -1L);
+            }
+            tableDirNames.put(tableName, tableDirName);
             pendingDurableDirNames.put(tableName, tableDirName);
             pendingDurableSeqTxns.put(tableName, seqTxn);
         }
