@@ -44,9 +44,11 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 import java.nio.charset.StandardCharsets;
@@ -110,11 +112,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * @return the number of bytes written, or -1 if buffer too small
      */
     public static int writeBadRequestResponse(long buffer, int bufferSize, String reason) {
-        byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
-        String contentLength = String.valueOf(reasonBytes.length);
-        byte[] contentLengthBytes = contentLength.getBytes(StandardCharsets.US_ASCII);
-
-        int requiredSize = badRequestResponseSize(reasonBytes.length);
+        int reasonByteCount = Utf8s.utf8Bytes(reason);
+        int requiredSize = badRequestResponseSize(reasonByteCount);
 
         if (requiredSize > bufferSize) {
             return -1;
@@ -128,9 +127,11 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
 
         // Write content length
-        for (byte b : contentLengthBytes) {
-            Unsafe.getUnsafe().putByte(buffer + offset++, b);
-        }
+        Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+        sink.put(reasonByteCount);
+        int contentLengthSize = sink.size();
+        Utf8s.strCpy(sink, contentLengthSize, buffer + offset);
+        offset += contentLengthSize;
 
         // Write header end
         for (byte b : HTTP_HEADER_END) {
@@ -138,9 +139,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
 
         // Write body
-        for (byte b : reasonBytes) {
-            Unsafe.getUnsafe().putByte(buffer + offset++, b);
-        }
+        offset += Utf8s.strCpyUtf8(reason, buffer + offset, reasonByteCount);
 
         return offset;
     }
@@ -416,15 +415,15 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private static int badRequestResponseSize(String reason) {
-        return badRequestResponseSize(reason.getBytes(StandardCharsets.UTF_8).length);
-    }
-
     private static int badRequestResponseSize(int reasonByteCount) {
         return BAD_REQUEST_PREFIX.length
-                + Integer.toString(reasonByteCount).length()
+                + Numbers.getPrecision(reasonByteCount)
                 + HTTP_HEADER_END.length
                 + reasonByteCount;
+    }
+
+    private static int badRequestResponseSize(String reason) {
+        return badRequestResponseSize(Utf8s.utf8Bytes(reason));
     }
 
     private static HttpException responseDoesNotFitSendBuffer(long fd, CharSequence responseType, int bufferSize, int requiredSize) {
@@ -435,6 +434,71 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 .put(" does not fit send buffer [required=").put(requiredSize)
                 .put(", available=").put(bufferSize)
                 .put(']');
+    }
+
+    private static int writeCloseFrameHeaderAndCode(long bufferAddr, int bufferSize, int code, int reasonLen) {
+        int payloadLen = 2 + reasonLen;
+        int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
+        if (frameSize > bufferSize) {
+            return -1;
+        }
+
+        int headerLen = WebSocketFrameWriter.writeHeader(bufferAddr, true, WebSocketOpcode.CLOSE, payloadLen, false);
+        Unsafe.getUnsafe().putShort(bufferAddr + headerLen, Short.reverseBytes((short) code));
+        return headerLen + 2;
+    }
+
+    private static int writeFragmentedFrameCloseFrame(long bufferAddr, int bufferSize) {
+        final String reason = "fragmented WebSocket frames are not supported";
+        final int reasonLen = reason.length();
+        int reasonOffset = writeCloseFrameHeaderAndCode(
+                bufferAddr,
+                bufferSize,
+                WebSocketCloseCode.PROTOCOL_ERROR,
+                reasonLen
+        );
+        if (reasonOffset < 0) {
+            return -1;
+        }
+        Utf8s.strCpyAscii(reason, reasonLen, bufferAddr + reasonOffset);
+        return reasonOffset + reasonLen;
+    }
+
+    private static int writeFrameTooLargeCloseFrame(long bufferAddr, int bufferSize, long frameSize, int maxFrameSize) {
+        Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+        sink.putAscii("frame too large [received=")
+                .put(frameSize)
+                .putAscii(" bytes, max=")
+                .put(maxFrameSize)
+                .putAscii(" bytes]; decrease batch size");
+        int reasonLen = sink.size();
+        int reasonOffset = writeCloseFrameHeaderAndCode(
+                bufferAddr,
+                bufferSize,
+                WebSocketCloseCode.MESSAGE_TOO_BIG,
+                reasonLen
+        );
+        if (reasonOffset < 0) {
+            return -1;
+        }
+        Utf8s.strCpy(sink, reasonLen, bufferAddr + reasonOffset);
+        return reasonOffset + reasonLen;
+    }
+
+    private static int writeTextFrameCloseFrame(long bufferAddr, int bufferSize) {
+        final String reason = "text frames are not supported, QWP requires binary frames";
+        final int reasonLen = reason.length();
+        int reasonOffset = writeCloseFrameHeaderAndCode(
+                bufferAddr,
+                bufferSize,
+                WebSocketCloseCode.UNSUPPORTED_DATA,
+                reasonLen
+        );
+        if (reasonOffset < 0) {
+            return -1;
+        }
+        Utf8s.strCpyAscii(reason, reasonLen, bufferAddr + reasonOffset);
+        return reasonOffset + reasonLen;
     }
 
     private void drainPendingResponse(HttpConnectionContext context, QwpProcessorState state)
@@ -597,7 +661,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 responseCode = closeCode;
             }
 
-            int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, bufferSize, responseCode, null);
+            int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, bufferSize, responseCode);
             if (written > 0) {
                 rawSocket.send(written);
             }
@@ -706,18 +770,15 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                         // Payload declared in the frame header exceeds recv buffer capacity.
                         // Reject immediately instead of wasting bandwidth filling the buffer.
                         LOG.error().$("WebSocket frame too large [fd=").$(context.getFd())
+                                .$(", frameSize=").$(totalFrameSize)
                                 .$(", payloadLength=").$(frameParser.getPayloadLength())
-                                .$(", bufferSize=").$(recvBufferSize).I$();
+                                .$(", maxFrameSize=").$(recvBufferSize).I$();
                         if (state.isSendReady()) {
                             try {
                                 HttpRawSocket rawSocket = context.getRawResponseSocket();
                                 long bufferAddr = rawSocket.getBufferAddress();
                                 int bufferSize = rawSocket.getBufferSize();
-                                int written = WebSocketFrameWriter.writeCloseFrame(
-                                        bufferAddr, bufferSize,
-                                        WebSocketCloseCode.MESSAGE_TOO_BIG,
-                                        "frame payload exceeds maximum size"
-                                );
+                                int written = writeFrameTooLargeCloseFrame(bufferAddr, bufferSize, totalFrameSize, recvBufferSize);
                                 if (written > 0) {
                                     rawSocket.send(written);
                                 }
@@ -787,11 +848,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 HttpRawSocket rawSocket = context.getRawResponseSocket();
                 long bufferAddr = rawSocket.getBufferAddress();
                 int bufferSize = rawSocket.getBufferSize();
-                int written = WebSocketFrameWriter.writeCloseFrame(
-                        bufferAddr, bufferSize,
-                        WebSocketCloseCode.PROTOCOL_ERROR,
-                        "fragmented WebSocket frames are not supported"
-                );
+                int written = writeFragmentedFrameCloseFrame(bufferAddr, bufferSize);
                 if (written > 0) {
                     rawSocket.send(written);
                 }
@@ -814,11 +871,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 HttpRawSocket rawSocket = context.getRawResponseSocket();
                 long bufferAddr = rawSocket.getBufferAddress();
                 int bufferSize = rawSocket.getBufferSize();
-                int written = WebSocketFrameWriter.writeCloseFrame(
-                        bufferAddr, bufferSize,
-                        WebSocketCloseCode.UNSUPPORTED_DATA,
-                        "text frames are not supported, QWP requires binary frames"
-                );
+                int written = writeTextFrameCloseFrame(bufferAddr, bufferSize);
                 if (written > 0) {
                     rawSocket.send(written);
                 }

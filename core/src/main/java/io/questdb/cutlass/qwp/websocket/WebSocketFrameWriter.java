@@ -26,8 +26,6 @@ package io.questdb.cutlass.qwp.websocket;
 
 import io.questdb.std.Unsafe;
 
-import java.nio.charset.StandardCharsets;
-
 /**
  * Zero-allocation WebSocket frame writer.
  * Writes WebSocket frames according to RFC 6455.
@@ -37,14 +35,9 @@ import java.nio.charset.StandardCharsets;
  * <p>Thread safety: This class is thread-safe as it contains no mutable state.
  */
 public final class WebSocketFrameWriter {
-    private static final byte[] EMPTY_BYTES = new byte[0];
     // Frame header bits
     private static final int FIN_BIT = 0x80;
     private static final int MASK_BIT = 0x80;
-    // RFC 6455 Section 5.5: control frame payload <= 125 bytes;
-    // close payload starts with a 2-byte status code, leaving 123 for the reason.
-    private static final int MAX_CLOSE_REASON_BYTES = 123;
-
     private WebSocketFrameWriter() {
         // Static utility class
     }
@@ -80,27 +73,23 @@ public final class WebSocketFrameWriter {
     }
 
     /**
-     * Writes a complete Close frame to the buffer if it fits.
+     * Writes a complete Close frame with no reason to the buffer if it fits.
      *
      * @param buf        the buffer to write to
      * @param bufferSize the buffer capacity in bytes
      * @param code       the close status code
-     * @param reason     the close reason (may be null)
      * @return the total number of bytes written, or -1 if the buffer is too small
      */
-    public static int writeCloseFrame(long buf, int bufferSize, int code, String reason) {
-        byte[] reasonBytes = encodeReason(reason);
-        int payloadLen = 2 + reasonBytes.length;
-
+    public static int writeCloseFrame(long buf, int bufferSize, int code) {
+        int payloadLen = 2;
         int frameSize = headerSize(payloadLen, false) + payloadLen;
         if (frameSize > bufferSize) {
             return -1;
         }
 
         int headerLen = writeHeader(buf, true, WebSocketOpcode.CLOSE, payloadLen, false);
-        int payloadOffset = writeClosePayload(buf + headerLen, code, reasonBytes);
-
-        return headerLen + payloadOffset;
+        Unsafe.getUnsafe().putShort(buf + headerLen, Short.reverseBytes((short) code));
+        return frameSize;
     }
 
     /**
@@ -175,29 +164,4 @@ public final class WebSocketFrameWriter {
         return headerLen + payloadLen;
     }
 
-    private static byte[] encodeReason(String reason) {
-        if (reason == null || reason.isEmpty()) {
-            return EMPTY_BYTES;
-        }
-        byte[] bytes = reason.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length <= MAX_CLOSE_REASON_BYTES) {
-            return bytes;
-        }
-        // Truncate without splitting a multi-byte UTF-8 sequence.
-        int len = MAX_CLOSE_REASON_BYTES;
-        while (len > 0 && (bytes[len] & 0xC0) == 0x80) {
-            len--;
-        }
-        byte[] truncated = new byte[len];
-        System.arraycopy(bytes, 0, truncated, 0, len);
-        return truncated;
-    }
-
-    private static int writeClosePayload(long buf, int code, byte[] reasonBytes) {
-        Unsafe.getUnsafe().putShort(buf, Short.reverseBytes((short) code));
-        if (reasonBytes.length > 0) {
-            Unsafe.getUnsafe().copyMemory(reasonBytes, Unsafe.BYTE_OFFSET, null, buf + 2, reasonBytes.length);
-        }
-        return 2 + reasonBytes.length;
-    }
 }

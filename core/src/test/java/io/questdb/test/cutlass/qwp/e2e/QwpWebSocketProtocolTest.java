@@ -141,6 +141,20 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testTooLargeBinaryFrameRejectedWithActionableError() throws Exception {
+        final int recvBufferSize = 512;
+        byte[] payload = new byte[recvBufferSize * 2];
+        sendFrameAndAssertCloseResponse(
+                WebSocketOpcode.BINARY,
+                payload,
+                true,
+                WebSocketCloseCode.MESSAGE_TOO_BIG,
+                "frame too large [received=1032 bytes, max=512 bytes]; decrease batch size",
+                recvBufferSize
+        );
+    }
+
+    @Test
     public void testVersionNegotiationDefaultsToOneWhenHeaderAbsent() throws Exception {
         runInContext((port) -> {
             byte[] keyBytes = new byte[16];
@@ -610,6 +624,10 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
      * frame carrying the expected code and optional reason substring.
      */
     private void sendFrameAndAssertCloseResponse(int opcode, byte[] payload, boolean fin, int expectedCode, String expectedReasonSubstring) throws Exception {
+        sendFrameAndAssertCloseResponse(opcode, payload, fin, expectedCode, expectedReasonSubstring, 65_536);
+    }
+
+    private void sendFrameAndAssertCloseResponse(int opcode, byte[] payload, boolean fin, int expectedCode, String expectedReasonSubstring, int recvBufferSize) throws Exception {
         runInContext((port) -> {
             try (Socket socket = new Socket("localhost", port)) {
                 socket.setSoTimeout(5000);
@@ -624,6 +642,6 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
 
                 assertCloseFrame(in, expectedCode, expectedReasonSubstring);
             }
-        });
+        }, recvBufferSize);
     }
 }

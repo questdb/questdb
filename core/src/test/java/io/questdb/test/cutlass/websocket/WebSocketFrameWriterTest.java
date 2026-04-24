@@ -30,8 +30,6 @@ import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 /**
@@ -156,7 +154,7 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
                     Unsafe.getUnsafe().putByte(buf + i, (byte) 0xAA);
                 }
 
-                int written = WebSocketFrameWriter.writeCloseFrame(buf, bufferSize, 1000, null);
+                int written = WebSocketFrameWriter.writeCloseFrame(buf, bufferSize, 1000);
                 Assert.assertEquals(-1, written);
 
                 // No bytes should have been touched
@@ -174,60 +172,11 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testWriteCloseFrameTruncatesLongAsciiReason() throws Exception {
-        assertMemoryLeak(() -> {
-            long buf = allocateBuffer(256);
-            try {
-                // 130 ASCII chars -> 130 bytes, exceeds the 123-byte limit
-                String reason = "A".repeat(130);
-                int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1001, reason);
-
-                // Payload = 2 (status code) + 123 (truncated reason)
-                int expectedPayload = 2 + 123;
-                // Total = 2 (header) + payload
-                Assert.assertEquals(2 + expectedPayload, totalLen);
-                // Verify the payload-length byte in the frame header
-                Assert.assertEquals((byte) expectedPayload, Unsafe.getUnsafe().getByte(buf + 1));
-                // Verify the reason was truncated to exactly 123 bytes
-                byte[] writtenReason = readBytes(buf + 4, 123);
-                for (int i = 0; i < 123; i++) {
-                    Assert.assertEquals((byte) 'A', writtenReason[i]);
-                }
-            } finally {
-                freeBuffer(buf, 256);
-            }
-        });
-    }
-
-    @Test
-    public void testWriteCloseFrameTruncatesWithoutSplittingMultiByteChar() throws Exception {
-        assertMemoryLeak(() -> {
-            long buf = allocateBuffer(256);
-            try {
-                // Build a string: 122 ASCII bytes + a 2-byte UTF-8 char (U+00E9, "e with accent").
-                // Total UTF-8 length = 124 bytes, which exceeds the 123-byte limit.
-                // Naive truncation at byte 123 would land on the second byte of the
-                // 2-byte sequence (a continuation byte, 0x80..0xBF). The encoder must
-                // back up to byte 122 so it doesn't split the character.
-                String reason = "x".repeat(122) + "é";
-                int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1001, reason);
-
-                // Reason truncated to 122 bytes (the multi-byte char is dropped entirely)
-                int expectedPayload = 2 + 122;
-                Assert.assertEquals(2 + expectedPayload, totalLen);
-                Assert.assertEquals((byte) expectedPayload, Unsafe.getUnsafe().getByte(buf + 1));
-            } finally {
-                freeBuffer(buf, 256);
-            }
-        });
-    }
-
-    @Test
-    public void testWriteCloseFrameWithEmptyReason() throws Exception {
+    public void testWriteCloseFrameWithoutReason() throws Exception {
         assertMemoryLeak(() -> {
             long buf = allocateBuffer(32);
             try {
-                int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1000, "");
+                int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1000);
 
                 // Should have header (2) + code (2) = 4
                 Assert.assertEquals(4, totalLen);
@@ -237,45 +186,6 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
                 Assert.assertEquals(1000, code);
             } finally {
                 freeBuffer(buf, 32);
-            }
-        });
-    }
-
-    @Test
-    public void testWriteCloseFrameWithNullReason() throws Exception {
-        assertMemoryLeak(() -> {
-            long buf = allocateBuffer(32);
-            try {
-                int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1000, null);
-
-                // Should have header (2) + code (2) = 4
-                Assert.assertEquals(4, totalLen);
-            } finally {
-                freeBuffer(buf, 32);
-            }
-        });
-    }
-
-    @Test
-    public void testWriteCompleteCloseFrame() throws Exception {
-        assertMemoryLeak(() -> {
-            long buf = allocateBuffer(64);
-            try {
-                String reason = "Normal";
-                byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
-                int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1000, reason);
-
-                // Verify header byte (FIN + CLOSE)
-                Assert.assertEquals((byte) 0x88, Unsafe.getUnsafe().getByte(buf));
-                // Verify payload length: 2 (status code) + reason bytes
-                Assert.assertEquals((byte) (2 + reasonBytes.length), Unsafe.getUnsafe().getByte(buf + 1));
-                // Verify total length: 2 (header) + 2 (code) + reason
-                Assert.assertEquals(2 + 2 + reasonBytes.length, totalLen);
-                // Verify status code
-                short code = Short.reverseBytes(Unsafe.getUnsafe().getShort(buf + 2));
-                Assert.assertEquals(1000, code);
-            } finally {
-                freeBuffer(buf, 64);
             }
         });
     }

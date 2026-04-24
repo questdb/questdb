@@ -1805,6 +1805,15 @@ public class Utf8sTest {
             Assert.assertEquals(2, n);
             Assert.assertEquals("?b", readUtf8(mem, n));
 
+            // invalid surrogate replacement doesn't fit
+            n = Utf8s.strCpyUtf8("a\uD83D", mem, 1);
+            Assert.assertEquals(1, n);
+            Assert.assertEquals("a", readUtf8(mem, n));
+
+            n = Utf8s.strCpyUtf8("a\uDE00", mem, 1);
+            Assert.assertEquals(1, n);
+            Assert.assertEquals("a", readUtf8(mem, n));
+
             // mixed: ASCII + 2-byte + 3-byte + 4-byte
             String mixed = "Aé世\uD83D\uDE00";
             n = Utf8s.strCpyUtf8(mixed, mem, bufSize);
@@ -2044,6 +2053,9 @@ public class Utf8sTest {
 
         // Lone surrogate
         Assert.assertEquals(1, Utf8s.utf8Bytes("\uD83Da", 1));
+        Assert.assertEquals(1, Utf8s.utf8Bytes("\uDE00b", 1));
+        Assert.assertEquals(1, Utf8s.utf8Bytes("a\uD83D", 1));
+        Assert.assertEquals(1, Utf8s.utf8Bytes("a\uDE00", 1));
 
         // Zero limit
         Assert.assertEquals(0, Utf8s.utf8Bytes("hello", 0));
