@@ -43,6 +43,7 @@ import org.jetbrains.annotations.NotNull;
 public class MaxTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final int argColumnIndex;
+    private final boolean isArgNotNull;
     private int valueIndex;
 
     public MaxTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
@@ -51,6 +52,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
         // The factory derives timestampType from arg.getType(), so this check also
         // filters out non-direct args (e.g., CASTs) that happen to produce timestamps.
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, timestampType);
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -164,7 +166,10 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        // NOT NULL columns take the per-row compute path; the native batch
+        // kernel treats the type sentinel as null and under-counts / skips
+        // values the NOT NULL contract declares to be real data.
+        return !isArgNotNull;
     }
 
     @Override

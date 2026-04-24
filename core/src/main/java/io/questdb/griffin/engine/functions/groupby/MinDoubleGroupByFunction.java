@@ -44,11 +44,13 @@ import org.jetbrains.annotations.NotNull;
 public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final int argColumnIndex;
+    private final boolean isArgNotNull;
     private int valueIndex;
 
     public MinDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.DOUBLE);
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -184,7 +186,10 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        // NOT NULL columns take the per-row compute path; the native batch
+        // kernel treats the type sentinel as null and under-counts / skips
+        // values the NOT NULL contract declares to be real data.
+        return !isArgNotNull;
     }
 
     @Override
