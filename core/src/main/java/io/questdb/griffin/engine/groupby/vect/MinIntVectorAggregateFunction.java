@@ -57,6 +57,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public MinIntVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
@@ -117,7 +118,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Numbers.INT_NULL);
+        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Numbers.INT_NULL);
     }
 
     @Override

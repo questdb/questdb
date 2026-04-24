@@ -303,7 +303,7 @@ public class QwpSchemaTest {
         long address = Unsafe.malloc(buf.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < buf.length; i++) {
-                Unsafe.getUnsafe().putByte(address + i, buf[i]);
+                Unsafe.putByte(address + i, buf[i]);
             }
 
             QwpSchema.ParseResult result = QwpSchema.parse(address, buf.length, 2);

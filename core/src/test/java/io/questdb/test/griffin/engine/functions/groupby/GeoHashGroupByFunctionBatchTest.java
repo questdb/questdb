@@ -406,7 +406,7 @@ public class GeoHashGroupByFunctionBatchTest {
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         long addr = lastAllocated;
         for (byte value : values) {
-            Unsafe.getUnsafe().putByte(addr, value);
+            Unsafe.putByte(addr, value);
             addr += Byte.BYTES;
         }
         return lastAllocated;
@@ -423,7 +423,7 @@ public class GeoHashGroupByFunctionBatchTest {
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         long addr = lastAllocated;
         for (int value : values) {
-            Unsafe.getUnsafe().putInt(addr, value);
+            Unsafe.putInt(addr, value);
             addr += Integer.BYTES;
         }
         return lastAllocated;
@@ -440,7 +440,7 @@ public class GeoHashGroupByFunctionBatchTest {
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         long addr = lastAllocated;
         for (long value : values) {
-            Unsafe.getUnsafe().putLong(addr, value);
+            Unsafe.putLong(addr, value);
             addr += Long.BYTES;
         }
         return lastAllocated;
@@ -457,7 +457,7 @@ public class GeoHashGroupByFunctionBatchTest {
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         long addr = lastAllocated;
         for (short value : values) {
-            Unsafe.getUnsafe().putShort(addr, value);
+            Unsafe.putShort(addr, value);
             addr += Short.BYTES;
         }
         return lastAllocated;

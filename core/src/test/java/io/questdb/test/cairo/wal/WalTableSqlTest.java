@@ -422,7 +422,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
                 long intAddr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.getUnsafe().putInt(intAddr, 10);
+                Unsafe.putInt(intAddr, 10);
                 ff.write(fd, intAddr, 4, 0);
                 Unsafe.free(intAddr, 4, MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);

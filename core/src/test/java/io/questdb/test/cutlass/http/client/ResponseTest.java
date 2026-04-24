@@ -116,7 +116,7 @@ public class ResponseTest {
                         n = bufRemaining;
                     }
                     for (int i = 0; i < n; i++) {
-                        Unsafe.getUnsafe().putByte(bufLo + i, (byte) frag.charAt(o + i));
+                        Unsafe.putByte(bufLo + i, (byte) frag.charAt(o + i));
                     }
                     return n;
                 }
@@ -129,7 +129,7 @@ public class ResponseTest {
                 Assert.assertNotNull(fragment);
                 sink.clear();
                 for (long p = rsp.lo(); p < rsp.hi(); p++) {
-                    sink.put((char) Unsafe.getUnsafe().getByte(p));
+                    sink.put((char) Unsafe.getByte(p));
                 }
                 TestUtils.assertEquals(expectedFragment, sink);
             }

@@ -168,13 +168,13 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         long ptr = kvAddress;
         final long hi = kvAddress + ((long) currentOffset << 2);
         while (ptr < hi) {
-            final int value = Unsafe.getUnsafe().getInt(ptr);
-            final int len = Unsafe.getUnsafe().getInt(ptr + 4);
+            final int value = Unsafe.getInt(ptr);
+            final int len = Unsafe.getInt(ptr + 4);
             if (value >= minimumValue) {
                 final long storageLen = Vm.getStorageLength(len) + Integer.BYTES;
                 final long addr = mem.appendAddressFor(storageLen);
-                Unsafe.getUnsafe().putInt(addr, value);
-                Unsafe.getUnsafe().putInt(addr + 4L, len);
+                Unsafe.putInt(addr, value);
+                Unsafe.putInt(addr + 4L, len);
                 Vect.memcpy(addr + 8L, ptr + 8L, (long) len << 1);
                 copied++;
             }
@@ -189,7 +189,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      */
     public int get(int offset) {
         final long ptr = kvAddress + ((long) offset << 2);
-        return Unsafe.getUnsafe().getInt(ptr);
+        return Unsafe.getInt(ptr);
     }
 
     /**
@@ -207,7 +207,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      */
     public CharSequence getKey(int offset) {
         final long ptr = kvAddress + ((long) offset << 2);
-        final int len = Unsafe.getUnsafe().getInt(ptr + 4);
+        final int len = Unsafe.getInt(ptr + 4);
         sview.of(ptr + 8, len);
         return sview;
     }
@@ -258,7 +258,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      */
     public int nextOffset(int offset) {
         final long lo = kvAddress + ((long) offset << 2);
-        final int len = Unsafe.getUnsafe().getInt(lo + 4);
+        final int len = Unsafe.getInt(lo + 4);
         final int next = offset + ((((len << 1) + 11) & ~3) >> 2);
         return next == this.currentOffset ? -1 : next;
     }
@@ -279,7 +279,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         final int hashCode = Chars.hashCode(key);
         final int index = keyIndex(key, hashCode);
         if (index < 0) {
-            Unsafe.getUnsafe().putInt(kvAddress + ((long) (-index - 1) << 2), value);
+            Unsafe.putInt(kvAddress + ((long) (-index - 1) << 2), value);
         } else {
             putAt(index, key, value, hashCode);
         }
@@ -317,13 +317,13 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
 
         for (int i = (int) (oldCapacity >> 3) - 1; i > -1; i--) {
             final long oldPtr = oldAddress + ((long) i << 3);
-            final int offset = Unsafe.getUnsafe().getInt(oldPtr);
+            final int offset = Unsafe.getInt(oldPtr);
             if (offset != NO_ENTRY_OFFSET) {
-                final int hashCode = Unsafe.getUnsafe().getInt(oldPtr + 4L);
+                final int hashCode = Unsafe.getInt(oldPtr + 4L);
                 final int index = keyIndexNoDup(hashCode);
                 final long ptr = address + ((long) index << 3);
-                Unsafe.getUnsafe().putInt(ptr, offset);
-                Unsafe.getUnsafe().putInt(ptr + 4L, hashCode);
+                Unsafe.putInt(ptr, offset);
+                Unsafe.putInt(ptr + 4L, hashCode);
             }
         }
 
@@ -345,17 +345,17 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      */
     public int valueAt(int offset) {
         int offset1 = -offset - 1;
-        return offset < 0 ? Unsafe.getUnsafe().getInt(kvAddress + ((long) offset1 << 2)) : noEntryValue;
+        return offset < 0 ? Unsafe.getInt(kvAddress + ((long) offset1 << 2)) : noEntryValue;
     }
 
     private boolean areKeysEquals(int offset, @NotNull CharSequence key) {
         long lo = kvAddress + ((long) offset << 2);
-        final int len = Unsafe.getUnsafe().getInt(lo + 4);
+        final int len = Unsafe.getInt(lo + 4);
         if (len != key.length()) {
             return false;
         }
         for (int i = 0; i < len; i++) {
-            if (Unsafe.getUnsafe().getChar(lo + 8 + ((long) i << 1)) != key.charAt(i)) {
+            if (Unsafe.getChar(lo + 8 + ((long) i << 1)) != key.charAt(i)) {
                 return false;
             }
         }
@@ -363,11 +363,11 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     }
 
     private int getHashCode(int index) {
-        return Unsafe.getUnsafe().getInt(address + ((long) index << 3) + 4L);
+        return Unsafe.getInt(address + ((long) index << 3) + 4L);
     }
 
     private int getOffset(int index) {
-        return Unsafe.getUnsafe().getInt(address + ((long) index << 3));
+        return Unsafe.getInt(address + ((long) index << 3));
     }
 
     /**
@@ -409,8 +409,8 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
 
     private void putAt0(int index, int offset, int hashCode) {
         final long ptr = address + ((long) index << 3);
-        Unsafe.getUnsafe().putInt(ptr, offset + 1);
-        Unsafe.getUnsafe().putInt(ptr + 4L, hashCode);
+        Unsafe.putInt(ptr, offset + 1);
+        Unsafe.putInt(ptr + 4L, hashCode);
         size++;
         if (--free == 0) {
             try {
@@ -432,10 +432,10 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
             kvCapacity = newKvCapacity;
         }
         final long lo = kvAddress + ((long) currentOffset << 2);
-        Unsafe.getUnsafe().putInt(lo, value);
-        Unsafe.getUnsafe().putInt(lo + 4, key.length());
+        Unsafe.putInt(lo, value);
+        Unsafe.putInt(lo + 4, key.length());
         for (int i = 0; i < key.length(); i++) {
-            Unsafe.getUnsafe().putChar(lo + 8 + ((long) i << 1), key.charAt(i));
+            Unsafe.putChar(lo + 8 + ((long) i << 1), key.charAt(i));
         }
 
         final int oldOffset = currentOffset;

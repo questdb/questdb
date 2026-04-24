@@ -67,7 +67,7 @@ public class CountLongBenchmark {
                 l = Numbers.LONG_NULL;
             }
 
-            Unsafe.getUnsafe().putLong(p, l);
+            Unsafe.putLong(p, l);
             longArr[i] = l;
             p += Long.BYTES;
         }
@@ -91,7 +91,7 @@ public class CountLongBenchmark {
     public long testJavaNativeCount() {
         long result = 0;
         for (int i = 0; i < longCount; i++) {
-            result += Unsafe.getUnsafe().getLong(mem + i * Long.BYTES) != Numbers.LONG_NULL ? 1 : 0;
+            result += Unsafe.getLong(mem + i * Long.BYTES) != Numbers.LONG_NULL ? 1 : 0;
         }
         return result;
     }
