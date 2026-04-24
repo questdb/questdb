@@ -33,22 +33,22 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public final class UuidColumn extends UuidFunction implements ColumnFunction {
     private static final ObjList<UuidColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
-    private final boolean notNull;
+    private final boolean isNotNull;
 
-    private UuidColumn(int columnIndex, boolean notNull) {
+    private UuidColumn(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
-        this.notNull = notNull;
+        this.isNotNull = isNotNull;
     }
 
     public static UuidColumn newInstance(int columnIndex) {
         return newInstance(columnIndex, false);
     }
 
-    public static UuidColumn newInstance(int columnIndex, boolean notNull) {
-        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
+    public static UuidColumn newInstance(int columnIndex, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new UuidColumn(columnIndex, notNull);
+        return new UuidColumn(columnIndex, isNotNull);
     }
 
     @Override
@@ -68,7 +68,7 @@ public final class UuidColumn extends UuidFunction implements ColumnFunction {
 
     @Override
     public boolean isNotNull() {
-        return notNull;
+        return isNotNull;
     }
 
     @Override

@@ -33,22 +33,22 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class LongColumn extends LongFunction implements ColumnFunction {
     private static final ObjList<LongColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
-    private final boolean notNull;
+    private final boolean isNotNull;
 
-    private LongColumn(int columnIndex, boolean notNull) {
+    private LongColumn(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
-        this.notNull = notNull;
+        this.isNotNull = isNotNull;
     }
 
     public static LongColumn newInstance(int columnIndex) {
         return newInstance(columnIndex, false);
     }
 
-    public static LongColumn newInstance(int columnIndex, boolean notNull) {
-        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
+    public static LongColumn newInstance(int columnIndex, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new LongColumn(columnIndex, notNull);
+        return new LongColumn(columnIndex, isNotNull);
     }
 
     @Override
@@ -63,7 +63,7 @@ public class LongColumn extends LongFunction implements ColumnFunction {
 
     @Override
     public boolean isNotNull() {
-        return notNull;
+        return isNotNull;
     }
 
     @Override

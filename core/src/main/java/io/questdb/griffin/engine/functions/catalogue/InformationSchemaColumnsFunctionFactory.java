@@ -190,7 +190,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             private static class ColumnsRecord implements Record {
                 private CharSequence columnName;
                 private CharSequence dataType;
-                private boolean notNull;
+                private boolean isNotNull;
                 private int ordinalPosition;
                 private CharSequence tableName;
 
@@ -207,7 +207,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                         case 2 -> tableName;
                         case 3 -> columnName;
                         case 5 -> null; // column_default
-                        case 6 -> notNull ? "no" : "yes"; // is_nullable
+                        case 6 -> isNotNull ? "no" : "yes"; // is_nullable
                         case 7 -> dataType;
                         default -> null;
                     };
@@ -228,7 +228,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                     this.ordinalPosition = ordinalPosition;
                     this.columnName = columnName;
                     this.dataType = dataType;
-                    this.notNull = notNull;
+                    this.isNotNull = notNull;
                 }
             }
         }

@@ -33,29 +33,29 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class GeoLongColumn extends GeoLongFunction implements ColumnFunction {
     private static final GeoLongColumn[] COLUMNS;
     private final int columnIndex;
-    private final boolean notNull;
+    private final boolean isNotNull;
 
-    private GeoLongColumn(int columnIndex, int columnType, boolean notNull) {
+    private GeoLongColumn(int columnIndex, int columnType, boolean isNotNull) {
         super(columnType);
         this.columnIndex = columnIndex;
-        this.notNull = notNull;
+        this.isNotNull = isNotNull;
     }
 
     public static GeoLongColumn newInstance(int columnIndex, int columnType) {
         return newInstance(columnIndex, columnType, false);
     }
 
-    public static GeoLongColumn newInstance(int columnIndex, int columnType, boolean notNull) {
+    public static GeoLongColumn newInstance(int columnIndex, int columnType, boolean isNotNull) {
         assert ColumnType.getGeoHashBits(columnType) >= ColumnType.GEOLONG_MIN_BITS &&
                 ColumnType.getGeoHashBits(columnType) <= ColumnType.GEOLONG_MAX_BITS;
 
         final int bits = (ColumnType.GEOLONG_MAX_BITS - ColumnType.GEOLONG_MIN_BITS + 1);
 
-        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS[columnIndex * bits + ColumnType.getGeoHashBits(columnType) - ColumnType.GEOLONG_MIN_BITS];
         }
 
-        return new GeoLongColumn(columnIndex, columnType, notNull);
+        return new GeoLongColumn(columnIndex, columnType, isNotNull);
     }
 
     @Override
@@ -70,7 +70,7 @@ public class GeoLongColumn extends GeoLongFunction implements ColumnFunction {
 
     @Override
     public boolean isNotNull() {
-        return notNull;
+        return isNotNull;
     }
 
     @Override

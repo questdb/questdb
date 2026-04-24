@@ -29,15 +29,15 @@ import io.questdb.griffin.engine.functions.StrFunction;
 
 public class StrColumn extends StrFunction implements ColumnFunction {
     private final int columnIndex;
-    private final boolean notNull;
+    private final boolean isNotNull;
 
     public StrColumn(int columnIndex) {
         this(columnIndex, false);
     }
 
-    public StrColumn(int columnIndex, boolean notNull) {
+    public StrColumn(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
-        this.notNull = notNull;
+        this.isNotNull = isNotNull;
     }
 
     @Override
@@ -62,6 +62,6 @@ public class StrColumn extends StrFunction implements ColumnFunction {
 
     @Override
     public boolean isNotNull() {
-        return notNull;
+        return isNotNull;
     }
 }

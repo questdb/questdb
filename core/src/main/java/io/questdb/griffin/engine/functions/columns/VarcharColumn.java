@@ -30,15 +30,15 @@ import io.questdb.std.str.Utf8Sequence;
 
 public class VarcharColumn extends VarcharFunction implements ColumnFunction {
     private final int columnIndex;
-    private final boolean notNull;
+    private final boolean isNotNull;
 
     public VarcharColumn(int columnIndex) {
         this(columnIndex, false);
     }
 
-    public VarcharColumn(int columnIndex, boolean notNull) {
+    public VarcharColumn(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
-        this.notNull = notNull;
+        this.isNotNull = isNotNull;
     }
 
     @Override
@@ -63,6 +63,6 @@ public class VarcharColumn extends VarcharFunction implements ColumnFunction {
 
     @Override
     public boolean isNotNull() {
-        return notNull;
+        return isNotNull;
     }
 }

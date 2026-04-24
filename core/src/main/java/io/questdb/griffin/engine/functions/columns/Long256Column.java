@@ -35,22 +35,22 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class Long256Column extends Long256Function implements ColumnFunction {
     private static final ObjList<Long256Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
-    private final boolean notNull;
+    private final boolean isNotNull;
 
-    private Long256Column(int columnIndex, boolean notNull) {
+    private Long256Column(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
-        this.notNull = notNull;
+        this.isNotNull = isNotNull;
     }
 
     public static Long256Column newInstance(int columnIndex) {
         return newInstance(columnIndex, false);
     }
 
-    public static Long256Column newInstance(int columnIndex, boolean notNull) {
-        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
+    public static Long256Column newInstance(int columnIndex, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new Long256Column(columnIndex, notNull);
+        return new Long256Column(columnIndex, isNotNull);
     }
 
     @Override
@@ -75,7 +75,7 @@ public class Long256Column extends Long256Function implements ColumnFunction {
 
     @Override
     public boolean isNotNull() {
-        return notNull;
+        return isNotNull;
     }
 
     static {

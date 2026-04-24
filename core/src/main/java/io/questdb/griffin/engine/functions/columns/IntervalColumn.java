@@ -39,25 +39,25 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class IntervalColumn extends IntervalFunction implements FunctionExtension {
     private static final ObjList<IntervalColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
-    private final boolean notNull;
+    private final boolean isNotNull;
 
-    private IntervalColumn(int columnIndex, int columnType, boolean notNull) {
+    private IntervalColumn(int columnIndex, int columnType, boolean isNotNull) {
         super(columnType);
         this.columnIndex = columnIndex;
-        this.notNull = notNull;
+        this.isNotNull = isNotNull;
     }
 
     public static IntervalColumn newInstance(int columnIndex, int columnType) {
         return newInstance(columnIndex, columnType, false);
     }
 
-    public static IntervalColumn newInstance(int columnIndex, int columnType, boolean notNull) {
-        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
+    public static IntervalColumn newInstance(int columnIndex, int columnType, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             IntervalColumn column = COLUMNS.getQuick(columnIndex);
             column.setType(columnType);
             return column;
         }
-        return new IntervalColumn(columnIndex, columnType, notNull);
+        return new IntervalColumn(columnIndex, columnType, isNotNull);
     }
 
     @Override
@@ -77,7 +77,7 @@ public class IntervalColumn extends IntervalFunction implements FunctionExtensio
 
     @Override
     public boolean isNotNull() {
-        return notNull;
+        return isNotNull;
     }
 
     @Override

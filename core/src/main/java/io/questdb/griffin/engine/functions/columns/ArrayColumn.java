@@ -30,16 +30,16 @@ import io.questdb.cairo.sql.Record;
 
 public class ArrayColumn extends ArrayFunction implements ColumnFunction {
     private final int columnIndex;
-    private final boolean notNull;
+    private final boolean isNotNull;
 
     public ArrayColumn(int columnIndex, int columnType) {
         this(columnIndex, columnType, false);
     }
 
-    public ArrayColumn(int columnIndex, int columnType, boolean notNull) {
+    public ArrayColumn(int columnIndex, int columnType, boolean isNotNull) {
         this.columnIndex = columnIndex;
         this.type = columnType;
-        this.notNull = notNull;
+        this.isNotNull = isNotNull;
     }
 
     public static ArrayColumn newInstance(int columnIndex, int columnType) {
@@ -58,7 +58,7 @@ public class ArrayColumn extends ArrayFunction implements ColumnFunction {
 
     @Override
     public boolean isNotNull() {
-        return notNull;
+        return isNotNull;
     }
 
     @Override

@@ -33,22 +33,22 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class DateColumn extends DateFunction implements ColumnFunction {
     private static final ObjList<DateColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
-    private final boolean notNull;
+    private final boolean isNotNull;
 
-    private DateColumn(int columnIndex, boolean notNull) {
+    private DateColumn(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
-        this.notNull = notNull;
+        this.isNotNull = isNotNull;
     }
 
     public static DateColumn newInstance(int columnIndex) {
         return newInstance(columnIndex, false);
     }
 
-    public static DateColumn newInstance(int columnIndex, boolean notNull) {
-        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
+    public static DateColumn newInstance(int columnIndex, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new DateColumn(columnIndex, notNull);
+        return new DateColumn(columnIndex, isNotNull);
     }
 
     @Override
@@ -63,7 +63,7 @@ public class DateColumn extends DateFunction implements ColumnFunction {
 
     @Override
     public boolean isNotNull() {
-        return notNull;
+        return isNotNull;
     }
 
     @Override

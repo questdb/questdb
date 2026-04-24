@@ -37,24 +37,24 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class TimestampColumn extends TimestampFunction implements ColumnFunction {
     private static final ObjList<TimestampColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
-    private final boolean notNull;
+    private final boolean isNotNull;
 
-    private TimestampColumn(int columnIndex, int timestampType, boolean notNull) {
+    private TimestampColumn(int columnIndex, int timestampType, boolean isNotNull) {
         super(timestampType);
         this.columnIndex = columnIndex;
-        this.notNull = notNull;
+        this.isNotNull = isNotNull;
     }
 
     public static TimestampColumn newInstance(int columnIndex, int timestampType) {
         return newInstance(columnIndex, timestampType, false);
     }
 
-    public static TimestampColumn newInstance(int columnIndex, int timestampType, boolean notNull) {
-        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
+    public static TimestampColumn newInstance(int columnIndex, int timestampType, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             TimestampColumn column = COLUMNS.getQuick(columnIndex);
             column.setType(timestampType);
         }
-        return new TimestampColumn(columnIndex, timestampType, notNull);
+        return new TimestampColumn(columnIndex, timestampType, isNotNull);
     }
 
     @Override
@@ -69,7 +69,7 @@ public class TimestampColumn extends TimestampFunction implements ColumnFunction
 
     @Override
     public boolean isNotNull() {
-        return notNull;
+        return isNotNull;
     }
 
     @Override
