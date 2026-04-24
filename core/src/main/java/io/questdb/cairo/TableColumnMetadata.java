@@ -40,7 +40,7 @@ public class TableColumnMetadata implements Plannable {
     private int columnType;
     private boolean dedupKeyFlag;
     private int indexValueBlockCapacity;
-    private boolean notNullFlag;
+    private volatile boolean notNullFlag;
     private int parquetEncodingConfig;
     private boolean symbolCacheFlag;
     private boolean symbolIndexFlag;

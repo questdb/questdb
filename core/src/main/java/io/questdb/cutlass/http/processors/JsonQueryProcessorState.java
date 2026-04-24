@@ -558,7 +558,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (i == Integer.MIN_VALUE && !notNull) {
             response.putAscii("null");
         } else {
-            // checkNaN=false — otherwise Numbers.append rewrites INT_NULL to the text "null".
+            // checkNaN=false -- otherwise Numbers.append rewrites INT_NULL to the text "null".
             Numbers.append(response, (long) i, false);
         }
     }

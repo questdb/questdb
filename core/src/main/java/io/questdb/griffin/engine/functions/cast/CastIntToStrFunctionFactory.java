@@ -98,7 +98,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrA(Record rec) {
             sinkA.clear();
-            // checkNaN=false — Numbers.append would otherwise rewrite INT_NULL to the text "null".
+            // checkNaN=false -- Numbers.append would otherwise rewrite INT_NULL to the text "null".
             Numbers.append(sinkA, (long) arg.getInt(rec), false);
             return sinkA;
         }
