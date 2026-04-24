@@ -10630,7 +10630,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     CharSequence colName = metadata.getColumnName(colIdx);
                     long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx);
-                    long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, colIdx);
+                    // getColumnTop() returns -1 when the column was added
+                    // after this partition (no rows carry it and no .pk
+                    // exists). A value >= partition size means the rows that
+                    // would hold the column were trimmed away by replace
+                    // commits. In either case, there is no .pk to seal.
+                    long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
+                    long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+                    if (columnTop < 0 || (partitionSize > -1 && columnTop >= partitionSize)) {
+                        continue;
+                    }
                     ColumnIndexer indexer = indexers.getQuick(colIdx);
                     if (indexer == null) {
                         continue;
@@ -10762,7 +10771,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                             CharSequence colName = metadata.getColumnName(colIdx);
                             long colNameTxn = columnVersionWriter.getColumnNameTxn(oldPartitionTimestamp, colIdx);
-                            long columnTop = columnVersionWriter.getColumnTopQuick(oldPartitionTimestamp, colIdx);
+                            long columnTop = columnVersionWriter.getColumnTop(oldPartitionTimestamp, colIdx);
+                            // Column was added after the original partition
+                            // (columnTop == -1) or the split trimmed the
+                            // original to a size that no longer covers any
+                            // rows of this column. In both cases there is
+                            // no .pk file to open.
+                            if (columnTop < 0 || columnTop >= newOriginalSize) {
+                                continue;
+                            }
                             indexer.configureFollowerAndWriter(
                                     path.trimTo(origPlen), colName, colNameTxn,
                                     getPrimaryColumn(colIdx), columnTop,
@@ -10805,7 +10822,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                     CharSequence colName = metadata.getColumnName(colIdx);
                     long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
-                    long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, colIdx);
+                    long columnTop = columnVersionWriter.getColumnTop(lastOpenPartitionTs, colIdx);
+                    long partitionSize = txWriter.getPartitionRowCountByTimestamp(lastOpenPartitionTs);
+                    if (columnTop < 0 || (partitionSize > -1 && columnTop >= partitionSize)) {
+                        continue;
+                    }
                     indexer.configureFollowerAndWriter(
                             path.trimTo(plen), colName, colNameTxn,
                             getPrimaryColumn(colIdx), columnTop,
