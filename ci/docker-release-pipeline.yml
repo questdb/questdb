@@ -18,6 +18,7 @@ schedules:
 # Define variable at the top level
 variables:
   SKIP_VALIDATION: 'false'  # Set to 'true' to skip validation
+  IMAGE_REPO: questdb/questdb
 
 jobs:
   - job: BuildAmd64
@@ -25,7 +26,6 @@ jobs:
     pool: hetzner-incus
     timeoutInMinutes: 60
     variables:
-      ARCH_SUFFIX: amd64
       BUILDX_PLATFORM: linux/amd64
     steps:
       - checkout: self
@@ -59,16 +59,28 @@ jobs:
             docker buildx create --use
 
       - task: CmdLine@2
-        displayName: Release Nightly MASTER ($(ARCH_SUFFIX))
+        name: NightlyBuild
+        displayName: Release Nightly MASTER (amd64)
         inputs:
           script: |
             set -eo pipefail
-            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --push -t questdb/questdb:nightly-$(ARCH_SUFFIX) .
-            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --push -t questdb/questdb:nightly-rhel-$(ARCH_SUFFIX) --target rhel .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-nightly.json .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --target rhel \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-nightly-rhel.json .
+            digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-nightly.json)
+            rhel_digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-nightly-rhel.json)
+            echo "nightly digest: $digest"
+            echo "nightly-rhel digest: $rhel_digest"
+            echo "##vso[task.setvariable variable=nightlyDigest;isOutput=true]$digest"
+            echo "##vso[task.setvariable variable=nightlyRhelDigest;isOutput=true]$rhel_digest"
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
-        displayName: Release Tag ($(ARCH_SUFFIX))
+        name: TagBuild
+        displayName: Release Tag (amd64)
         inputs:
           script: |
             set -eo pipefail
@@ -76,20 +88,25 @@ jobs:
             # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/tags")
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
-            pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
-            common_args="-f core/Dockerfile --build-arg tag_name=$tag_name --platform $(BUILDX_PLATFORM) --push"
-            if [[ "$tag_name" =~ $pattern ]]; then
-              echo "labeling latest"
-              docker buildx build $common_args -t questdb/questdb:$tag_name-$(ARCH_SUFFIX) -t questdb/questdb:latest-$(ARCH_SUFFIX) .
-            else
-              echo "NOT labeling latest"
-              docker buildx build $common_args -t questdb/questdb:$tag_name-$(ARCH_SUFFIX) .
-            fi
-            docker buildx build $common_args -t questdb/questdb:$tag_name-rhel-$(ARCH_SUFFIX) --target rhel .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) \
+              --build-arg tag_name=$tag_name \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-tag.json .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --target rhel \
+              --build-arg tag_name=$tag_name \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-tag-rhel.json .
+            digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-tag.json)
+            rhel_digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-tag-rhel.json)
+            echo "tag digest: $digest"
+            echo "tag-rhel digest: $rhel_digest"
+            echo "##vso[task.setvariable variable=tagDigest;isOutput=true]$digest"
+            echo "##vso[task.setvariable variable=tagRhelDigest;isOutput=true]$rhel_digest"
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
       - task: CmdLine@2
-        displayName: Release Commit from Branch ($(ARCH_SUFFIX))
+        name: BranchBuild
+        displayName: Release Commit from Branch (amd64)
         inputs:
           script: |
             set -eo pipefail
@@ -97,12 +114,20 @@ jobs:
             # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/heads")
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
-            # Docker tags are prefixed with "patch-" and use the short commit hash
-            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
-            echo $docker_tag_name
-            common_args="-f core/Dockerfile --build-arg tag_name=$tag_name --platform $(BUILDX_PLATFORM) --push"
-            docker buildx build $common_args -t questdb/questdb:${docker_tag_name}-$(ARCH_SUFFIX) .
-            docker buildx build $common_args -t questdb/questdb:${docker_tag_name}-rhel-$(ARCH_SUFFIX) --target rhel .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) \
+              --build-arg tag_name=$tag_name \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-branch.json .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --target rhel \
+              --build-arg tag_name=$tag_name \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-branch-rhel.json .
+            digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-branch.json)
+            rhel_digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-branch-rhel.json)
+            echo "branch digest: $digest"
+            echo "branch-rhel digest: $rhel_digest"
+            echo "##vso[task.setvariable variable=branchDigest;isOutput=true]$digest"
+            echo "##vso[task.setvariable variable=branchRhelDigest;isOutput=true]$rhel_digest"
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
   - job: BuildArm64
@@ -110,7 +135,6 @@ jobs:
     pool: hetzner-incus-arm
     timeoutInMinutes: 60
     variables:
-      ARCH_SUFFIX: arm64
       BUILDX_PLATFORM: linux/arm64
     steps:
       - checkout: self
@@ -144,45 +168,71 @@ jobs:
             docker buildx create --use
 
       - task: CmdLine@2
-        displayName: Release Nightly MASTER ($(ARCH_SUFFIX))
+        name: NightlyBuild
+        displayName: Release Nightly MASTER (arm64)
         inputs:
           script: |
             set -eo pipefail
-            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --push -t questdb/questdb:nightly-$(ARCH_SUFFIX) .
-            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --push -t questdb/questdb:nightly-rhel-$(ARCH_SUFFIX) --target rhel .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-nightly.json .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --target rhel \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-nightly-rhel.json .
+            digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-nightly.json)
+            rhel_digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-nightly-rhel.json)
+            echo "nightly digest: $digest"
+            echo "nightly-rhel digest: $rhel_digest"
+            echo "##vso[task.setvariable variable=nightlyDigest;isOutput=true]$digest"
+            echo "##vso[task.setvariable variable=nightlyRhelDigest;isOutput=true]$rhel_digest"
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
-        displayName: Release Tag ($(ARCH_SUFFIX))
+        name: TagBuild
+        displayName: Release Tag (arm64)
         inputs:
           script: |
             set -eo pipefail
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
-            pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
-            common_args="-f core/Dockerfile --build-arg tag_name=$tag_name --platform $(BUILDX_PLATFORM) --push"
-            if [[ "$tag_name" =~ $pattern ]]; then
-              echo "labeling latest"
-              docker buildx build $common_args -t questdb/questdb:$tag_name-$(ARCH_SUFFIX) -t questdb/questdb:latest-$(ARCH_SUFFIX) .
-            else
-              echo "NOT labeling latest"
-              docker buildx build $common_args -t questdb/questdb:$tag_name-$(ARCH_SUFFIX) .
-            fi
-            docker buildx build $common_args -t questdb/questdb:$tag_name-rhel-$(ARCH_SUFFIX) --target rhel .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) \
+              --build-arg tag_name=$tag_name \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-tag.json .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --target rhel \
+              --build-arg tag_name=$tag_name \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-tag-rhel.json .
+            digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-tag.json)
+            rhel_digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-tag-rhel.json)
+            echo "tag digest: $digest"
+            echo "tag-rhel digest: $rhel_digest"
+            echo "##vso[task.setvariable variable=tagDigest;isOutput=true]$digest"
+            echo "##vso[task.setvariable variable=tagRhelDigest;isOutput=true]$rhel_digest"
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
       - task: CmdLine@2
-        displayName: Release Commit from Branch ($(ARCH_SUFFIX))
+        name: BranchBuild
+        displayName: Release Commit from Branch (arm64)
         inputs:
           script: |
             set -eo pipefail
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
-            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
-            echo $docker_tag_name
-            common_args="-f core/Dockerfile --build-arg tag_name=$tag_name --platform $(BUILDX_PLATFORM) --push"
-            docker buildx build $common_args -t questdb/questdb:${docker_tag_name}-$(ARCH_SUFFIX) .
-            docker buildx build $common_args -t questdb/questdb:${docker_tag_name}-rhel-$(ARCH_SUFFIX) --target rhel .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) \
+              --build-arg tag_name=$tag_name \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-branch.json .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --target rhel \
+              --build-arg tag_name=$tag_name \
+              --output "type=image,name=$(IMAGE_REPO),push-by-digest=true,push=true" \
+              --metadata-file meta-branch-rhel.json .
+            digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-branch.json)
+            rhel_digest=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" meta-branch-rhel.json)
+            echo "branch digest: $digest"
+            echo "branch-rhel digest: $rhel_digest"
+            echo "##vso[task.setvariable variable=branchDigest;isOutput=true]$digest"
+            echo "##vso[task.setvariable variable=branchRhelDigest;isOutput=true]$rhel_digest"
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
   - job: Manifest
@@ -193,6 +243,19 @@ jobs:
       - BuildArm64
     condition: succeeded()
     timeoutInMinutes: 30
+    variables:
+      amd64NightlyDigest: $[ dependencies.BuildAmd64.outputs['NightlyBuild.nightlyDigest'] ]
+      amd64NightlyRhelDigest: $[ dependencies.BuildAmd64.outputs['NightlyBuild.nightlyRhelDigest'] ]
+      arm64NightlyDigest: $[ dependencies.BuildArm64.outputs['NightlyBuild.nightlyDigest'] ]
+      arm64NightlyRhelDigest: $[ dependencies.BuildArm64.outputs['NightlyBuild.nightlyRhelDigest'] ]
+      amd64TagDigest: $[ dependencies.BuildAmd64.outputs['TagBuild.tagDigest'] ]
+      amd64TagRhelDigest: $[ dependencies.BuildAmd64.outputs['TagBuild.tagRhelDigest'] ]
+      arm64TagDigest: $[ dependencies.BuildArm64.outputs['TagBuild.tagDigest'] ]
+      arm64TagRhelDigest: $[ dependencies.BuildArm64.outputs['TagBuild.tagRhelDigest'] ]
+      amd64BranchDigest: $[ dependencies.BuildAmd64.outputs['BranchBuild.branchDigest'] ]
+      amd64BranchRhelDigest: $[ dependencies.BuildAmd64.outputs['BranchBuild.branchRhelDigest'] ]
+      arm64BranchDigest: $[ dependencies.BuildArm64.outputs['BranchBuild.branchDigest'] ]
+      arm64BranchRhelDigest: $[ dependencies.BuildArm64.outputs['BranchBuild.branchRhelDigest'] ]
     steps:
       - checkout: none
 
@@ -215,13 +278,13 @@ jobs:
         inputs:
           script: |
             set -eo pipefail
-            docker buildx imagetools create -t questdb/questdb:nightly \
-              questdb/questdb:nightly-amd64 \
-              questdb/questdb:nightly-arm64
-            docker buildx imagetools create -t questdb/questdb:nightly-rhel \
-              questdb/questdb:nightly-rhel-amd64 \
-              questdb/questdb:nightly-rhel-arm64
-            preflight check container questdb/questdb:nightly-rhel
+            docker buildx imagetools create -t $(IMAGE_REPO):nightly \
+              $(IMAGE_REPO)@$(amd64NightlyDigest) \
+              $(IMAGE_REPO)@$(arm64NightlyDigest)
+            docker buildx imagetools create -t $(IMAGE_REPO):nightly-rhel \
+              $(IMAGE_REPO)@$(amd64NightlyRhelDigest) \
+              $(IMAGE_REPO)@$(arm64NightlyRhelDigest)
+            preflight check container $(IMAGE_REPO):nightly-rhel
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
@@ -232,19 +295,19 @@ jobs:
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
             pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
-            docker buildx imagetools create -t questdb/questdb:$tag_name \
-              questdb/questdb:$tag_name-amd64 \
-              questdb/questdb:$tag_name-arm64
+            docker buildx imagetools create -t $(IMAGE_REPO):$tag_name \
+              $(IMAGE_REPO)@$(amd64TagDigest) \
+              $(IMAGE_REPO)@$(arm64TagDigest)
             if [[ "$tag_name" =~ $pattern ]]; then
               echo "labeling latest"
-              docker buildx imagetools create -t questdb/questdb:latest \
-                questdb/questdb:latest-amd64 \
-                questdb/questdb:latest-arm64
+              docker buildx imagetools create -t $(IMAGE_REPO):latest \
+                $(IMAGE_REPO)@$(amd64TagDigest) \
+                $(IMAGE_REPO)@$(arm64TagDigest)
             fi
-            docker buildx imagetools create -t questdb/questdb:$tag_name-rhel \
-              questdb/questdb:$tag_name-rhel-amd64 \
-              questdb/questdb:$tag_name-rhel-arm64
-            preflight check container questdb/questdb:$tag_name-rhel
+            docker buildx imagetools create -t $(IMAGE_REPO):$tag_name-rhel \
+              $(IMAGE_REPO)@$(amd64TagRhelDigest) \
+              $(IMAGE_REPO)@$(arm64TagRhelDigest)
+            preflight check container $(IMAGE_REPO):$tag_name-rhel
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
       - task: CmdLine@2
@@ -254,13 +317,13 @@ jobs:
             set -eo pipefail
             docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
             echo $docker_tag_name
-            docker buildx imagetools create -t questdb/questdb:${docker_tag_name} \
-              questdb/questdb:${docker_tag_name}-amd64 \
-              questdb/questdb:${docker_tag_name}-arm64
-            docker buildx imagetools create -t questdb/questdb:${docker_tag_name}-rhel \
-              questdb/questdb:${docker_tag_name}-rhel-amd64 \
-              questdb/questdb:${docker_tag_name}-rhel-arm64
-            preflight check container questdb/questdb:${docker_tag_name}-rhel
+            docker buildx imagetools create -t $(IMAGE_REPO):${docker_tag_name} \
+              $(IMAGE_REPO)@$(amd64BranchDigest) \
+              $(IMAGE_REPO)@$(arm64BranchDigest)
+            docker buildx imagetools create -t $(IMAGE_REPO):${docker_tag_name}-rhel \
+              $(IMAGE_REPO)@$(amd64BranchRhelDigest) \
+              $(IMAGE_REPO)@$(arm64BranchRhelDigest)
+            preflight check container $(IMAGE_REPO):${docker_tag_name}-rhel
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
   - job: NotifyOnFailure
