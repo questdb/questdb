@@ -247,6 +247,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
+    // Cached boolean[] parallel to columnCount: true when the column is
+    // enforceable NOT NULL. Built on demand from metadata and invalidated
+    // whenever the metadata changes (set to null). The hot path in rowAppend
+    // reads from this instead of resolving metadata.getColumnType(i) +
+    // metadata.isNotNull(i) per row per column.
+    private boolean[] enforceableNotNullCache;
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
     private final TableWriterSegmentFileCache segmentFileCache;
     private final TxReader slaveTxReader;
@@ -697,6 +703,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
 
 
+        invalidateEnforceableNotNullCache();
         // extend columnTop list to make sure row cancel can work
         // need for setting correct top is hard to test without being able to read from table
         int columnIndex = columnCount - 1;
@@ -2873,6 +2880,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
         columnMetadata.setNotNullFlag(isNotNull);
+        invalidateEnforceableNotNullCache();
         // SET/DROP NOT NULL is a structural change: the sequencer increments
         // structureVersion on every toggle so concurrent WalWriters pick up
         // the metadata refresh. The TableWriter must match by bumping
@@ -10246,9 +10254,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void rowAppend(ObjList<Runnable> activeNullSetters) {
         if ((masterRef & 1) != 0) {
+            final boolean[] enforceableNotNull = enforceableNotNullCache();
             for (int i = 0; i < columnCount; i++) {
                 if (rowValueIsNotNull.getQuick(i) < masterRef) {
-                    if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                    if (enforceableNotNull[i]) {
                         throw CairoException.nonCritical()
                                 .put("NOT NULL constraint violation, column is required [column=")
                                 .put(metadata.getColumnName(i))
@@ -10259,6 +10268,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             masterRef++;
         }
+    }
+
+    private boolean[] enforceableNotNullCache() {
+        final boolean[] cache = enforceableNotNullCache;
+        if (cache != null && cache.length == columnCount) {
+            return cache;
+        }
+        final boolean[] rebuilt = new boolean[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            rebuilt[i] = TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i));
+        }
+        enforceableNotNullCache = rebuilt;
+        return rebuilt;
+    }
+
+    private void invalidateEnforceableNotNullCache() {
+        enforceableNotNullCache = null;
     }
 
     private void runFragile(FragileCode fragile, CairoException e) {
@@ -11085,6 +11111,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void writeMetadataToDisk() {
+        invalidateEnforceableNotNullCache();
         rewriteAndSwapMetadata(metadata);
         clearTodoAndCommitMeta();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
