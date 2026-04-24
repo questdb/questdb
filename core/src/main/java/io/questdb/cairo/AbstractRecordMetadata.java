@@ -88,6 +88,10 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
         return timestampIndex;
     }
 
+    public int getOriginalWriterIndex(int columnIndex) {
+        return getColumnMetadata(columnIndex).getOriginalWriterIndex();
+    }
+
     @Override
     public int getWriterIndex(int columnIndex) {
         return getColumnMetadata(columnIndex).getWriterIndex();

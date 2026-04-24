@@ -50,6 +50,7 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long COLUMN_RECORD_NAME_PTR_OFFSET;
     private static final long COLUMN_RECORD_NAME_SIZE_OFFSET;
     private static final long COLUMN_RECORD_TYPE_OFFSET;
+    private static final long COLUMN_STRUCTURE_VERSION_OFFSET;
     private static final long COLUMN_STRUCT_SIZE;
     private static final Log LOG = LogFactory.getLog(PartitionDecoder.class);
     private static final long ROW_COUNT_OFFSET;
@@ -433,6 +434,8 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long timestampIndexOffset();
 
+    private static native long columnStructureVersionOffset();
+
     private static native long unusedBytesOffset();
 
     private void destroy() {
@@ -499,6 +502,10 @@ public class PartitionDecoder implements QuietCloseable {
 
         public int getColumnCount() {
             return Unsafe.getUnsafe().getInt(ptr + COLUMN_COUNT_OFFSET);
+        }
+
+        public int getColumnStructureVersion() {
+            return Unsafe.getUnsafe().getInt(ptr + COLUMN_STRUCTURE_VERSION_OFFSET);
         }
 
         public int getColumnId(int columnIndex) {
@@ -573,6 +580,7 @@ public class PartitionDecoder implements QuietCloseable {
 
         COLUMN_COUNT_OFFSET = columnCountOffset();
         COLUMNS_PTR_OFFSET = columnsPtrOffset();
+        COLUMN_STRUCTURE_VERSION_OFFSET = columnStructureVersionOffset();
         ROW_COUNT_OFFSET = rowCountOffset();
         COLUMN_STRUCT_SIZE = columnRecordSize();
         COLUMN_RECORD_TYPE_OFFSET = columnRecordTypeOffset();

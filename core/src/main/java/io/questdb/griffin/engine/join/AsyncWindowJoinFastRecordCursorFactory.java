@@ -1240,7 +1240,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-        if (compiledFilter == null || frameMemory.hasColumnTops()) {
+        if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.needsColumnTypeCast()) {
             AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
         } else {
             applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);

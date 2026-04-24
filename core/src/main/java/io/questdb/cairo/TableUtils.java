@@ -286,7 +286,8 @@ public final class TableUtils {
         if (existingIndex < 0) {
             throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
         }
-        String columnNameStr = columnMetadata.getQuick(existingIndex).getColumnName();
+        TableColumnMetadata existingMeta = columnMetadata.getQuick(existingIndex);
+        String columnNameStr = existingMeta.getColumnName();
         int columnIndex = columnMetadata.size();
         columnMetadata.add(
                 new TableColumnMetadata(
@@ -300,7 +301,8 @@ public final class TableUtils {
                         false,
                         existingIndex + 1, // replacing column index by convention can be 0 if not in use
                         symbolCacheFlag,
-                        symbolCapacity
+                        symbolCapacity,
+                        existingMeta.getOriginalWriterIndex()
                 )
         );
         columnMetadata.getQuick(existingIndex).markDeleted();
@@ -1749,10 +1751,13 @@ public final class TableUtils {
                     }
 
                     final String columnName = metadata.getColumnName(columnIndex);
-                    final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+                    // Store the original writer index in the parquet file so that a later
+                    // parquet->native conversion can match columns by their original id even
+                    // after a column-type conversion has re-keyed the column.
+                    final int columnId = metadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
 
-                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnId);
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnId);
+                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
                     final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
@@ -1777,7 +1782,7 @@ public final class TableUtils {
                             ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_SEQUENTIAL);
 
                             // root symbol files use separate txn
-                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnId);
+                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
 
                             offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
                             if (!ff.exists(path.$())) {
@@ -2582,10 +2587,30 @@ public final class TableUtils {
             boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(metaMem, i));
 
             if (replacingColumnIndex > -1 && replacingColumnIndex < columnCount - 1) {
-                // Replace the column index
-                targetList.set(3 * replacingColumnIndex, i);
-                targetList.set(3 * replacingColumnIndex + 1, nameOffset);
-                targetList.set(3 * replacingColumnIndex + 2, isSymbol ? denseSymbolIndex : -1);
+                // Find the slot where the replaced column currently lives.
+                // For a chain A→B→C, when C replaces B, B may already have been
+                // moved into A's slot by a prior replacement. Follow the chain
+                // of negative markers to find the actual slot.
+                int targetSlot = replacingColumnIndex;
+                int marker = targetList.getQuick(3 * targetSlot);
+                if (marker < 0) {
+                    // Slot holds a dead marker — the column that was here was itself
+                    // replaced into an earlier slot. Decode the marker to find the
+                    // original slot: marker = -(originalReplacingIndex) - 1.
+                    // But we need to find where 'replacingColumnIndex' actually lives.
+                    // Search for it among all slots.
+                    for (int s = 0, sn = targetList.size() / 3; s < sn; s++) {
+                        if (targetList.getQuick(3 * s) == replacingColumnIndex) {
+                            targetSlot = s;
+                            break;
+                        }
+                    }
+                }
+
+                // Replace the column index at the found slot
+                targetList.set(3 * targetSlot, i);
+                targetList.set(3 * targetSlot + 1, nameOffset);
+                targetList.set(3 * targetSlot + 2, isSymbol ? denseSymbolIndex : -1);
 
                 targetList.add(-replacingColumnIndex - 1);
                 targetList.add(0);

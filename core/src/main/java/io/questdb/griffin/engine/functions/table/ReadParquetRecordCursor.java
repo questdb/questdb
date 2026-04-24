@@ -181,7 +181,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
             if (columnMapping != null) {
                 final int columnId = parquetMetadata.getColumnId(parquetIndex);
-                columnMapping.addColumn(parquetIndex, columnId < 0 ? parquetIndex : columnId);
+                final int effectiveId = columnId < 0 ? parquetIndex : columnId;
+                columnMapping.addColumn(parquetIndex, effectiveId, effectiveId);
             }
         }
 

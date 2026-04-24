@@ -5,6 +5,7 @@
 //! UUID byte-order normalization).
 
 use num_traits::AsPrimitive;
+use std::marker::PhantomData;
 
 /// Converts decoded values from one representation into another.
 pub trait Converter<A, B> {
@@ -20,7 +21,7 @@ where
     B: 'static + Copy,
     A: AsPrimitive<B>,
 {
-    _marker: std::marker::PhantomData<(A, B)>,
+    _marker: PhantomData<(A, B)>,
 }
 
 impl<A, B> Default for PrimitiveConverter<A, B>
@@ -39,7 +40,7 @@ where
     A: AsPrimitive<B>,
 {
     pub fn new() -> Self {
-        Self { _marker: std::marker::PhantomData }
+        Self { _marker: PhantomData }
     }
 }
 
@@ -53,6 +54,40 @@ where
     #[inline]
     fn convert(&self, input: A) -> B {
         input.as_()
+    }
+}
+
+/// Range-checked float-to-integer conversion.
+///
+/// Values that are NaN or outside `[min_val, max_val]` produce `null_value`
+/// instead of saturating (which is what Rust's `as` cast does).
+/// This matches the C++ `convert_from_type_to_type` behaviour for float→int.
+pub struct FloatToIntRangeCheckConverter<F, I> {
+    null_value: I,
+    max_val: F,
+    min_val: F,
+    _marker: PhantomData<(F, I)>,
+}
+
+impl<F: Copy, I: Copy> FloatToIntRangeCheckConverter<F, I> {
+    pub fn new(null_value: I, max_val: F, min_val: F) -> Self {
+        Self { null_value, max_val, min_val, _marker: PhantomData }
+    }
+}
+
+impl<F, I> Converter<F, I> for FloatToIntRangeCheckConverter<F, I>
+where
+    F: PartialOrd + Copy + AsPrimitive<I>,
+    I: 'static + Copy,
+{
+    #[inline]
+    fn convert(&self, input: F) -> I {
+        // NaN fails both comparisons (PartialOrd), so falls through to null_value.
+        if input <= self.max_val && input >= self.min_val {
+            input.as_()
+        } else {
+            self.null_value
+        }
     }
 }
 

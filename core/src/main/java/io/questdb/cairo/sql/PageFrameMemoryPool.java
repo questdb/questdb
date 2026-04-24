@@ -70,7 +70,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // Contains [parquet_column_index, column_type] pairs.
     private final DirectIntList parquetColumns;
     private final PartitionDecoder parquetDecoder;
+    // Per-column source type tag for fixed→var type-cast columns.
+    // Indexed by query column index; -1 means no type cast.
+    private final IntList sourceColumnTypes;
     private PageFrameAddressCache addressCache;
+    private boolean hasTypeCasts;
 
     public PageFrameMemoryPool(int parquetCacheSize) {
         try {
@@ -85,6 +89,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             fromParquetColumnIndexes = new IntList(16);
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
             parquetDecoder = new PartitionDecoder();
+            sourceColumnTypes = new IntList();
         } catch (Throwable th) {
             close();
             throw th;
@@ -127,7 +132,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getAuxPageAddresses(),
                     addressCache.getPageSizes(),
                     addressCache.getAuxPageSizes(),
-                    columnOffset
+                    columnOffset,
+                    false,
+                    null
             );
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
@@ -148,7 +155,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetBuffers.auxPageAddresses,
                     parquetBuffers.pageSizes,
                     parquetBuffers.auxPageSizes,
-                    0 // parquet buffers use 0 offset since they're frame-specific
+                    0, // parquet buffers use 0 offset since they're frame-specific
+                    hasTypeCasts,
+                    sourceColumnTypes
             );
         }
     }
@@ -320,36 +329,28 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // Fall back to positional index so the lookup in openParquet() works.
             columnIdToParquetIdx.put(id < 0 ? i : id, i);
         }
+
+        parquetColumns.reopen();
+        parquetColumns.clear();
+        fromParquetColumnIndexes.clear();
+        fromParquetColumnIndexes.setAll(parquetColumnCount, -1);
     }
 
     private void openParquet(int frameIndex) {
         final PartitionDecoder frameDecoder = addressCache.getParquetPartitionDecoder(frameIndex);
         if (parquetDecoder.getFileAddr() != frameDecoder.getFileAddr() || parquetDecoder.getFileSize() != frameDecoder.getFileSize()) {
             parquetDecoder.of(frameDecoder);
-            buildColumnIdMap(parquetDecoder.metadata());
         }
-
-        parquetColumns.reopen();
-        parquetColumns.clear();
-        final int parquetColumnCount = parquetDecoder.metadata().getColumnCount();
-        fromParquetColumnIndexes.clear();
-        fromParquetColumnIndexes.setAll(parquetColumnCount, -1);
+        final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
+        buildColumnIdMap(parquetMetadata);
 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
+
         final int readParquetColumnCount = columnMapping.getColumnCount();
+        sourceColumnTypes.setAll(readParquetColumnCount, -1);
+        hasTypeCasts = false;
         for (int i = 0; i < readParquetColumnCount; i++) {
-            final int columnWriterIndex = columnMapping.getWriterIndex(i);
-            final int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
-            if (parquetIdx >= 0) {
-                int columnType = addressCache.getColumnTypes().getQuick(i);
-                if (ColumnType.tagOf(columnType) == ColumnType.VARCHAR) {
-                    columnType = ColumnType.VARCHAR_SLICE;
-                }
-                parquetColumns.add(parquetIdx);
-                fromParquetColumnIndexes.setQuick(parquetIdx, i);
-                parquetColumns.add(columnType);
-            }
-            // Column missing from parquet (ADD COLUMN): stays at address 0 (NULL).
+            resolveParquetColumn(i, columnMapping, parquetMetadata);
         }
     }
 
@@ -357,32 +358,131 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final PartitionDecoder frameDecoder = addressCache.getParquetPartitionDecoder(frameIndex);
         if (parquetDecoder.getFileAddr() != frameDecoder.getFileAddr() || parquetDecoder.getFileSize() != frameDecoder.getFileSize()) {
             parquetDecoder.of(frameDecoder);
-            buildColumnIdMap(parquetDecoder.metadata());
         }
-
-        parquetColumns.reopen();
-        parquetColumns.clear();
-        final int parquetColumnCount = parquetDecoder.metadata().getColumnCount();
-        fromParquetColumnIndexes.clear();
-        fromParquetColumnIndexes.setAll(parquetColumnCount, -1);
+        final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
+        buildColumnIdMap(parquetMetadata);
 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
+
         final int readParquetColumnCount = columnMapping.getColumnCount();
+        sourceColumnTypes.setAll(readParquetColumnCount, -1);
+        hasTypeCasts = false;
         for (int i = 0; i < readParquetColumnCount; i++) {
             if (include && columnIndexes.contains(i) || (!include && !columnIndexes.contains(i))) {
-                final int columnWriterIndex = columnMapping.getWriterIndex(i);
-                final int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
-                if (parquetIdx >= 0) {
-                    int columnType = addressCache.getColumnTypes().getQuick(i);
-                    if (ColumnType.tagOf(columnType) == ColumnType.VARCHAR) {
-                        columnType = ColumnType.VARCHAR_SLICE;
-                    }
-                    parquetColumns.add(parquetIdx);
-                    fromParquetColumnIndexes.setQuick(parquetIdx, i);
-                    parquetColumns.add(columnType);
-                }
+                resolveParquetColumn(i, columnMapping, parquetMetadata);
             }
         }
+    }
+
+    private void resolveParquetColumn(int i, ColumnMapping columnMapping, PartitionDecoder.Metadata parquetMetadata) {
+        final int columnWriterIndex = columnMapping.getWriterIndex(i);
+        int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
+
+        if (parquetIdx < 0) {
+            // Direct writer index lookup failed. The column may have been type-converted
+            // (ALTER COLUMN TYPE), so the parquet file stores it under the original writer index.
+            final int origWriterIndex = columnMapping.getOriginalWriterIndex(i);
+            if (origWriterIndex >= 0 && origWriterIndex != columnWriterIndex) {
+                parquetIdx = columnIdToParquetIdx.get(origWriterIndex);
+            }
+            if (parquetIdx >= 0) {
+                int targetType = addressCache.getColumnTypes().getQuick(i);
+                final int sourceType = parquetMetadata.getColumnType(parquetIdx);
+                final int sourceTag = ColumnType.tagOf(sourceType);
+                final int targetTag = ColumnType.tagOf(targetType);
+                if (ColumnType.isSymbol(targetTag) && !ColumnType.isSymbol(sourceTag)) {
+                    // Non-symbol → symbol: the pre-pass in ConvertOperatorImpl should have
+                    // converted this parquet partition to native. If we get here, it's a bug.
+                    throw CairoException.critical(0)
+                            .put("unexpected non-symbol→symbol in parquet, column=").put(i)
+                            .put(", sourceType=").put(ColumnType.nameOf(sourceTag))
+                            .put(", targetType=").put(ColumnType.nameOf(targetTag));
+                }
+                if (sourceTag == targetTag) {
+                    // Same type, just a writer index mismatch after ALTER COLUMN TYPE.
+                    // No conversion needed, decode normally.
+                    parquetColumns.add(parquetIdx);
+                    fromParquetColumnIndexes.setQuick(parquetIdx, i);
+                    if (ColumnType.tagOf(targetType) == ColumnType.VARCHAR) {
+                        targetType = ColumnType.VARCHAR_SLICE;
+                    }
+                    parquetColumns.add(targetType);
+                    return;
+                }
+
+                if (ColumnType.isSymbol(sourceTag) && !ColumnType.isSymbol(targetTag)) {
+                    // Symbol → non-symbol: decode as VARCHAR_SLICE, Java converts lazily.
+                    // For Symbol→VARCHAR, the fallthrough below handles it (VARCHAR_SLICE is native format).
+                    if (targetTag != ColumnType.VARCHAR && targetTag != ColumnType.STRING) {
+                        parquetColumns.add(parquetIdx);
+                        fromParquetColumnIndexes.setQuick(parquetIdx, i);
+                        parquetColumns.add(ColumnType.VARCHAR_SLICE);
+                        // Negative VARCHAR tag signals var→fixed/var→string conversion.
+                        sourceColumnTypes.setQuick(i, -ColumnType.VARCHAR);
+                        hasTypeCasts = true;
+                        return;
+                    }
+                    // Symbol→VARCHAR falls through to the bottom of this method.
+                }
+
+                if (!ColumnType.isVarSize(sourceTag) && !ColumnType.isSymbol(sourceTag)
+                        && (targetTag == ColumnType.VARCHAR || targetTag == ColumnType.STRING)) {
+                    // Fixed → var-size: decode as source fixed type.
+                    // Java does lazy per-row conversion in PageFrameMemoryRecord.
+                    parquetColumns.add(parquetIdx);
+                    fromParquetColumnIndexes.setQuick(parquetIdx, i);
+                    parquetColumns.add(sourceType);
+                    sourceColumnTypes.setQuick(i, sourceType);
+                    hasTypeCasts = true;
+                    return;
+                }
+
+                if (ColumnType.isVarSize(sourceTag) && !ColumnType.isVarSize(targetTag)
+                        && !ColumnType.isSymbol(targetTag)) {
+                    // Var → fixed-size: decode as source var type.
+                    // Java does lazy per-row conversion in PageFrameMemoryRecord.
+                    int decodeType = (sourceTag == ColumnType.VARCHAR)
+                            ? ColumnType.VARCHAR_SLICE : sourceType;
+                    parquetColumns.add(parquetIdx);
+                    fromParquetColumnIndexes.setQuick(parquetIdx, i);
+                    parquetColumns.add(decodeType);
+                    // Negative value signals var→fixed direction.
+                    // -1 remains the "no conversion" sentinel.
+                    // For decimal targets, encode precision/scale in the upper bits:
+                    //   bits 0-7:  source tag (STRING or VARCHAR)
+                    //   bits 8-15: target decimal precision
+                    //   bits 16-23: target decimal scale
+                    int encoded = ColumnType.tagOf(sourceType);
+                    if (ColumnType.isDecimal(targetType)) {
+                        encoded |= (ColumnType.getDecimalPrecision(targetType) << 8)
+                                | (ColumnType.getDecimalScale(targetType) << 16);
+                    }
+                    sourceColumnTypes.setQuick(i, -encoded);
+                    hasTypeCasts = true;
+                    return;
+                }
+
+                // Fixed → fixed type conversion: tell Rust to decode as target type.
+                if (targetTag == ColumnType.VARCHAR) {
+                    targetType = ColumnType.VARCHAR_SLICE;
+                }
+                parquetColumns.add(parquetIdx);
+                fromParquetColumnIndexes.setQuick(parquetIdx, i);
+                parquetColumns.add(targetType);
+                return;
+            }
+        }
+
+        if (parquetIdx >= 0) {
+            int columnType = addressCache.getColumnTypes().getQuick(i);
+            if (ColumnType.tagOf(columnType) == ColumnType.VARCHAR) {
+                columnType = ColumnType.VARCHAR_SLICE;
+            }
+            parquetColumns.add(parquetIdx);
+            fromParquetColumnIndexes.setQuick(parquetIdx, i);
+            parquetColumns.add(columnType);
+        }
+        // Column missing from parquet (ADD COLUMN): stays at address 0 (NULL).
     }
 
     private class PageFrameMemoryImpl implements PageFrameMemory, Mutable {
@@ -443,6 +543,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         @Override
+        public int getSourceColumnType(int columnIndex) {
+            if (frameFormat == PartitionFormat.PARQUET && hasTypeCasts) {
+                return sourceColumnTypes.getQuick(columnIndex);
+            }
+            return -1;
+        }
+
+        @Override
         public long getPageAddress(int columnIndex) {
             return pageAddresses.get(columnOffset + columnIndex);
         }
@@ -477,6 +585,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
             }
             return false;
+        }
+
+        @Override
+        public boolean needsColumnTypeCast() {
+            return frameFormat == PartitionFormat.PARQUET && hasTypeCasts;
         }
 
         @Override

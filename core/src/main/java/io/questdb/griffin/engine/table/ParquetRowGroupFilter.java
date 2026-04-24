@@ -129,6 +129,13 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
+                // Skip pushdown for type-converted columns — parquet metadata
+                // (bloom filters, min/max stats, null counts) reflects the old column type.
+                int parquetColumnType = metadata.getColumnType(columnIndex);
+                if (parquetColumnType != condition.getColumnType()) {
+                    continue;
+                }
+
                 if (opType == PushdownFilterExtractor.OP_IS_NULL || opType == PushdownFilterExtractor.OP_IS_NOT_NULL) {
                     filterList.add(encodeColumnCountAndOp(columnIndex, 0, opType));
                     filterList.add(0);

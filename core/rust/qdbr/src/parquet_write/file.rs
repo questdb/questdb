@@ -521,6 +521,12 @@ pub fn create_row_group_from_partitions(
             options
         };
 
+        let options = if first_partition_column.designated_timestamp {
+            WriteOptions { write_statistics: true, ..options }
+        } else {
+            options
+        };
+
         let partition_ranges: Vec<(Column, usize, usize)> = partitions
             .iter()
             .enumerate()

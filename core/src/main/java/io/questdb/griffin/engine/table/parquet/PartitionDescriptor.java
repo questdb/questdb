@@ -49,6 +49,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
     protected DirectLongList columnData = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
     // A single DirectUtf8Sink to store all the column names
     protected DirectUtf8Sink columnNames = new DirectUtf8Sink(32);
+    protected int columnStructureVersion = -1;
     protected long partitionRowCount;
     protected DirectUtf8Sink tableName = new DirectUtf8Sink(16);
     protected int timestampIndex = -1;
@@ -103,6 +104,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
         tableName.clear();
         columnNames.clear();
         columnData.clear();
+        columnStructureVersion = -1;
     }
 
     @Override
@@ -115,6 +117,10 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
 
     public int getColumnCount() {
         return (int) (getColumnDataLen() / COLUMN_ENTRY_SIZE);
+    }
+
+    public int getColumnStructureVersion() {
+        return columnStructureVersion;
     }
 
     public long getColumnDataLen() {

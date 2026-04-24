@@ -63,6 +63,7 @@ public class PartitionEncoder {
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
             double bloomFilterFpp,
+            int columnStructureVersion,
             double minCompressionRatio
     ) throws CairoException;
 
@@ -154,6 +155,7 @@ public class PartitionEncoder {
                     bloomFilterColumnIndexesPtr,
                     bloomFilterColumnCount,
                     bloomFilterFpp,
+                    descriptor.getColumnStructureVersion(),
                     minCompressionRatio,
                     squashTracker
             );
@@ -310,6 +312,7 @@ public class PartitionEncoder {
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
             double bloomFilterFpp,
+            int columnStructureVersion,
             double minCompressionRatio,
             long squashTracker
     ) throws CairoException;

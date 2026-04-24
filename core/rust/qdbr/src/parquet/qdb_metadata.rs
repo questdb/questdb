@@ -141,6 +141,10 @@ fn is_neg_one_i64(v: &i64) -> bool {
     *v == -1
 }
 
+fn default_neg_one_i32() -> i32 {
+    -1
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct QdbMetaV1 {
     version: U32Const<1>,
@@ -153,6 +157,9 @@ pub struct QdbMetaV1 {
     #[serde(default = "default_neg_one_i64")]
     #[serde(skip_serializing_if = "is_neg_one_i64")]
     pub squash_tracker: i64,
+
+    #[serde(default = "default_neg_one_i32")]
+    pub column_structure_version: i32,
 }
 
 impl QdbMetaV1 {
@@ -162,6 +169,7 @@ impl QdbMetaV1 {
             schema: QdbMetaSchema::with_capacity(column_count),
             unused_bytes: 0,
             squash_tracker: -1,
+            column_structure_version: -1,
         }
     }
 }
@@ -224,6 +232,7 @@ mod tests {
             ],
             unused_bytes: 0,
             squash_tracker: -1,
+            column_structure_version: -1,
         };
 
         let expected = json!({
@@ -243,7 +252,8 @@ mod tests {
                     "column_top": 0,
                     "ascii": true
                 }
-            ]
+            ],
+            "column_structure_version": -1
         });
 
         let serialized_str = metadata.serialize()?;
@@ -272,6 +282,7 @@ mod tests {
             }],
             unused_bytes: 4096,
             squash_tracker: -1,
+            column_structure_version: 5,
         };
 
         let expected = json!({
@@ -282,7 +293,8 @@ mod tests {
                     "column_top": 0
                 }
             ],
-            "unused_bytes": 4096
+            "unused_bytes": 4096,
+            "column_structure_version": 5
         });
 
         let serialized_str = metadata.serialize()?;
@@ -304,6 +316,16 @@ mod tests {
         let deserialized = QdbMeta::deserialize(json_str)?;
         assert_eq!(deserialized.unused_bytes, 0);
         assert_eq!(deserialized.squash_tracker, -1);
+        assert_eq!(deserialized.column_structure_version, -1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_with_column_structure_version() -> ParquetResult<()> {
+        let json_str =
+            r#"{"version":1,"schema":[{"column_type":5,"column_top":0}],"column_structure_version":3}"#;
+        let deserialized = QdbMeta::deserialize(json_str)?;
+        assert_eq!(deserialized.column_structure_version, 3);
         Ok(())
     }
 
@@ -319,6 +341,7 @@ mod tests {
             }],
             unused_bytes: 0,
             squash_tracker: -1,
+            column_structure_version: -1,
         };
 
         let serialized_str = metadata.serialize()?;

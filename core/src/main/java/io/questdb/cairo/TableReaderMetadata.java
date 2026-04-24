@@ -329,6 +329,12 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int columnType = TableUtils.getColumnType(mem, writerIndex);
 
             if (columnType > -1) {
+                int origWriterIndex = writerIndex;
+                int ri = TableUtils.getReplacingColumnIndex(mem, writerIndex);
+                while (ri >= 0) {
+                    origWriterIndex = ri;
+                    ri = TableUtils.getReplacingColumnIndex(mem, ri);
+                }
                 String colName = Chars.toString(name);
                 TableReaderMetadataColumn colMeta = new TableReaderMetadataColumn(
                         colName,
@@ -342,7 +348,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         denseSymbolIndex,
                         stableIndex,
                         TableUtils.isSymbolCached(mem, writerIndex),
-                        TableUtils.getSymbolCapacity(mem, writerIndex)
+                        TableUtils.getSymbolCapacity(mem, writerIndex),
+                        origWriterIndex
                 );
                 colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(mem, writerIndex));
                 columnMetadata.add(colMeta);
@@ -404,6 +411,14 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
             boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
             int symbolCapacity = TableUtils.getSymbolCapacity(newMetaMem, writerIndex);
+            int origWriterIndex = writerIndex;
+            {
+                int ri = TableUtils.getReplacingColumnIndex(newMetaMem, writerIndex);
+                while (ri >= 0) {
+                    origWriterIndex = ri;
+                    ri = TableUtils.getReplacingColumnIndex(newMetaMem, ri);
+                }
+            }
             TableReaderMetadataColumn existing = null;
             String newName;
 
@@ -457,7 +472,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     denseSymbolIndex,
                                     stableIndex,
                                     symbolIsCached,
-                                    symbolCapacity
+                                    symbolCapacity,
+                                    origWriterIndex
                             )
                     );
                     if (existing != null) {

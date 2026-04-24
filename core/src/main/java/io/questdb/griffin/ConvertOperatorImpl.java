@@ -36,6 +36,7 @@ import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -218,8 +219,55 @@ public class ConvertOperatorImpl implements Closeable {
             long start = timer.getTicks();
             long totalRows = 0;
 
+            // Pre-pass: convert parquet partitions to native when needed.
+            // Case 1: chained conversion (e.g. INT -> STRING -> DATE) where parquet stores an
+            //         older type — convert so the two-step path matches native behavior.
+            // Case 2: target type is Symbol — symbol maps cannot be built from parquet.
+            boolean hasPriorConversion = tableWriter.getMetadata()
+                    .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
+            boolean isTargetSymbol = ColumnType.isSymbol(newType);
+            if (hasPriorConversion || isTargetSymbol) {
+                for (int pi = 0, pn = tableWriter.getPartitionCount(); pi < pn; pi++) {
+                    if (tableWriter.getPartitionFormat(pi) != PartitionFormat.PARQUET) {
+                        continue;
+                    }
+                    int parquetColType = tableWriter.getParquetColumnType(pi, existingColIndex);
+                    if (!ColumnType.isUndefined(parquetColType)
+                            && (isTargetSymbol
+                                || ColumnType.tagOf(parquetColType) != ColumnType.tagOf(existingType))) {
+                        long pts = tableWriter.getPartitionTimestamp(pi);
+                        LOG.info()
+                                .$("converting parquet partition to native before type change [partition=").$ts(pts)
+                                .$(", column=").$safe(columnName)
+                                .$(", targetType=").$(ColumnType.nameOf(newType))
+                                .I$();
+                        tableWriter.convertPartitionParquetToNative(pts);
+                    }
+                }
+            }
+
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
                 if (asyncProcessingErrorCount.get() == 0) {
+                    if (tableWriter.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+                        // Parquet partitions are not converted here (the parquet decoder handles
+                        // on-the-fly type conversion via the replacingIndex chain). However, we
+                        // still propagate the column top from existingColIndex to columnIndex so
+                        // that if the parquet is later converted to native (e.g. by a chained
+                        // ALTER TYPE pre-pass), the native reader finds the data at the correct
+                        // row offsets.
+                        final long parquetPts = tableWriter.getPartitionTimestamp(partitionIndex);
+                        final long parquetColTop = columnVersionWriter.getColumnTop(parquetPts, existingColIndex);
+                        if (parquetColTop != tableWriter.getColumnTop(parquetPts, columnIndex, -1)) {
+                            long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE
+                                    ? parquetPts
+                                    : TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                            columnVersionWriter.upsertColumnTop(
+                                    partTs, columnIndex,
+                                    parquetColTop > -1 ? parquetColTop : tableWriter.getPartitionSize(partitionIndex)
+                            );
+                        }
+                        continue;
+                    }
                     try {
                         final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
                         final long maxRow = tableWriter.getPartitionSize(partitionIndex);

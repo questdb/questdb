@@ -225,7 +225,7 @@ mod tests {
             })
             .collect();
 
-        let partition = Partition { table: "test_table".to_string(), columns };
+        let partition = Partition { table: "test_table".to_string(), columns, column_structure_version: -1 };
 
         // Measure the start time
         let start = Instant::now();
@@ -338,6 +338,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: [col1_w].to_vec(),
+            column_structure_version: -1,
         };
 
         ParquetWriter::new(&mut buf)
@@ -424,6 +425,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: [col1_w, col2_w].to_vec(),
+            column_structure_version: -1,
         };
 
         ParquetWriter::new(&mut buf)
@@ -484,6 +486,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: [col1_w].to_vec(),
+            column_structure_version: -1,
         };
 
         ParquetWriter::new(&mut buf)
@@ -602,6 +605,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![ts_col],
+            column_structure_version: -1,
         };
 
         let sorting_columns = Some(vec![SortingColumn::new(0, true, false)]); // descending=true
@@ -661,6 +665,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![ts_col],
+            column_structure_version: -1,
         };
 
         let sorting_columns = Some(vec![SortingColumn::new(0, false, false)]); // descending=false
@@ -770,14 +775,17 @@ mod tests {
         let partition1 = Partition {
             table: "test_table".to_string(),
             columns: vec![col1],
+            column_structure_version: -1,
         };
         let partition2 = Partition {
             table: "test_table".to_string(),
             columns: vec![col2],
+            column_structure_version: -1,
         };
         let partition3 = Partition {
             table: "test_table".to_string(),
             columns: vec![col3],
+            column_structure_version: -1,
         };
 
         let (schema, additional_meta) = to_parquet_schema(&partition1, false, -1).unwrap();
@@ -1369,6 +1377,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         let mut bloom_cols = HashSet::new();
@@ -1451,6 +1460,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         let mut bloom_cols = HashSet::new();
@@ -1569,6 +1579,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w, col2_w],
+            column_structure_version: -1,
         };
 
         // Only enable bloom filter for column 0
@@ -1649,6 +1660,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         let mut bloom_cols = HashSet::new();
@@ -1741,6 +1753,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         let mut bloom_cols = HashSet::new();
@@ -1831,6 +1844,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         let mut bloom_cols = HashSet::new();
@@ -1921,6 +1935,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         let mut bloom_cols = HashSet::new();
@@ -2016,6 +2031,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         let mut bloom_cols = HashSet::new();
@@ -2125,6 +2141,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         // No bloom filter, only statistics
@@ -2199,6 +2216,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         ParquetWriter::new(&mut buf)
@@ -2272,6 +2290,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         ParquetWriter::new(&mut buf)
@@ -2345,6 +2364,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         ParquetWriter::new(&mut buf)
@@ -2419,6 +2439,7 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: vec![col1_w],
+            column_structure_version: -1,
         };
 
         ParquetWriter::new(&mut buf)

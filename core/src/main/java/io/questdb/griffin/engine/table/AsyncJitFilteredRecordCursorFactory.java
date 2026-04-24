@@ -327,8 +327,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             }
             record.init(frameMemory);
 
-            if (frameMemory.hasColumnTops()) {
-                // Use Java-based filter in case of a page frame with column tops.
+            if (frameMemory.hasColumnTops() || frameMemory.needsColumnTypeCast()) {
+                // Use Java-based filter in case of a page frame with column tops
+                // or type-cast columns (fixed→var conversion not supported in JIT).
                 final Function filter = atom.getFilter(filterId);
 
                 if (task.isCountOnly()) {

@@ -168,7 +168,7 @@ pub fn symbol_to_data_page_only(
     primitive_type: PrimitiveType,
     offsets: &[u64],
     chars: &[u8],
-    not_null_hint: bool,
+    _not_null_hint: bool,
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows = column_top + column_values.len();
@@ -182,16 +182,14 @@ pub fn symbol_to_data_page_only(
         "local key exceeds global_max_key, encoding would be invalid"
     );
 
-    // Always encode def levels so the file-level schema stays OPTIONAL
-    // across O3 merges.  When there are no nulls (not_null_hint from Java),
-    // a single RLE run of 1s is ~3 bytes regardless of row count.
-    // The hint can be stale, so fall back to per-row def levels when
-    // nulls are actually present (column_top > 0).
-    let (definition_levels_byte_length, data_null_count) = if not_null_hint && column_top == 0 {
+    // Always count actual nulls — the not_null_hint from Java can be stale
+    // after O3 merges or parquet-to-native conversions that write symbol keys
+    // directly without updating the SymbolMapWriter null flag.
+    let data_null_count = column_values.iter().filter(|&&k| k < 0).count();
+    let definition_levels_byte_length = if data_null_count == 0 && column_top == 0 {
         encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
-        (data_buffer.len(), 0)
+        data_buffer.len()
     } else {
-        let data_null_count = column_values.iter().filter(|&&k| k < 0).count();
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {
                 false
@@ -201,7 +199,7 @@ pub fn symbol_to_data_page_only(
         });
 
         encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-        (data_buffer.len(), data_null_count)
+        data_buffer.len()
     };
     let total_null_count = column_top + data_null_count;
 
@@ -372,22 +370,20 @@ pub fn symbol_to_pages(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    not_null_hint: bool,
+    _not_null_hint: bool,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + column_values.len();
     let mut data_buffer = vec![];
 
-    // Always encode def levels so the file-level schema stays OPTIONAL
-    // across O3 merges.  When there are no nulls (not_null_hint from Java),
-    // a single RLE run of 1s is ~3 bytes regardless of row count.
-    // The hint can be stale, so fall back to per-row def levels when
-    // nulls are actually present (column_top > 0).
-    let (definition_levels_byte_length, data_null_count) = if not_null_hint && column_top == 0 {
+    // Always count actual nulls — the not_null_hint from Java can be stale
+    // after O3 merges or parquet-to-native conversions that write symbol keys
+    // directly without updating the SymbolMapWriter null flag.
+    let data_null_count = column_values.iter().filter(|&&k| k < 0).count();
+    let definition_levels_byte_length = if data_null_count == 0 && column_top == 0 {
         encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
-        (data_buffer.len(), 0)
+        data_buffer.len()
     } else {
-        let data_null_count = column_values.iter().filter(|&&k| k < 0).count();
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {
                 false
@@ -397,7 +393,7 @@ pub fn symbol_to_pages(
         });
 
         encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-        (data_buffer.len(), data_null_count)
+        data_buffer.len()
     };
     let total_null_count = column_top + data_null_count;
 
