@@ -1496,7 +1496,19 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.frameFormat = frameFormat;
         this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
         this.hasTypeCasts = hasTypeCasts;
-        this.sourceColumnTypes = sourceColumnTypes;
+        // The pool passes its own IntList by reference and mutates it in place on every
+        // openParquet() call. Snapshot the contents so a later navigateTo() on Record B
+        // does not overwrite this record's view of the per-column conversion state.
+        if (hasTypeCasts) {
+            if (this.sourceColumnTypes == null) {
+                this.sourceColumnTypes = new IntList(sourceColumnTypes.size());
+            }
+            final int n = sourceColumnTypes.size();
+            this.sourceColumnTypes.setAll(n, -1);
+            for (int c = 0; c < n; c++) {
+                this.sourceColumnTypes.setQuick(c, sourceColumnTypes.getQuick(c));
+            }
+        }
         this.rowIdOffset = rowIdOffset;
         this.pageAddresses = pageAddresses;
         this.auxPageAddresses = auxPageAddresses;

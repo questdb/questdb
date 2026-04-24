@@ -24,7 +24,13 @@
 
 package io.questdb.test.cairo.parquet;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -639,6 +645,120 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (NULL, '2024-01-01T00:00:03.000000Z')""";
             for (String target : new String[]{"STRING", "VARCHAR"}) {
                 assertConversion("UUID", target, values);
+            }
+        });
+    }
+
+    /**
+     * Reproduces the aliasing bug where the pool's {@code sourceColumnTypes}
+     * {@link io.questdb.std.IntList} is stored by reference in BOTH Record A and Record B
+     * via the package-private {@code init(...)} overload in {@link io.questdb.cairo.sql.PageFrameMemoryRecord}
+     * (line 1499). When Record B is navigated via {@code recordAt} to a partition whose
+     * parquet schema does NOT need conversion, the pool's {@code sourceColumnTypes} is
+     * rebuilt in place (see {@link io.questdb.cairo.sql.PageFrameMemoryPool#openParquet}
+     * at the {@code setAll(readParquetColumnCount, -1)} call). Record A, which is still
+     * anchored at a partition that DOES need INT-&gt;STRING lazy conversion, now reads the
+     * overwritten mapping and silently skips the conversion, returning raw INT bytes
+     * interpreted as native STRING storage -- garbage.
+     * <p>
+     * Setup:
+     * <ul>
+     *   <li>Partition 2024-01-01: inserted while column {@code val} is INT, converted to
+     *       parquet (parquet physical type = INT32). After the ALTER, the table schema
+     *       says STRING, so this partition needs lazy INT-&gt;STRING conversion.</li>
+     *   <li>Partition 2024-01-02: inserted AFTER the ALTER, so {@code val} is already
+     *       stored natively as STRING; then converted to parquet (parquet stores STRING).
+     *       This partition does NOT need any conversion -- {@code sourceColumnTypes[val]==-1}.</li>
+     * </ul>
+     * Trigger: iterate the cursor to land Record A on partition 2024-01-01, then call
+     * {@code recordAt(recordB, rowIdInPartition_2024_01_02)} to navigate Record B to the
+     * other partition. Re-reading Record A's {@code getStrA(val)} should still return the
+     * correctly-converted INT value as a string, but with the aliasing bug it returns
+     * garbage or throws.
+     */
+    @Test
+    public void testMixedConversionStatesAcrossPartitionsReproduceAliasingBug() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Partition 2024-01-01: val stored as INT in parquet (conversion needed after ALTER).
+                execute("INSERT INTO pt VALUES (42, '2024-01-01T00:00:00.000000Z')");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                // Schema change: val is now STRING. Partition 2024-01-01 still stores INT
+                // in its parquet file; reads must lazy-convert INT->STRING.
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE STRING");
+                drainWalQueue();
+
+                // Partition 2024-01-02: val inserted as STRING natively, then parquet-encoded
+                // as STRING. This partition does NOT need any conversion at read time.
+                execute("INSERT INTO pt VALUES ('hello-from-p2', '2024-01-02T00:00:00.000000Z')");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
+                drainWalQueue();
+
+                // Baseline: a straight SELECT must see the correctly-converted strings on both partitions.
+                assertSql(
+                        "val\tts\n42\t2024-01-01T00:00:00.000000Z\nhello-from-p2\t2024-01-02T00:00:00.000000Z\n",
+                        "SELECT * FROM pt ORDER BY ts"
+                );
+
+                // Now manually drive the cursor so we can interleave Record A iteration with
+                // a Record B recordAt() on a different frame. The aliasing bug hits when
+                // the pool's sourceColumnTypes is rebuilt for a non-converting partition
+                // while Record A is still pointing at the converting one.
+                try (
+                        RecordCursorFactory factory = select("SELECT val FROM pt ORDER BY ts");
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    final Record recordA = cursor.getRecord();
+                    final Record recordB = cursor.getRecordB();
+
+                    Assert.assertTrue("expected at least one row", cursor.hasNext());
+
+                    // Capture the rowId while recordA is positioned on partition 1 (INT->STRING).
+                    final long rowIdPartition1 = recordA.getRowId();
+
+                    // Read Record A before any Record B traversal -- must be the converted INT.
+                    final StringSink beforeBSink = new StringSink();
+                    beforeBSink.put(recordA.getStrA(0));
+                    TestUtils.assertEquals("42", beforeBSink);
+
+                    // Advance recordA to row in partition 2 to grab its rowId, then rewind
+                    // recordA back to the partition-1 row via recordAt.
+                    Assert.assertTrue("expected second row", cursor.hasNext());
+                    final long rowIdPartition2 = recordA.getRowId();
+                    cursor.recordAt(recordA, rowIdPartition1);
+                    TestUtils.assertEquals("42", recordA.getStrA(0));
+
+                    // Trigger the aliasing bug: navigate recordB to partition 2.
+                    // This rebuilds the pool's sourceColumnTypes in place with partition 2's
+                    // mapping (no conversion), silently overwriting the state Record A relies on.
+                    cursor.recordAt(recordB, rowIdPartition2);
+                    TestUtils.assertEquals("hello-from-p2", recordB.getStrA(0));
+
+                    // Re-read Record A: it is still anchored at partition 1 (rowIdPartition1)
+                    // which needs INT->STRING conversion. If the pool's sourceColumnTypes is
+                    // aliased between Record A and Record B, partition 2's "no conversion"
+                    // mapping clobbers Record A's view and the read returns garbage.
+                    //
+                    // With the fix (per-record snapshot of sourceColumnTypes), the assertion
+                    // below holds. With the current shared-reference code, it fails.
+                    final CharSequence afterB = recordA.getStrA(0);
+                    final String afterBStr = afterB == null ? "<null>" : afterB.toString();
+                    TestUtils.assertEquals(
+                            "Record A must still see partition 1's INT->STRING conversion "
+                                    + "after Record B navigated to a non-converting partition. "
+                                    + "Got: '" + afterBStr + "'",
+                            "42",
+                            afterBStr
+                    );
+                }
+            } finally {
+                tryDrop("pt");
             }
         });
     }
