@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -40,6 +41,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
@@ -348,12 +350,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .I$();
 
                     if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled())
-                                .setOutOfMemory(task.isOutOfMemory());
+                        throw task.buildError();
                     }
 
                     allFramesActive &= frameSequence.isActive();
@@ -391,6 +388,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
             }
             LOG.error().$("filter error [ex=").$(th).I$();
+            // Preserve typed user-facing errors (ImplicitCastException / NumericException)
+            // raised via task.buildError() so the caller can recognise them.
+            if (th instanceof ImplicitCastException || th instanceof NumericException) {
+                throw (RuntimeException) th;
+            }
             throw CairoException.nonCritical().put(th.getMessage());
         }
     }

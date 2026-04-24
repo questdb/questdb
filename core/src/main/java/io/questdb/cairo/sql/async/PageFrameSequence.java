@@ -58,7 +58,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
-
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
@@ -348,7 +347,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     // We haven't dispatched anything, and we have collected everything
                     // that was dispatched previously in this loop iteration. Use the
                     // local task to avoid being blocked in case of full reduce queue.
-                    workLocally(countOnly);
+                    reduceLocally(countOnly);
                     return LOCAL_TASK_CURSOR;
                 }
                 return -1;
@@ -586,20 +585,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return dispatched;
     }
 
-    private boolean stealWork(
-            RingQueue<PageFrameReduceTask> queue,
-            MCSequence reduceSubSeq,
-            PageFrameMemoryRecord record,
-            SqlExecutionCircuitBreakerWrapper circuitBreaker
-    ) {
-        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker, this)) {
-            Os.pause();
-            return false;
-        }
-        return true;
-    }
-
-    private void workLocally(boolean countOnly) {
+    private void reduceLocally(boolean countOnly) {
         assert dispatchStartFrameIndex < frameCount;
 
         if (localTask == null) {
@@ -633,10 +619,27 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             if (th instanceof CairoException e) {
                 interruptReason = e.getInterruptionReason();
             }
+            // Route the error through the local task so the collector sees it via
+            // task.hasError() and can re-throw the original class via task.buildError().
+            // Re-throwing here would let the outer catch in the collector wrap the
+            // typed exception into a generic CairoException, losing the original class.
+            localTask.setErrorMsg(th);
             cancel(interruptReason);
-            throw th;
         } finally {
             reduceFinishedCounter.incrementAndGet();
         }
+    }
+
+    private boolean stealWork(
+            RingQueue<PageFrameReduceTask> queue,
+            MCSequence reduceSubSeq,
+            PageFrameMemoryRecord record,
+            SqlExecutionCircuitBreakerWrapper circuitBreaker
+    ) {
+        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker, this)) {
+            Os.pause();
+            return false;
+        }
+        return true;
     }
 }
