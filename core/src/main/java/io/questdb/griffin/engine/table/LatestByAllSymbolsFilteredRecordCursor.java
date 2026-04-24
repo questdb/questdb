@@ -70,7 +70,8 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     @Override
     public void close() {
         if (isOpen()) {
-            Misc.free(filter);
+            // filter ownership moved to the enclosing factory; close() is called between
+            // prepared-statement executions and freeing it here would break the next of()
             Misc.free(map);
             super.close();
         }

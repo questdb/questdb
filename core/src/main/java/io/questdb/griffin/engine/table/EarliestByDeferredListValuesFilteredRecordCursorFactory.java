@@ -115,6 +115,27 @@ public class EarliestByDeferredListValuesFilteredRecordCursorFactory extends Abs
         sink.child(partitionFrameCursorFactory);
     }
 
+    @Override
+    protected void _close() {
+        super._close();
+        // This factory takes ownership of the cloned deferred symbol function lists;
+        // release any closeable resources they hold.
+        Misc.freeObjList(includedSymbolFuncs);
+        Misc.freeObjList(excludedSymbolFuncs);
+        Misc.free(filter);
+        Misc.free(cursor);
+    }
+
+    @Override
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        lookupDeferredSymbols(pageFrameCursor, executionContext);
+        cursor.of(pageFrameCursor, executionContext);
+        return cursor;
+    }
+
     private void lookupDeferredSymbols(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         if (includedSymbolFuncs != null) {
             IntHashSet symbolKeys = cursor.getIncludedSymbolKeys();
@@ -142,26 +163,5 @@ public class EarliestByDeferredListValuesFilteredRecordCursorFactory extends Abs
                 }
             }
         }
-    }
-
-    @Override
-    protected void _close() {
-        super._close();
-        // This factory takes ownership of the cloned deferred symbol function lists;
-        // release any closeable resources they hold.
-        Misc.freeObjList(includedSymbolFuncs);
-        Misc.freeObjList(excludedSymbolFuncs);
-        Misc.free(filter);
-        Misc.free(cursor);
-    }
-
-    @Override
-    protected RecordCursor initRecordCursor(
-            PageFrameCursor pageFrameCursor,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        lookupDeferredSymbols(pageFrameCursor, executionContext);
-        cursor.of(pageFrameCursor, executionContext);
-        return cursor;
     }
 }

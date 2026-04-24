@@ -950,5 +950,5 @@ public interface CairoConfiguration {
 
     int maxArrayElementCount();
 
-    boolean useWithinLatestEarliestByOptimisation();
+    boolean useWithinByOptimisation();
 }

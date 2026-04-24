@@ -59,7 +59,8 @@ class LateralJoinRewriter implements Mutable {
     private static final int CORRELATED_GROUP_BY = CORRELATED_ORDER_BY << 1;
     private static final int CORRELATED_SAMPLE_BY = CORRELATED_GROUP_BY << 1;
     private static final int CORRELATED_LATEST_BY = CORRELATED_SAMPLE_BY << 1;
-    private static final int CORRELATED_LIMIT = CORRELATED_LATEST_BY << 1;
+    private static final int CORRELATED_EARLIEST_BY = CORRELATED_LATEST_BY << 1;
+    private static final int CORRELATED_LIMIT = CORRELATED_EARLIEST_BY << 1;
     private static final int CORRELATED_JOIN_ON = CORRELATED_LIMIT << 1;
 
     private static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
@@ -708,6 +709,74 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    // Compensates EARLIEST ON inside a lateral subquery to ensure per-outer-row computation.
+    //
+    // EARLIEST ON operates at the physical table scan level, BEFORE the WHERE filter
+    // (mirror of LATEST BY). Original LATERAL semantics require WHERE FIRST, then
+    // EARLIEST ON. The difference is safe only when ALL correlations are equalities.
+    //
+    // Fast path — add inner physical column to PARTITION BY (native EARLIEST ON preserved):
+    //   Condition: ALL correlations are equalities (no non-eq correlation at all).
+    //             Each groupingCol maps to an inner physical column via WHERE equality.
+    //   Example:
+    //     SELECT * FROM orders o JOIN LATERAL (
+    //         SELECT category, qty FROM trades
+    //         WHERE order_id = o.id
+    //         EARLIEST ON ts PARTITION BY category
+    //     ) t
+    //   After compensation:
+    //     EARLIEST ON ts PARTITION BY category, order_id
+    //
+    // Fallback — convert to row_number() OVER (...) = 1 (window function replacement
+    // with ascending timestamp order, the inverse of LATEST BY):
+    //   Condition: ANY non-equality correlation exists.
+    private IQueryModel compensateEarliestBy(
+            IQueryModel inner,
+            IQueryModel parent,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
+            int depth
+    ) throws SqlException {
+        ObjList<ExpressionNode> earliestBy = inner.getEarliestBy();
+
+        boolean isNativeEarliestByUsable = !hasNonEqualityCorrelation(inner.getWhereClause(), depth)
+                && groupingCols.size() > 0;
+
+        if (isNativeEarliestByUsable) {
+            for (int i = 0, n = groupingCols.size(); i < n; i++) {
+                CharSequence outerRefAlias = groupingCols.getQuick(i).token;
+                CharSequence innerCol = findInnerPhysicalColumn(inner.getWhereClause(), outerRefAlias, outerToInnerAlias);
+                if (innerCol == null) {
+                    isNativeEarliestByUsable = false;
+                    break;
+                }
+            }
+        }
+
+        if (isNativeEarliestByUsable) {
+            for (int i = 0, n = groupingCols.size(); i < n; i++) {
+                CharSequence outerRefAlias = groupingCols.getQuick(i).token;
+                CharSequence innerCol = findInnerPhysicalColumn(inner.getWhereClause(), outerRefAlias, outerToInnerAlias);
+                boolean isFound = false;
+                for (int j = 0, m = earliestBy.size(); j < m; j++) {
+                    if (Chars.equalsIgnoreCase(earliestBy.getQuick(j).token, innerCol)) {
+                        isFound = true;
+                        break;
+                    }
+                }
+                if (!isFound) {
+                    earliestBy.add(expressionNodePool.next().of(
+                            ExpressionNode.LITERAL, innerCol, 0, 0
+                    ));
+                }
+                ensureColumnInSelect(inner, groupingCols.getQuick(i), groupingCols.getQuick(i).token);
+            }
+            return inner;
+        }
+
+        // Fallback: convert EARLIEST ON to row_number() OVER (... ORDER BY ts ASC) = 1
+        return convertEarliestByToWindowFunction(inner, parent, outerToInnerAlias, depth);
+    }
+
     // Compensates LATEST BY inside a lateral subquery to ensure per-outer-row computation.
     //
     // LATEST BY operates at the physical table scan level, BEFORE the WHERE filter.
@@ -1029,6 +1098,74 @@ class LateralJoinRewriter implements Mutable {
             result = createBinaryOp("and", result, predicates.getQuick(i));
         }
         return result;
+    }
+
+    private IQueryModel convertEarliestByToWindowFunction(
+            final IQueryModel inner,
+            IQueryModel parent,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
+            int depth
+    ) throws SqlException {
+        ObjList<ExpressionNode> earliestBy = inner.getEarliestBy();
+        CharSequence rnAlias = createColumnAlias("_earliest_rn", inner);
+        ExpressionNode rnFunc = expressionNodePool.next().of(
+                ExpressionNode.FUNCTION, "row_number", 0, 0
+        );
+        rnFunc.paramCount = 0;
+
+        WindowExpression rnWindowExpr = windowExpressionPool.next();
+        rnWindowExpr.of(rnAlias, rnFunc);
+
+        for (int i = 0, n = earliestBy.size(); i < n; i++) {
+            ExpressionNode cloned = earliestBy.getQuick(i);
+            if (hasCorrelatedExprAtDepth(cloned, depth)) {
+                cloned = rewriteOuterRefs(cloned, outerToInnerAlias, depth);
+            }
+            rnWindowExpr.getPartitionBy().add(cloned);
+        }
+        for (int i = 0, n = groupingCols.size(); i < n; i++) {
+            rnWindowExpr.getPartitionBy().add(
+                    ExpressionNode.deepClone(expressionNodePool, groupingCols.getQuick(i)));
+        }
+
+        ExpressionNode tsExpr = inner.getTimestamp();
+        if (tsExpr != null) {
+            rnWindowExpr.getOrderBy().add(
+                    ExpressionNode.deepClone(expressionNodePool, tsExpr));
+            rnWindowExpr.getOrderByDirection().add(IQueryModel.ORDER_DIRECTION_ASCENDING);
+        }
+
+        earliestBy.clear();
+
+        IQueryModel windowLayer = queryModelPool.next();
+        windowLayer.setNestedModel(inner);
+        if (parent != null && parent.getBottomUpColumns().size() > 0) {
+            ObjList<QueryColumn> parentCols = parent.getBottomUpColumns();
+            for (int i = 0, n = parentCols.size(); i < n; i++) {
+                QueryColumn col = parentCols.getQuick(i);
+                ExpressionNode ref = expressionNodePool.next().of(
+                        ExpressionNode.LITERAL, col.getAlias(), 0, 0
+                );
+                windowLayer.addBottomUpColumn(queryColumnPool.next().of(col.getAlias(), ref));
+            }
+        }
+        for (int i = 0, n = groupingCols.size(); i < n; i++) {
+            ExpressionNode gcol = groupingCols.getQuick(i);
+            ensureColumnInSelect(windowLayer, gcol, gcol.token);
+        }
+        windowLayer.addBottomUpColumn(rnWindowExpr);
+        ExpressionNode rnRef = expressionNodePool.next().of(
+                ExpressionNode.LITERAL, rnAlias, 0, 0
+        );
+        ExpressionNode one = expressionNodePool.next().of(
+                ExpressionNode.CONSTANT, "1", 0, 0
+        );
+
+        IQueryModel filterModel = queryModelPool.next();
+        filterModel.setNestedModel(windowLayer);
+        filterModel.setNestedModelIsSubQuery(true);
+        filterModel.setWhereClause(createBinaryOp("=", rnRef, one));
+        return replaceAndTransferDependents(inner, filterModel);
     }
 
     private IQueryModel convertLatestByToWindowFunction(
@@ -1645,6 +1782,7 @@ class LateralJoinRewriter implements Mutable {
                     || m.isDistinct()
                     || m.getLimitHi() != null || m.getLimitLo() != null
                     || m.getLatestBy().size() > 0
+                    || m.getEarliestBy().size() > 0
                     || m.getUnionModel() != null
                     || hasAggregateFunctions(m)
                     || hasWindowColumns(m)
@@ -2012,6 +2150,16 @@ class LateralJoinRewriter implements Mutable {
                 }
             }
         }
+        if (current.getEarliestBy().size() > 0) {
+            IQueryModel earliestByWrapper = compensateEarliestBy(current, parent, outerToInnerAlias, depth);
+            if (earliestByWrapper != current) {
+                if (parent != null) {
+                    parent.setNestedModel(earliestByWrapper);
+                } else {
+                    lateralJoinModel.setNestedModel(earliestByWrapper);
+                }
+            }
+        }
 
         // 4. Rewrite current layer correlated references
         rewriteSelectExpressions(current, outerToInnerAlias, depth);
@@ -2028,6 +2176,14 @@ class LateralJoinRewriter implements Mutable {
             if (hasCorrelatedExprAtDepth(lb, depth)) {
                 latestBy.setQuick(li,
                         rewriteOuterRefs(lb, outerToInnerAlias, depth));
+            }
+        }
+        ObjList<ExpressionNode> earliestBy = current.getEarliestBy();
+        for (int ei = 0, en = earliestBy.size(); ei < en; ei++) {
+            ExpressionNode eb = earliestBy.getQuick(ei);
+            if (hasCorrelatedExprAtDepth(eb, depth)) {
+                earliestBy.setQuick(ei,
+                        rewriteOuterRefs(eb, outerToInnerAlias, depth));
             }
         }
 
@@ -2651,6 +2807,10 @@ class LateralJoinRewriter implements Mutable {
         for (int j = 0, sz = latestBy.size(); j < sz; j++) {
             latestBy.setQuick(j, rewriteOuterRefs(latestBy.getQuick(j), aliasMap, 0));
         }
+        ObjList<ExpressionNode> earliestBy = model.getEarliestBy();
+        for (int j = 0, sz = earliestBy.size(); j < sz; j++) {
+            earliestBy.setQuick(j, rewriteOuterRefs(earliestBy.getQuick(j), aliasMap, 0));
+        }
         for (int j = 1, sz = model.getJoinModels().size(); j < sz; j++) {
             IQueryModel jm = model.getJoinModels().getQuick(j);
             ExpressionNode jc = jm.getJoinCriteria();
@@ -2702,6 +2862,11 @@ class LateralJoinRewriter implements Mutable {
         for (int i = 0, n = latestBy.size(); i < n; i++) {
             latestBy.setQuick(i,
                     rewriteOuterRefs(latestBy.getQuick(i), outerToInnerAlias, depth));
+        }
+        ObjList<ExpressionNode> earliestBy = subquery.getEarliestBy();
+        for (int i = 0, n = earliestBy.size(); i < n; i++) {
+            earliestBy.setQuick(i,
+                    rewriteOuterRefs(earliestBy.getQuick(i), outerToInnerAlias, depth));
         }
         if (subquery.getLimitLo() != null) {
             subquery.setLimit(
@@ -2823,6 +2988,15 @@ class LateralJoinRewriter implements Mutable {
         }
         if (!baseline && hasCorrelation) {
             flags |= CORRELATED_LATEST_BY;
+        }
+        hasCorrelation = baseline;
+
+        ObjList<ExpressionNode> earliestBy = current.getEarliestBy();
+        for (int i = 0, n = earliestBy.size(); i < n; i++) {
+            collectCorrelatedRef(earliestBy.getQuick(i), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
+        }
+        if (!baseline && hasCorrelation) {
+            flags |= CORRELATED_EARLIEST_BY;
         }
         hasCorrelation = baseline;
 

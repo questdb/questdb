@@ -123,15 +123,15 @@ public class EarliestByTest extends AbstractCairoTest {
         final int iterations = 100;
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
-                    "CREATE TABLE e (ts #TIMESTAMP, sym SYMBOL CAPACITY 32768 INDEX CAPACITY 4) TIMESTAMP(ts) PARTITION BY DAY",
+                    "CREATE TABLE e (ts #TIMESTAMP, sym SYMBOL CAPACITY 32_768 INDEX CAPACITY 4) TIMESTAMP(ts) PARTITION BY DAY",
                     timestampType.getTypeName()
             );
             executeWithRewriteTimestamp(
-                    "CREATE TABLE p (ts #TIMESTAMP, sym SYMBOL CAPACITY 32768 CACHE INDEX CAPACITY 4, lon FLOAT, lat FLOAT, g3 geohash(3c)) TIMESTAMP(ts) PARTITION BY DAY",
+                    "CREATE TABLE p (ts #TIMESTAMP, sym SYMBOL CAPACITY 32_768 CACHE INDEX CAPACITY 4, lon FLOAT, lat FLOAT, g3 geohash(3c)) TIMESTAMP(ts) PARTITION BY DAY",
                     timestampType.getTypeName()
             );
 
-            long timestamp = 1625853700000000L;
+            long timestamp = 1_625_853_700_000_000L;
             for (int i = 0; i < iterations; i++) {
                 execute("INSERT INTO e VALUES(CAST(" + timestamp + " as TIMESTAMP), '42')");
                 execute("INSERT INTO p VALUES(CAST(" + timestamp + " as TIMESTAMP), '42', 142.31, 42.31, #xpt)");
@@ -141,7 +141,7 @@ public class EarliestByTest extends AbstractCairoTest {
                         "  WHERE lon >= 142.0 AND lon <= 143.0 AND lat >= 42.0 AND lat <= 43.0) " +
                         "JOIN (SELECT ts ts_e, sym FROM e WHERE ts >= cast(" + timestamp + " AS timestamp) EARLIEST ON ts PARTITION BY sym) ON (sym)";
                 assertQuery("count\n1\n", query, null, false, true);
-                timestamp += 10000L;
+                timestamp += 10_000L;
             }
         });
     }
@@ -247,19 +247,19 @@ public class EarliestByTest extends AbstractCairoTest {
     // row per key in the post-conversion data must be selected correctly.
     @Test
     public void testEarliestByMultipleChangedColSymbols() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("create table t (ts timestamp, s string, s2 string) timestamp (ts) partition by month");
+            execute("create table t (ts " + timestampType.getTypeName() + ", s string, s2 string) timestamp (ts) partition by month");
             execute("insert into t values('2025-01-01', null, null), " +
                     "('2025-01-02', null, null), " +
                     "('2025-01-03', null, null), " +
                     "('2025-01-04', 'symSA', 'symS2A')");
             execute("alter table t alter column s type symbol");
             execute("alter table t alter column s2 type symbol");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts2\ts\n" +
-                            "2025-01-01T00:00:00.000000Z\t\t\n" +
-                            "2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA\n",
+                            "2025-01-01T00:00:00.000000" + suffix + "\t\t\n" +
+                            "2025-01-04T00:00:00.000000" + suffix + "\tsymS2A\tsymSA\n",
                     "select ts, s2, s from t earliest on ts partition by s, s2",
                     "ts",
                     true,
@@ -273,19 +273,19 @@ public class EarliestByTest extends AbstractCairoTest {
     // first and must treat it as NULL keys, not as garbage.
     @Test
     public void testEarliestByMultipleColTopSymbols() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("create table t (ts timestamp) timestamp (ts) partition by month");
+            execute("create table t (ts " + timestampType.getTypeName() + ") timestamp (ts) partition by month");
             execute("insert into t values('2025-01-01'), " +
                     "('2025-01-02'), " +
                     "('2025-01-03'), " +
                     "('2025-01-04')");
             execute("alter table t add column s symbol, s2 symbol");
             execute("insert into t values('2025-01-05', 'symSA', 'symS2A');");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts2\ts\n" +
-                            "2025-01-01T00:00:00.000000Z\t\t\n" +
-                            "2025-01-05T00:00:00.000000Z\tsymS2A\tsymSA\n",
+                            "2025-01-01T00:00:00.000000" + suffix + "\t\t\n" +
+                            "2025-01-05T00:00:00.000000" + suffix + "\tsymS2A\tsymSA\n",
                     "select ts, s2, s from t earliest on ts partition by s, s2",
                     "ts",
                     true,
@@ -946,10 +946,14 @@ public class EarliestByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('a', 'x', '1970-01-01T02:00:00'), ('a', 'y', '1970-01-01T01:00:00'), " +
                     "('a', 'x', '1970-01-01T00:00:00'), ('b', 'x', '1970-01-01T03:00:00')");
 
-            // Multi-key map iteration order is non-deterministic, so wrap in a count query
+            // Multi-key map iteration order is non-deterministic, so wrap in an ORDER BY
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertSql(
-                    "count\n3\n",
-                    "SELECT count() FROM (SELECT s1, s2, ts FROM (SELECT s1, s2, ts FROM t) EARLIEST ON ts PARTITION BY s1, s2)"
+                    "s1\ts2\tts\n" +
+                            "a\tx\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "a\ty\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                            "b\tx\t1970-01-01T03:00:00.000000" + suffix + "\n",
+                    "SELECT s1, s2, ts FROM (SELECT s1, s2, ts FROM (SELECT s1, s2, ts FROM t) EARLIEST ON ts PARTITION BY s1, s2) ORDER BY s1, s2, ts"
             );
         });
     }
@@ -1019,10 +1023,15 @@ public class EarliestByTest extends AbstractCairoTest {
             String query = "SELECT s, ts FROM (" +
                     "SELECT s, ts FROM t1 UNION ALL SELECT s, ts FROM t2" +
                     ") EARLIEST ON ts PARTITION BY s";
-            // UNION ALL path (EarliestByRecordCursorFactory) has non-deterministic map iteration order
+            // UNION ALL path (EarliestByRecordCursorFactory) has non-deterministic map iteration order,
+            // so wrap in ORDER BY to assert exact rows.
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertSql(
-                    "count\n3\n",
-                    "SELECT count() FROM (" + query + ")"
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "b\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                            "c\t1970-01-01T03:00:00.000000" + suffix + "\n",
+                    "SELECT s, ts FROM (" + query + ") ORDER BY s, ts"
             );
         });
     }
@@ -1068,12 +1077,19 @@ public class EarliestByTest extends AbstractCairoTest {
                     "('c', '1970-01-01T03:00:00'), ('d', '1970-01-01T02:00:00'), " +
                     "('e', '1970-01-01T01:00:00'), ('a', '1970-01-01T00:00:00')");
 
-            // UNION ALL forces non-random-access, exercises row index sorting in EarliestByRecordCursorFactory
+            // UNION ALL forces non-random-access, exercises row index sorting in EarliestByRecordCursorFactory.
+            // Map iteration order is non-deterministic, so wrap in ORDER BY to assert exact rows.
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertSql(
-                    "count\n5\n",
-                    "SELECT count() FROM (SELECT s, ts FROM (" +
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "b\t1970-01-01T04:00:00.000000" + suffix + "\n" +
+                            "c\t1970-01-01T03:00:00.000000" + suffix + "\n" +
+                            "d\t1970-01-01T02:00:00.000000" + suffix + "\n" +
+                            "e\t1970-01-01T01:00:00.000000" + suffix + "\n",
+                    "SELECT s, ts FROM (SELECT s, ts FROM (" +
                             "SELECT s, ts FROM t UNION ALL SELECT s, ts FROM t WHERE 1 = 0" +
-                            ") EARLIEST ON ts PARTITION BY s)"
+                            ") EARLIEST ON ts PARTITION BY s) ORDER BY s, ts"
             );
         });
     }
@@ -1085,12 +1101,17 @@ public class EarliestByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('a', 'x', '1970-01-01T02:00:00'), ('a', 'y', '1970-01-01T01:00:00'), " +
                     "('b', 'x', '1970-01-01T00:00:00')");
 
-            // UNION ALL with multi-column partition by
+            // UNION ALL with multi-column partition by. Map iteration order is non-deterministic,
+            // so wrap in ORDER BY to assert exact rows.
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertSql(
-                    "count\n3\n",
-                    "SELECT count() FROM (SELECT s1, s2, ts FROM (" +
+                    "s1\ts2\tts\n" +
+                            "a\tx\t1970-01-01T02:00:00.000000" + suffix + "\n" +
+                            "a\ty\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                            "b\tx\t1970-01-01T00:00:00.000000" + suffix + "\n",
+                    "SELECT s1, s2, ts FROM (SELECT s1, s2, ts FROM (" +
                             "SELECT s1, s2, ts FROM t UNION ALL SELECT s1, s2, ts FROM t WHERE 1 = 0" +
-                            ") EARLIEST ON ts PARTITION BY s1, s2)"
+                            ") EARLIEST ON ts PARTITION BY s1, s2) ORDER BY s1, s2, ts"
             );
         });
     }
@@ -1201,10 +1222,16 @@ public class EarliestByTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
 
-            // Multi-column partition by goes through the AllSymbolsFiltered path
+            // partial row assertion: input data uses rnd_symbol so specific ts values per (s1,s2)
+            // depend on the PRNG seed. Assert that all 4 combinations of (s1, s2) appear exactly
+            // once in ORDER BY s1, s2 order, which is stronger than a count().
             assertSql(
-                    "count\n4\n",
-                    "SELECT count() FROM (SELECT ts, s1, s2 FROM t EARLIEST ON ts PARTITION BY s1, s2)"
+                    "s1\ts2\n" +
+                            "a\tx\n" +
+                            "a\ty\n" +
+                            "b\tx\n" +
+                            "b\ty\n",
+                    "SELECT s1, s2 FROM (SELECT ts, s1, s2 FROM t EARLIEST ON ts PARTITION BY s1, s2) ORDER BY s1, s2"
             );
         });
     }
@@ -1217,11 +1244,16 @@ public class EarliestByTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "FROM long_sequence(30)) TIMESTAMP(ts) PARTITION BY DAY");
 
-            // WHERE + EARLIEST ON triggers the table query with filter path
+            // WHERE + EARLIEST ON triggers the table query with filter path.
+            // partial row assertion: input uses rnd_symbol/rnd_int so exact ts per symbol depends
+            // on the PRNG seed. Assert that all 3 symbols appear once in ORDER BY s.
             String query = "SELECT ts, s FROM t WHERE v > 50 EARLIEST ON ts PARTITION BY s";
             assertSql(
-                    "count\n3\n",
-                    "SELECT count() FROM (" + query + ")"
+                    "s\n" +
+                            "a\n" +
+                            "b\n" +
+                            "c\n",
+                    "SELECT s FROM (" + query + ") ORDER BY s"
             );
         });
     }
@@ -1234,11 +1266,15 @@ public class EarliestByTest extends AbstractCairoTest {
                     "timestamp_sequence('2024-01-01', 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "FROM long_sequence(48)) TIMESTAMP(ts) PARTITION BY DAY");
 
-            // Interval filter with earliest on
+            // Interval filter with earliest on.
+            // partial row assertion: input uses rnd_symbol so exact ts per symbol depends on the
+            // PRNG seed. Assert that both 'a' and 'b' appear once in ORDER BY s.
             String query = "SELECT ts, s FROM t WHERE ts >= '2024-01-01T12:00:00' AND ts < '2024-01-02' EARLIEST ON ts PARTITION BY s";
             assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM (" + query + ")"
+                    "s\n" +
+                            "a\n" +
+                            "b\n",
+                    "SELECT s FROM (" + query + ") ORDER BY s"
             );
         });
     }
@@ -1251,11 +1287,15 @@ public class EarliestByTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "FROM long_sequence(30)) TIMESTAMP(ts) PARTITION BY DAY");
 
-            // WHERE s NOT IN triggers excludedKeyValues path
+            // WHERE s NOT IN triggers excludedKeyValues path.
+            // partial row assertion: input uses rnd_symbol so exact ts per symbol depends on the
+            // PRNG seed. Assert that 'a' and 'b' each appear once and 'c' is absent.
             String query = "SELECT ts, s FROM t WHERE s != 'c' EARLIEST ON ts PARTITION BY s";
             assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM (" + query + ")"
+                    "s\n" +
+                            "a\n" +
+                            "b\n",
+                    "SELECT s FROM (" + query + ") ORDER BY s"
             );
         });
     }
@@ -1268,11 +1308,16 @@ public class EarliestByTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "FROM long_sequence(30)) TIMESTAMP(ts) PARTITION BY DAY");
 
-            // Multiple values in IN list triggers multi-value path
+            // Multiple values in IN list triggers multi-value path.
+            // partial row assertion: input uses rnd_symbol so exact ts per symbol depends on the
+            // PRNG seed. Assert that 'a', 'b', 'c' each appear once and 'd' is absent.
             String query = "SELECT ts, s FROM t WHERE s IN ('a', 'b', 'c') EARLIEST ON ts PARTITION BY s";
             assertSql(
-                    "count\n3\n",
-                    "SELECT count() FROM (" + query + ")"
+                    "s\n" +
+                            "a\n" +
+                            "b\n" +
+                            "c\n",
+                    "SELECT s FROM (" + query + ") ORDER BY s"
             );
         });
     }
@@ -1470,11 +1515,18 @@ public class EarliestByTest extends AbstractCairoTest {
             execute("CREATE TABLE t as (" +
                     "SELECT rnd_symbol('a', 'b', 'c', 'd', 'e') s, rnd_int(0,1000,0) v, " +
                     "timestamp_sequence(0, 1000*1000L)::" + timestampType.getTypeName() + " ts " +
-                    "FROM long_sequence(10000)) TIMESTAMP(ts) PARTITION BY HOUR");
+                    "FROM long_sequence(10_000)) TIMESTAMP(ts) PARTITION BY HOUR");
 
+            // partial row assertion: input uses rnd_symbol so exact ts per symbol depends on the
+            // PRNG seed. Assert that all 5 symbols appear exactly once in ORDER BY s.
             assertSql(
-                    "count\n5\n",
-                    "SELECT count() FROM (SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s)"
+                    "s\n" +
+                            "a\n" +
+                            "b\n" +
+                            "c\n" +
+                            "d\n" +
+                            "e\n",
+                    "SELECT s FROM (SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s) ORDER BY s"
             );
         });
     }
@@ -1505,10 +1557,32 @@ public class EarliestByTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY HOUR");
 
-            // Many distinct symbols through direct table scan
+            // Many distinct symbols through direct table scan.
+            // partial row assertion: input uses rnd_symbol so exact ts per symbol depends on the
+            // PRNG seed. Assert that all 20 symbols appear exactly once in ORDER BY s.
             assertSql(
-                    "count\n20\n",
-                    "SELECT count() FROM (SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s)"
+                    "s\n" +
+                            "a\n" +
+                            "b\n" +
+                            "c\n" +
+                            "d\n" +
+                            "e\n" +
+                            "f\n" +
+                            "g\n" +
+                            "h\n" +
+                            "i\n" +
+                            "j\n" +
+                            "k\n" +
+                            "l\n" +
+                            "m\n" +
+                            "n\n" +
+                            "o\n" +
+                            "p\n" +
+                            "q\n" +
+                            "r\n" +
+                            "s\n" +
+                            "t\n",
+                    "SELECT s FROM (SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s) ORDER BY s"
             );
         });
     }
@@ -1615,7 +1689,7 @@ public class EarliestByTest extends AbstractCairoTest {
 
     @Test
     public void testEarliestByWithInSubquery() throws Exception {
-        // Tests EARLIEST ON with WHERE s IN (SELECT ...) — exercises EarliestBySubQueryRecordCursorFactory
+        // Tests EARLIEST ON with WHERE s IN (SELECT ...)  -  exercises EarliestBySubQueryRecordCursorFactory
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES ('a', '1970-01-01T02:00:00'), ('b', '1970-01-01T01:00:00'), " +
@@ -1647,10 +1721,16 @@ public class EarliestByTest extends AbstractCairoTest {
                     "('b', 'x', '1970-01-01T02:00:00'), ('b', 'y', '1970-01-01T03:00:00'), " +
                     "('a', 'x', '1970-01-02T00:00:00'), ('b', 'y', '1970-01-02T01:00:00')");
 
-            // All 4 combinations found in first partition - exercises early termination
+            // All 4 combinations found in first partition - exercises early termination.
+            // Map iteration order is non-deterministic, so wrap in ORDER BY to assert exact rows.
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertSql(
-                    "count\n4\n",
-                    "SELECT count() FROM (SELECT ts, s1, s2 FROM t EARLIEST ON ts PARTITION BY s1, s2)"
+                    "s1\ts2\tts\n" +
+                            "a\tx\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "a\ty\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                            "b\tx\t1970-01-01T02:00:00.000000" + suffix + "\n" +
+                            "b\ty\t1970-01-01T03:00:00.000000" + suffix + "\n",
+                    "SELECT s1, s2, ts FROM (SELECT ts, s1, s2 FROM t EARLIEST ON ts PARTITION BY s1, s2) ORDER BY s1, s2, ts"
             );
         });
     }
@@ -1663,10 +1743,15 @@ public class EarliestByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('a', 'x', 10, '1970-01-01T00:00:00'), ('a', 'y', 20, '1970-01-01T01:00:00'), " +
                     "('b', 'x', 30, '1970-01-01T02:00:00'), ('a', 'x', 40, '1970-01-01T03:00:00')");
 
-            // Filter narrows results
+            // Filter narrows results. Map iteration order is non-deterministic,
+            // so wrap in ORDER BY to assert exact rows.
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertSql(
-                    "count\n3\n",
-                    "SELECT count() FROM (SELECT ts, s1, s2 FROM t WHERE v > 15 EARLIEST ON ts PARTITION BY s1, s2)"
+                    "s1\ts2\tts\n" +
+                            "a\tx\t1970-01-01T03:00:00.000000" + suffix + "\n" +
+                            "a\ty\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                            "b\tx\t1970-01-01T02:00:00.000000" + suffix + "\n",
+                    "SELECT s1, s2, ts FROM (SELECT ts, s1, s2 FROM t WHERE v > 15 EARLIEST ON ts PARTITION BY s1, s2) ORDER BY s1, s2, ts"
             );
         });
     }
@@ -1680,10 +1765,14 @@ public class EarliestByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('a', 10, '1970-01-01T02:00:00'), ('b', 20, '1970-01-01T00:00:00'), " +
                     "('a', 30, '1970-01-01T00:00:00'), ('b', 40, '1970-01-01T03:00:00')");
 
-            // No WHERE clause with indexed symbol column
+            // No WHERE clause with indexed symbol column. Iteration order is non-deterministic,
+            // so wrap in ORDER BY to assert exact rows.
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM (SELECT ts, s, v FROM t EARLIEST ON ts PARTITION BY s)"
+                    "s\tv\tts\n" +
+                            "a\t30\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "b\t20\t1970-01-01T00:00:00.000000" + suffix + "\n",
+                    "SELECT s, v, ts FROM (SELECT ts, s, v FROM t EARLIEST ON ts PARTITION BY s) ORDER BY s, ts"
             );
         });
     }
@@ -1697,10 +1786,14 @@ public class EarliestByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('a', '1970-01-01T00:00:00'), ('b', '1970-01-02T00:00:00'), " +
                     "('a', '1970-01-02T00:00:00'), ('b', '1970-01-01T00:00:00')");
 
-            // Indexed symbol scan across partition boundaries
+            // Indexed symbol scan across partition boundaries. Iteration order is non-deterministic,
+            // so wrap in ORDER BY to assert exact rows.
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM (SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s)"
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "b\t1970-01-01T00:00:00.000000" + suffix + "\n",
+                    "SELECT s, ts FROM (SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s) ORDER BY s, ts"
             );
         });
     }
@@ -1744,21 +1837,24 @@ public class EarliestByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEarliestByConfigurationDefaults() throws Exception {
-        // Just ensure the configuration method is called
+    public void testEarliestByConfigurationRowCountOverride() throws Exception {
+        // Pins that cairo.sql.earliest.by.row.count actually drives the rows DirectLongList
+        // initial capacity for EARLIEST paths: set a small value and verify the factory
+        // still produces correct results when the list has to grow past the seeded size.
+        setProperty(PropertyKey.CAIRO_SQL_EARLIEST_BY_ROW_COUNT, 1);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t as (" +
-                    "SELECT rnd_symbol('a', 'b') s, " +
-                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
-                    "FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t AS (" +
+                    "SELECT rnd_symbol('a', 'b', 'c', 'd', 'e') s, " +
+                    "timestamp_sequence(0, 60 * 60 * 1_000_000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(25)) TIMESTAMP(ts) PARTITION BY DAY");
 
-            // Execute query that uses earliest by row count configuration
-            String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertSql(
-                    "s\tts\n" +
-                            "a\t1970-01-01T00:00:00.000000" + suffix + "\n" +
-                            "b\t1970-01-01T02:00:00.000000" + suffix + "\n",
-                    "SELECT s, ts FROM (SELECT s, ts FROM t) EARLIEST ON ts PARTITION BY s"
+            // Expect one row per distinct symbol (more than the configured initial capacity of 1).
+            assertQueryNoLeakCheck(
+                    "count\n5\n",
+                    "SELECT count() FROM (SELECT s, ts FROM t EARLIEST ON ts PARTITION BY s)",
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -1788,10 +1884,16 @@ public class EarliestByTest extends AbstractCairoTest {
                     "('a', 50, '1970-01-02T00:00:00'), " +
                     "('b', 60, '1970-01-02T01:00:00')");
 
-            // EARLIEST ON + SAMPLE BY should work (consistent with LATEST ON + SAMPLE BY)
+            // EARLIEST ON + SAMPLE BY should work (consistent with LATEST ON + SAMPLE BY).
+            // Row ordering from SAMPLE BY hashmap is non-deterministic; wrap in ORDER BY to
+            // assert exact (sym, sum) pairs, which is stronger than a plain count().
             assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM (SELECT s, sum(v) FROM t EARLIEST ON ts PARTITION BY s SAMPLE BY 1d)"
+                    "sym\tsum_v\n" +
+                            "a\t10\n" +
+                            "b\t20\n",
+                    "SELECT sym, sum_v FROM (" +
+                            "SELECT s sym, sum(v) sum_v FROM t EARLIEST ON ts PARTITION BY s SAMPLE BY 1d" +
+                            ") ORDER BY sym"
             );
         });
     }
@@ -1897,7 +1999,7 @@ public class EarliestByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('a', '1970-01-01T10:00:00'), ('b', '1970-01-01T10:00:00')");
             drainWalQueue();
 
-            // Second batch with earlier timestamps — WAL must reorder
+            // Second batch with earlier timestamps  -  WAL must reorder
             execute("INSERT INTO t VALUES ('a', '1970-01-01T01:00:00'), ('b', '1970-01-01T02:00:00')");
             drainWalQueue();
 
@@ -1993,10 +2095,23 @@ public class EarliestByTest extends AbstractCairoTest {
                     "FROM long_sequence(1000)" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
 
-            // Each of the 1000 symbols appears exactly once, so EARLIEST ON returns all rows
+            // Each of the 1000 symbols appears exactly once, so EARLIEST ON returns all rows.
+            // Map iteration order is non-deterministic, so ORDER BY and assert the full count
+            // plus the first and last rows by symbol name length, then by ts.
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertSql(
-                    "count\n1000\n",
-                    "SELECT count() FROM (SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s)"
+                    "cnt\tmin_ts\tmax_ts\n" +
+                            "1000\t1970-01-01T00:00:00.000000" + suffix
+                            + "\t1970-01-01T16:39:00.000000" + suffix + "\n",
+                    "SELECT count() cnt, min(ts) min_ts, max(ts) max_ts FROM (SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s)"
+            );
+            // Additionally verify ORDER BY works over the result so row identity is observable.
+            assertSql(
+                    "s\tts\n" +
+                            "s1\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "s10\t1970-01-01T00:09:00.000000" + suffix + "\n" +
+                            "s100\t1970-01-01T01:39:00.000000" + suffix + "\n",
+                    "SELECT s, ts FROM (SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s) ORDER BY s, ts LIMIT 3"
             );
         });
     }
@@ -2362,7 +2477,7 @@ public class EarliestByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T01:00:00')");
             execute("CREATE TABLE keys (k SYMBOL)");
             execute("INSERT INTO keys VALUES ('x'), ('y')");
-            // Subquery returns symbols not present in t — should return empty result
+            // Subquery returns symbols not present in t  -  should return empty result
             assertSql(
                     "ts\ts\n",
                     "SELECT ts, s FROM t WHERE s IN (SELECT k FROM keys) EARLIEST ON ts PARTITION BY s"
@@ -2383,8 +2498,8 @@ public class EarliestByTest extends AbstractCairoTest {
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             // UNION ALL removes random access, forcing EarliestByRecordCursorFactory path.
-            // 'a' has rows at NULL, 01:00, 02:00 — earliest non-NULL is 01:00 (v=2)
-            // 'b' has rows at 00:00, NULL — earliest non-NULL is 00:00 (v=3)
+            // 'a' has rows at NULL, 01:00, 02:00  -  earliest non-NULL is 01:00 (v=2)
+            // 'b' has rows at 00:00, NULL  -  earliest non-NULL is 00:00 (v=3)
             assertSql(
                     "s\tv\tts\n" +
                             "a\t2\t1970-01-01T01:00:00.000000" + suffix + "\n" +
@@ -2411,7 +2526,7 @@ public class EarliestByTest extends AbstractCairoTest {
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             // Without the fix, the collapse would turn
             //   SELECT * FROM (t EARLIEST ON ts PARTITION BY s)
-            // into just "t" — returning all 4 rows instead of 2.
+            // into just "t"  -  returning all 4 rows instead of 2.
             assertQuery(
                     "s\tts\n" +
                             "a\t1970-01-01T00:00:00.000000" + suffix + "\n" +
@@ -3214,7 +3329,7 @@ public class EarliestByTest extends AbstractCairoTest {
     // mid-scan. The test then re-acquires a cursor from the same factory,
     // which invokes of() on the reused cursor instance, and verifies it
     // produces the full, correct result set. This pins the contract that
-    // of() fully resets after an exception — the same contract LATEST BY
+    // of() fully resets after an exception  -  the same contract LATEST BY
     // relies on.
     private void insertRetryIndexedDataset() throws SqlException {
         execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
@@ -3245,7 +3360,7 @@ public class EarliestByTest extends AbstractCairoTest {
                     }
                     Assert.fail("expected CairoException from injected FS failure");
                 } catch (CairoException expected2) {
-                    // pass — cursor threw mid-scan
+                    // pass  -  cursor threw mid-scan
                 }
 
                 // Allow partition 2 to open on the retry.
@@ -3301,6 +3416,158 @@ public class EarliestByTest extends AbstractCairoTest {
                         "b\t2\t1970-01-01T01:00:00.000000" + suffix + "\n" +
                         "c\t5\t1970-01-02T02:00:00.000000" + suffix + "\n"
         );
+    }
+
+    @Test
+    public void testLateralEarliestByInnerEqCorrelation() throws Exception {
+        // Inner LATERAL with equality correlation exercises the fast path in
+        // compensateEarliestBy: WHERE symbol = o.sym becomes a hash join and
+        // symbol is appended to EARLIEST ON's PARTITION BY list.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, sym SYMBOL, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (symbol SYMBOL, venue SYMBOL, price DOUBLE, ts "
+                    + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'MSFT', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('AAPL', 'NYSE',   100.0, '2024-01-01T00:10:00.000000Z'),
+                    ('AAPL', 'NYSE',   101.0, '2024-01-01T00:20:00.000000Z'),
+                    ('AAPL', 'NASDAQ', 102.0, '2024-01-01T00:30:00.000000Z'),
+                    ('AAPL', 'NASDAQ', 103.0, '2024-01-01T00:40:00.000000Z'),
+                    ('MSFT', 'NYSE',   200.0, '2024-01-01T01:10:00.000000Z'),
+                    ('MSFT', 'NASDAQ', 201.0, '2024-01-01T01:20:00.000000Z'),
+                    ('MSFT', 'NASDAQ', 202.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // earliest trade per venue, scoped to each outer order's symbol
+            // order 1 (AAPL): NYSE earliest = 100.0, NASDAQ earliest = 102.0
+            // order 2 (MSFT): NYSE earliest = 200.0, NASDAQ earliest = 201.0
+            assertQueryNoLeakCheck(
+                    "id\tvenue\tprice\n" +
+                            "1\tNASDAQ\t102.0\n" +
+                            "1\tNYSE\t100.0\n" +
+                            "2\tNASDAQ\t201.0\n" +
+                            "2\tNYSE\t200.0\n",
+                    """
+                            SELECT o.id, e.venue, e.price
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT venue, price FROM trades
+                                WHERE symbol = o.sym
+                                EARLIEST ON ts PARTITION BY venue
+                            ) e
+                            ORDER BY o.id, e.venue
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testLateralEarliestByLeftEqCorrelation() throws Exception {
+        // LEFT LATERAL with equality correlation. Unmatched outer rows must
+        // get a NULL-filled right side. Also validates fast-path PARTITION BY
+        // expansion for compensateEarliestBy.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, sym SYMBOL, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (symbol SYMBOL, venue SYMBOL, price DOUBLE, ts "
+                    + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'MSFT', '2024-01-01T01:00:00.000000Z'),
+                    (3, 'GOOG', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('AAPL', 'NYSE',   100.0, '2024-01-01T00:10:00.000000Z'),
+                    ('AAPL', 'NYSE',   101.0, '2024-01-01T00:20:00.000000Z'),
+                    ('AAPL', 'NASDAQ', 102.0, '2024-01-01T00:30:00.000000Z'),
+                    ('MSFT', 'NYSE',   200.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // order 1 (AAPL): NYSE earliest = 100.0, NASDAQ earliest = 102.0
+            // order 2 (MSFT): NYSE earliest = 200.0
+            // order 3 (GOOG): no trades -> NULL row
+            assertQueryNoLeakCheck(
+                    "id\tvenue\tprice\n" +
+                            "1\tNASDAQ\t102.0\n" +
+                            "1\tNYSE\t100.0\n" +
+                            "2\tNYSE\t200.0\n" +
+                            "3\t\tnull\n",
+                    """
+                            SELECT o.id, e.venue, e.price
+                            FROM orders o
+                            LEFT JOIN LATERAL (
+                                SELECT venue, price FROM trades
+                                WHERE symbol = o.sym
+                                EARLIEST ON ts PARTITION BY venue
+                            ) e
+                            ORDER BY o.id, e.venue
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testLateralEarliestByNonEqCorrelationFallback() throws Exception {
+        // Non-eq correlation (ts > o.min_ts) forces compensateEarliestBy
+        // onto the window-function fallback path: row_number() OVER
+        // (PARTITION BY venue, __qdb_outer_ref__0_id ORDER BY ts ASC) = 1.
+        // Validates that outer-reference rewriting and ORDER BY direction
+        // (ASCENDING, inverse of LATEST BY) are correct.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, min_ts " + timestampType.getTypeName()
+                    + ", ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (venue SYMBOL, price DOUBLE, ts "
+                    + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:15:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:15:00.000000Z', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('NYSE',   10.0, '2024-01-01T00:10:00.000000Z'),
+                    ('NYSE',   20.0, '2024-01-01T00:20:00.000000Z'),
+                    ('NYSE',   21.0, '2024-01-01T00:30:00.000000Z'),
+                    ('NASDAQ', 30.0, '2024-01-01T00:40:00.000000Z'),
+                    ('NASDAQ', 31.0, '2024-01-01T00:50:00.000000Z'),
+                    ('NYSE',   40.0, '2024-01-01T01:20:00.000000Z'),
+                    ('NASDAQ', 50.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // order 1 (min_ts=00:15): trades after 00:15 -> NYSE {20,21,40}, NASDAQ {30,31,50}
+            //   earliest per venue: NYSE=20, NASDAQ=30
+            // order 2 (min_ts=01:15): trades after 01:15 -> NYSE {40}, NASDAQ {50}
+            //   earliest per venue: NYSE=40, NASDAQ=50
+            assertQueryNoLeakCheck(
+                    "id\tvenue\tprice\n" +
+                            "1\tNASDAQ\t30.0\n" +
+                            "1\tNYSE\t20.0\n" +
+                            "2\tNASDAQ\t50.0\n" +
+                            "2\tNYSE\t40.0\n",
+                    """
+                            SELECT o.id, e.venue, e.price
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT venue, price FROM trades
+                                WHERE ts > o.min_ts
+                                EARLIEST ON ts PARTITION BY venue
+                            ) e
+                            ORDER BY o.id, e.venue
+                            """,
+                    null, true, true
+            );
+        });
     }
 }
 

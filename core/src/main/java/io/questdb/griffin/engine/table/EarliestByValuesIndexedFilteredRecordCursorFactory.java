@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -51,7 +52,9 @@ public class EarliestByValuesIndexedFilteredRecordCursorFactory extends Abstract
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader,
+                columnIndexes, columnSizeShifts,
+                configuration.getSqlEarliestByRowCount(), MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST);
 
         try {
             if (filter != null) {

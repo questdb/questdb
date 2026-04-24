@@ -34,22 +34,22 @@ import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
 
 public class EarliestByValueIndexedRowCursorFactory implements RowCursorFactory {
-    private final boolean cachedIndexReaderCursor;
+    private final boolean isCachedIndexReaderCursor;
     private final int columnIndex;
     private final EarliestByValueIndexedRowCursor cursor = new EarliestByValueIndexedRowCursor();
     private final int symbolKey;
 
-    public EarliestByValueIndexedRowCursorFactory(int columnIndex, int symbolKey, boolean cachedIndexReaderCursor) {
+    public EarliestByValueIndexedRowCursorFactory(int columnIndex, int symbolKey, boolean isCachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
         this.symbolKey = TableUtils.toIndexKey(symbolKey);
-        this.cachedIndexReaderCursor = cachedIndexReaderCursor;
+        this.isCachedIndexReaderCursor = isCachedIndexReaderCursor;
     }
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         final RowCursor indexReaderCursor = pageFrame
                 .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
-                .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(isCachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
 
         if (indexReaderCursor.hasNext()) {
             cursor.of(indexReaderCursor.next());

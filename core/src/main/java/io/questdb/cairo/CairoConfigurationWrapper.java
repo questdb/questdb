@@ -1660,8 +1660,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean useWithinLatestEarliestByOptimisation() {
-        return getDelegate().useWithinLatestEarliestByOptimisation();
+    public boolean useWithinByOptimisation() {
+        return getDelegate().useWithinByOptimisation();
     }
 
     protected CairoConfiguration getDelegate() {

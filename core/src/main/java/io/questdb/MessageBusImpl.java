@@ -263,6 +263,7 @@ public class MessageBusImpl implements MessageBus {
     @TestOnly
     public void clear() {
         columnPurgeSubSeq.clear();
+        earliestBySubSeq.clear();
         groupByMergeShardSubSeq.clear();
         indexerSubSeq.clear();
         latestBySubSeq.clear();

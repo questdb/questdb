@@ -51,7 +51,6 @@ import org.jetbrains.annotations.NotNull;
 class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-    private final long indexShift = 0;
     private final DirectLongList prefixes;
     private final DirectLongList rows;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
@@ -122,7 +121,7 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public long size() {
-        return isTreeMapBuilt ? aLimit - indexShift : -1;
+        return isTreeMapBuilt ? aLimit : -1;
     }
 
     @Override
@@ -150,7 +149,7 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public void toTop() {
-        aIndex = indexShift;
+        aIndex = 0;
     }
 
     private static long getChunkSize(int keyCount, int sharedWorkerCount) {
@@ -337,7 +336,7 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             argumentsAddress = 0;
         }
         aLimit = rowCount;
-        aIndex = indexShift;
+        aIndex = 0;
         postProcessRows();
     }
 

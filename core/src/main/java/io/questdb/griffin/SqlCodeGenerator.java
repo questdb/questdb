@@ -5842,7 +5842,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // we select all values of "earliest by" column
             assert intrinsicModel.keyValueFuncs.size() == 0;
 
-            if (indexed && filter == null && configuration.useWithinLatestEarliestByOptimisation()) {
+            if (indexed && filter == null && configuration.useWithinByOptimisation()) {
                 return new EarliestByAllIndexedRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
@@ -5903,26 +5903,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         }
 
-        boolean orderedByTimestampAsc = false;
+        boolean isOrderedByTimestampAsc = false;
         final IQueryModel nested = model.getNestedModel();
         assert nested != null;
         final LowerCaseCharSequenceIntHashMap orderBy = nested.getOrderHash();
         CharSequence timestampColumn = metadata.getColumnName(timestampIndex);
         if (orderBy.get(timestampColumn) == IQueryModel.ORDER_DIRECTION_ASCENDING) {
             // ORDER BY the timestamp column case.
-            orderedByTimestampAsc = true;
+            isOrderedByTimestampAsc = true;
         } else if (timestampIndex == metadata.getTimestampIndex() && orderBy.size() == 0) {
             // Empty ORDER BY, but the timestamp column in the designated timestamp.
-            orderedByTimestampAsc = true;
+            isOrderedByTimestampAsc = true;
         }
 
-        return new io.questdb.griffin.engine.table.EarliestByLightRecordCursorFactory(
+        return new EarliestByLightRecordCursorFactory(
                 configuration,
                 factory,
                 RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),
                 keyTypes,
                 timestampIndex,
-                orderedByTimestampAsc
+                isOrderedByTimestampAsc
         );
     }
 
@@ -6198,7 +6198,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert intrinsicModel.keyValueFuncs.size() == 0;
             // get the latest rows for all values of "latest by" column
 
-            if (indexed && filter == null && configuration.useWithinLatestEarliestByOptimisation()) {
+            if (indexed && filter == null && configuration.useWithinByOptimisation()) {
                 return new LatestByAllIndexedRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
@@ -9350,7 +9350,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode withinExtracted;
 
         final int byColumnCount = latestByColumnCount > 0 ? latestByColumnCount : earliestByColumnCount;
-        if (byColumnCount > 0 && configuration.useWithinLatestEarliestByOptimisation()) {
+        if (byColumnCount > 0 && configuration.useWithinByOptimisation()) {
             withinExtracted = whereClauseParser.extractWithin(
                     model,
                     model.getWhereClause(),

@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
@@ -35,13 +36,18 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.table.EarliestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
@@ -51,25 +57,29 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 
 @RunWith(Parameterized.class)
 public class ParallelEarliestByTest extends AbstractTest {
-    private final boolean convertToParquet;
+    private final boolean isConvertToParquet;
     private final StringSink sink = new StringSink();
     private final TestTimestampType timestampType;
 
-    public ParallelEarliestByTest(TestTimestampType timestampType) {
-        this.convertToParquet = TestUtils.generateRandom(LOG).nextBoolean();
+    public ParallelEarliestByTest(TestTimestampType timestampType, boolean isConvertToParquet) {
+        this.isConvertToParquet = isConvertToParquet;
         this.timestampType = timestampType;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0}, parquet={1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+                {TestTimestampType.MICRO, false},
+                {TestTimestampType.MICRO, true},
+                {TestTimestampType.NANO, false},
+                {TestTimestampType.NANO, true},
         });
     }
 
@@ -77,6 +87,127 @@ public class ParallelEarliestByTest extends AbstractTest {
     public void setUp() {
         SharedRandom.RANDOM.set(new Rnd());
         super.setUp();
+    }
+
+    @Test
+    public void testEarliestByAllIndexedReentrantAfterException() throws Exception {
+        // Reuses EarliestByAllIndexedRecordCursor across two cursor acquisitions on the same
+        // factory. The first cursor trips on an injected openRO failure for the partition 2
+        // index files; the of() call for the second cursor must fully reset shared state so
+        // the retry produces the correct complete result. Runs on the parallel path (non-zero
+        // queue capacity) to exercise the try/catch/finally pipeline in buildTreeMap.
+        final AtomicBoolean failNext = new AtomicBoolean(true);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNext.get()
+                        && Utf8s.containsAscii(name, "1970-01-02")
+                        && (Utf8s.endsWithAscii(name, ".k") || Utf8s.endsWithAscii(name, ".v"))) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        final String expected = replaceTimestampSuffix1("""
+                s\tts
+                a\t1970-01-01T00:00:00.000000Z
+                b\t1970-01-01T01:00:00.000000Z
+                c\t1970-01-02T02:00:00.000000Z
+                """, timestampType.getTypeName());
+
+        executeWithPoolAndFilesFacade(4, 8, ff, (engine, compiler, sqlExecutionContext) -> {
+            CairoEngine.execute(
+                    compiler,
+                    "CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY",
+                    sqlExecutionContext,
+                    null
+            );
+            CairoEngine.execute(
+                    compiler,
+                    """
+                            INSERT INTO t VALUES\s
+                            ('a', 1, '1970-01-01T00:00:00'), ('b', 2, '1970-01-01T01:00:00'),\s
+                            ('a', 3, '1970-01-02T00:00:00'), ('b', 4, '1970-01-02T01:00:00'), ('c', 5, '1970-01-02T02:00:00'),\s
+                            ('a', 6, '1970-01-03T00:00:00'), ('b', 7, '1970-01-03T01:00:00'), ('c', 8, '1970-01-03T02:00:00')""",
+                    sqlExecutionContext,
+                    null
+            );
+
+            final CompiledQuery cc = compiler.compile(
+                    "SELECT s, ts FROM t EARLIEST ON ts PARTITION BY s",
+                    sqlExecutionContext
+            );
+            try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                        // drain until the injected FS fault trips
+                    }
+                    Assert.fail("expected CairoException from injected FS failure");
+                } catch (CairoException expected2) {
+                    // pass - cursor threw mid-scan
+                }
+
+                failNext.set(false);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testEarliestByAllIndexedWorkerException() throws Exception {
+        // Injects a filesystem failure on the indexed frame open while the parallel path is
+        // active. The query thread must surface the CairoException, the shared circuit breaker
+        // must be cancelled (see buildTreeMap's catch block), and the outer assertMemoryLeak
+        // must confirm no native memory leaks from the argumentsAddress or the frame cache.
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.containsAscii(name, "1970-01-02")
+                        && (Utf8s.endsWithAscii(name, ".k") || Utf8s.endsWithAscii(name, ".v"))) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        executeWithPoolAndFilesFacade(4, 8, ff, (engine, compiler, sqlExecutionContext) -> {
+            CairoEngine.execute(
+                    compiler,
+                    "CREATE TABLE x AS (" +
+                            "SELECT" +
+                            " rnd_double(0)*100 a," +
+                            " rnd_symbol(5,4,4,1) b," +
+                            " timestamp_sequence(0, 100_000_000_000)::" + timestampType.getTypeName() + " k" +
+                            " FROM long_sequence(20)" +
+                            "), INDEX(b) TIMESTAMP(k) PARTITION BY DAY",
+                    sqlExecutionContext,
+                    null
+            );
+
+            final CompiledQuery cc = compiler.compile(
+                    "SELECT * FROM x EARLIEST ON k PARTITION BY b",
+                    sqlExecutionContext
+            );
+            try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                        // drain until the injected FS fault trips
+                    }
+                    Assert.fail("expected CairoException from injected FS failure");
+                } catch (CairoException expected) {
+                    // pass - exception propagated to the query thread; buildTreeMap's
+                    // catch block has already invoked sharedCircuitBreaker.cancel() so
+                    // any in-flight workers abort, and processTasks() in the finally has
+                    // drained the queue before this cursor.close() runs.
+                }
+            }
+        });
     }
 
     @Test
@@ -220,12 +351,42 @@ public class ParallelEarliestByTest extends AbstractTest {
                     }
 
                     @Override
-                    public boolean useWithinLatestEarliestByOptimisation() {
+                    public boolean useWithinByOptimisation() {
                         return true;
                     }
                 };
                 execute(null, runnable, configuration);
             }
+        });
+    }
+
+    private static void executeWithPoolAndFilesFacade(
+            int workerCount,
+            int queueCapacity,
+            FilesFacade ff,
+            EarliestByRunnable runnable
+    ) throws Exception {
+        executeVanilla(() -> {
+            // Non-zero queue capacity keeps the parallel queue enabled so
+            // EarliestByAllIndexedRecordCursor publishes tasks to sibling workers.
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return ff;
+                }
+
+                @Override
+                public int getLatestByQueueCapacity() {
+                    return queueCapacity;
+                }
+
+                @Override
+                public boolean useWithinByOptimisation() {
+                    return true;
+                }
+            };
+            final WorkerPool pool = new WorkerPool(() -> workerCount);
+            execute(pool, runnable, configuration);
         });
     }
 
@@ -277,7 +438,7 @@ public class ParallelEarliestByTest extends AbstractTest {
                 " from" +
                 " long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
-        final String ddl2 = convertToParquet ? "alter table x convert partition to parquet where k >= 0" : null;
+        final String ddl2 = isConvertToParquet ? "alter table x convert partition to parquet where k >= 0" : null;
 
         final String query = "select * from x earliest on k partition by b";
 
@@ -306,7 +467,7 @@ public class ParallelEarliestByTest extends AbstractTest {
                 " rnd_symbol(5,4,4,1) b" +
                 " from long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
-        final String ddl2 = convertToParquet ? "alter table x convert partition to parquet where k >= 0" : null;
+        final String ddl2 = isConvertToParquet ? "alter table x convert partition to parquet where k >= 0" : null;
 
         final String query = "select * from (select a,k,b from x earliest on k partition by b) where a > 40";
 
@@ -334,7 +495,7 @@ public class ParallelEarliestByTest extends AbstractTest {
                 "), index(b) timestamp(k) partition by DAY";
 
         final String query = "select * from x where k > '1970-01-20' earliest on k partition by b";
-        final String ddl2 = convertToParquet ? "alter table x convert partition to parquet where k >= 0" : null;
+        final String ddl2 = isConvertToParquet ? "alter table x convert partition to parquet where k >= 0" : null;
 
         assertQuery(compiler, sqlExecutionContext, expected, ddl, ddl2, query);
     }
@@ -363,7 +524,7 @@ public class ParallelEarliestByTest extends AbstractTest {
                 " rnd_geohash(30) geo" +
                 " from long_sequence(10000)" +
                 "), index(sym) timestamp(ts) partition by DAY";
-        final String ddl2 = convertToParquet ? "alter table x convert partition to parquet where ts >= 0" : null;
+        final String ddl2 = isConvertToParquet ? "alter table x convert partition to parquet where ts >= 0" : null;
 
         final String query = "select * from x where geo within(#gk1gj8, #mbx5c0) earliest on ts partition by sym";
 

@@ -57,7 +57,7 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
 
     private final RecordCursorFactory base;
     private final EarliestByLightRecordCursor cursor;
-    private final boolean orderedByTimestampAsc;
+    private final boolean isOrderedByTimestampAsc;
     private final RecordSink recordSink;
     private final int timestampIndex;
 
@@ -67,7 +67,7 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
             @NotNull RecordSink recordSink,
             @NotNull ColumnTypes columnTypes,
             int timestampIndex,
-            boolean orderedByTimestampAsc
+            boolean isOrderedByTimestampAsc
     ) {
         super(base.getMetadata());
         assert base.recordCursorSupportsRandomAccess();
@@ -77,14 +77,14 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
         try {
             ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
             mapValueTypes.add(ROW_ID_VALUE_IDX, ColumnType.LONG);
-            if (!orderedByTimestampAsc) {
+            if (!isOrderedByTimestampAsc) {
                 mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
             }
             earliestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
             this.cursor = new EarliestByLightRecordCursor(earliestByMap);
             earliestByMap = null;
             this.timestampIndex = timestampIndex;
-            this.orderedByTimestampAsc = orderedByTimestampAsc;
+            this.isOrderedByTimestampAsc = isOrderedByTimestampAsc;
         } catch (Throwable th) {
             Misc.free(earliestByMap);
             close();
@@ -118,7 +118,7 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("EarliestBy light");
-        sink.meta("order_by_timestamp").val(orderedByTimestampAsc);
+        sink.meta("order_by_timestamp").val(isOrderedByTimestampAsc);
         sink.child(base);
     }
 
@@ -235,7 +235,7 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         private void buildMap() {
-            if (orderedByTimestampAsc) {
+            if (isOrderedByTimestampAsc) {
                 // We don't need to store and compare timestamps if the sub-query returns them in asc order.
                 // In this case we'll be good with the very first row id per each unique key.
                 buildMapForOrderedSubQuery();

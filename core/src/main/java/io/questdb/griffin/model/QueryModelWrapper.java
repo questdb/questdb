@@ -338,6 +338,16 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ObjList<ExpressionNode> getEarliestBy() {
+        return delegate.getEarliestBy();
+    }
+
+    @Override
+    public int getEarliestByType() {
+        return delegate.getEarliestByType();
+    }
+
+    @Override
     public ObjList<ExpressionNode> getExpressionModels() {
         return delegate.getExpressionModels();
     }
@@ -410,16 +420,6 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<CharSequence> getLateralCountColumns() {
         return delegate.getLateralCountColumns();
-    }
-
-    @Override
-    public ObjList<ExpressionNode> getEarliestBy() {
-        return delegate.getEarliestBy();
-    }
-
-    @Override
-    public int getEarliestByType() {
-        return delegate.getEarliestByType();
     }
 
     @Override
@@ -1048,6 +1048,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setEarliestByType(int earliestByType) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
         throw new UnsupportedOperationException();
     }
@@ -1099,11 +1104,6 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setJoinType(int joinType) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void setEarliestByType(int earliestByType) {
         throw new UnsupportedOperationException();
     }
 

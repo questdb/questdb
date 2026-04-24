@@ -527,7 +527,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getExportPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getExportPoolConfiguration().getYieldThreshold());
 
-        Assert.assertFalse(configuration.getCairoConfiguration().useWithinLatestEarliestByOptimisation());
+        Assert.assertFalse(configuration.getCairoConfiguration().useWithinByOptimisation());
     }
 
     @Test

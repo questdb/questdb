@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -86,7 +87,24 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        this(configuration, metadata, partitionFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader,
+                columnIndexes, columnSizeShifts,
+                configuration.getSqlLatestByRowCount(), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
+    }
+
+    public AbstractDeferredTreeSetRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
+            int columnIndex,
+            @Transient ObjList<Function> keyValueFuncs,
+            @Transient SymbolMapReader symbolMapReader,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts,
+            long rowCount,
+            int memoryTag
+    ) {
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts, rowCount, memoryTag);
 
         // we need two data structures, int hash set for symbol keys we can resolve here
         // and CharSequence hash set for symbols we cannot resolve

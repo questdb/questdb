@@ -72,6 +72,7 @@ public class QueryModel implements IQueryModel {
     private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
+    private final ObjList<ExpressionNode> earliestBy = new ObjList<>();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -132,6 +133,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
+    private int earliestByType = EARLIEST_BY_NONE;
     private boolean explicitTimestamp;
     private ExpressionNode fillFrom;
     private ExpressionNode fillStride;
@@ -147,8 +149,6 @@ public class QueryModel implements IQueryModel {
     private int joinKeywordPosition;
     private int joinType = JOIN_NONE;
     private int latestByType = LATEST_BY_NONE;
-    private int earliestByType = EARLIEST_BY_NONE;
-    private final ObjList<ExpressionNode> earliestBy = new ObjList<>();
     private ExpressionNode limitAdviceHi;
     private ExpressionNode limitAdviceLo;
     private ExpressionNode limitHi;

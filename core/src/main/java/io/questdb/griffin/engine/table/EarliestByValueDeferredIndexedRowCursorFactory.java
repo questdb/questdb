@@ -30,17 +30,17 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 
 public class EarliestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
-    private final boolean cachedIndexReaderCursor;
+    private final boolean isCachedIndexReaderCursor;
     private final int columnIndex;
     private final EarliestByValueIndexedRowCursor cursor = new EarliestByValueIndexedRowCursor();
     private final Function symbolFunc;
     private int symbolKey;
 
-    public EarliestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc, boolean cachedIndexReaderCursor) {
+    public EarliestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc, boolean isCachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
         this.symbolFunc = symbolFunc;
         symbolKey = SymbolTable.VALUE_NOT_FOUND;
-        this.cachedIndexReaderCursor = cachedIndexReaderCursor;
+        this.isCachedIndexReaderCursor = isCachedIndexReaderCursor;
     }
 
     @Override
@@ -48,7 +48,7 @@ public class EarliestByValueDeferredIndexedRowCursorFactory implements RowCursor
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             RowCursor indexReaderCursor = pageFrame
                     .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
-                    .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                    .getCursor(isCachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
 
             if (indexReaderCursor.hasNext()) {
                 cursor.of(indexReaderCursor.next());

@@ -102,12 +102,6 @@ class EarliestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecor
         super.init();
     }
 
-    // preComputedStateSize() and toPlan() below are dead: the wrapping
-    // EarliestByValuesIndexedFilteredRecordCursorFactory writes the plan inline
-    // instead of chaining via sink.child(cursor), and no caller asks this leaf
-    // cursor for its pre-computed state size. They exist only for symmetry with
-    // LatestByValuesIndexedFilteredRecordCursor, which has the same dead pair.
-    // size() below is live: assertQuery with expectSize reads it.
     @Override
     public long preComputedStateSize() {
         return isTreeMapBuilt ? 1 : 0;

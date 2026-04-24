@@ -1671,7 +1671,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean useWithinLatestEarliestByOptimisation() {
+    public boolean useWithinByOptimisation() {
         return false;
     }
 }

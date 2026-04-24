@@ -86,18 +86,13 @@ class EarliestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueRe
     }
 
     @Override
-    public long size() {
-        return -1;
-    }
-
-    // preComputedStateSize() and toPlan() below are dead: the wrapping
-    // EarliestByValueIndexedFilteredRecordCursorFactory writes the plan inline
-    // instead of chaining via sink.child(cursor), and no caller asks this leaf
-    // cursor for its pre-computed state size. They exist only for symmetry with
-    // LatestByValueIndexedFilteredRecordCursor, which has the same dead pair.
-    @Override
     public long preComputedStateSize() {
         return isFindPending ? 1 : 0;
+    }
+
+    @Override
+    public long size() {
+        return -1;
     }
 
     @Override
