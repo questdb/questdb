@@ -123,6 +123,7 @@ import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
 import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
@@ -1476,7 +1477,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnSizeShifts.add(Numbers.msb(typeSize));
                     }
 
-                    queryMeta.add(new TableColumnMetadata(
+                    TableColumnMetadata columnMetadata = new TableColumnMetadata(
                             metadata.getColumnName(columnIndex),
                             type,
                             metadata.getColumnIndexType(columnIndex),
@@ -1488,7 +1489,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             0,
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
-                    ));
+                    );
+                    columnMetadata.setParquetEncodingConfig(
+                            metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig()
+                    );
+                    queryMeta.add(columnMetadata);
 
                     if (columnIndex == readerTimestampIndex) {
                         queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
@@ -1498,11 +1503,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // select timestamp when it is required but not already selected
                 if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
                     int timestampType = metadata.getColumnType(readerTimestampIndex);
-                    queryMeta.add(new TableColumnMetadata(
+                    TableColumnMetadata timestampColumnMetadata = new TableColumnMetadata(
                             metadata.getColumnName(readerTimestampIndex),
                             timestampType,
                             metadata.getMetadata(readerTimestampIndex)
-                    ));
+                    );
+                    timestampColumnMetadata.setParquetEncodingConfig(
+                            metadata.getColumnMetadata(readerTimestampIndex).getParquetEncodingConfig()
+                    );
+                    queryMeta.add(timestampColumnMetadata);
                     queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
 
                     if (columnIndexes != null) {
@@ -7513,16 +7522,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (queryColumn.getAlias() == null) {
                 queryMetadata.add(metadata.getColumnMetadata(index));
             } else {
-                queryMetadata.add(
-                        new TableColumnMetadata(
-                                Chars.toString(queryColumn.getAlias()),
-                                metadata.getColumnType(index),
-                                metadata.getColumnIndexType(index),
-                                metadata.getIndexValueBlockCapacity(index),
-                                metadata.isSymbolTableStatic(index),
-                                metadata.getMetadata(index)
-                        )
+                TableColumnMetadata aliasedColumn = new TableColumnMetadata(
+                        Chars.toString(queryColumn.getAlias()),
+                        metadata.getColumnType(index),
+                        metadata.getColumnIndexType(index),
+                        metadata.getIndexValueBlockCapacity(index),
+                        metadata.isSymbolTableStatic(index),
+                        metadata.getMetadata(index)
                 );
+                aliasedColumn.setParquetEncodingConfig(
+                        metadata.getColumnMetadata(index).getParquetEncodingConfig()
+                );
+                queryMetadata.add(aliasedColumn);
             }
 
             if (index == timestampIndex) {
@@ -7542,16 +7553,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            queryMetadata.add(
-                    new TableColumnMetadata(
-                            "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
-                            colMetadata.getColumnType(),
-                            colMetadata.getIndexType(),
-                            colMetadata.getIndexValueBlockCapacity(),
-                            colMetadata.isSymbolTableStatic(),
-                            metadata
-                    )
+            TableColumnMetadata implicitTs = new TableColumnMetadata(
+                    "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
+                    colMetadata.getColumnType(),
+                    colMetadata.getIndexType(),
+                    colMetadata.getIndexValueBlockCapacity(),
+                    colMetadata.isSymbolTableStatic(),
+                    metadata
             );
+            implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
+            queryMetadata.add(implicitTs);
             queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
         }
@@ -8321,6 +8332,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
                 assert m != null;
+                final ColumnFunction cf = ColumnFunction.unwrap(function);
+                if (cf != null) {
+                    final int baseColIdx = cf.getColumnIndex();
+                    if (baseColIdx >= 0) {
+                        m.setParquetEncodingConfig(
+                                priorityMetadata.getColumnMetadata(baseColIdx).getParquetEncodingConfig()
+                        );
+                    }
+                }
                 virtualMetadata.add(m);
                 priorityMetadata.add(m);
             }

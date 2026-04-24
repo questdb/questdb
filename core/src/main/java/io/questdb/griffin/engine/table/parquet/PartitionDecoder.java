@@ -315,6 +315,11 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
+    public boolean rowGroupColumnHasEncoding(int rowGroupIndex, int columnIndex, int encoding) {
+        assert ptr != 0;
+        return rowGroupColumnHasEncoding(ptr, rowGroupIndex, columnIndex, encoding);
+    }
+
     public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
         assert ptr != 0;
         return rowGroupMaxTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
@@ -411,6 +416,13 @@ public class PartitionDecoder implements QuietCloseable {
     ) throws CairoException;
 
     private static native long rowCountOffset();
+
+    private static native boolean rowGroupColumnHasEncoding(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex,
+            int encoding
+    ) throws CairoException;
 
     private static native long rowGroupCountOffset();
 
