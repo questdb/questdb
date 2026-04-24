@@ -1027,6 +1027,49 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Lower-indexed inner window models can't resolve the literal from their
+    // nested chain, and the referencing site itself already exposes it, so only
+    // models strictly above the literal's origin and below upToExclusive get it.
+    private void addLiteralPassThroughToInnerWindowModels(
+            ExpressionNode node,
+            ObjList<IQueryModel> innerWindowModels,
+            int upToExclusive
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.type == LITERAL) {
+                    int ownerIdx = findInnerWindowModelOwnerIdx(innerWindowModels, node.token);
+                    for (int i = ownerIdx + 1; i < upToExclusive; i++) {
+                        IQueryModel innerWm = innerWindowModels.getQuick(i);
+                        if (innerWm.getAliasToColumnMap().excludes(node.token)) {
+                            innerWm.addBottomUpColumn(nextColumn(node.token));
+                        }
+                    }
+                }
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        sqlNodeStack.push(node.rhs);
+                    }
+                    node = node.lhs;
+                } else {
+                    for (int i = 0, k = node.paramCount; i < k; i++) {
+                        ExpressionNode arg = node.args.getQuick(i);
+                        if (arg != null) {
+                            sqlNodeStack.push(arg);
+                        }
+                    }
+                    node = null;
+                }
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+    }
+
     // add table prefix to all column references to make it easier to compare expressions
     private void addMissingTablePrefixesForGroupByQueries(ExpressionNode node, IQueryModel baseModel, IQueryModel innerVirtualModel) throws SqlException {
         sqlNodeStack.clear();
@@ -3977,6 +4020,15 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return null;
+    }
+
+    private int findInnerWindowModelOwnerIdx(ObjList<IQueryModel> innerWindowModels, CharSequence token) {
+        for (int i = 0, n = innerWindowModels.size(); i < n; i++) {
+            if (!innerWindowModels.getQuick(i).getAliasToColumnMap().excludes(token)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private QueryColumn findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
@@ -9691,6 +9743,58 @@ public class SqlOptimiser implements Mutable {
                                     laterModel.getAliasToColumnMap().excludes(alias)) {
                                 laterModel.addBottomUpColumn(nextColumn(alias));
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // With an aggregate wrapping a nested window, the inner window model sits
+        // between groupByModel and translatingModel, so groupByModel can only see
+        // its GROUP BY keys and aggregate-arg literals if they pass through the
+        // inner chain.
+        if (innerWindowModels.size() > 0 && (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
+            final int nInner = innerWindowModels.size();
+            ObjList<QueryColumn> groupByCols = groupByModel.getBottomUpColumns();
+            for (int i = 0, n = groupByCols.size(); i < n; i++) {
+                QueryColumn col = groupByCols.getQuick(i);
+                ExpressionNode ast = col.getAst();
+                if (ast.type == LITERAL) {
+                    for (int j = 0; j < nInner; j++) {
+                        IQueryModel innerWm = innerWindowModels.getQuick(j);
+                        if (innerWm.getAliasToColumnMap().excludes(col.getAlias())) {
+                            innerWm.addBottomUpColumn(nextColumn(col.getAlias()));
+                        }
+                    }
+                } else {
+                    // Covers both aggregates wrapping nested windows (sum(avg(x) OVER ...))
+                    // and non-aggregate GROUP BY expressions (GROUP BY upper(cat)). In both
+                    // cases the inner window model needs the underlying literal references,
+                    // not the outer column's alias, so walk the AST.
+                    addLiteralPassThroughToInnerWindowModels(ast, innerWindowModels, nInner);
+                }
+            }
+
+            // A later inner window model's OVER clause may reference literals that
+            // deeper models don't yet expose; forward them through the chain.
+            if (nInner > 1) {
+                for (int i = 1; i < nInner; i++) {
+                    IQueryModel laterModel = innerWindowModels.getQuick(i);
+                    ObjList<QueryColumn> laterCols = laterModel.getBottomUpColumns();
+                    for (int k = 0, m = laterCols.size(); k < m; k++) {
+                        QueryColumn laterCol = laterCols.getQuick(k);
+                        if (laterCol instanceof WindowExpression wc) {
+                            addLiteralPassThroughToInnerWindowModels(wc.getAst(), innerWindowModels, i);
+                            ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
+                            for (int p = 0, pN = partitionBy.size(); p < pN; p++) {
+                                addLiteralPassThroughToInnerWindowModels(partitionBy.getQuick(p), innerWindowModels, i);
+                            }
+                            ObjList<ExpressionNode> orderBy = wc.getOrderBy();
+                            for (int p = 0, pN = orderBy.size(); p < pN; p++) {
+                                addLiteralPassThroughToInnerWindowModels(orderBy.getQuick(p), innerWindowModels, i);
+                            }
+                            addLiteralPassThroughToInnerWindowModels(wc.getRowsLoExpr(), innerWindowModels, i);
+                            addLiteralPassThroughToInnerWindowModels(wc.getRowsHiExpr(), innerWindowModels, i);
                         }
                     }
                 }
