@@ -628,6 +628,40 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueRejectedForGeoHashAggregate() throws Exception {
+        // first(geohash) returns GEOHASH; no INT -> GEOHASH implicit cast exists.
+        assertException(
+                "SELECT ts, first(g) FROM t_fv_geo SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_geo (g GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForIPv4Aggregate() throws Exception {
+        // first(ipv4) returns IPv4; no INT -> IPv4 implicit cast exists, and IntFunction.getIPv4
+        // throws UnsupportedOperationException at runtime.
+        assertException(
+                "SELECT ts, first(ip) FROM t_fv_ip SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_ip (ip IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForLong256Aggregate() throws Exception {
+        // sum(long256) returns LONG256; no INT -> LONG256 implicit cast exists.
+        assertException(
+                "SELECT ts, sum(l) FROM t_fv_l256 SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_l256 (l LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                51,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
     public void testFillValueRejectedForStringAggregate() throws Exception {
         // first(string) returns STRING; no INT -> STRING implicit cast exists.
         assertException(
