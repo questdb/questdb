@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # 1) Base tools + Maven
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
-       git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven \
+       curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven \
     && rm -rf /var/lib/apt/lists/*
 
 # 2) Download GraalVM CE archive + SHA256, arch-aware
@@ -51,13 +51,11 @@ RUN set -eux; \
 ENV JAVA_HOME=/usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION}
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
-WORKDIR /build
-
 RUN echo tag_name ${tag_name:-master}
 
-RUN git clone --depth=1 --progress --branch "${tag_name:-master}" --verbose https://github.com/questdb/questdb.git
-
 WORKDIR /build/questdb
+
+COPY . .
 
 RUN mvn clean package -Djdk.lang.Process.launchMechanism=vfork -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -DskipTests -P build-web-console,build-binaries
 
@@ -88,12 +86,12 @@ WORKDIR /app
 
 COPY --from=builder /build/questdb/core/target/questdb-*-rt-* .
 
-COPY docker-entrypoint.sh /docker-entrypoint.sh
+COPY core/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Add license information
 RUN mkdir /licenses
-COPY LICENSE.txt /licenses
+COPY core/LICENSE.txt /licenses
 
 LABEL name=QuestDB \
     vendor=QuestDB \
@@ -137,7 +135,7 @@ WORKDIR /app
 COPY --from=builder /build/questdb/core/target/questdb-*-rt-* .
 COPY --from=builder /build/questdb/core/target/gosu /usr/local/bin/gosu
 
-COPY docker-entrypoint.sh /docker-entrypoint.sh
+COPY core/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Create questdb user and group

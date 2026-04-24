@@ -19,17 +19,19 @@ schedules:
 variables:
   SKIP_VALIDATION: 'false'  # Set to 'true' to skip validation
 
-pool: hetzner-incus
-
 jobs:
-  - job: RunOn
-    displayName: "Build and push docker"
-
+  - job: BuildAmd64
+    displayName: "Build amd64"
     pool: hetzner-incus
-
     timeoutInMinutes: 60
-
+    variables:
+      ARCH_SUFFIX: amd64
+      BUILDX_PLATFORM: linux/amd64
     steps:
+      - checkout: self
+        fetchDepth: 1
+        fetchTags: false
+
       - bash: |
           tag=$(Build.SourceBranchName)
           echo "Checking tag: $tag"
@@ -45,10 +47,154 @@ jobs:
         displayName: 'Validate semantic version format'
         condition: and(startsWith(variables['Build.SourceBranch'], 'refs/tags/'), ne(variables['SKIP_VALIDATION'], 'true'))
 
-      # - task: CmdLine@2
-      #   displayName: Check that trivy is installed and present in PATH
-      #   inputs:
-      #     script: which trivy && trivy version
+      - task: Docker@2
+        inputs:
+          command: 'login'
+          containerRegistry: serviceaccountquestdb
+
+      - task: CmdLine@2
+        displayName: Setup docker buildx
+        inputs:
+          script: |
+            docker buildx create --use
+
+      - task: CmdLine@2
+        displayName: Release Nightly MASTER ($(ARCH_SUFFIX))
+        inputs:
+          script: |
+            set -eo pipefail
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --push -t questdb/questdb:nightly-$(ARCH_SUFFIX) .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --push -t questdb/questdb:nightly-rhel-$(ARCH_SUFFIX) --target rhel .
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: CmdLine@2
+        displayName: Release Tag ($(ARCH_SUFFIX))
+        inputs:
+          script: |
+            set -eo pipefail
+            # Cannot use Build.SourceBranchName if a tag name contains a "/", since the var only returns the final path component
+            # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/tags")
+            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+            echo $tag_name
+            pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+            common_args="-f core/Dockerfile --build-arg tag_name=$tag_name --platform $(BUILDX_PLATFORM) --push"
+            if [[ "$tag_name" =~ $pattern ]]; then
+              echo "labeling latest"
+              docker buildx build $common_args -t questdb/questdb:$tag_name-$(ARCH_SUFFIX) -t questdb/questdb:latest-$(ARCH_SUFFIX) .
+            else
+              echo "NOT labeling latest"
+              docker buildx build $common_args -t questdb/questdb:$tag_name-$(ARCH_SUFFIX) .
+            fi
+            docker buildx build $common_args -t questdb/questdb:$tag_name-rhel-$(ARCH_SUFFIX) --target rhel .
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+
+      - task: CmdLine@2
+        displayName: Release Commit from Branch ($(ARCH_SUFFIX))
+        inputs:
+          script: |
+            set -eo pipefail
+            # Cannot use Build.SourceBranchName if a branch name contains a "/", since the var only returns the final path component
+            # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/heads")
+            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+            echo $tag_name
+            # Docker tags are prefixed with "patch-" and use the short commit hash
+            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
+            echo $docker_tag_name
+            common_args="-f core/Dockerfile --build-arg tag_name=$tag_name --platform $(BUILDX_PLATFORM) --push"
+            docker buildx build $common_args -t questdb/questdb:${docker_tag_name}-$(ARCH_SUFFIX) .
+            docker buildx build $common_args -t questdb/questdb:${docker_tag_name}-rhel-$(ARCH_SUFFIX) --target rhel .
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+  - job: BuildArm64
+    displayName: "Build arm64"
+    pool: hetzner-incus-arm
+    timeoutInMinutes: 60
+    variables:
+      ARCH_SUFFIX: arm64
+      BUILDX_PLATFORM: linux/arm64
+    steps:
+      - checkout: self
+        fetchDepth: 1
+        fetchTags: false
+
+      - bash: |
+          tag=$(Build.SourceBranchName)
+          echo "Checking tag: $tag"
+
+          if [[ ! $tag =~ ^\d+(\.\d+)*$ ]]; then
+            echo "Tag '$tag' is not a pure numeric version (x.y.z) - skipping build"
+            echo "Valid tags should only contain numbers and dots (e.g., 1.2.3, 10.0.5)"
+            echo "##vso[task.complete result=Succeeded;]Skipping build for non-numeric version tag"
+            exit 0
+          fi
+
+          echo "Tag '$tag' is a valid numeric version, continuing with build"
+        displayName: 'Validate semantic version format'
+        condition: and(startsWith(variables['Build.SourceBranch'], 'refs/tags/'), ne(variables['SKIP_VALIDATION'], 'true'))
+
+      - task: Docker@2
+        inputs:
+          command: 'login'
+          containerRegistry: serviceaccountquestdb
+
+      - task: CmdLine@2
+        displayName: Setup docker buildx
+        inputs:
+          script: |
+            docker buildx create --use
+
+      - task: CmdLine@2
+        displayName: Release Nightly MASTER ($(ARCH_SUFFIX))
+        inputs:
+          script: |
+            set -eo pipefail
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --push -t questdb/questdb:nightly-$(ARCH_SUFFIX) .
+            docker buildx build -f core/Dockerfile --platform $(BUILDX_PLATFORM) --push -t questdb/questdb:nightly-rhel-$(ARCH_SUFFIX) --target rhel .
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: CmdLine@2
+        displayName: Release Tag ($(ARCH_SUFFIX))
+        inputs:
+          script: |
+            set -eo pipefail
+            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+            echo $tag_name
+            pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+            common_args="-f core/Dockerfile --build-arg tag_name=$tag_name --platform $(BUILDX_PLATFORM) --push"
+            if [[ "$tag_name" =~ $pattern ]]; then
+              echo "labeling latest"
+              docker buildx build $common_args -t questdb/questdb:$tag_name-$(ARCH_SUFFIX) -t questdb/questdb:latest-$(ARCH_SUFFIX) .
+            else
+              echo "NOT labeling latest"
+              docker buildx build $common_args -t questdb/questdb:$tag_name-$(ARCH_SUFFIX) .
+            fi
+            docker buildx build $common_args -t questdb/questdb:$tag_name-rhel-$(ARCH_SUFFIX) --target rhel .
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+
+      - task: CmdLine@2
+        displayName: Release Commit from Branch ($(ARCH_SUFFIX))
+        inputs:
+          script: |
+            set -eo pipefail
+            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+            echo $tag_name
+            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
+            echo $docker_tag_name
+            common_args="-f core/Dockerfile --build-arg tag_name=$tag_name --platform $(BUILDX_PLATFORM) --push"
+            docker buildx build $common_args -t questdb/questdb:${docker_tag_name}-$(ARCH_SUFFIX) .
+            docker buildx build $common_args -t questdb/questdb:${docker_tag_name}-rhel-$(ARCH_SUFFIX) --target rhel .
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+  - job: Manifest
+    displayName: "Combine multi-arch manifests and publish"
+    pool: hetzner-incus
+    dependsOn:
+      - BuildAmd64
+      - BuildArm64
+    condition: succeeded()
+    timeoutInMinutes: 30
+    steps:
+      - checkout: none
 
       - task: CmdLine@2
         displayName: Download latest openshift-preflight tool
@@ -65,100 +211,68 @@ jobs:
           containerRegistry: serviceaccountquestdb
 
       - task: CmdLine@2
-        displayName: Setup docker buildx
-        inputs:
-          script: |
-            docker run --privileged --rm tonistiigi/binfmt --install arm64
-            docker run --privileged --rm tonistiigi/binfmt
-            docker buildx create --use
-
-      - task: CmdLine@2
-        displayName: Release Nightly MASTER
+        displayName: Combine Nightly MASTER manifests
         inputs:
           script: |
             set -eo pipefail
-            docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly .
-            docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly-rhel --target rhel  .
+            docker buildx imagetools create -t questdb/questdb:nightly \
+              questdb/questdb:nightly-amd64 \
+              questdb/questdb:nightly-arm64
+            docker buildx imagetools create -t questdb/questdb:nightly-rhel \
+              questdb/questdb:nightly-rhel-amd64 \
+              questdb/questdb:nightly-rhel-arm64
             preflight check container questdb/questdb:nightly-rhel
-          workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
-      #- task: CmdLine@2
-      #  displayName: Scan nightly docker image for vulnerabilities
-      #  inputs:
-      #    script: |
-      #      echo "Scanning image: questdb/questdb:nightly"
-      #      trivy image --exit-code 1 --severity HIGH,CRITICAL questdb/questdb:nightly
-      #
-      #      echo "Scanning image: questdb/questdb:nightly-rhel"
-      #      trivy image --exit-code 1 --severity HIGH,CRITICAL questdb/questdb:nightly-rhel
-      #  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
-
       - task: CmdLine@2
-        displayName: Release Tag
+        displayName: Combine Release Tag manifests
         inputs:
           script: |
             set -eo pipefail
-            # Cannot use Build.SourceBranchName if a tag name contains a "/", since the var only returns the final path component
-            # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/tags")
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
             pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+            docker buildx imagetools create -t questdb/questdb:$tag_name \
+              questdb/questdb:$tag_name-amd64 \
+              questdb/questdb:$tag_name-arm64
             if [[ "$tag_name" =~ $pattern ]]; then
               echo "labeling latest"
-              docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name -t questdb/questdb:latest .
-            else
-              echo "NOT labeling latest"
-              docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name .
+              docker buildx imagetools create -t questdb/questdb:latest \
+                questdb/questdb:latest-amd64 \
+                questdb/questdb:latest-arm64
             fi
-            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name-rhel --target rhel  .
+            docker buildx imagetools create -t questdb/questdb:$tag_name-rhel \
+              questdb/questdb:$tag_name-rhel-amd64 \
+              questdb/questdb:$tag_name-rhel-arm64
             preflight check container questdb/questdb:$tag_name-rhel
-          workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
-      #- task: CmdLine@2
-      #  displayName: Scan tagged docker image for vulnerabilities
-      #  inputs:
-      #    script: |
-      #      tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
-      #
-      #      echo "Scanning image: questdb/questdb:${tag_name}"
-      #      trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${tag_name}"
-      #
-      #      echo "Scanning image: questdb/questdb:${tag_name}-rhel"
-      #      trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${tag_name}-rhel"
-      #  condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
-
       - task: CmdLine@2
-        displayName: Release Commit from Branch
+        displayName: Combine Release Commit from Branch manifests
         inputs:
           script: |
             set -eo pipefail
-            # Cannot use Build.SourceBranchName if a branch name contains a "/", since the var only returns the final path component
-            # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/heads")
-            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
-            echo $tag_name
-            # Docker tags are prefixed with "patch-" and use the short commit hash
             docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
             echo $docker_tag_name
-            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name} .
-            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name}-rhel --target rhel .
+            docker buildx imagetools create -t questdb/questdb:${docker_tag_name} \
+              questdb/questdb:${docker_tag_name}-amd64 \
+              questdb/questdb:${docker_tag_name}-arm64
+            docker buildx imagetools create -t questdb/questdb:${docker_tag_name}-rhel \
+              questdb/questdb:${docker_tag_name}-rhel-amd64 \
+              questdb/questdb:${docker_tag_name}-rhel-arm64
             preflight check container questdb/questdb:${docker_tag_name}-rhel
-          workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
-      #- task: CmdLine@2
-      #  displayName: Scan branch docker image for vulnerabilities
-      #  inputs:
-      #    script: |
-      #      docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
-      #
-      #      echo "Scanning image: questdb/questdb:${docker_tag_name}"
-      #      trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${docker_tag_name}"
-      #
-      #      echo "Scanning image: questdb/questdb:${docker_tag_name}-rhel"
-      #      trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${docker_tag_name}-rhel"
-      #  condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+  - job: NotifyOnFailure
+    displayName: "Notify Slack on failure"
+    pool: hetzner-incus
+    dependsOn:
+      - BuildAmd64
+      - BuildArm64
+      - Manifest
+    condition: failed()
+    steps:
+      - checkout: none
 
       - task: CmdLine@2
         displayName: Notify Slack on Failure
@@ -167,6 +281,5 @@ jobs:
             curl -X POST -H 'Content-type: application/json' \
               --data '{"text":"🚨 *Docker Build Failed (OSS)*\n\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`"}' \
               "$(BUILDS_SLACK_HOOK_URL)"
-        condition: failed()
         env:
           BUILDS_SLACK_HOOK_URL: $(BUILDS_SLACK_HOOK_URL)
