@@ -3808,14 +3808,17 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testSetActiveColumnsOpenPartitionColumnsErrorPathParquet() throws Exception {
         // Verifies that openPartitionCount stays consistent when
         // openPartitionColumns() throws during Parquet partition open.
-        // The bitmap index .k file open is the only I/O in this path
-        // that can fail, and it requires a non-null (previously created)
-        // bitmap index reader in the slot.
+        // The index key file open is the only I/O in this path that can
+        // fail, and it requires a non-null (previously created) index
+        // reader in the slot. Match both bitmap (.k) and posting (.pk)
+        // key files so the test works regardless of the default symbol
+        // index type.
         AtomicInteger failCounter = new AtomicInteger();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (Utf8s.endsWithAscii(name, ".k") && failCounter.get() > 0 && failCounter.decrementAndGet() >= 0) {
+                boolean isKeyFile = Utf8s.endsWithAscii(name, ".k") || Utf8s.endsWithAscii(name, ".pk");
+                if (isKeyFile && failCounter.get() > 0 && failCounter.decrementAndGet() >= 0) {
                     return -1;
                 }
                 return TestFilesFacadeImpl.INSTANCE.openRO(name);
