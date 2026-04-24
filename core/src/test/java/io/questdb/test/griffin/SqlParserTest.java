@@ -5183,6 +5183,47 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testEarliestByDeprecatedKeepWhereOutside() throws SqlException {
+        // Round-trips EARLIEST BY (deprecated form) through QueryModel.toSink.
+        assertQuery(
+                "select-choose a, b from (select [a, b] from x earliest by b where b = 'PEHN' and a < 22 and test_match())",
+                "select * from x earliest by b where b = 'PEHN' and a < 22 and test_match()",
+                modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testEarliestByDeprecatedMultipleColumns() throws SqlException {
+        // Round-trips the deprecated EARLIEST BY with multiple columns.
+        assertQuery(
+                "select-group-by ts, market_type, avg(bid_price) avg from (select [ts, market_type, bid_price] from market_updates timestamp (ts) earliest by ts,market_type) sample by 1s",
+                "select ts, market_type, avg(bid_price) FROM market_updates EARLIEST BY ts, market_type SAMPLE BY 1s ALIGN TO FIRST OBSERVATION",
+                modelOf("market_updates").timestamp("ts").col("market_type", ColumnType.SYMBOL).col("bid_price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testEarliestOnMultipleColumns() throws SqlException {
+        // Round-trips EARLIEST ON with multiple PARTITION BY columns.
+        assertQuery(
+                "select-group-by ts, market_type, avg(bid_price) avg from (select [ts, market_type, bid_price, country] from market_updates earliest on ts partition by market_type,country) sample by 1s",
+                "select ts, market_type, avg(bid_price) FROM market_updates earliest on ts partition by market_type, country sample by 1s align to first observation",
+                modelOf("market_updates").timestamp("ts").col("market_type", ColumnType.SYMBOL).col("country", ColumnType.SYMBOL).col("bid_price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testEarliestOnNoWhere() throws SqlException {
+        // Round-trips EARLIEST ON through QueryModel.toSink, which had previously
+        // rendered neither the EARLIEST ON clause nor the suppression of timestamp().
+        assertQuery(
+                "select-choose ts, a from (select [ts, a] from x earliest on ts partition by a)",
+                "select * from x earliest on ts partition by a",
+                modelOf("x").timestamp("ts").col("a", ColumnType.STRING)
+        );
+    }
+
+    @Test
     public void testEmptyColumnAliasDisallowed() throws Exception {
         assertSyntaxError("select x as '' from long_sequence(1)", 12, "non-empty identifier");
         assertSyntaxError("select 'x' '' from long_sequence(1)", 11, "non-empty identifier");

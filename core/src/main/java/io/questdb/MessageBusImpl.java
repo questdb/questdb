@@ -43,6 +43,7 @@ import io.questdb.std.Misc;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.EarliestByTask;
 import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.tasks.LatestByTask;
@@ -74,6 +75,9 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<CopyImportRequestTask> copyImportRequestQueue;
     private final SCSequence copyImportRequestSubSeq;
     private final MCSequence copyImportSubSeq;
+    private final MPSequence earliestByPubSeq;
+    private final RingQueue<EarliestByTask> earliestByQueue;
+    private final MCSequence earliestBySubSeq;
     private final MPSequence groupByLongTopKPubSeq;
     private final RingQueue<GroupByLongTopKTask> groupByLongTopKQueue;
     private final MCSequence groupByLongTopKSubSeq;
@@ -161,6 +165,13 @@ public class MessageBusImpl implements MessageBus {
             this.latestByPubSeq = new MPSequence(latestByQueue.getCycle());
             this.latestBySubSeq = new MCSequence(latestByQueue.getCycle());
             latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
+
+            // EARLIEST BY shares the same capacity configuration as LATEST BY; the workloads are
+            // symmetric (same per-frame task weight, same max concurrency).
+            this.earliestByQueue = new RingQueue<>(EarliestByTask::new, configuration.getLatestByQueueCapacity());
+            this.earliestByPubSeq = new MPSequence(earliestByQueue.getCycle());
+            this.earliestBySubSeq = new MCSequence(earliestByQueue.getCycle());
+            earliestByPubSeq.then(earliestBySubSeq).then(earliestByPubSeq);
 
             this.tableWriterEventQueue = new RingQueue<>(
                     TableWriterTask::new,
@@ -252,6 +263,7 @@ public class MessageBusImpl implements MessageBus {
     @TestOnly
     public void clear() {
         columnPurgeSubSeq.clear();
+        earliestBySubSeq.clear();
         groupByMergeShardSubSeq.clear();
         indexerSubSeq.clear();
         latestBySubSeq.clear();
@@ -279,6 +291,9 @@ public class MessageBusImpl implements MessageBus {
         for (int i = 0, n = latestByQueue.getCycle(); i < n; i++) {
             latestByQueue.get(i).clear();
         }
+        for (int i = 0, n = earliestByQueue.getCycle(); i < n; i++) {
+            earliestByQueue.get(i).clear();
+        }
     }
 
     @Override
@@ -288,6 +303,7 @@ public class MessageBusImpl implements MessageBus {
         Misc.free(tableWriterEventQueue);
         Misc.free(pageFrameReduceQueue);
         Misc.free(latestByQueue);
+        Misc.free(earliestByQueue);
     }
 
     @Override
@@ -373,6 +389,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getCopyImportSubSeq() {
         return copyImportSubSeq;
+    }
+
+    @Override
+    public MPSequence getEarliestByPubSeq() {
+        return earliestByPubSeq;
+    }
+
+    @Override
+    public RingQueue<EarliestByTask> getEarliestByQueue() {
+        return earliestByQueue;
+    }
+
+    @Override
+    public MCSequence getEarliestBySubSeq() {
+        return earliestBySubSeq;
     }
 
     @Override

@@ -31,6 +31,54 @@ import io.questdb.std.Rows;
 
 public class GeoHashNative {
 
+    public static void earliestByAndFilterPrefix(
+            PageFrameMemoryPool frameMemoryPool,
+            long keysMemory,
+            long keysMemorySize,
+            long valuesMemory,
+            long valuesMemorySize,
+            long argsMemory,
+            long unIndexedNullCount,
+            long maxValue,
+            long minValue,
+            int frameIndex,
+            int blockValueCountMod,
+            int geoHashColumnIndex,
+            int geoHashColumnType,
+            long prefixesAddress,
+            long prefixesCount
+    ) {
+        long geoHashColumnAddress = 0;
+        // hashColumnIndex can be -1 for earliest by part only (no prefixes to match)
+        if (geoHashColumnIndex > -1) {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            geoHashColumnAddress = frameMemory.getPageAddress(geoHashColumnIndex);
+        }
+
+        final int geoHashColumnSize = ColumnType.isGeoHash(geoHashColumnType) ? getPow2SizeOfGeoHashType(geoHashColumnType) : -1;
+        assert geoHashColumnIndex == -1 || geoHashColumnSize != -1 : "no within filter or within on geohash column expected";
+
+        earliestByAndFilterPrefix(
+                keysMemory,
+                keysMemorySize,
+                valuesMemory,
+                valuesMemorySize,
+                argsMemory,
+                unIndexedNullCount,
+                maxValue,
+                minValue,
+                // Forward scan already emits frames in ascending partition-index order,
+                // so there is no need for the MAX_SAFE - frameIndex inversion that LATEST
+                // applies to its backward scan.
+                frameIndex,
+                blockValueCountMod,
+                geoHashColumnAddress,
+                geoHashColumnSize,
+                prefixesAddress,
+                prefixesCount
+        );
+    }
+
     public static native long iota(long address, long size, long init);
 
     public static void latestByAndFilterPrefix(
@@ -85,6 +133,23 @@ public class GeoHashNative {
     private static int getPow2SizeOfGeoHashType(int type) {
         return 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
     }
+
+    private static native void earliestByAndFilterPrefix(
+            long keysMemory,
+            long keysMemorySize,
+            long valuesMemory,
+            long valuesMemorySize,
+            long argsMemory,
+            long unIndexedNullCount,
+            long maxValue,
+            long minValue,
+            int frameIndex,
+            int blockValueCountMod,
+            long geoHashColumnAddress,
+            int geoHashColumnSize,
+            long prefixesAddress,
+            long prefixesCount
+    );
 
     private static native void latestByAndFilterPrefix(
             long keysMemory,

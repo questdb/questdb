@@ -70,14 +70,17 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     @Override
     public void close() {
         if (isOpen()) {
-            Misc.free(filter);
+            // filter ownership moved to the enclosing factory; close() is called between
+            // prepared-statement executions and freeing it here would break the next of()
             Misc.free(map);
             super.close();
         }
     }
 
     public Function getFilter() {
-        return filter;
+        // Return null for the NO_OP_FILTER sentinel so EXPLAIN plans don't render
+        // a misleading `filter: true` when the query had no WHERE clause.
+        return filter != NO_OP_FILTER ? filter : null;
     }
 
     @Override

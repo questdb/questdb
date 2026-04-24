@@ -977,6 +977,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlEarliestByRowCount() {
+        return 1000;
+    }
+
+    @Override
     public int getSqlExpressionPoolCapacity() {
         return 8192;
     }
@@ -1671,7 +1676,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean useWithinLatestByOptimisation() {
+    public boolean useWithinByOptimisation() {
         return false;
     }
 }

@@ -295,7 +295,12 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 // process our own queue
                 // this should fix deadlock with 1 worker configuration
                 while (!doneLatch.done(queuedCount)) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    if (circuitBreaker.checkIfTripped()) {
+                        // Flip the shared breaker first so sibling workers abort their native
+                        // calls, then re-raise the SQL execution exception for this thread.
+                        sharedCircuitBreaker.cancel();
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    }
                     long seq = subSeq.next();
                     if (seq > -1) {
                         try {

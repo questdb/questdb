@@ -41,6 +41,9 @@ import io.questdb.std.str.Sinkable;
 
 public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, Sinkable {
 
+    int EARLIEST_BY_DEPRECATED = 3;
+    int EARLIEST_BY_NEW = 4;
+    int EARLIEST_BY_NONE = 0;
     int JOIN_ASOF = 4;
     int JOIN_CROSS = 3;
     int JOIN_CROSS_FULL = 12;
@@ -190,6 +193,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean addField(QueryColumn column);
 
+    void addEarliestBy(ExpressionNode earliestBy);
+
     void addGroupBy(ExpressionNode node);
 
     void addHint(CharSequence key, CharSequence value);
@@ -279,6 +284,10 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls();
 
     IntHashSet getDependencies();
+
+    ObjList<ExpressionNode> getEarliestBy();
+
+    int getEarliestByType();
 
     ObjList<ExpressionNode> getExpressionModels();
 
@@ -551,6 +560,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setContext(JoinContext context);
 
     void setDistinct(boolean distinct);
+
+    void setEarliestByType(int earliestByType);
 
     void setExplicitTimestamp(boolean explicitTimestamp);
 

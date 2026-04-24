@@ -40,6 +40,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    private Function filter;
 
     public LatestByAllSymbolsFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -56,6 +57,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
+            this.filter = filter;
             Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes);
             this.cursor = new LatestByAllSymbolsFilteredRecordCursor(
                     configuration,
@@ -90,5 +92,6 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     protected void _close() {
         super._close();
         Misc.free(cursor);
+        filter = Misc.free(filter);
     }
 }

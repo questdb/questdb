@@ -582,6 +582,8 @@ public interface CairoConfiguration {
 
     double getSqlDistinctTimestampLoadFactor();
 
+    long getSqlEarliestByRowCount();
+
     int getSqlExpressionPoolCapacity();
 
     double getSqlFastMapLoadFactor();
@@ -950,5 +952,5 @@ public interface CairoConfiguration {
 
     int maxArrayElementCount();
 
-    boolean useWithinLatestByOptimisation();
+    boolean useWithinByOptimisation();
 }

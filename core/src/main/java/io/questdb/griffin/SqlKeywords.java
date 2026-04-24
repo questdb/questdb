@@ -1197,6 +1197,18 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 't';
     }
 
+    public static boolean isEarliestKeyword(CharSequence tok) {
+        return tok.length() == 8
+                && (tok.charAt(0) | 32) == 'e'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'r'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'i'
+                && (tok.charAt(5) | 32) == 'e'
+                && (tok.charAt(6) | 32) == 's'
+                && (tok.charAt(7) | 32) == 't';
+    }
+
     public static boolean isLeftKeyword(CharSequence tok) {
         return tok.length() == 4
                 && (tok.charAt(0) | 32) == 'l'
@@ -2649,6 +2661,7 @@ public class SqlKeywords {
         KEYWORDS.add("except");
         KEYWORDS.add("exists");
         KEYWORDS.add("explain");
+        KEYWORDS.add("earliest");
         KEYWORDS.add("false");
         KEYWORDS.add("from");
         KEYWORDS.add("in");

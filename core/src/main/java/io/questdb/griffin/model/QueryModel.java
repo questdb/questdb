@@ -72,6 +72,7 @@ public class QueryModel implements IQueryModel {
     private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
+    private final ObjList<ExpressionNode> earliestBy = new ObjList<>();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -132,6 +133,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
+    private int earliestByType = EARLIEST_BY_NONE;
     private boolean explicitTimestamp;
     private ExpressionNode fillFrom;
     private ExpressionNode fillStride;
@@ -244,6 +246,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void addDependency(int index) {
         dependencies.add(index);
+    }
+
+    @Override
+    public void addEarliestBy(ExpressionNode earliestBy) {
+        this.earliestBy.add(earliestBy);
     }
 
     @Override
@@ -399,6 +406,8 @@ public class QueryModel implements IQueryModel {
         alias = null;
         latestByType = LATEST_BY_NONE;
         latestBy.clear();
+        earliestByType = EARLIEST_BY_NONE;
+        earliestBy.clear();
         joinCriteria = null;
         joinType = JOIN_NONE;
         joinKeywordPosition = 0;
@@ -733,6 +742,16 @@ public class QueryModel implements IQueryModel {
     @Override
     public IntHashSet getDependencies() {
         return dependencies;
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getEarliestBy() {
+        return earliestBy;
+    }
+
+    @Override
+    public int getEarliestByType() {
+        return earliestByType;
     }
 
     @Override
@@ -1626,6 +1645,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void setEarliestByType(int earliestByType) {
+        this.earliestByType = earliestByType;
+    }
+
+    @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
         this.explicitTimestamp = explicitTimestamp;
     }
@@ -1957,7 +1981,7 @@ public class QueryModel implements IQueryModel {
                 aliasToSink(alias.token, sink);
             }
 
-            if (getLatestByType() != LATEST_BY_NEW && timestamp != null) {
+            if (getLatestByType() != LATEST_BY_NEW && getEarliestByType() != EARLIEST_BY_NEW && timestamp != null) {
                 sink.putAscii(" timestamp (");
                 timestamp.toSink(sink);
                 sink.putAscii(')');
@@ -1972,6 +1996,16 @@ public class QueryModel implements IQueryModel {
                 sink.putAscii(", ");
                 sink.put(timestampColumnIndex);
                 sink.putAscii(')');
+            }
+
+            if (getEarliestByType() == EARLIEST_BY_DEPRECATED && getEarliestBy().size() > 0) {
+                sink.putAscii(" earliest by ");
+                for (int i = 0, n = getEarliestBy().size(); i < n; i++) {
+                    if (i > 0) {
+                        sink.putAscii(',');
+                    }
+                    getEarliestBy().getQuick(i).toSink(sink);
+                }
             }
 
             if (getLatestByType() == LATEST_BY_DEPRECATED && getLatestBy().size() > 0) {
@@ -2223,6 +2257,18 @@ public class QueryModel implements IQueryModel {
         if (!joinSlave && outerJoinExpressionClause != null) {
             sink.putAscii(" outer-join-expressions ");
             outerJoinExpressionClause.toSink(sink);
+        }
+
+        if (getEarliestByType() == EARLIEST_BY_NEW && getEarliestBy().size() > 0) {
+            sink.putAscii(" earliest on ");
+            timestamp.toSink(sink);
+            sink.putAscii(" partition by ");
+            for (int i = 0, n = getEarliestBy().size(); i < n; i++) {
+                if (i > 0) {
+                    sink.put(',');
+                }
+                getEarliestBy().getQuick(i).toSink(sink);
+            }
         }
 
         if (getLatestByType() == LATEST_BY_NEW && getLatestBy().size() > 0) {

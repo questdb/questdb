@@ -2700,6 +2700,7 @@ public class SqlParser {
                                     && target.getWhereClause() == null
                                     && target.getOrderBy().size() == 0
                                     && target.getLatestBy().size() == 0
+                                    && target.getEarliestBy().size() == 0
                                     && target.getNestedModel() == null
                                     && target.getSampleBy() == null
                                     && target.getGroupBy().size() == 0
@@ -2738,6 +2739,14 @@ public class SqlParser {
                     parseLatestBy(lexer, model);
                     tok = optTok(lexer);
                 }
+            }
+            // expect [earliest by] (deprecated syntax)
+            if (tok != null && isEarliestKeyword(tok)) {
+                if (model.getLatestBy().size() > 0) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "cannot use both LATEST and EARLIEST in the same query");
+                }
+                parseEarliestBy(lexer, model);
+                tok = optTok(lexer);
             }
         }
 
@@ -2806,6 +2815,9 @@ public class SqlParser {
             if (model.getLatestByType() == IQueryModel.LATEST_BY_NEW) {
                 throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'latest on'");
             }
+            if (model.getEarliestByType() == IQueryModel.EARLIEST_BY_NEW) {
+                throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'earliest on'");
+            }
             ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls());
             if (expr != null) {
                 model.setWhereClause(expr);
@@ -2821,9 +2833,33 @@ public class SqlParser {
             if (model.getLatestByType() == IQueryModel.LATEST_BY_DEPRECATED) {
                 throw SqlException.$((lexer.lastTokenPosition()), "mix of new and deprecated 'latest by' syntax");
             }
+            if (model.getEarliestBy().size() > 0) {
+                throw SqlException.$(lexer.lastTokenPosition(), "cannot use both LATEST and EARLIEST in the same query");
+            }
             expectTok(lexer, "on");
             parseLatestByNew(lexer, model);
             tok = optTok(lexer);
+        }
+
+        // expect [earliest by] (new syntax)
+
+        if (tok != null && isEarliestKeyword(tok)) {
+            if (model.getEarliestByType() == IQueryModel.EARLIEST_BY_DEPRECATED) {
+                throw SqlException.$((lexer.lastTokenPosition()), "mix of new and deprecated 'earliest by' syntax");
+            }
+            if (model.getLatestBy().size() > 0) {
+                throw SqlException.$(lexer.lastTokenPosition(), "cannot use both LATEST and EARLIEST in the same query");
+            }
+            expectTok(lexer, "on");
+            parseEarliestByNew(lexer, model);
+            tok = optTok(lexer);
+        }
+
+        // Catch reversed order: EARLIEST followed by LATEST. The LATEST check
+        // above runs before EARLIEST parsing, so it would otherwise fall through
+        // to an unhelpful "unexpected token" error.
+        if (tok != null && isLatestKeyword(tok) && model.getEarliestBy().size() > 0) {
+            throw SqlException.$(lexer.lastTokenPosition(), "cannot use both LATEST and EARLIEST in the same query");
         }
 
         // expect [pivot]
@@ -3652,6 +3688,63 @@ public class SqlParser {
         return joinModel;
     }
 
+    private void parseEarliestBy(GenericLexer lexer, IQueryModel model) throws SqlException {
+        CharSequence tok = optTok(lexer);
+        if (tok != null) {
+            if (isByKeyword(tok)) {
+                parseEarliestByDeprecated(lexer, model);
+                return;
+            }
+            if (isOnKeyword(tok)) {
+                parseEarliestByNew(lexer, model);
+                return;
+            }
+        }
+        throw SqlException.$((lexer.lastTokenPosition()), "'on' or 'by' expected");
+    }
+
+    private void parseEarliestByDeprecated(GenericLexer lexer, IQueryModel model) throws SqlException {
+        // 'earliest by' is already parsed at this point
+
+        CharSequence tok;
+        do {
+            model.addEarliestBy(expectLiteral(lexer, model.getDecls()));
+            tok = SqlUtil.fetchNext(lexer);
+        } while (Chars.equalsNc(tok, ','));
+
+        model.setEarliestByType(IQueryModel.EARLIEST_BY_DEPRECATED);
+
+        if (tok != null) {
+            lexer.unparseLast();
+        }
+    }
+
+    private void parseEarliestByNew(GenericLexer lexer, IQueryModel model) throws SqlException {
+        // 'earliest on' is already parsed at this point
+
+        // <timestamp>
+        final ExpressionNode timestamp = expectLiteral(lexer, model.getDecls());
+        if (model.getTimestamp() != null) {
+            throw SqlException.$(timestamp.position, "timestamp already specified");
+        }
+        model.setTimestamp(timestamp);
+        // 'partition by'
+        expectTok(lexer, "partition");
+        expectTok(lexer, "by");
+        // <columns>
+        CharSequence tok;
+        do {
+            model.addEarliestBy(expectLiteral(lexer, model.getDecls()));
+            tok = SqlUtil.fetchNext(lexer);
+        } while (Chars.equalsNc(tok, ','));
+
+        model.setEarliestByType(IQueryModel.EARLIEST_BY_NEW);
+
+        if (tok != null) {
+            lexer.unparseLast();
+        }
+    }
+
     private void parseLatestBy(GenericLexer lexer, IQueryModel model) throws SqlException {
         CharSequence tok = optTok(lexer);
         if (tok != null) {
@@ -3688,6 +3781,9 @@ public class SqlParser {
 
         // <timestamp>
         final ExpressionNode timestamp = expectLiteral(lexer, model.getDecls());
+        if (model.getTimestamp() != null) {
+            throw SqlException.$(timestamp.position, "timestamp already specified");
+        }
         model.setTimestamp(timestamp);
         // 'partition by'
         expectTok(lexer, "partition");
@@ -5388,6 +5484,7 @@ public class SqlParser {
     static {
         tableAliasStop.add("where");
         tableAliasStop.add("latest");
+        tableAliasStop.add("earliest");
         tableAliasStop.add("join");
         tableAliasStop.add("inner");
         tableAliasStop.add("left");

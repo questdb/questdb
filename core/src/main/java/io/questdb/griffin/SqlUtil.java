@@ -1219,6 +1219,7 @@ public class SqlUtil {
                 || model.getGroupBy().size() > 0
                 || model.getJoinModels().size() > 1
                 || model.getLatestByType() != IQueryModel.LATEST_BY_NONE
+                || model.getEarliestByType() != IQueryModel.EARLIEST_BY_NONE
                 || model.getUnionModel() != null;
     }
 
@@ -1241,6 +1242,7 @@ public class SqlUtil {
                     || model.getGroupBy().size() > 0
                     || model.getJoinModels().size() > 1
                     || model.getLatestByType() != IQueryModel.LATEST_BY_NONE
+                    || model.getEarliestByType() != IQueryModel.EARLIEST_BY_NONE
                     || model.getUnionModel() != null) {
                 return false;
             }

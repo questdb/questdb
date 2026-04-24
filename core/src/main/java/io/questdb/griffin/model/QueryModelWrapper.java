@@ -88,6 +88,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void addEarliestBy(ExpressionNode earliestBy) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void addExpressionModel(ExpressionNode node) {
         throw new UnsupportedOperationException();
     }
@@ -330,6 +335,16 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public IntHashSet getDependencies() {
         return delegate.getDependencies();
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getEarliestBy() {
+        return delegate.getEarliestBy();
+    }
+
+    @Override
+    public int getEarliestByType() {
+        return delegate.getEarliestByType();
     }
 
     @Override
@@ -1029,6 +1044,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setDistinct(boolean distinct) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setEarliestByType(int earliestByType) {
         throw new UnsupportedOperationException();
     }
 
