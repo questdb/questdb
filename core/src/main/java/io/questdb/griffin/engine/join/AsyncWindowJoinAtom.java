@@ -244,9 +244,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             }
 
             this.ownerTemporaryAllocator = GroupByAllocatorFactory.createAllocator(configuration);
-            this.ownerLongList = new GroupByLongList(INITIAL_LIST_CAPACITY);
+            this.ownerLongList = new GroupByLongList(INITIAL_LIST_CAPACITY, 0L);
             ownerLongList.setAllocator(ownerTemporaryAllocator);
-            this.ownerTimestampList = new GroupByLongList(INITIAL_LIST_CAPACITY);
+            this.ownerTimestampList = new GroupByLongList(INITIAL_LIST_CAPACITY, 0L);
             ownerTimestampList.setAllocator(ownerTemporaryAllocator);
             this.perWorkerTemporaryAllocators = new ObjList<>(slotCount);
             this.perWorkerLongLists = new ObjList<>(slotCount);
@@ -257,10 +257,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 GroupByAllocator workerTemporaryAllocator = GroupByAllocatorFactory.createAllocator(configuration);
                 perWorkerTemporaryAllocators.extendAndSet(i, workerTemporaryAllocator);
 
-                final GroupByLongList workerRowIds = new GroupByLongList(INITIAL_LIST_CAPACITY);
+                final GroupByLongList workerRowIds = new GroupByLongList(INITIAL_LIST_CAPACITY, 0L);
                 workerRowIds.setAllocator(workerTemporaryAllocator);
                 perWorkerLongLists.extendAndSet(i, workerRowIds);
-                final GroupByLongList workerTimestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
+                final GroupByLongList workerTimestamps = new GroupByLongList(INITIAL_LIST_CAPACITY, 0L);
                 workerTimestamps.setAllocator(workerTemporaryAllocator);
                 perWorkerTimestampLists.extendAndSet(i, workerTimestamps);
                 perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());

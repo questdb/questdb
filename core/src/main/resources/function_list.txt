@@ -804,6 +804,36 @@ io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctio
 io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByDefaultFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByDefaultFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MultiApproxPercentileDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MultiApproxPercentileDoubleGroupByDefaultFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MultiApproxPercentileLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MultiApproxPercentileLongGroupByDefaultFunctionFactory
+
+# 'percentile_disc' and 'percentile_cont' group-by functions
+io.questdb.griffin.engine.functions.groupby.PercentileDiscDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.PercentileDiscLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.PercentileContDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MultiPercentileDiscDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MultiPercentileContDoubleGroupByFunctionFactory
+
+# 'quantile_disc' and 'quantile_cont' group-by aliases
+io.questdb.griffin.engine.functions.groupby.QuantileDiscDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.QuantileDiscLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.QuantileContDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MultiQuantileDiscDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MultiQuantileContDoubleGroupByFunctionFactory
+
+# 'percentile_disc' and 'percentile_cont' window functions
+io.questdb.griffin.engine.functions.window.PercentileDiscDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.PercentileContDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.MultiPercentileDiscDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.MultiPercentileContDoubleWindowFunctionFactory
+
+# 'quantile_disc' and 'quantile_cont' window aliases
+io.questdb.griffin.engine.functions.window.QuantileDiscDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.QuantileContDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.MultiQuantileDiscDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.MultiQuantileContDoubleWindowFunctionFactory
 
 # Change string case
 io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory
