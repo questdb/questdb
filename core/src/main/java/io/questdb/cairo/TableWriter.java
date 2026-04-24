@@ -10728,6 +10728,54 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 path.trimTo(pathSize);
             }
+
+            // If this sink entry represents an O3 partition split, the ORIGINAL
+            // partition (oldPartitionTimestamp, stored at field 6) is kept in
+            // place on disk with its size reduced to srcDataNewPartitionSize,
+            // but its posting index still holds entries for the discarded tail
+            // (rowIds >= srcDataNewPartitionSize). Reader maxValue filtering
+            // hides them while the partition stays smaller, but if a later
+            // replace-range commit drops the split sibling and reactivates the
+            // original, fresh appends reuse those rowIds and the stale entries
+            // surface under the wrong keys. Trim the index to the new size
+            // here so the invariant "pk maxValue matches partition size" holds.
+            long oldPartitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress + 6 * Long.BYTES);
+            long newOriginalSize = Unsafe.getUnsafe().getLong(blockAddress + 2 * Long.BYTES);
+            if (oldPartitionTimestamp != -1L
+                    && oldPartitionTimestamp != partitionTimestamp
+                    && newOriginalSize > 0
+                    && PartitionBy.isPartitioned(partitionBy)) {
+                long origNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(oldPartitionTimestamp, Long.MIN_VALUE);
+                if (origNameTxn != Long.MIN_VALUE) {
+                    path.trimTo(pathSize);
+                    setPathForNativePartition(path, timestampType, partitionBy, oldPartitionTimestamp, origNameTxn);
+                    int origPlen = path.size();
+                    try {
+                        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                            if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                                    || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
+                                continue;
+                            }
+                            ColumnIndexer indexer = indexers.getQuick(colIdx);
+                            if (indexer == null) {
+                                continue;
+                            }
+                            CharSequence colName = metadata.getColumnName(colIdx);
+                            long colNameTxn = columnVersionWriter.getColumnNameTxn(oldPartitionTimestamp, colIdx);
+                            long columnTop = columnVersionWriter.getColumnTopQuick(oldPartitionTimestamp, colIdx);
+                            indexer.configureFollowerAndWriter(
+                                    path.trimTo(origPlen), colName, colNameTxn,
+                                    getPrimaryColumn(colIdx), columnTop,
+                                    oldPartitionTimestamp, origNameTxn
+                            );
+                            indexer.rollback(newOriginalSize - 1);
+                            indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                        }
+                    } finally {
+                        path.trimTo(pathSize);
+                    }
+                }
+            }
         }
 
         if (anyPartitionProcessed && lastOpenPartitionTs != Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)) {
