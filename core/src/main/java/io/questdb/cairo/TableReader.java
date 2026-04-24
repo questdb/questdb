@@ -322,7 +322,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     public ParquetPartitionDecoder getAndInitParquetPartitionDecoder(int partitionIndex) {
         ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
         if (decoder == null) {
-            decoder = new ParquetPartitionDecoder();
+            decoder = ParquetPartitionDecoder.newInstance();
             parquetMetaDecoders.setQuick(partitionIndex, decoder);
         }
         long parquetMetaAddr = getParquetMetadataAddr(partitionIndex);

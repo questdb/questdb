@@ -27,15 +27,13 @@ package io.questdb.griffin.engine.table.parquet;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.Path;
+
+import java.util.function.Supplier;
 
 /**
  * Parquet partition decoder that reads metadata from the {@code _pm} sidecar file
@@ -47,25 +45,14 @@ import io.questdb.std.str.Path;
  * separate {@link ParquetFileDecoder} which parses the parquet footer.
  */
 public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
-    private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
-    private long allocator;
-    // Pre-computed [byte_offset, byte_length] pairs handed to the resolver. Lazy.
-    private DirectLongList byteRanges;
-    // Lazy [addr, size] pairs filled by ParquetColumnChunkResolver. Reused across decode calls.
-    private DirectLongList chunks;
-    // Built on-demand on the cold path; null until first cold decode, so hot-path-only
-    // decoders don't account against NATIVE_PATH.
-    private Path coldPartitionPath;
-    private long decodeContextPtr;
-    private long nameTxn;
-    private long parquetAddr;
-    private long parquetMetaAddr;
-    private long parquetMetaSize;
-    private long parquetSize;
-    private int partitionBy;
-    private TableToken table;
-    private long timestamp;
-    private int timestampType;
+    public static volatile Supplier<ParquetPartitionDecoder> SUPPLIER = ParquetPartitionDecoder::new;
+    protected final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+    protected long allocator;
+    protected long decodeContextPtr;
+    protected long parquetAddr;
+    protected long parquetMetaAddr;
+    protected long parquetMetaSize;
+    protected long parquetSize;
 
     public static boolean decodeNoNeedToDecodeFlag(long encodedIndex) {
         return (encodedIndex & 1) == 1;
@@ -75,16 +62,22 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         return (int) ((encodedIndex >> 1) - 1);
     }
 
+    public static ParquetPartitionDecoder newInstance() {
+        return SUPPLIER.get();
+    }
+
     @Override
     public void close() {
         destroy();
     }
 
     /**
-     * Decodes a row group. The {@code columns} list uses the same {@code [parquet_column_index, column_type]}
-     * pair format as {@link ParquetFileDecoder#decodeRowGroup(RowGroupBuffers, DirectIntList, int, int, int)}
-     * for compatibility with {@code PageFrameMemoryPool}. The column type from Java is used for
-     * Symbol->Varchar and Varchar->VarcharSlice overrides; the base type comes from the {@code _pm} file.
+     * Decodes a row group. The {@code columns} list uses the same
+     * {@code [parquet_column_index, column_type]} pair format as
+     * {@link ParquetFileDecoder#decodeRowGroup(RowGroupBuffers, DirectIntList, int, int, int)} for compatibility with
+     * {@code PageFrameMemoryPool}. The column type from Java is used for
+     * Symbol->Varchar and Varchar->VarcharSlice overrides; the base type
+     * comes from the {@code _pm} file.
      *
      * @param rowGroupBuffers output buffers
      * @param columns         [parquet_column_index, column_type] pairs
@@ -102,37 +95,18 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     ) {
         ensureDecodeContext();
         final int columnsSize = (int) (columns.size() >>> 1);
-        if (parquetAddr != 0) {
-            return decodeRowGroup(
-                    decodeContextPtr,
-                    parquetAddr,
-                    parquetSize,
-                    parquetMetaReader.getOrCreateNativeReaderPtr(),
-                    rowGroupBuffers.ptr(),
-                    columns.getAddress(),
-                    columnsSize,
-                    rowGroupIndex,
-                    rowLo,
-                    rowHi
-            );
-        }
-        final ParquetColumnChunkResolver resolver = requireColdResolver();
-        final DirectLongList chunkList = resolveColdChunks(resolver, columns, columnsSize, rowGroupIndex);
-        try {
-            return decodeRowGroupFromBuffers(
-                    decodeContextPtr,
-                    parquetMetaReader.getOrCreateNativeReaderPtr(),
-                    rowGroupBuffers.ptr(),
-                    columns.getAddress(),
-                    columnsSize,
-                    rowGroupIndex,
-                    chunkList.getAddress(),
-                    rowLo,
-                    rowHi
-            );
-        } finally {
-            resolver.release(chunkList, columnsSize);
-        }
+        return decodeRowGroup(
+                decodeContextPtr,
+                parquetAddr,
+                parquetSize,
+                parquetMetaReader.getOrCreateNativeReaderPtr(),
+                rowGroupBuffers.ptr(),
+                columns.getAddress(),
+                columnsSize,
+                rowGroupIndex,
+                rowLo,
+                rowHi
+        );
     }
 
     public void decodeRowGroupWithRowFilter(
@@ -146,31 +120,14 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     ) {
         ensureDecodeContext();
         final int columnsSize = (int) (columns.size() >>> 1);
-        if (parquetAddr != 0) {
-            decodeRowGroupWithRowFilter(
-                    decodeContextPtr, parquetAddr, parquetSize,
-                    parquetMetaReader.getOrCreateNativeReaderPtr(),
-                    rowGroupBuffers.ptr(), columnOffset,
-                    columns.getAddress(), columnsSize,
-                    rowGroupIndex, rowLo, rowHi,
-                    filteredRows.getAddress(), filteredRows.size()
-            );
-            return;
-        }
-        final ParquetColumnChunkResolver resolver = requireColdResolver();
-        final DirectLongList chunkList = resolveColdChunks(resolver, columns, columnsSize, rowGroupIndex);
-        try {
-            decodeRowGroupWithRowFilterFromBuffers(
-                    decodeContextPtr, parquetMetaReader.getOrCreateNativeReaderPtr(),
-                    rowGroupBuffers.ptr(), columnOffset,
-                    columns.getAddress(), columnsSize,
-                    rowGroupIndex, chunkList.getAddress(),
-                    rowLo, rowHi,
-                    filteredRows.getAddress(), filteredRows.size()
-            );
-        } finally {
-            resolver.release(chunkList, columnsSize);
-        }
+        decodeRowGroupWithRowFilter(
+                decodeContextPtr, parquetAddr, parquetSize,
+                parquetMetaReader.getOrCreateNativeReaderPtr(),
+                rowGroupBuffers.ptr(), columnOffset,
+                columns.getAddress(), columnsSize,
+                rowGroupIndex, rowLo, rowHi,
+                filteredRows.getAddress(), filteredRows.size()
+        );
     }
 
     public void decodeRowGroupWithRowFilterFillNulls(
@@ -184,31 +141,14 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     ) {
         ensureDecodeContext();
         final int columnsSize = (int) (columns.size() >>> 1);
-        if (parquetAddr != 0) {
-            decodeRowGroupWithRowFilterFillNulls(
-                    decodeContextPtr, parquetAddr, parquetSize,
-                    parquetMetaReader.getOrCreateNativeReaderPtr(),
-                    rowGroupBuffers.ptr(), columnOffset,
-                    columns.getAddress(), columnsSize,
-                    rowGroupIndex, rowLo, rowHi,
-                    filteredRows.getAddress(), filteredRows.size()
-            );
-            return;
-        }
-        final ParquetColumnChunkResolver resolver = requireColdResolver();
-        final DirectLongList chunkList = resolveColdChunks(resolver, columns, columnsSize, rowGroupIndex);
-        try {
-            decodeRowGroupWithRowFilterFillNullsFromBuffers(
-                    decodeContextPtr, parquetMetaReader.getOrCreateNativeReaderPtr(),
-                    rowGroupBuffers.ptr(), columnOffset,
-                    columns.getAddress(), columnsSize,
-                    rowGroupIndex, chunkList.getAddress(),
-                    rowLo, rowHi,
-                    filteredRows.getAddress(), filteredRows.size()
-            );
-        } finally {
-            resolver.release(chunkList, columnsSize);
-        }
+        decodeRowGroupWithRowFilterFillNulls(
+                decodeContextPtr, parquetAddr, parquetSize,
+                parquetMetaReader.getOrCreateNativeReaderPtr(),
+                rowGroupBuffers.ptr(), columnOffset,
+                columns.getAddress(), columnsSize,
+                rowGroupIndex, rowLo, rowHi,
+                filteredRows.getAddress(), filteredRows.size()
+        );
     }
 
     public long findRowGroupByTimestamp(
@@ -217,18 +157,9 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             long rowHi,
             int timestampColumnIndex
     ) {
-        if (parquetAddr != 0) {
-            return findRowGroupByTimestamp(
-                    parquetAddr,
-                    parquetSize,
-                    parquetMetaReader.getOrCreateNativeReaderPtr(),
-                    timestamp,
-                    rowLo,
-                    rowHi,
-                    timestampColumnIndex
-            );
-        }
-        return findRowGroupByTimestampCold(
+        return findRowGroupByTimestamp(
+                parquetAddr,
+                parquetSize,
                 parquetMetaReader.getOrCreateNativeReaderPtr(),
                 timestamp,
                 rowLo,
@@ -284,36 +215,16 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     }
 
     /**
-     * Initializes the decoder with mmapped _pm and parquet file regions.
-     *
-     * @param parquetMetaAddr base address of the mmapped _pm file
-     * @param parquetMetaSize size of the mmapped _pm file
-     * @param parquetAddr     base address of the mmapped parquet file
-     * @param parquetSize     size of the mmapped parquet file
-     * @param memoryTag       memory tag for native allocations
-     */
-    /**
      * Hot-path-only initialization. Use when the parquet file is mmapped
-     * locally (write/restore/index/O3 callers). The cold-path resolver
-     * fields are left null/zero; calling cold-path entry points after this
-     * overload will throw because the partition path cannot be built.
+     * locally (write/restore/index/O3 callers).
      */
     public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, int memoryTag) {
-        of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, null, 0, 0, 0L, 0L, memoryTag);
-    }
-
-    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, long nameTxn, int memoryTag) {
         destroy();
         try {
             this.parquetMetaAddr = parquetMetaAddr;
             this.parquetMetaSize = parquetMetaSize;
             this.parquetAddr = parquetAddr;
             this.parquetSize = parquetSize;
-            this.partitionBy = partitionBy;
-            this.timestamp = timestamp;
-            this.nameTxn = nameTxn;
-            this.timestampType = timestampType;
-            this.table = table;
             this.allocator = Unsafe.getNativeAllocator(memoryTag);
             this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
             if (!this.parquetMetaReader.resolveFooter(parquetSize)) {
@@ -323,6 +234,10 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             destroy();
             throw t;
         }
+    }
+
+    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, long nameTxn, int memoryTag) {
+        of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, memoryTag);
     }
 
     /**
@@ -358,11 +273,6 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         this.parquetSize = other.parquetSize;
         this.allocator = other.allocator;
         this.parquetMetaReader.of(other.parquetMetaReader);
-        this.table = other.table;
-        this.partitionBy = other.partitionBy;
-        this.timestampType = other.timestampType;
-        this.timestamp = other.timestamp;
-        this.nameTxn = other.nameTxn;
     }
 
     public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
@@ -371,6 +281,68 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
 
     public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
         return parquetMetaReader.getRowGroupMinTimestamp(rowGroupIndex, timestampColumnIndex);
+    }
+
+    /**
+     * Shim over the {@code decodeRowGroupFromBuffers} private native for use
+     * by the enterprise cold-storage subclass, which assembles the chunk
+     * buffers itself rather than reading the parquet file directly.
+     */
+    protected static int decodeRowGroupFromBuffersShim(
+            long decodeContextPtr,
+            long parquetMetaReaderPtr,
+            long rowGroupBufsPtr,
+            long columnsPtr,
+            int columnCount,
+            int rowGroupIndex,
+            long chunksPtr,
+            int rowLo,
+            int rowHi
+    ) {
+        return decodeRowGroupFromBuffers(decodeContextPtr, parquetMetaReaderPtr, rowGroupBufsPtr, columnsPtr,
+                columnCount, rowGroupIndex, chunksPtr, rowLo, rowHi);
+    }
+
+    protected static void decodeRowGroupWithRowFilterFillNullsFromBuffersShim(
+            long decodeContextPtr,
+            long parquetMetaReaderPtr,
+            long rowGroupBufsPtr,
+            int columnOffset,
+            long columnsPtr,
+            int columnCount,
+            int rowGroupIndex,
+            long chunksPtr,
+            int rowLo,
+            int rowHi,
+            long filteredRowsPtr,
+            long filteredRowsSize
+    ) {
+        decodeRowGroupWithRowFilterFillNullsFromBuffers(decodeContextPtr, parquetMetaReaderPtr, rowGroupBufsPtr, columnOffset,
+                columnsPtr, columnCount, rowGroupIndex, chunksPtr, rowLo, rowHi, filteredRowsPtr, filteredRowsSize);
+    }
+
+    protected static void decodeRowGroupWithRowFilterFromBuffersShim(
+            long decodeContextPtr,
+            long parquetMetaReaderPtr,
+            long rowGroupBufsPtr,
+            int columnOffset,
+            long columnsPtr,
+            int columnCount,
+            int rowGroupIndex,
+            long chunksPtr,
+            int rowLo,
+            int rowHi,
+            long filteredRowsPtr,
+            long filteredRowsSize
+    ) {
+        decodeRowGroupWithRowFilterFromBuffers(decodeContextPtr, parquetMetaReaderPtr, rowGroupBufsPtr, columnOffset,
+                columnsPtr, columnCount, rowGroupIndex, chunksPtr, rowLo, rowHi, filteredRowsPtr, filteredRowsSize);
+    }
+
+    protected void ensureDecodeContext() {
+        if (decodeContextPtr == 0) {
+            decodeContextPtr = ParquetFileDecoder.createDecodeContext(parquetAddr, parquetSize);
+        }
     }
 
     private static native int decodeRowGroup(
@@ -470,34 +442,6 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             int timestampColumnIndex
     ) throws CairoException;
 
-    private static native long findRowGroupByTimestampCold(
-            long parquetMetaReaderPtr,
-            long timestamp,
-            long rowLo,
-            long rowHi,
-            int timestampColumnIndex
-    ) throws CairoException;
-
-    private static DirectLongList resetLongList(DirectLongList list, int columnsSize) {
-        final long required = 2L * columnsSize;
-        list.clear();
-        list.ensureCapacity(required);
-        list.setPos(required);
-        return list;
-    }
-
-    private void buildColdPartitionPath() {
-        if (table == null) {
-            throw CairoException.critical(0)
-                    .put("cannot build cold-storage partition path: decoder was initialized via the hot-path-only of() overload");
-        }
-        if (coldPartitionPath == null) {
-            coldPartitionPath = new Path();
-        }
-        coldPartitionPath.of(table.getDirName());
-        TableUtils.setPathForParquetPartition(coldPartitionPath, timestampType, partitionBy, timestamp, nameTxn);
-    }
-
     private void destroy() {
         if (decodeContextPtr != 0) {
             ParquetFileDecoder.destroyDecodeContext(decodeContextPtr);
@@ -508,75 +452,6 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         parquetMetaSize = 0;
         parquetAddr = 0;
         parquetSize = 0;
-        byteRanges = Misc.free(byteRanges);
-        chunks = Misc.free(chunks);
-        coldPartitionPath = Misc.free(coldPartitionPath);
-        nameTxn = 0;
-        partitionBy = 0;
-        table = null;
-        timestamp = 0;
-        timestampType = 0;
-    }
-
-    private DirectLongList ensureByteRanges(int columnsSize) {
-        if (byteRanges == null) {
-            byteRanges = new DirectLongList(2L * columnsSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-        }
-        return resetLongList(byteRanges, columnsSize);
-    }
-
-    private DirectLongList ensureChunks(int columnsSize) {
-        if (chunks == null) {
-            chunks = new DirectLongList(2L * columnsSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-        }
-        return resetLongList(chunks, columnsSize);
-    }
-
-    private void ensureDecodeContext() {
-        if (decodeContextPtr == 0) {
-            decodeContextPtr = ParquetFileDecoder.createDecodeContext(parquetAddr, parquetSize);
-        }
-    }
-
-    private ParquetColumnChunkResolver requireColdResolver() {
-        final ParquetColumnChunkResolver resolver = ParquetColumnChunkResolver.Holder.INSTANCE;
-        if (resolver == null) {
-            throw CairoException.critical(0)
-                    .put("parquet file not available locally and no column chunk resolver configured");
-        }
-        return resolver;
-    }
-
-    private DirectLongList resolveColdChunks(
-            ParquetColumnChunkResolver resolver,
-            DirectIntList columns,
-            int columnsSize,
-            int rowGroupIndex
-    ) {
-        final DirectLongList ranges = ensureByteRanges(columnsSize);
-        final long columnsAddr = columns.getAddress();
-        for (int i = 0; i < columnsSize; i++) {
-            // Each (parquet_column_index, column_type) pair occupies 8 bytes (two ints).
-            // The parquet column index is the first int.
-            final int parquetColumnIndex = Unsafe.getUnsafe().getInt(columnsAddr + (i * 8L));
-            ranges.set(2L * i, parquetMetaReader.getChunkByteRangeStart(rowGroupIndex, parquetColumnIndex));
-            ranges.set(2L * i + 1L, parquetMetaReader.getChunkTotalCompressed(rowGroupIndex, parquetColumnIndex));
-        }
-        final DirectLongList chunkList = ensureChunks(columnsSize);
-        buildColdPartitionPath();
-        try {
-            resolver.resolve(coldPartitionPath, ranges, columnsSize, chunkList);
-        } catch (Throwable t) {
-            // The resolver may have allocated buffers and partially populated chunkList before throwing.
-            // Release defensively so those native buffers do not leak.
-            try {
-                resolver.release(chunkList, columnsSize);
-            } catch (Throwable releaseFailure) {
-                t.addSuppressed(releaseFailure);
-            }
-            throw t;
-        }
-        return chunkList;
     }
 
     static {

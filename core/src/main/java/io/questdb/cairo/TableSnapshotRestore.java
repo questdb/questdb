@@ -706,6 +706,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
         try (
                 Path path = new Path().put(tablePathStr);
+                ParquetMetaPartitionDecoder partitionDecoder = ParquetMetaPartitionDecoder.newInstance();
                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 DirectIntList parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT)
         ) {
@@ -746,7 +747,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     // Decoder lives strictly inside the parquet/_pm mmaps. Closing it
                     // before either munmap honors the documented clear-then-munmap
                     // contract of ParquetPartitionDecoder.
-                    try (ParquetPartitionDecoder partitionDecoder = new ParquetPartitionDecoder()) {
+                    try (ParquetPartitionDecoder partitionDecoder = ParquetPartitionDecoder.newInstance()) {
                         partitionDecoder.of(parquetMetaAddr, parquetMetaFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
                         // Set path to native partition directory (where index files go)

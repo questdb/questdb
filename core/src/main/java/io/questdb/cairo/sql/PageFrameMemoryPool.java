@@ -88,7 +88,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory = new PageFrameMemoryImpl();
             fromParquetColumnIndexes = new IntList(16);
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
-            parquetMetaDecoder = new ParquetPartitionDecoder();
+            parquetMetaDecoder = ParquetPartitionDecoder.newInstance();
             legacyDecoder = new ParquetFileDecoder();
         } catch (Throwable th) {
             close();
