@@ -2101,15 +2101,23 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (struct.isWalEnabled()) {
                     // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
                     tableSequencerAPI.dropTable(tableToken, true);
-                }
-                // If on-disk files were created before the failure (e.g. registerName threw),
-                // remove them so the table name does not stay blocked by an orphan directory.
-                if (filesystemCreated) {
+                } else if (filesystemCreated) {
+                    final FilesFacade ff = configuration.getFilesFacade();
                     try {
-                        final FilesFacade ff = configuration.getFilesFacade();
                         path.of(configuration.getDbRoot()).concat(tableToken).$();
+                        Path volumeTarget = null;
+                        if (ff.isSoftLink(path.$())) {
+                            volumeTarget = Path.getThreadLocal2("");
+                            if (!ff.readLink(path, volumeTarget)) {
+                                volumeTarget = null;
+                            }
+                        }
                         if (!ff.unlinkOrRemove(path, LOG)) {
                             LOG.error().$("could not clean up partial table after failed create [table=").$(tableToken)
+                                    .$(", errno=").$(ff.errno()).I$();
+                        }
+                        if (volumeTarget != null && !ff.unlinkOrRemove(volumeTarget, LOG)) {
+                            LOG.error().$("could not clean up partial table in volume [table=").$(tableToken)
                                     .$(", errno=").$(ff.errno()).I$();
                         }
                     } catch (Throwable cleanupEx) {

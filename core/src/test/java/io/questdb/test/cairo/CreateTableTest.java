@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.CreateTableOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.log.Log;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -48,8 +49,10 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -58,6 +61,200 @@ import static org.junit.Assert.*;
 
 @SuppressWarnings("SameParameterValue")
 public class CreateTableTest extends AbstractCairoTest {
+
+    @Test
+    public void testCreateCleanupFailureDoesNotMaskOriginalError() throws Exception {
+        final String tableName = "x_cleanup_fail";
+        final AtomicBoolean failNextMetaOpen = new AtomicBoolean(false);
+        final AtomicBoolean failNextUnlinkOrRemove = new AtomicBoolean(false);
+
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNextMetaOpen.get()
+                        && Utf8s.containsAscii(name, tableName)
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    failNextMetaOpen.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean unlinkOrRemove(Path path, Log LOG) {
+                if (failNextUnlinkOrRemove.get() && Utf8s.containsAscii(path, tableName)) {
+                    failNextUnlinkOrRemove.set(false);
+                    return false;
+                }
+                return super.unlinkOrRemove(path, LOG);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            failNextMetaOpen.set(true);
+            failNextUnlinkOrRemove.set(true);
+            try {
+                execute("CREATE TABLE " + tableName +
+                        " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                fail("expected CREATE to fail on injected _meta openRO failure");
+            } catch (CairoException | SqlException e) {
+                // The original openRO error must propagate even when the best-effort
+                // cleanup also fails. The cleanup error is logged and swallowed.
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateInVolumeCleansUpOnRegisterNameHydrateFailure() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        final String tableName = "x_orphan_vol";
+        final AtomicBoolean failNextMetaOpen = new AtomicBoolean(false);
+
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNextMetaOpen.get()
+                        && Utf8s.containsAscii(name, tableName)
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    failNextMetaOpen.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final File volume = temp.newFolder("volume_orphan");
+            final String volumeAlias = "orphan_vol";
+            final String volumePath = volume.getAbsolutePath();
+            try (Path p = new Path()) {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, p, root);
+            }
+            try {
+                failNextMetaOpen.set(true);
+                try {
+                    execute("CREATE TABLE " + tableName +
+                            " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL IN VOLUME '" + volumeAlias + "'");
+                    fail("expected CREATE to fail on injected _meta openRO failure");
+                } catch (CairoException | SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+
+                execute("CREATE TABLE " + tableName +
+                        " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL IN VOLUME '" + volumeAlias + "'");
+            } finally {
+                configuration.getVolumeDefinitions().clear();
+            }
+        });
+    }
+
+    @Test
+    public void testCreateInVolumeReadLinkFailureDoesNotMaskOriginalError() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        final String tableName = "x_orphan_readlink";
+        final AtomicBoolean failNextMetaOpen = new AtomicBoolean(false);
+        final AtomicBoolean failNextReadLink = new AtomicBoolean(false);
+
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNextMetaOpen.get()
+                        && Utf8s.containsAscii(name, tableName)
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    failNextMetaOpen.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean readLink(Path softLink, Path readTo) {
+                if (failNextReadLink.get() && Utf8s.containsAscii(softLink, tableName)) {
+                    failNextReadLink.set(false);
+                    return false;
+                }
+                return super.readLink(softLink, readTo);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final File volume = temp.newFolder("volume_readlink");
+            final String volumeAlias = "vol_readlink";
+            try (Path p = new Path()) {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volume.getAbsolutePath(), p, root);
+            }
+            try {
+                failNextMetaOpen.set(true);
+                failNextReadLink.set(true);
+                try {
+                    execute("CREATE TABLE " + tableName +
+                            " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL IN VOLUME '" + volumeAlias + "'");
+                    fail("expected CREATE to fail on injected _meta openRO failure");
+                } catch (CairoException | SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+            } finally {
+                configuration.getVolumeDefinitions().clear();
+            }
+        });
+    }
+
+    @Test
+    public void testCreateInVolumeTargetUnlinkFailureDoesNotMaskOriginalError() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        final String tableName = "x_orphan_volunlink";
+        final String volumeFolder = "volume_target_unlink";
+        final AtomicBoolean failNextMetaOpen = new AtomicBoolean(false);
+        final AtomicBoolean failNextVolumeUnlink = new AtomicBoolean(false);
+
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNextMetaOpen.get()
+                        && Utf8s.containsAscii(name, tableName)
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    failNextMetaOpen.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean unlinkOrRemove(Path path, Log LOG) {
+                // Match only the volume-side call: the dbRoot arm never contains the
+                // volume folder name, so the dbRoot unlink is left to succeed.
+                if (failNextVolumeUnlink.get()
+                        && Utf8s.containsAscii(path, volumeFolder)
+                        && Utf8s.containsAscii(path, tableName)) {
+                    failNextVolumeUnlink.set(false);
+                    return false;
+                }
+                return super.unlinkOrRemove(path, LOG);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final File volume = temp.newFolder(volumeFolder);
+            final String volumeAlias = "vol_target_unlink";
+            try (Path p = new Path()) {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volume.getAbsolutePath(), p, root);
+            }
+            try {
+                failNextMetaOpen.set(true);
+                failNextVolumeUnlink.set(true);
+                try {
+                    execute("CREATE TABLE " + tableName +
+                            " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL IN VOLUME '" + volumeAlias + "'");
+                    fail("expected CREATE to fail on injected _meta openRO failure");
+                } catch (CairoException | SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+            } finally {
+                configuration.getVolumeDefinitions().clear();
+            }
+        });
+    }
 
     @Test
     public void testCreateNaNColumn() throws Exception {
@@ -100,8 +297,8 @@ public class CreateTableTest extends AbstractCairoTest {
                 execute("CREATE TABLE " + tableName +
                         " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
                 fail("expected CREATE to fail on injected _meta openRO failure");
-            } catch (CairoException | SqlException ignore) {
-                // expected: SqlException wraps the injected CairoException
+            } catch (CairoException | SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
             }
 
             // Once the engine rolls back the on-disk state on registerName failure,
