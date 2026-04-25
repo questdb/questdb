@@ -522,10 +522,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             if (isParquetFrame) {
                 filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
-            // Late materialization installs a PageFrameFilteredMemoryRecord whose setRowIndex()
-            // auto-advances an internal compact index. The batched probe/update split calls
-            // setRowIndex multiple times per row, which would desync that counter, so fall back
-            // to the per-row path in that case.
+            // Late materialization installs a PageFrameFilteredMemoryRecord that requires both
+            // the absolute and the compacted row index via setFilteredRowIndex. The batched
+            // probe/update path bottoms out in Map.probeBatch* and computeKeyedBatch, which call
+            // setRowIndex(long) and have no way to supply a compacted index, so fall back to the
+            // per-row path in that case.
             boolean lateMaterialized = false;
             if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, false)) {
                 PageFrameFilteredMemoryRecord filteredMemoryRecord = filterCtx.getPageFrameFilteredMemoryRecord(slotId);

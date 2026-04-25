@@ -569,8 +569,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
      * overrides this to keep the compacted index in sync so non-filter columns read from the
      * compacted buffer.
      * <p>
-     * Prefer this method over {@link #setRowIndex(long)} on any hot path that may run against a
-     * filtered record via polymorphic dispatch.
+     * Callers that may receive a {@link PageFrameFilteredMemoryRecord} via polymorphic dispatch
+     * must use this method; {@link #setRowIndex(long)} throws {@link UnsupportedOperationException}
+     * on a filtered record.
      */
     public void setFilteredRowIndex(long rowIndex, long compactedRowIndex) {
         this.rowIndex = rowIndex;

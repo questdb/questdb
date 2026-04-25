@@ -244,9 +244,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
     /**
      * Resets state for reuse: frees data/aux buffers and nulls references,
-     * but retains {@code pfMemory}'s native allocations (DirectLongLists).
+     * but retains {@code pageFrameMemory}'s native allocations (DirectLongLists).
      * Use {@link #close()} to fully release all native memory including
-     * {@code pfMemory}.
+     * {@code pageFrameMemory}.
      */
     @Override
     public void clear() {
