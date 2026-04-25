@@ -83,22 +83,22 @@ public class GroupByIntHashSet {
         setKeyAt(index, key);
         int size = size();
         int sizeLimit = sizeLimit();
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, ++size);
+        Unsafe.putInt(ptr + SIZE_OFFSET, ++size);
         if (size >= sizeLimit) {
             rehash(capacity() << 1, sizeLimit << 1);
         }
     }
 
     public int capacity() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr) : 0;
     }
 
     public int keyAt(long index) {
-        return Unsafe.getUnsafe().getInt(ptr + HEADER_SIZE + 4L * index);
+        return Unsafe.getInt(ptr + HEADER_SIZE + 4L * index);
     }
 
     public long keyIndex(int key) {
-        long hashCode = Hash.fastHashInt64(key);
+        long hashCode = Hash.hashInt64(key);
         long index = hashCode & mask;
         int k = keyAt(index);
         if (k == noKeyValue) {
@@ -112,7 +112,7 @@ public class GroupByIntHashSet {
 
     public void merge(GroupByIntHashSet srcSet) {
         for (long p = srcSet.ptr + HEADER_SIZE, lim = srcSet.ptr + HEADER_SIZE + 4L * srcSet.capacity(); p < lim; p += 4L) {
-            int val = Unsafe.getUnsafe().getInt(p);
+            int val = Unsafe.getInt(p);
             if (val != noKeyValue) {
                 final long index = keyIndex(val);
                 if (index >= 0) {
@@ -126,9 +126,9 @@ public class GroupByIntHashSet {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 4L * initialCapacity);
             zero(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
+            Unsafe.putInt(this.ptr, initialCapacity);
+            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
             mask = initialCapacity - 1;
         } else {
             this.ptr = ptr;
@@ -150,11 +150,11 @@ public class GroupByIntHashSet {
     }
 
     public int size() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + SIZE_OFFSET) : 0;
     }
 
     public int sizeLimit() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
     }
 
     private long probe(int key, long index) {
@@ -184,13 +184,13 @@ public class GroupByIntHashSet {
         long oldPtr = ptr;
         ptr = allocator.malloc(HEADER_SIZE + 4L * newCapacity);
         zero(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
+        Unsafe.putInt(ptr, newCapacity);
+        Unsafe.putInt(ptr + SIZE_OFFSET, oldSize);
+        Unsafe.putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
         mask = newCapacity - 1;
 
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + 4L * oldCapacity; p < lim; p += 4L) {
-            int key = Unsafe.getUnsafe().getInt(p);
+            int key = Unsafe.getInt(p);
             if (key != noKeyValue) {
                 long index = keyIndex(key);
                 setKeyAt(index, key);
@@ -201,7 +201,7 @@ public class GroupByIntHashSet {
     }
 
     private void setKeyAt(long index, int key) {
-        Unsafe.getUnsafe().putInt(ptr + HEADER_SIZE + 4L * index, key);
+        Unsafe.putInt(ptr + HEADER_SIZE + 4L * index, key);
     }
 
     private void zero(long ptr, int cap) {
@@ -210,7 +210,7 @@ public class GroupByIntHashSet {
             Vect.memset(ptr + HEADER_SIZE, 4L * cap, 0);
         } else {
             for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 4L * cap; p < lim; p += 4L) {
-                Unsafe.getUnsafe().putInt(p, noKeyValue);
+                Unsafe.putInt(p, noKeyValue);
             }
         }
     }

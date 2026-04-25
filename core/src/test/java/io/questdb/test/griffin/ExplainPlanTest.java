@@ -959,7 +959,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from x where id = 42 and dateadd('h', -1, ts2) = '2020-01-01T00:01'",
                     """
                             Async Filter workers: 1
-                              filter: (id=42 and dateadd('h',-1,ts2)=2020-01-01T00:01:00.000000Z)
+                              filter: (id=42 and 2020-01-01T00:01:00.000000Z=dateadd('h',-1,ts2))
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -3763,7 +3763,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testInUuid() throws Exception {
         assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);", "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')", """
                 Async JIT Filter workers: 1
-                  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']
+                  filter: u in ['33333333-3333-3333-3333-333333333333','11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222']
                     PageFrame
                         Row forward scan
                         Frame forward scan on: a
@@ -4507,7 +4507,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                 assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1", "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
-                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T2.created=1", "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T2.created=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
+                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T2.created=1", "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: 1=T2.created\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
                 assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T3.value=1", "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
 
@@ -8860,7 +8860,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithJittedFilter17() throws Exception {
         assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where not(b = false or ts = 123) ", """
                 Async JIT Filter workers: 1
-                  filter: (b!=false and ts!=123)
+                  filter: (b!=false and 123!=ts)
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9068,7 +9068,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithJittedFilter3() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select /*+ ENABLE_PRE_TOUCH(tab) */ * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ", """
                 Async JIT Filter workers: 1
-                  filter: (100<l and l<1000 and ts=2022-01-01T00:00:00.000000Z) [pre-touch]
+                  filter: (100<l and l<1000 and 2022-01-01T00:00:00.000000Z=ts) [pre-touch]
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9101,7 +9101,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithJittedFilter6() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 or ts = 123", """
                 Async JIT Filter workers: 1
-                  filter: ((100<l and l<1000) or ts=123)
+                  filter: ((100<l and l<1000) or 123=ts)
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab

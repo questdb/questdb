@@ -3777,29 +3777,29 @@ public class JoinTest extends AbstractCairoTest {
                             5\t5
                             """
             );
-            assertHashJoinSql(
-                    "select t1.*, t2.* from t2 right join t1 on i = j and abs(i) > 3",
+            assertHashJoinSqlWithRandomAccess(
+                    "select t1.*, t2.* from t2 right join t1 on i = j and abs(i) > 3 order by i, j",
                     """
                             i\tj
-                            5\t5
-                            4\t4
                             1\tnull
-                            3\tnull
                             2\tnull
+                            3\tnull
+                            4\t4
+                            5\t5
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on i = j and abs(i) > 3",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on i = j and abs(i) > 3 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t2
+                            null\t3
                             1\tnull
                             2\tnull
                             3\tnull
                             4\t4
                             5\t5
-                            null\t1
-                            null\t3
-                            null\t2
                             """
             );
         });
@@ -3868,29 +3868,29 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+            assertHashJoinSqlWithRandomAccess(
+                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ 'a' or s2 ~ 'c') order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
                             1\ta\t1\ta
-                            3\tc\t3\tc
                             2\tb\tnull\t
+                            3\tc\t3\tc
                             4\td\tnull\t
                             5\te\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c') order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
+                            null\t\t2\tb
+                            null\t\t4\td
+                            null\t\t5\te
                             1\ta\t1\ta
                             2\tb\tnull\t
                             3\tc\t3\tc
                             4\td\tnull\t
                             5\te\tnull\t
-                            null\t\t2\tb
-                            null\t\t5\te
-                            null\t\t4\td
                             """
             );
         });
@@ -3914,13 +3914,13 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ '[abde]')",
+            assertHashJoinSqlWithRandomAccess(
+                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ '[abde]') order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
                             1\ta\tnull\t
-                            3\tc\tnull\t
                             2\tb\tnull\t
+                            3\tc\tnull\t
                             4\td\tnull\t
                             5\te\tnull\t
                             """
@@ -4108,33 +4108,33 @@ public class JoinTest extends AbstractCairoTest {
                     false
             );
             assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "select * from t1 right join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c') order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
+                            null\t\t2\tb
+                            null\t\t4\td
+                            null\t\t5\te
                             1\ta\t1\ta
                             3\tc\t3\tc
-                            null\t\t2\tb
-                            null\t\t5\te
-                            null\t\t4\td
                             """,
                     null,
-                    false
+                    true
             );
             assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "select * from t1 full join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c') order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
+                            null\t\t2\tb
+                            null\t\t4\td
+                            null\t\t5\te
                             1\ta\t1\ta
                             2\tb\tnull\t
                             3\tc\t3\tc
                             4\td\tnull\t
                             5\te\tnull\t
-                            null\t\t2\tb
-                            null\t\t5\te
-                            null\t\t4\td
                             """,
                     null,
-                    false
+                    true
             );
         });
     }
@@ -4158,31 +4158,31 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on i = j and abs(i) > 5",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on i = j and abs(i) > 5 order by i, j",
                     """
                             i\tj
                             null\t1
-                            null\t3
                             null\t2
-                            null\t5
+                            null\t3
                             null\t4
+                            null\t5
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on i = j and abs(i) > 5",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on i = j and abs(i) > 5 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t2
+                            null\t3
+                            null\t4
+                            null\t5
                             1\tnull
                             2\tnull
                             3\tnull
                             4\tnull
                             5\tnull
-                            null\t1
-                            null\t3
-                            null\t2
-                            null\t5
-                            null\t4
                             """
             );
         });
@@ -4207,30 +4207,30 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on i = j and abs(i) = 3",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on i = j and abs(i) = 3 order by i, j",
                     """
                             i\tj
-                            3\t3
                             null\t1
                             null\t2
-                            null\t5
                             null\t4
+                            null\t5
+                            3\t3
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on i = j and abs(i) = 3",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on i = j and abs(i) = 3 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t2
+                            null\t4
+                            null\t5
                             1\tnull
                             2\tnull
                             3\t3
                             4\tnull
                             5\tnull
-                            null\t1
-                            null\t2
-                            null\t5
-                            null\t4
                             """
             );
         });
@@ -4255,31 +4255,31 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on i = j and abs(i) <= 0",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on i = j and abs(i) <= 0 order by i, j",
                     """
                             i\tj
                             null\t1
-                            null\t3
                             null\t2
-                            null\t5
+                            null\t3
                             null\t4
+                            null\t5
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on i = j and abs(i) <= 0",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on i = j and abs(i) <= 0 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t2
+                            null\t3
+                            null\t4
+                            null\t5
                             1\tnull
                             2\tnull
                             3\tnull
                             4\tnull
                             5\tnull
-                            null\t1
-                            null\t3
-                            null\t2
-                            null\t5
-                            null\t4
                             """
             );
         });
@@ -4304,29 +4304,29 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t4
+                            null\t5
                             2\t2
                             3\t3
-                            null\t1
-                            null\t5
-                            null\t4
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t4
+                            null\t5
                             1\tnull
                             2\t2
                             3\t3
                             4\tnull
                             5\tnull
-                            null\t1
-                            null\t5
-                            null\t4
                             """
             );
         });
@@ -4351,29 +4351,29 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and (j = 2 or i = 4)",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and (j = 2 or i = 4) order by i, j",
                     """
                             i\tj
-                            2\t2
-                            4\t4
                             null\t1
                             null\t3
                             null\t5
+                            2\t2
+                            4\t4
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and (j = 2 or i = 4)",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and (j = 2 or i = 4) order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t3
+                            null\t5
                             1\tnull
                             2\t2
                             3\tnull
                             4\t4
                             5\tnull
-                            null\t1
-                            null\t3
-                            null\t5
                             """
             );
         });
@@ -4398,30 +4398,30 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and (abs(j) = 2 or abs(i) = 4) order by i, j",
                     """
                             i\tj
-                            -4\t-4
-                            null\t1
                             null\t-2
+                            null\t1
                             null\t3
                             null\t5
+                            -4\t-4
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and (abs(j) = 2 or abs(i) = 4) order by i, j",
                     """
                             i\tj
+                            null\t-2
+                            null\t1
+                            null\t3
+                            null\t5
+                            -4\t-4
                             1\tnull
                             2\tnull
                             3\tnull
-                            -4\t-4
                             5\tnull
-                            null\t1
-                            null\t-2
-                            null\t3
-                            null\t5
                             """
             );
         });
@@ -4446,30 +4446,30 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and s2 = 'a'",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and s2 = 'a' order by i, j, s2",
                     """
                             i\tj\ts2
-                            1\t1\ta
                             null\t-2\tb
                             null\t3\tc
-                            null\t5\te
                             null\t4\td
+                            null\t5\te
+                            1\t1\ta
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and s2 = 'a'",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and s2 = 'a' order by i, j, s2",
                     """
                             i\tj\ts2
+                            null\t-2\tb
+                            null\t3\tc
+                            null\t4\td
+                            null\t5\te
                             1\t1\ta
                             2\tnull\t
                             3\tnull\t
                             4\tnull\t
                             5\tnull\t
-                            null\t-2\tb
-                            null\t3\tc
-                            null\t5\te
-                            null\t4\td
                             """
             );
         });
@@ -4494,29 +4494,29 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and s2 ~ '[ad]'",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and s2 ~ '[ad]' order by i, j, s2",
                     """
                             i\tj\ts2
-                            1\t1\ta
-                            4\t4\td
                             null\t-2\tb
                             null\t3\tc
                             null\t5\te
+                            1\t1\ta
+                            4\t4\td
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and s2 ~ '[ad]'",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and s2 ~ '[ad]' order by i, j, s2",
                     """
                             i\tj\ts2
+                            null\t-2\tb
+                            null\t3\tc
+                            null\t5\te
                             1\t1\ta
                             2\tnull\t
                             3\tnull\t
                             4\t4\td
                             5\tnull\t
-                            null\t-2\tb
-                            null\t3\tc
-                            null\t5\te
                             """
             );
         });
@@ -4614,31 +4614,31 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and i = 1 where 1 = 1",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and i = 1 where 1 = 1 order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
-                            1\ta\t1\ta
-                            null\t\t3\tc
                             null\t\t2\tb
-                            null\t\t5\te
+                            null\t\t3\tc
                             null\t\t4\td
+                            null\t\t5\te
+                            1\ta\t1\ta
                             """
             );
 
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and i = 1 where 1 = 1",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and i = 1 where 1 = 1 order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
+                            null\t\t2\tb
+                            null\t\t3\tc
+                            null\t\t4\td
+                            null\t\t5\te
                             1\ta\t1\ta
                             2\tb\tnull\t
                             3\tc\tnull\t
                             4\td\tnull\t
                             5\te\tnull\t
-                            null\t\t3\tc
-                            null\t\t2\tb
-                            null\t\t5\te
-                            null\t\t4\td
                             """
             );
         });
@@ -4663,30 +4663,30 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and j = 1 where 1 = 1",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and j = 1 where 1 = 1 order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
-                            1\ta\t1\ta
-                            null\t\t3\tc
                             null\t\t2\tb
-                            null\t\t5\te
+                            null\t\t3\tc
                             null\t\t4\td
+                            null\t\t5\te
+                            1\ta\t1\ta
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and j = 1 where 1 = 1",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and j = 1 where 1 = 1 order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
+                            null\t\t2\tb
+                            null\t\t3\tc
+                            null\t\t4\td
+                            null\t\t5\te
                             1\ta\t1\ta
                             2\tb\tnull\t
                             3\tc\tnull\t
                             4\td\tnull\t
                             5\te\tnull\t
-                            null\t\t3\tc
-                            null\t\t2\tb
-                            null\t\t5\te
-                            null\t\t4\td
                             """
             );
         });
@@ -5215,7 +5215,8 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "i\tj\n",
-                    "select * from t1 join t2 on i=j and abs(1) = 0");
+                    "select * from t1 join t2 on i=j and abs(1) = 0"
+            );
             assertQueryNoLeakCheck(
                     """
                             i\tj
@@ -5223,26 +5224,33 @@ public class JoinTest extends AbstractCairoTest {
                             2\tnull
                             3\tnull
                             """,
-                    "select * from t1 left join t2 on i=j and abs(1) = 0");
+                    "select * from t1 left join t2 on i=j and abs(1) = 0"
+            );
             assertQueryNoLeakCheck(
                     """
                             i\tj
-                            null\t12
                             null\t11
+                            null\t12
                             null\t13
                             """,
-                    "select * from t1 right join t2 on i=j and abs(1) = 0");
+                    "select * from t1 right join t2 on i=j and abs(1) = 0 order by i, j",
+                    null,
+                    true
+            );
             assertQueryNoLeakCheck(
                     """
                             i\tj
+                            null\t11
+                            null\t12
+                            null\t13
                             1\tnull
                             2\tnull
                             3\tnull
-                            null\t12
-                            null\t11
-                            null\t13
                             """,
-                    "select * from t1 full join t2 on i=j and abs(1) = 0");
+                    "select * from t1 full join t2 on i=j and abs(1) = 0 order by i, j",
+                    null,
+                    true
+            );
         });
     }
 

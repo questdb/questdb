@@ -140,10 +140,10 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         long metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
 
         long addr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.getUnsafe().putInt(addr, PartitionBy.YEAR);
+        Unsafe.putInt(addr, PartitionBy.YEAR);
         ff.write(metaFd, addr, 4, TableUtils.META_OFFSET_PARTITION_BY);
 
-        Unsafe.getUnsafe().putInt(addr, merged.getTableId());
+        Unsafe.putInt(addr, merged.getTableId());
         ff.write(metaFd, addr, 4, TableUtils.META_OFFSET_TABLE_ID);
 
         Unsafe.free(addr, 4, MemoryTag.NATIVE_DEFAULT);
