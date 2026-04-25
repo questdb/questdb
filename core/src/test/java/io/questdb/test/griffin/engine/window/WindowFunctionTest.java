@@ -9760,6 +9760,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "aggregate functions are not allowed in GROUP BY"
             );
 
+            // CTE source: the SELECT-list guard fires inside the outer model that consumes the CTE.
+            assertExceptionNoLeakCheck(
+                    "WITH cte AS (SELECT category, x FROM t) SELECT category, sum(x) + avg(x) OVER () FROM cte GROUP BY category",
+                    66,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // JOIN source: the guard fires on the joined model's SELECT list as well.
+            assertExceptionNoLeakCheck(
+                    "SELECT t.category, sum(t.x) + avg(s.x) OVER () FROM t JOIN t s ON t.category = s.category GROUP BY t.category",
+                    30,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
             // Sub-query workaround: the inner query exposes the window column, the outer aggregates it.
             assertQueryNoLeakCheck(
                     """

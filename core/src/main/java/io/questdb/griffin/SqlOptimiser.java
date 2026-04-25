@@ -4044,14 +4044,16 @@ public class SqlOptimiser implements Mutable {
      * argument" error pointing at the inner window. Reject upfront with a
      * clear message instead.
      * <p>
-     * Caller must invoke findWindowFunctionOutsideAggregatePos first, which
-     * rejects any window function sitting outside an aggregate. By the time
-     * this walker runs, the only window functions reachable from {@code root}
-     * live inside aggregate subtrees and are detected via
-     * checkForChildWindowFunctions on each candidate aggregate.
+     * Caller must invoke findWindowFunctionOutsideAggregatePos first (enforced
+     * by an {@code assert}), which rejects any window function sitting outside
+     * an aggregate. By the time this walker runs, the only window functions
+     * reachable from {@code root} live inside aggregate subtrees and are
+     * detected via checkForChildWindowFunctions on each candidate aggregate.
      */
     private int findInvalidAggregateOverWindowPos(ExpressionNode root) {
         final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
+        assert findWindowFunctionOutsideAggregatePos(root) == -1
+                : "caller must invoke findWindowFunctionOutsideAggregatePos first";
         // Bare aggregate-over-window as the column root is the supported case.
         if (root.type == FUNCTION && root.windowExpression == null && cache.isGroupBy(root.token)) {
             return -1;
@@ -4176,7 +4178,7 @@ public class SqlOptimiser implements Mutable {
     private int findWindowFunctionOutsideAggregatePos(ExpressionNode node) {
         sqlNodeStack.clear();
         final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
-        // ExpressionNode invariants (see ExpressionNode.java:64-68):
+        // ExpressionNode.paramCount invariants (documented on the field):
         // paramCount == 1: rhs only; paramCount == 2: lhs and rhs; paramCount > 2: args.
         while (node != null) {
             if (node.windowExpression != null
@@ -9452,7 +9454,7 @@ public class SqlOptimiser implements Mutable {
             // expression sets REWRITE_STATUS_USE_WINDOW_MODEL and is caught by the
             // REWRITE_STATUS_USE_WINDOW_MODEL + REWRITE_STATUS_USE_GROUP_BY_MODEL check
             // below.
-            if ((explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) && !qc.isWindowExpression()) {
+            if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0 && !qc.isWindowExpression()) {
                 int windowFnPos = findWindowFunctionOutsideAggregatePos(qc.getAst());
                 if (windowFnPos >= 0) {
                     throw SqlException.$(windowFnPos, "Window function is not allowed in context of aggregation. Use sub-query.");
