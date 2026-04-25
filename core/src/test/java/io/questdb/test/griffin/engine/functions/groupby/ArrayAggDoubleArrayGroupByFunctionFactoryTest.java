@@ -573,4 +573,128 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
             );
         });
     }
+
+    @Test
+    public void testBufferGrowth() throws Exception {
+        // Concatenate enough single-element arrays to force the underlying
+        // pair buffer to outgrow INITIAL_CAPACITY (16) several times. Asserts
+        // that growth preserves null elements and keeps insertion order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            StringBuilder insert = new StringBuilder("INSERT INTO tab VALUES\n");
+            StringBuilder expected = new StringBuilder("agg\n[");
+            for (int i = 0; i < 100; i++) {
+                if (i > 0) {
+                    insert.append(",\n");
+                    expected.append(',');
+                }
+                if (i == 0 || i == 16 || i == 99) {
+                    insert.append("(ARRAY[null::double])");
+                    expected.append("null");
+                } else {
+                    insert.append("(ARRAY[").append(i).append(".0])");
+                    expected.append(i).append(".0");
+                }
+            }
+            execute(insert.toString());
+            expected.append("]\n");
+            assertQueryNoLeakCheck(
+                    expected.toString(),
+                    "SELECT array_agg(arr) agg FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testGroupByNullKey() throws Exception {
+        // A NULL grouping key must form its own group rather than being silently
+        // dropped or coerced into the empty-string group.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', ARRAY[1.0, 2.0]),
+                    (null, ARRAY[3.0]),
+                    ('a', ARRAY[4.0]),
+                    (null, ARRAY[5.0, 6.0])
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\tagg\n" +
+                            "\t[3.0,5.0,6.0]\n" +
+                            "a\t[1.0,2.0,4.0]\n",
+                    "SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRejectsDistinctModifier() throws Exception {
+        // array_agg(DISTINCT x) is not supported. ExpressionParser only rewrites
+        // DISTINCT for count() and string_agg(); for array_agg the keyword leaks
+        // through to the function call and must be rejected with a clear error.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(DISTINCT arr) FROM tab",
+                    26,
+                    "dangling literal"
+            );
+        });
+    }
+
+    @Test
+    public void testRejectsOrderByInsideAggregate() throws Exception {
+        // array_agg(x ORDER BY y) is PostgreSQL syntax. QuestDB only handles ORDER BY
+        // inside string_distinct_agg(), so for array_agg it must be rejected rather
+        // than silently dropped, otherwise users would get a non-deterministic order
+        // without any indication that ORDER BY was ignored.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[])");
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(arr ORDER BY ts) FROM tab",
+                    21,
+                    "dangling literal"
+            );
+        });
+    }
+
+    @Test
+    public void testRejectsWindowOver() throws Exception {
+        // array_agg is a GROUP BY function, not a window function. Using it with
+        // OVER() must error rather than silently producing wrong results.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(arr) OVER () FROM tab",
+                    7,
+                    "non-window function called in window context"
+            );
+        });
+    }
+
+    @Test
+    public void testToPlan() throws Exception {
+        // Pin the query plan output so a regression in toPlan() is caught.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            assertPlanNoLeakCheck(
+                    "SELECT array_agg(arr) FROM tab",
+                    """
+                            Async Group By workers: 1
+                              vectorized: false
+                              values: [array_agg(arr)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
 }

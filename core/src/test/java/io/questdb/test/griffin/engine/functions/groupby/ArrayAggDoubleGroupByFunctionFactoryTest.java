@@ -591,4 +591,147 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
             );
         });
     }
+
+    @Test
+    public void testGroupByNullKey() throws Exception {
+        // A NULL grouping key must form its own group rather than being silently
+        // dropped or coerced into the empty-string group.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', 1.0),
+                    (null, 2.0),
+                    ('a', 3.0),
+                    (null, 4.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\tarr\n" +
+                            "\t[2.0,4.0]\n" +
+                            "a\t[1.0,3.0]\n",
+                    "SELECT grp, array_agg(val) arr FROM tab ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleArrayAggInSameQuery() throws Exception {
+        // Two independent array_agg() calls in the same projection must produce
+        // two independent buffers per group; one's compaction sentinel must not
+        // affect the other.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, x DOUBLE, y DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', 1.0, 10.0),
+                    ('a', 2.0, 20.0),
+                    ('b', 3.0, 30.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\txs\tys\n" +
+                            "a\t[1.0,2.0]\t[10.0,20.0]\n" +
+                            "b\t[3.0]\t[30.0]\n",
+                    "SELECT grp, array_agg(x) xs, array_agg(y) ys FROM tab ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testReAggregationViaArrayCount() throws Exception {
+        // Forces array_agg's getArray() to be consumed by another array
+        // function (array_count) inside an outer query, exercising the
+        // BorrowedArray-as-shape-descriptor handoff across the cursor boundary.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', 1.0),
+                    ('a', 2.0),
+                    ('a', 3.0),
+                    ('b', 10.0),
+                    ('b', 20.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\tcnt\n" +
+                            "a\t3\n" +
+                            "b\t2\n",
+                    "SELECT grp, array_count(arr) cnt FROM " +
+                            "(SELECT grp, array_agg(val) arr FROM tab) ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRejectsDistinctModifier() throws Exception {
+        // array_agg(DISTINCT x) is not supported. ExpressionParser only rewrites
+        // DISTINCT for count() and string_agg(); for array_agg the keyword leaks
+        // through to the function call and must be rejected with a clear error.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(DISTINCT val) FROM tab",
+                    26,
+                    "dangling literal"
+            );
+        });
+    }
+
+    @Test
+    public void testRejectsOrderByInsideAggregate() throws Exception {
+        // array_agg(x ORDER BY y) is PostgreSQL syntax. QuestDB only handles ORDER BY
+        // inside string_distinct_agg(), so for array_agg it must be rejected rather
+        // than silently dropped, otherwise users would get a non-deterministic order
+        // without any indication that ORDER BY was ignored.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE)");
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(val ORDER BY ts) FROM tab",
+                    21,
+                    "dangling literal"
+            );
+        });
+    }
+
+    @Test
+    public void testRejectsWindowOver() throws Exception {
+        // array_agg is a GROUP BY function, not a window function. Using it with
+        // OVER() must error rather than silently producing wrong results.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(val) OVER () FROM tab",
+                    7,
+                    "non-window function called in window context"
+            );
+        });
+    }
+
+    @Test
+    public void testToPlan() throws Exception {
+        // Pin the query plan output so a regression in toPlan() is caught.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            assertPlanNoLeakCheck(
+                    "SELECT array_agg(val) FROM tab",
+                    """
+                            Async Group By workers: 1
+                              vectorized: false
+                              values: [array_agg(val)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
 }
