@@ -232,7 +232,7 @@ public class TableTransactionLog implements Closeable {
 
     long endMetadataChangeEntry() {
         fullSync();
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         long txn = lastTxn = txnLogFile.endMetadataChangeEntry();
         maxMetadataVersion.incrementAndGet();
         return txn;

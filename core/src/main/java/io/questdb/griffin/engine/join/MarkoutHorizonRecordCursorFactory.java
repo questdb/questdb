@@ -354,15 +354,15 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         }
 
         private static int block_decUsedSlotCount(long blockAddr) {
-            int count = Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
+            int count = Unsafe.getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
             count--;
-            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count);
+            Unsafe.putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count);
             return count;
         }
 
         private static void block_incUsedSlotCount(long blockAddr) {
-            int count = Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
-            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count + 1);
+            int count = Unsafe.getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
+            Unsafe.putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count + 1);
         }
 
         private static long block_iteratorAddr(long blockAddr, int slot) {
@@ -370,67 +370,67 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         }
 
         private static long block_nextBlockAddr(long blockAddr) {
-            return Unsafe.getUnsafe().getLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR);
+            return Unsafe.getLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR);
         }
 
         private static int block_nextFreeSlot(long blockAddr) {
-            return Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT);
+            return Unsafe.getInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT);
         }
 
         private static void block_setNextBlockAddr(long blockAddr, long nextAddr) {
-            Unsafe.getUnsafe().putLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR, nextAddr);
+            Unsafe.putLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR, nextAddr);
         }
 
         private static void block_setNextFreeSlot(long blockAddr, int slot) {
-            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT, slot);
+            Unsafe.putInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT, slot);
         }
 
         private static long iter_masterRowId(long iterAddr) {
-            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID);
+            return Unsafe.getLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID);
         }
 
         private static long iter_masterTimestamp(long iterAddr) {
-            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_MASTER_TIMESTAMP);
+            return Unsafe.getLong(iterAddr + ITERATOR_OFFSET_MASTER_TIMESTAMP);
         }
 
         private static long iter_nextIterAddr(long iterAddr) {
-            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR);
+            return Unsafe.getLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR);
         }
 
         private static int iter_nextSlaveRowNum(long iterAddr) {
-            return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM);
+            return Unsafe.getInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM);
         }
 
         private static long iter_nextTimestamp(long iterAddr) {
-            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP);
+            return Unsafe.getLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP);
         }
 
         private static int iter_offsetFromBlockStart(long iterAddr) {
-            return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START);
+            return Unsafe.getInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START);
         }
 
         private static void iter_setMasterRowId(long iterAddr, long value) {
-            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID, value);
+            Unsafe.putLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID, value);
         }
 
         private static void iter_setMasterTimestamp(long iterAddr, long value) {
-            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_MASTER_TIMESTAMP, value);
+            Unsafe.putLong(iterAddr + ITERATOR_OFFSET_MASTER_TIMESTAMP, value);
         }
 
         private static void iter_setNextIterAddr(long iterAddr, long value) {
-            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR, value);
+            Unsafe.putLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR, value);
         }
 
         private static void iter_setNextSlaveRowNum(long iterAddr, int value) {
-            Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM, value);
+            Unsafe.putInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM, value);
         }
 
         private static void iter_setNextTimestamp(long iterAddr, long value) {
-            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP, value);
+            Unsafe.putLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP, value);
         }
 
         private static void iter_setOffsetFromBlockStart(long iterAddr, int value) {
-            Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START, value);
+            Unsafe.putInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START, value);
         }
 
         private long activateMasterRow() {
@@ -456,7 +456,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
 
         private long block_alloc() {
             long blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().setMemory(blockAddr, BLOCK_HEADER_SIZE, (byte) 0);
+            Unsafe.setMemory(blockAddr, BLOCK_HEADER_SIZE, (byte) 0);
             return blockAddr;
         }
 
