@@ -1112,9 +1112,27 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void setMaxValue(long maxValue) {
-        // Write maxValue directly on the active page for writer-only reads.
+        // In tentative (fd-based O3) mode the active page is the committed
+        // page; writing maxValue there would persist a value past any rows
+        // not yet published. A subsequent failed/aborted attempt would leave
+        // the committed metadata corrupted, causing the next open to read a
+        // maxValue past the live row count and either skip a needed rollback
+        // or roll back valid committed entries. Stage the value on the
+        // tentative slot the same way writeMetadataPage does so committed
+        // page A stays untouched until a successful seal promotes the slot.
         // Published to readers via writeMetadataPage on next commit/seal.
-        keyMem.putLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, maxValue);
+        long writeOffset;
+        if (deferMetadataPublish) {
+            if (tentativeSlotOffset == -1L) {
+                tentativeSlotOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
+                        ? PostingIndexUtils.PAGE_B_OFFSET
+                        : PostingIndexUtils.PAGE_A_OFFSET;
+            }
+            writeOffset = tentativeSlotOffset;
+        } else {
+            writeOffset = activePageOffset;
+        }
+        keyMem.putLong(writeOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, maxValue);
     }
 
     @Override
