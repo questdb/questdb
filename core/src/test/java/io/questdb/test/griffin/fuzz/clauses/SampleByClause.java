@@ -48,7 +48,15 @@ public final class SampleByClause {
     // 1-second buckets combined with FILL over a multi-day table explode
     // into ~260k rows that overflow the ORDER BY sort buffer; 30s is the
     // smallest interval that stays comfortably inside the cap.
-    private static final String[] INTERVALS = {"30s", "1m", "5m", "15m", "1h", "1d"};
+    // The fuzzer tables span 30..75 hours of data (FuzzConfig stepMicros * rowsPerTable).
+    // SAMPLE BY with FILL(PREV/NULL/LINEAR) emits one row per (key, bucket) -- multiplying
+    // a tight bucket interval, a wide span, and a high-cardinality key produces an output
+    // row count that overruns the 128-page sort budget the test config uses (Overrides
+    // sets cairo.sql.sort.key.max.pages=128). That manifests as LimitOverflowException
+    // on otherwise legal SAMPLE BY queries. The smallest practical interval that fits
+    // 75h of data plus typical fuzzer key cardinality inside 128 * 128KB of sort memory
+    // is 5m -- below that, the LimitOverflow rate becomes noise dominating real bugs.
+    private static final String[] INTERVALS = {"5m", "15m", "1h", "1d"};
 
     private SampleByClause() {
     }
