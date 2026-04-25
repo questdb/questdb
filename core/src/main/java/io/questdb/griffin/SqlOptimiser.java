@@ -4031,6 +4031,62 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
+    /**
+     * Walks the AST of a SELECT column and returns the position of the first
+     * aggregate function that contains a window function in its arguments,
+     * provided the column root is NOT itself that aggregate. Returns -1
+     * otherwise.
+     * <p>
+     * The rewriter only handles {@code agg(window(x))} when the aggregate is
+     * the column root (e.g. {@code SELECT max(avg(x) OVER ()) FROM t GROUP BY cat}).
+     * Any wrapping around the aggregate falls back to a code path that fails
+     * later with a cryptic "Aggregate function cannot be passed as an
+     * argument" error pointing at the inner window. Reject upfront with a
+     * clear message instead.
+     * <p>
+     * Caller must invoke findWindowFunctionOutsideAggregatePos first, which
+     * rejects any window function sitting outside an aggregate. By the time
+     * this walker runs, the only window functions reachable from {@code root}
+     * live inside aggregate subtrees and are detected via
+     * checkForChildWindowFunctions on each candidate aggregate.
+     */
+    private int findInvalidAggregateOverWindowPos(ExpressionNode root) {
+        final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
+        // Bare aggregate-over-window as the column root is the supported case.
+        if (root.type == FUNCTION && root.windowExpression == null && cache.isGroupBy(root.token)) {
+            return -1;
+        }
+        sqlNodeStack.clear();
+        ExpressionNode node = root;
+        while (node != null) {
+            if (node.type == FUNCTION && cache.isGroupBy(node.token)) {
+                if (checkForChildWindowFunctions(sqlNodeStack2, node)) {
+                    return node.position;
+                }
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+                continue;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                if (node.lhs != null) {
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+                node = sqlNodeStack.poll();
+            }
+        }
+        return -1;
+    }
+
     private QueryColumn findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
         for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -4117,6 +4173,8 @@ public class SqlOptimiser implements Mutable {
     private int findWindowFunctionOutsideAggregatePos(ExpressionNode node) {
         sqlNodeStack.clear();
         final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
+        // ExpressionNode invariants (see ExpressionNode.java:64-68):
+        // paramCount == 1: rhs only; paramCount == 2: lhs and rhs; paramCount > 2: args.
         while (node != null) {
             if (node.windowExpression != null
                     || (node.type == FUNCTION && cache.isPureWindowFunction(node.token))) {
@@ -9395,6 +9453,10 @@ public class SqlOptimiser implements Mutable {
                 int windowFnPos = findWindowFunctionOutsideAggregatePos(qc.getAst());
                 if (windowFnPos >= 0) {
                     throw SqlException.$(windowFnPos, "Window function is not allowed in context of aggregation. Use sub-query.");
+                }
+                int aggOverWindowPos = findInvalidAggregateOverWindowPos(qc.getAst());
+                if (aggOverWindowPos >= 0) {
+                    throw SqlException.$(aggOverWindowPos, "Aggregate over window function cannot be combined with other terms. Use a sub-query.");
                 }
             }
             IQueryModel translatingModel0 = isWindowJoin ? windowJoinModel : (isHorizonJoin ? horizonJoinModel : translatingModel);
