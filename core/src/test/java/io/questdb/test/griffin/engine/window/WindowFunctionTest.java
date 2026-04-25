@@ -13594,6 +13594,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
+            // NthValueOverRowsFrameUnboundedFunction (rows between unbounded preceding and K preceding)
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 1) over (order by ts rows between unbounded preceding and 2 preceding) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,1) over ( rows between unbounded preceding and 2 preceding)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverPartitionRowsFrameUnboundedFunction (partitioned variant of the above)
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,1) over (partition by [i] rows between unbounded preceding and 1 preceding)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
         });
     }
 
