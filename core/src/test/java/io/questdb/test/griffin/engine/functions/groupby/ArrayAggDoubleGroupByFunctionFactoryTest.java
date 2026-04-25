@@ -52,6 +52,45 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testBufferGrowthPreservesNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            // Insert >16 rows to force buffer growth past INITIAL_CAPACITY.
+            // Place nulls at boundaries: first, at capacity boundary (16th), and last.
+            execute("""
+                    INSERT INTO tab VALUES
+                    (null),
+                    (1.0),
+                    (2.0),
+                    (3.0),
+                    (4.0),
+                    (5.0),
+                    (6.0),
+                    (7.0),
+                    (8.0),
+                    (9.0),
+                    (10.0),
+                    (11.0),
+                    (12.0),
+                    (13.0),
+                    (14.0),
+                    (null),
+                    (16.0),
+                    (-17.5),
+                    (null)
+                    """);
+            assertQueryNoLeakCheck(
+                    "arr\n" +
+                            "[null,1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0,13.0,14.0,null,16.0,-17.5,null]\n",
+                    "SELECT array_agg(val) arr FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testCompactionSentinelSkipPath() throws Exception {
         // The getArray() compaction step writes -1 into the capacity slot so subsequent
         // calls on the same group skip re-compaction. Project the aggregate alongside a
@@ -164,6 +203,31 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testGroupByNullKey() throws Exception {
+        // A NULL grouping key must form its own group rather than being silently
+        // dropped or coerced into the empty-string group.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', 1.0),
+                    (null, 2.0),
+                    ('a', 3.0),
+                    (null, 4.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\tarr\n" +
+                            "\t[2.0,4.0]\n" +
+                            "a\t[1.0,3.0]\n",
+                    "SELECT grp, array_agg(val) arr FROM tab ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testImplicitCastFromInt() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (val INT)");
@@ -185,6 +249,49 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testMaxArrayElementCountExceeded() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 5);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (1.0), (2.0), (3.0), (4.0), (5.0), (6.0)
+                    """);
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(val) FROM tab",
+                    0,
+                    "array_agg: array size exceeds configured maximum [maxArrayElementCount=5]"
+            );
+        });
+    }
+
+    @Test
+    public void testMergeTimeCardinalityExceeded() throws Exception {
+        // Shrink the page frame so per-worker counts stay below the 9_999-element
+        // limit while the merged count crosses it, exercising the capacity check
+        // inside merge(). Without this, the 10_000-row insert fits in a single
+        // page frame and only the computeNext check runs.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
+        setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 9_999);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+            for (int i = 0; i < 10_000; i++) {
+                if (i > 0) {
+                    sb.append(",\n");
+                }
+                sb.append("(").append(i).append(".0)");
+            }
+            execute(sb.toString());
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(val) FROM tab",
+                    0,
+                    "array_agg: array size exceeds configured maximum [maxArrayElementCount=9999]"
+            );
+        });
+    }
+
+    @Test
     public void testMixedWithOtherAggregates() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
@@ -201,6 +308,31 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                             "a\t[10.0,20.0,30.0]\t20.0\n" +
                             "b\t[100.0,200.0]\t150.0\n",
                     "SELECT grp, array_agg(val) arr, avg(val) avg FROM tab ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleArrayAggInSameQuery() throws Exception {
+        // Two independent array_agg() calls in the same projection must produce
+        // two independent buffers per group; one's compaction sentinel must not
+        // affect the other.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, x DOUBLE, y DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', 1.0, 10.0),
+                    ('a', 2.0, 20.0),
+                    ('b', 3.0, 30.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\txs\tys\n" +
+                            "a\t[1.0,2.0]\t[10.0,20.0]\n" +
+                            "b\t[3.0]\t[30.0]\n",
+                    "SELECT grp, array_agg(x) xs, array_agg(y) ys FROM tab ORDER BY grp",
                     null,
                     true,
                     true
@@ -246,206 +378,6 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
             assertQueryNoLeakCheck(
                     "arr\n" +
                             "[5.0,3.0,1.0,4.0,2.0]\n",
-                    "SELECT array_agg(val) arr FROM tab",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testBufferGrowthPreservesNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (val DOUBLE)");
-            // Insert >16 rows to force buffer growth past INITIAL_CAPACITY.
-            // Place nulls at boundaries: first, at capacity boundary (16th), and last.
-            execute("""
-                    INSERT INTO tab VALUES
-                    (null),
-                    (1.0),
-                    (2.0),
-                    (3.0),
-                    (4.0),
-                    (5.0),
-                    (6.0),
-                    (7.0),
-                    (8.0),
-                    (9.0),
-                    (10.0),
-                    (11.0),
-                    (12.0),
-                    (13.0),
-                    (14.0),
-                    (null),
-                    (16.0),
-                    (-17.5),
-                    (null)
-                    """);
-            assertQueryNoLeakCheck(
-                    "arr\n" +
-                            "[null,1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0,13.0,14.0,null,16.0,-17.5,null]\n",
-                    "SELECT array_agg(val) arr FROM tab",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testSampleBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('2024-01-01T00:00:00', 1.0),
-                    ('2024-01-01T01:00:00', 2.0),
-                    ('2024-01-01T02:00:00', 3.0),
-                    ('2024-01-01T05:00:00', 4.0),
-                    ('2024-01-01T05:30:00', 5.0),
-                    ('2024-01-01T09:00:00', 6.0)
-                    """);
-            assertQueryNoLeakCheck(
-                    "ts\tarr\n" +
-                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]\n" +
-                            "2024-01-01T03:00:00.000000Z\t[4.0,5.0]\n" +
-                            "2024-01-01T09:00:00.000000Z\t[6.0]\n",
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 3h ALIGN TO FIRST OBSERVATION",
-                    "ts"
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByAlignToCalendar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('2024-01-01T00:00:00', 1.0),
-                    ('2024-01-01T00:30:00', 2.0),
-                    ('2024-01-01T01:00:00', 3.0),
-                    ('2024-01-01T01:15:00', 4.0)
-                    """);
-            assertQueryNoLeakCheck(
-                    "ts\tarr\n" +
-                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
-                            "2024-01-01T01:00:00.000000Z\t[3.0,4.0]\n",
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h ALIGN TO CALENDAR",
-                    "ts",
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByFillNone() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('2024-01-01T00:00:00', 1.0),
-                    ('2024-01-01T00:30:00', 2.0),
-                    ('2024-01-01T03:00:00', 3.0),
-                    ('2024-01-01T06:00:00', 4.0),
-                    ('2024-01-01T06:30:00', 5.0),
-                    ('2024-01-01T06:45:00', null)
-                    """);
-            // Two gaps (01:00-03:00 and 04:00-06:00) must be omitted.
-            // Null at 06:45 is preserved in the array, not skipped by FILL(NONE).
-            assertQueryNoLeakCheck(
-                    "ts\tarr\n" +
-                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
-                            "2024-01-01T03:00:00.000000Z\t[3.0]\n" +
-                            "2024-01-01T06:00:00.000000Z\t[4.0,5.0,null]\n",
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(NONE)",
-                    "ts",
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByFillNull() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('2024-01-01T00:00:00', 1.0),
-                    ('2024-01-01T01:00:00', 2.0),
-                    ('2024-01-01T04:00:00', 3.0)
-                    """);
-            assertQueryNoLeakCheck(
-                    "ts\tarr\n" +
-                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
-                            "2024-01-01T02:00:00.000000Z\tnull\n" +
-                            "2024-01-01T04:00:00.000000Z\t[3.0]\n",
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 2h FILL(NULL)",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByFillLinearRejected() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', 'a', 1.0)");
-            assertExceptionNoLeakCheck(
-                    "SELECT ts, grp, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(LINEAR)",
-                    16,
-                    "support for LINEAR fill is not yet implemented"
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByFillPrev() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('2024-01-01T00:00:00', 1.0),
-                    ('2024-01-01T01:00:00', 2.0),
-                    ('2024-01-01T04:00:00', 3.0)
-                    """);
-            assertQueryNoLeakCheck(
-                    "ts\tarr\n" +
-                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
-                            "2024-01-01T02:00:00.000000Z\t[1.0,2.0]\n" +
-                            "2024-01-01T04:00:00.000000Z\t[3.0]\n",
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 2h FILL(PREV)",
-                    "ts"
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByFillValueRejected() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', 'a', 1.0)");
-            assertExceptionNoLeakCheck(
-                    "SELECT ts, grp, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(42)",
-                    16,
-                    "support for VALUE fill is not yet implemented"
-            );
-        });
-    }
-
-    @Test
-    public void testSingleRow() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (val DOUBLE)");
-            execute("INSERT INTO tab VALUES (42.0)");
-            assertQueryNoLeakCheck(
-                    "arr\n" +
-                            "[42.0]\n",
                     "SELECT array_agg(val) arr FROM tab",
                     null,
                     false,
@@ -529,120 +461,6 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
-    public void testMaxArrayElementCountExceeded() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 5);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (val DOUBLE)");
-            execute("""
-                    INSERT INTO tab VALUES
-                    (1.0), (2.0), (3.0), (4.0), (5.0), (6.0)
-                    """);
-            assertExceptionNoLeakCheck(
-                    "SELECT array_agg(val) FROM tab",
-                    0,
-                    "array_agg: array size exceeds configured maximum [maxArrayElementCount=5]"
-            );
-        });
-    }
-
-    @Test
-    public void testMergeTimeCardinalityExceeded() throws Exception {
-        // Shrink the page frame so per-worker counts stay below the 9_999-element
-        // limit while the merged count crosses it, exercising the capacity check
-        // inside merge(). Without this, the 10_000-row insert fits in a single
-        // page frame and only the computeNext check runs.
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
-        setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 9_999);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (val DOUBLE)");
-            StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
-            for (int i = 0; i < 10_000; i++) {
-                if (i > 0) {
-                    sb.append(",\n");
-                }
-                sb.append("(").append(i).append(".0)");
-            }
-            execute(sb.toString());
-            assertExceptionNoLeakCheck(
-                    "SELECT array_agg(val) FROM tab",
-                    0,
-                    "array_agg: array size exceeds configured maximum [maxArrayElementCount=9999]"
-            );
-        });
-    }
-
-    @Test
-    public void testWithSubquery() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (val DOUBLE)");
-            execute("""
-                    INSERT INTO tab VALUES
-                    (1.0),
-                    (2.0),
-                    (3.0)
-                    """);
-            assertQueryNoLeakCheck(
-                    "arr\n" +
-                            "[1.0,2.0,3.0]\n",
-                    "SELECT arr FROM (SELECT array_agg(val) arr FROM tab)",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testGroupByNullKey() throws Exception {
-        // A NULL grouping key must form its own group rather than being silently
-        // dropped or coerced into the empty-string group.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('a', 1.0),
-                    (null, 2.0),
-                    ('a', 3.0),
-                    (null, 4.0)
-                    """);
-            assertQueryNoLeakCheck(
-                    "grp\tarr\n" +
-                            "\t[2.0,4.0]\n" +
-                            "a\t[1.0,3.0]\n",
-                    "SELECT grp, array_agg(val) arr FROM tab ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMultipleArrayAggInSameQuery() throws Exception {
-        // Two independent array_agg() calls in the same projection must produce
-        // two independent buffers per group; one's compaction sentinel must not
-        // affect the other.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (grp SYMBOL, x DOUBLE, y DOUBLE)");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('a', 1.0, 10.0),
-                    ('a', 2.0, 20.0),
-                    ('b', 3.0, 30.0)
-                    """);
-            assertQueryNoLeakCheck(
-                    "grp\txs\tys\n" +
-                            "a\t[1.0,2.0]\t[10.0,20.0]\n" +
-                            "b\t[3.0]\t[30.0]\n",
-                    "SELECT grp, array_agg(x) xs, array_agg(y) ys FROM tab ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
     public void testReAggregationViaArrayCount() throws Exception {
         // Forces array_agg's getArray() to be consumed by another array
         // function (array_count) inside an outer query, exercising the
@@ -716,6 +534,167 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', 1.0),
+                    ('2024-01-01T01:00:00', 2.0),
+                    ('2024-01-01T02:00:00', 3.0),
+                    ('2024-01-01T05:00:00', 4.0),
+                    ('2024-01-01T05:30:00', 5.0),
+                    ('2024-01-01T09:00:00', 6.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "ts\tarr\n" +
+                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]\n" +
+                            "2024-01-01T03:00:00.000000Z\t[4.0,5.0]\n" +
+                            "2024-01-01T09:00:00.000000Z\t[6.0]\n",
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 3h ALIGN TO FIRST OBSERVATION",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByAlignToCalendar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', 1.0),
+                    ('2024-01-01T00:30:00', 2.0),
+                    ('2024-01-01T01:00:00', 3.0),
+                    ('2024-01-01T01:15:00', 4.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "ts\tarr\n" +
+                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
+                            "2024-01-01T01:00:00.000000Z\t[3.0,4.0]\n",
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h ALIGN TO CALENDAR",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillLinearRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', 'a', 1.0)");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, grp, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(LINEAR)",
+                    16,
+                    "support for LINEAR fill is not yet implemented"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillNone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', 1.0),
+                    ('2024-01-01T00:30:00', 2.0),
+                    ('2024-01-01T03:00:00', 3.0),
+                    ('2024-01-01T06:00:00', 4.0),
+                    ('2024-01-01T06:30:00', 5.0),
+                    ('2024-01-01T06:45:00', null)
+                    """);
+            // Two gaps (01:00-03:00 and 04:00-06:00) must be omitted.
+            // Null at 06:45 is preserved in the array, not skipped by FILL(NONE).
+            assertQueryNoLeakCheck(
+                    "ts\tarr\n" +
+                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
+                            "2024-01-01T03:00:00.000000Z\t[3.0]\n" +
+                            "2024-01-01T06:00:00.000000Z\t[4.0,5.0,null]\n",
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(NONE)",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', 1.0),
+                    ('2024-01-01T01:00:00', 2.0),
+                    ('2024-01-01T04:00:00', 3.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "ts\tarr\n" +
+                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
+                            "2024-01-01T02:00:00.000000Z\tnull\n" +
+                            "2024-01-01T04:00:00.000000Z\t[3.0]\n",
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 2h FILL(NULL)",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillPrev() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', 1.0),
+                    ('2024-01-01T01:00:00', 2.0),
+                    ('2024-01-01T04:00:00', 3.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "ts\tarr\n" +
+                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
+                            "2024-01-01T02:00:00.000000Z\t[1.0,2.0]\n" +
+                            "2024-01-01T04:00:00.000000Z\t[3.0]\n",
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 2h FILL(PREV)",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillValueRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', 'a', 1.0)");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, grp, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(42)",
+                    16,
+                    "support for VALUE fill is not yet implemented"
+            );
+        });
+    }
+
+    @Test
+    public void testSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            execute("INSERT INTO tab VALUES (42.0)");
+            assertQueryNoLeakCheck(
+                    "arr\n" +
+                            "[42.0]\n",
+                    "SELECT array_agg(val) arr FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testToPlan() throws Exception {
         // Pin the query plan output so a regression in toPlan() is caught.
         assertMemoryLeak(() -> {
@@ -731,6 +710,27 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                                     Row forward scan
                                     Frame forward scan on: tab
                             """
+            );
+        });
+    }
+
+    @Test
+    public void testWithSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (1.0),
+                    (2.0),
+                    (3.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "arr\n" +
+                            "[1.0,2.0,3.0]\n",
+                    "SELECT arr FROM (SELECT array_agg(val) arr FROM tab)",
+                    null,
+                    false,
+                    true
             );
         });
     }

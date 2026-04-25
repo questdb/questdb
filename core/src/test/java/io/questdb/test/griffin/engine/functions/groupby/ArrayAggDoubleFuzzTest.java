@@ -47,6 +47,72 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayInputConcatenation() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int iter = 0; iter < ITERATIONS; iter++) {
+                int numGroups = rnd.nextInt(5) + 1;
+                int rowsPerGroup = rnd.nextInt(10) + 1;
+
+                execute("DROP TABLE IF EXISTS t");
+                execute("CREATE TABLE t (grp INT, arr DOUBLE[])");
+
+                StringBuilder insert = new StringBuilder("INSERT INTO t VALUES\n");
+                int[] expectedCounts = new int[numGroups];
+                double[] expectedSums = new double[numGroups];
+                boolean first = true;
+                for (int g = 0; g < numGroups; g++) {
+                    for (int r = 0; r < rowsPerGroup; r++) {
+                        if (!first) {
+                            insert.append(",\n");
+                        }
+                        first = false;
+                        boolean isNull = rnd.nextDouble() < 0.2;
+                        if (isNull) {
+                            insert.append("(").append(g).append(", null)");
+                        } else {
+                            int arrLen = rnd.nextInt(5) + 1;
+                            insert.append("(").append(g).append(", ARRAY[");
+                            for (int i = 0; i < arrLen; i++) {
+                                if (i > 0) {
+                                    insert.append(",");
+                                }
+                                double val = rnd.nextInt(1000);
+                                insert.append(val);
+                                expectedSums[g] += val;
+                            }
+                            insert.append("])");
+                            expectedCounts[g] += arrLen;
+                        }
+                    }
+                }
+                execute(insert.toString());
+
+                // Verify element counts and sums match per group.
+                // When all arrays in a group are null, array_agg returns null:
+                // array_count(null) = 0, array_sum(null) = null.
+                StringBuilder expected = new StringBuilder("grp\tcnt\tsum\n");
+                for (int g = 0; g < numGroups; g++) {
+                    expected.append(g).append("\t").append(expectedCounts[g]).append("\t");
+                    if (expectedCounts[g] == 0) {
+                        expected.append("null");
+                    } else {
+                        expected.append(expectedSums[g]);
+                    }
+                    expected.append("\n");
+                }
+
+                assertQueryNoLeakCheck(
+                        expected.toString(),
+                        "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) sum FROM t ORDER BY grp",
+                        null,
+                        true,
+                        true
+                );
+            }
+        });
+    }
+
+    @Test
     public void testKeyedGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             for (int iter = 0; iter < ITERATIONS; iter++) {
@@ -147,72 +213,6 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                         "SELECT array_agg(val) arr FROM t",
                         null,
                         false,
-                        true
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testArrayInputConcatenation() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int iter = 0; iter < ITERATIONS; iter++) {
-                int numGroups = rnd.nextInt(5) + 1;
-                int rowsPerGroup = rnd.nextInt(10) + 1;
-
-                execute("DROP TABLE IF EXISTS t");
-                execute("CREATE TABLE t (grp INT, arr DOUBLE[])");
-
-                StringBuilder insert = new StringBuilder("INSERT INTO t VALUES\n");
-                int[] expectedCounts = new int[numGroups];
-                double[] expectedSums = new double[numGroups];
-                boolean first = true;
-                for (int g = 0; g < numGroups; g++) {
-                    for (int r = 0; r < rowsPerGroup; r++) {
-                        if (!first) {
-                            insert.append(",\n");
-                        }
-                        first = false;
-                        boolean isNull = rnd.nextDouble() < 0.2;
-                        if (isNull) {
-                            insert.append("(").append(g).append(", null)");
-                        } else {
-                            int arrLen = rnd.nextInt(5) + 1;
-                            insert.append("(").append(g).append(", ARRAY[");
-                            for (int i = 0; i < arrLen; i++) {
-                                if (i > 0) {
-                                    insert.append(",");
-                                }
-                                double val = rnd.nextInt(1000);
-                                insert.append(val);
-                                expectedSums[g] += val;
-                            }
-                            insert.append("])");
-                            expectedCounts[g] += arrLen;
-                        }
-                    }
-                }
-                execute(insert.toString());
-
-                // Verify element counts and sums match per group.
-                // When all arrays in a group are null, array_agg returns null:
-                // array_count(null) = 0, array_sum(null) = null.
-                StringBuilder expected = new StringBuilder("grp\tcnt\tsum\n");
-                for (int g = 0; g < numGroups; g++) {
-                    expected.append(g).append("\t").append(expectedCounts[g]).append("\t");
-                    if (expectedCounts[g] == 0) {
-                        expected.append("null");
-                    } else {
-                        expected.append(expectedSums[g]);
-                    }
-                    expected.append("\n");
-                }
-
-                assertQueryNoLeakCheck(
-                        expected.toString(),
-                        "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) sum FROM t ORDER BY grp",
-                        null,
-                        true,
                         true
                 );
             }
