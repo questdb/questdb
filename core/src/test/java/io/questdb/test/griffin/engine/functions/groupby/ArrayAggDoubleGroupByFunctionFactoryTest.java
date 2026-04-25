@@ -355,12 +355,15 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     """);
             // Two gaps (01:00-03:00 and 04:00-06:00) must be omitted.
             // Null at 06:45 is preserved in the array, not skipped by FILL(NONE).
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tarr\n" +
                             "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
                             "2024-01-01T03:00:00.000000Z\t[3.0]\n" +
                             "2024-01-01T06:00:00.000000Z\t[4.0,5.0,null]\n",
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(NONE)"
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(NONE)",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -389,6 +392,19 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testSampleByFillLinearRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', 'a', 1.0)");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, grp, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(LINEAR)",
+                    16,
+                    "support for LINEAR fill is not yet implemented"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFillPrev() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -405,6 +421,19 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                             "2024-01-01T04:00:00.000000Z\t[3.0]\n",
                     "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 2h FILL(PREV)",
                     "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillValueRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', 'a', 1.0)");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, grp, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(42)",
+                    16,
+                    "support for VALUE fill is not yet implemented"
             );
         });
     }

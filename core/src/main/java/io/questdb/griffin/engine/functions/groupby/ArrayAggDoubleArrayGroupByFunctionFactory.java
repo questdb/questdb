@@ -56,7 +56,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactory implements FunctionFactor
     ) throws SqlException {
         final Function arg = args.getQuick(0);
         final int dims = ColumnType.decodeWeakArrayDimensionality(arg.getType());
-        if (dims > 0 && dims != 1) {
+        if (dims == -1) {
+            throw SqlException.position(argPositions.getQuick(0)).put("array bind variable argument is not supported");
+        }
+        if (dims != 1) {
             throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
         }
         return new ArrayAggDoubleArrayGroupByFunction(arg, configuration.maxArrayElementCount());
