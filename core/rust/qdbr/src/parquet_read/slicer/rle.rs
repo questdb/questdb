@@ -142,17 +142,25 @@ impl<'a, T: VarDictDecoder> RleDictionarySlicer<'a, T> {
         let num_bits = buffer[0];
         if num_bits > 0 {
             buffer = &buffer[1..];
+            // Do not decode the first run eagerly — see the matching
+            // comment in ``RleDictVarcharSliceDecoder::try_new``. A
+            // bitpacked header declaring zero groups (``[0x01]``),
+            // which the writer emits for pages with
+            // ``non_null_count == 0`` but a non-zero global
+            // ``bits_per_key``, would make an eager
+            // ``Decoder::next()`` return ``None`` and the call site
+            // would surface "Unexpected end of rle iterator" even
+            // when the def-level iterator never actually pulls a
+            // value. ``next``/``skip`` already lazy-decode.
             let decoder = Decoder::new(buffer, num_bits as usize);
-            let mut res = Self {
+            Ok(Self {
                 dict,
                 inner: SlicerInner::new(
                     Some(decoder),
                     RleIterator::Rle(RepeatN::new(0, 0)),
                     sliced_row_count,
                 ),
-            };
-            res.decode()?;
-            Ok(res)
+            })
         } else {
             Ok(Self {
                 dict,

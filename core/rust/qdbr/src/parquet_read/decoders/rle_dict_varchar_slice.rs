@@ -60,17 +60,26 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
             .ok_or_else(|| fmt_err!(Layout, "empty RLE dictionary buffer"))?;
         if num_bits > 0 {
             buffer = &buffer[1..];
+            // Do not decode the first hybrid-RLE run eagerly. When a
+            // column chunk has a data page where every row is null
+            // (``non_null_count == 0``) but ``bits_per_key`` was
+            // computed from a non-empty global dict, the writer emits
+            // ``[bits_per_key, 0x01]`` — a bitpacked header declaring
+            // zero groups. The hybrid decoder returns ``None`` after
+            // consuming the header byte, which an eager decode would
+            // surface as "Unexpected end of rle iterator" even though
+            // the caller (def-level iterator) never asks for a value.
+            // Defer decoding to ``push()``; it already pulls the next
+            // run on demand when the current iterator is empty.
             let hybrid_decoder = Decoder::new(buffer, num_bits as usize);
-            let mut res = Self {
+            Ok(Self {
                 buffers,
                 dict_aux,
                 null_entry,
                 dict_len,
                 decoder: Some(hybrid_decoder),
                 data: RleIterator::Rle(RepeatN::new(0, 0)),
-            };
-            res.decode_next_run()?;
-            Ok(res)
+            })
         } else {
             // Zero bit width: single dict entry, all indices are 0.
             // We don't know row_count here, but we use usize::MAX as a
@@ -2068,5 +2077,47 @@ mod tests {
         assert_eq!(entries[3][1], 0);
         assert_eq!(entries[6][1], 0);
         assert_eq!(entries[7][1], 0);
+    }
+
+    #[test]
+    fn test_try_new_with_zero_values_and_positive_bit_width() {
+        // Regression: the writer can emit a data page whose values
+        // stream is ``[bits_per_key, 0x01]`` — a single byte of
+        // ``bits_per_key`` followed by a bitpacked header declaring
+        // zero groups — when a column has zero non-null values in
+        // this page but the global dictionary is non-empty so
+        // ``bits_per_key > 0``. QuestDB-written ClickBench
+        // ``hits.parquet`` triggers this for mostly-null SYMBOL
+        // columns (e.g. ``ParamOrderID``) split across multiple
+        // data pages by the writer.
+        //
+        // ``try_new`` must succeed on this payload. Eager decoding
+        // would have the hybrid-RLE stream return ``None`` right
+        // after the header byte and surface "Unexpected end of rle
+        // iterator" even though the def-level iterator never pulls
+        // a value for this page.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+
+        let dict_strings: &[&[u8]] = &[b"a", b"b", b"c"];
+        let dict_buf = build_dict_page_buffer(dict_strings);
+        let dict_page = make_dict_page(&dict_buf, dict_strings.len());
+
+        let encoded = encode_rle_data(&[], 6);
+        assert_eq!(
+            encoded,
+            vec![6, 0x01],
+            "writer emits bits_per_key byte + bitpacked-zero-groups header",
+        );
+
+        let mut decoder = RleDictVarcharSliceDecoder::try_new(
+            &encoded, &dict_page, &mut buffers, true,
+        )
+        .expect("try_new must not eagerly decode and fail");
+        // A zero-count push is valid — no indices consumed.
+        decoder.reserve(0).unwrap();
+        decoder.push_slice(0).unwrap();
+        assert_eq!(read_aux_entries(&buffers).len(), 0);
     }
 }
