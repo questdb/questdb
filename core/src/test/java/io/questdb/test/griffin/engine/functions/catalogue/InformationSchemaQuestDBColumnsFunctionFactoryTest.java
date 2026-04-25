@@ -37,16 +37,18 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
             execute("create table C(col0 double, col1 char, col2 byte)");
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\tA\tcol0\t0\t\tyes\tINT\n" +
-                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL\n" +
-                            "qdb\tpublic\tA\tcol2\t2\t\tyes\tDOUBLE\n" +
-                            "qdb\tpublic\tB\tcol0\t0\t\tyes\tLONG\n" +
-                            "qdb\tpublic\tB\tcol1\t1\t\tyes\tSTRING\n" +
-                            "qdb\tpublic\tB\tcol2\t2\t\tyes\tFLOAT\n" +
-                            "qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE\n" +
-                            "qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR\n" +
-                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE\n",
+                    """
+                            table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                            qdb\tpublic\tA\tcol0\t0\t\tyes\tINT
+                            qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL
+                            qdb\tpublic\tA\tcol2\t2\t\tyes\tDOUBLE
+                            qdb\tpublic\tB\tcol0\t0\t\tyes\tLONG
+                            qdb\tpublic\tB\tcol1\t1\t\tyes\tSTRING
+                            qdb\tpublic\tB\tcol2\t2\t\tyes\tFLOAT
+                            qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE
+                            qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR
+                            qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE
+                            """,
                     "SELECT * FROM information_schema.questdb_columns() ORDER BY table_name",
                     null,
                     null,
@@ -62,16 +64,20 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
             drainWalQueue();
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """,
                     "show columns from test_rename"
             );
 
             assertSql(
-                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\ttest_rename\tts\t0\t\tyes\tTIMESTAMP\n" +
-                            "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tINT\n",
+                    """
+                            table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                            qdb\tpublic\ttest_rename\tts\t0\t\tyes\tTIMESTAMP
+                            qdb\tpublic\ttest_rename\tx\t1\t\tyes\tINT
+                            """,
                     "information_schema.questdb_columns()"
             );
 
@@ -79,16 +85,20 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
             drainWalQueue();
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """,
                     "show columns from test_renamed"
             );
 
             assertSql(
-                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\ttest_renamed\tts\t0\t\tyes\tTIMESTAMP\n" +
-                            "qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tINT\n",
+                    """
+                            table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                            qdb\tpublic\ttest_renamed\tts\t0\t\tyes\tTIMESTAMP
+                            qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tINT
+                            """,
                     "information_schema.questdb_columns()"
             );
         });

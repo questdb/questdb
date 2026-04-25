@@ -53,13 +53,16 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     public static final int N_TYPE_COL = N_NAME_COL + 1;
     private static final int N_INDEXED_COL = N_TYPE_COL + 1;
     private static final int N_INDEX_BLOCK_CAPACITY_COL = N_INDEXED_COL + 1;
-    private static final int N_INDEX_TYPE_COL = N_INDEX_BLOCK_CAPACITY_COL + 1;
-    private static final int N_INDEX_INCLUDE_COL = N_INDEX_TYPE_COL + 1;
-    private static final int N_SYMBOL_CACHED_COL = N_INDEX_INCLUDE_COL + 1;
+    // Ordinals 0..8 match the pre-posting-index layout. The two posting
+    // columns (indexType, indexInclude) are appended at the end so JDBC
+    // clients reading by column index do not break on upgrade.
+    private static final int N_SYMBOL_CACHED_COL = N_INDEX_BLOCK_CAPACITY_COL + 1;
     private static final int N_SYMBOL_CAPACITY_COL = N_SYMBOL_CACHED_COL + 1;
     private static final int N_SYMBOL_TABLE_SIZE_COL = N_SYMBOL_CAPACITY_COL + 1;
     private static final int N_DESIGNATED_COL = N_SYMBOL_TABLE_SIZE_COL + 1;
     private static final int N_UPSERT_KEY_COL = N_DESIGNATED_COL + 1;
+    private static final int N_INDEX_TYPE_COL = N_UPSERT_KEY_COL + 1;
+    private static final int N_INDEX_INCLUDE_COL = N_INDEX_TYPE_COL + 1;
     private static final RecordMetadata METADATA;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
@@ -280,13 +283,15 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         metadata.add(new TableColumnMetadata("type", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("indexed", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("indexBlockCapacity", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indexType", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("indexInclude", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("symbolCached", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT));
         metadata.add(new TableColumnMetadata("symbolTableSize", ColumnType.INT));
         metadata.add(new TableColumnMetadata("designated", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("upsertKey", ColumnType.BOOLEAN));
+        // Posting-index columns appended at the end — keep JDBC ordinals
+        // 0..8 stable with pre-posting-index builds.
+        metadata.add(new TableColumnMetadata("indexType", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("indexInclude", ColumnType.STRING));
         METADATA = metadata;
     }
 }

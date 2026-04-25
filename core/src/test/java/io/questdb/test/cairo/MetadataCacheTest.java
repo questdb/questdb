@@ -169,7 +169,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table foo to bah", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -184,7 +184,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table bah to foo", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -280,7 +280,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     while (true) {
                         engine.execute("rename table foo to bah", sqlExecutionContext);
                         assertExceptionNoLeakCheck("show columns from foo", 18, "table does not exist", false, sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -296,7 +296,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     while (true) {
                         engine.execute("rename table bah to foo", sqlExecutionContext);
                         assertException("show columns from bah", 18, "table does not exist", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -368,7 +368,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "POSTING" : "POSTING");
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
         super.setUp();
     }
 
@@ -429,7 +429,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, indexType=NONE, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
-            execute("ALTER TABLE y ALTER COLUMN foo ADD INDEX");
+            execute("ALTER TABLE y ALTER COLUMN foo ADD INDEX TYPE POSTING");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -916,13 +916,13 @@ public class MetadataCacheTest extends AbstractCairoTest {
             CharSequenceObjSortedHashMap<CairoTable> sortedMap = new CharSequenceObjSortedHashMap<>();
 
             for (int cu = 'Z'; cu > 'A' - 1; cu--) {
-                execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+                execute("CREATE TABLE " + (char) cu + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
             }
 
             long version = assertTableNamesOrderedWith(sortedMap, "[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z]", -1);
 
             for (int cu = 'Z'; cu > 'A' - 1; cu = cu - 2) {
-                execute("drop table " + new String(new char[]{(char) cu}));
+                execute("drop table " + (char) cu);
             }
 
             for (int cu = 'z'; cu > 'a' - 1; cu = cu - 2) {
@@ -939,7 +939,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     public void testSnapshotSortedWithInitialListOfTables() throws Exception {
         assertMemoryLeak(() -> {
             for (int cu = 'Z'; cu > 'A' - 1; cu--) {
-                execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+                execute("CREATE TABLE " + (char) cu + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
             }
 
             assertTableNamesOrderedWith(new CharSequenceObjSortedHashMap<>(), "[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z]", -1);

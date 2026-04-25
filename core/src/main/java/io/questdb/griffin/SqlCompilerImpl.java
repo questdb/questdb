@@ -1162,7 +1162,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata metadata,
             int indexValueBlockSize,
             byte indexType,
-            @Nullable ObjList<CharSequence> coveringColumnNames
+            @Nullable ObjList<CharSequence> coveringColumnNames,
+            @Nullable IntList coveringColumnPositions
     ) throws SqlException {
         final int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
@@ -1177,16 +1178,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (coveringColumnNames != null) {
             for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
                 CharSequence covName = coveringColumnNames.get(i);
+                // Positions list is parallel to names; when callers pass null
+                // (internal re-use) we report the column-name position as a
+                // best-effort fallback rather than 0.
+                int covPos = coveringColumnPositions != null ? coveringColumnPositions.getQuick(i) : columnNamePosition;
                 int covIdx = metadata.getColumnIndexQuiet(covName);
                 if (covIdx == -1) {
-                    throw SqlException.$(0, "INCLUDE column does not exist [column=").put(covName).put(']');
+                    throw SqlException.$(covPos, "INCLUDE column does not exist [column=").put(covName).put(']');
                 }
                 if (covIdx == columnIndex) {
-                    throw SqlException.$(0, "INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+                    throw SqlException.$(covPos, "INCLUDE must not contain the indexed column [column=").put(covName).put(']');
                 }
                 for (int j = 0; j < i; j++) {
                     if (metadata.getColumnIndexQuiet(coveringColumnNames.get(j)) == covIdx) {
-                        throw SqlException.$(0, "duplicate column in INCLUDE [column=").put(covName).put(']');
+                        throw SqlException.$(covPos, "duplicate column in INCLUDE [column=").put(covName).put(']');
                     }
                 }
             }
@@ -2006,6 +2011,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             tableMetadata,
                             indexValueBlockSize,
                             indexType,
+                            null,
                             null
                     );
                 } else if (SqlKeywords.isDropKeyword(tok)) {
@@ -2338,6 +2344,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         byte indexType = configuration.getDefaultSymbolIndexType();
                         boolean indexTypeExplicit = false;
                         ObjList<CharSequence> coveringColumnNames = null;
+                        IntList coveringColumnPositions = null;
 
                         if (tok != null && !isSemicolon(tok)) {
                             // ADD INDEX TYPE POSTING [DELTA|EF]
@@ -2369,6 +2376,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     throw SqlException.$(lexer.lastTokenPosition(), "INCLUDE is only supported for POSTING index type");
                                 }
                                 coveringColumnNames = new ObjList<>();
+                                coveringColumnPositions = new IntList();
                                 tok = expectToken(lexer, "'('");
                                 if (!Chars.equals(tok, '(')) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
@@ -2379,6 +2387,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 }
                                 do {
                                     coveringColumnNames.add(GenericLexer.immutableOf(unquote(tok)));
+                                    coveringColumnPositions.add(lexer.lastTokenPosition());
                                     tok = expectToken(lexer, "',' or ')'");
                                     if (Chars.equals(tok, ',')) {
                                         tok = expectToken(lexer, "column name");
@@ -2419,7 +2428,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 tableMetadata,
                                 indexValueCapacity,
                                 indexType,
-                                coveringColumnNames
+                                coveringColumnNames,
+                                coveringColumnPositions
                         );
                     } else if (isDropKeyword(tok)) {
                         tok = expectToken(lexer, "'index'");

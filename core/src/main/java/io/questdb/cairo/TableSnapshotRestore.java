@@ -1018,18 +1018,24 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
-    static void removeIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, byte indexType) {
-        // For POSTING, resolve the live sealTxn from .pk before removing. BITMAP ignores sealTxn.
-        long sealTxn = columnNameTxn;
+    public static void removeIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, byte indexType) {
         if (IndexType.isPosting(indexType)) {
-            long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
-                    ff, PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
-            if (fromPk >= 0) sealTxn = fromPk;
+            // POSTING leaves multiple sealed .pv.{txn} generations, plus a
+            // .pci and one or more .pc<N>.*.* covering sidecars per index
+            // instance. removeAllSealedFiles enumerates and removes every
+            // such file across all sealTxn values. Without this, snapshot
+            // restore leaves stale sidecars on disk that shadow the freshly
+            // re-created .pk/.pv pair.
+            PostingIndexUtils.removeAllSealedFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
+            // Remove .pk last — the helper above relies on its presence to
+            // discover the sealTxn range.
+            path.trimTo(partitionPathLen);
+            removeFile(ff, IndexFactory.keyFileName(indexType, path, columnName, columnNameTxn));
+            return;
         }
-        // Remove .k file
-        removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn));
 
-        // Remove .v file
-        removeFile(ff, IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, sealTxn));
+        // BITMAP keeps a single .v at columnVersion; no sealTxn axis.
+        removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn));
+        removeFile(ff, IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, columnNameTxn));
     }
 }

@@ -31,6 +31,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.FSSTNative;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
@@ -46,8 +47,13 @@ import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
@@ -55,6 +61,96 @@ import static org.junit.Assert.*;
 public class CoveringIndexTest extends AbstractCairoTest {
 
     private static final ColumnVersionReader EMPTY_CVR = new ColumnVersionReader();
+
+    @Test
+    public void testAlterAddIndexIncludeDuplicatePosition() throws Exception {
+        // The SqlException must point at the duplicated column name, not
+        // position 0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_alt_dup (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            String sql = "ALTER TABLE t_alt_dup ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, price)";
+            int expected = sql.indexOf("price, price") + "price, ".length();
+            assertException(sql, expected, "duplicate column in INCLUDE");
+        });
+    }
+
+    @Test
+    public void testAlterAddIndexIncludeMissingColumnPosition() throws Exception {
+        // The SqlException must point at the missing column name, not 0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_alt_miss (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            String sql = "ALTER TABLE t_alt_miss ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (ghost)";
+            int expected = sql.indexOf("ghost");
+            assertException(sql, expected, "INCLUDE column does not exist");
+        });
+    }
+
+    @Test
+    public void testAlterAddIndexIncludeSelfReferencePosition() throws Exception {
+        // The SqlException must point at the offending sym name in the
+        // INCLUDE list, not 0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_alt_self (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            String sql = "ALTER TABLE t_alt_self ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (sym)";
+            int expected = sql.lastIndexOf("sym");
+            assertException(sql, expected, "INCLUDE must not contain the indexed column");
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexIncludesColumnWithColumnTop() throws Exception {
+        // Regression test: when an INCLUDE column was added via ALTER TABLE
+        // ADD COLUMN after some rows already existed, the column file starts
+        // at offset 0 mapping to row colTop in that partition. Reading
+        // rowId * size without subtracting colTop reads past the mapped
+        // region or returns garbage for rows below colTop. The covering
+        // index sidecar must represent those rows as NULL.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ct (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2 rows before the new column exists — colTop will be 2 on this partition.
+            execute("""
+                    INSERT INTO t_ct VALUES
+                    ('2024-01-01T00:00:00', 'A', 10),
+                    ('2024-01-01T01:00:00', 'B', 20)
+                    """);
+
+            execute("ALTER TABLE t_ct ADD COLUMN price DOUBLE");
+
+            // 3 rows after ADD COLUMN — these have price values in the file.
+            execute("""
+                    INSERT INTO t_ct VALUES
+                    ('2024-01-01T02:00:00', 'A', 30, 100.5),
+                    ('2024-01-01T03:00:00', 'B', 40, 200.5),
+                    ('2024-01-01T04:00:00', 'A', 50, 300.5)
+                    """);
+
+            // Build a covering index that INCLUDEs the newly-added column.
+            execute("ALTER TABLE t_ct ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            engine.releaseAllWriters();
+
+            // Confirm the covering factory is actually on the plan.
+            String plan = getPlan("SELECT sym, qty, price FROM t_ct WHERE sym = 'A' ORDER BY ts");
+            assertTrue("covering index must be used for this regression: " + plan,
+                    plan.contains("CoveringIndex"));
+
+            // 'A' rows land at rowIds 0, 2, 4.
+            //   rowId 0 — below colTop=2, price must be NULL.
+            //   rowId 2 — price = 100.5.
+            //   rowId 4 — price = 300.5.
+            assertSql("""
+                    sym\tqty\tprice
+                    A\t10\tnull
+                    A\t30\t100.5
+                    A\t50\t300.5
+                    """, "SELECT sym, qty, price FROM t_ct WHERE sym = 'A' ORDER BY ts");
+        });
+    }
 
     @Test
     public void testAlterTableAddIndexO3DuplicateInsert() throws Exception {
@@ -930,7 +1026,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
                     }
 
                     // First writer: write data and close (seal creates sidecar files)
@@ -1008,7 +1104,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
                     }
                     // Write 20 rows to key 0, close (seal creates dense gen0 + stride sidecar)
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
@@ -1112,7 +1208,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
                     }
 
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
@@ -1401,6 +1497,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // End-to-end SQL tests
+    // ===================================================================
+
     @Test
     public void testCoveringIndexGroupByMinMax() throws Exception {
         assertMemoryLeak(() -> {
@@ -1476,10 +1576,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT /*+ no_covering */ sym, sum(price), count() FROM t_grp_mp WHERE sym = 'A' GROUP BY sym");
         });
     }
-
-    // ===================================================================
-    // End-to-end SQL tests
-    // ===================================================================
 
     @Test
     public void testCoveringIndexLatestOnPlan() throws Exception {
@@ -1970,6 +2066,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // Fallback scenario tests: covering index NOT used
+    // ===================================================================
+
     @Test
     public void testCoveringIndexSidecarAlterAddIndexMultiPartition() throws Exception {
         // ALTER TABLE ADD INDEX INCLUDE on a table with multiple existing partitions.
@@ -2052,10 +2152,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Fallback scenario tests: covering index NOT used
-    // ===================================================================
-
     @Test
     public void testCoveringIndexSidecarSurvivesPartitionSwitchWal() throws Exception {
         // Same partition-switch scenario through WAL.
@@ -2126,6 +2222,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, qty FROM t_alter_cover WHERE sym = 'A'");
         });
     }
+
+    // ===================================================================
+    // DDL edge case tests
+    // ===================================================================
 
     @Test
     public void testCoveringIndexSidecarWrittenOnAlterAddIndexWal() throws Exception {
@@ -2206,10 +2306,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // DDL edge case tests
-    // ===================================================================
-
     @Test
     public void testCoveringIndexWithResidualFilterInList() throws Exception {
         assertMemoryLeak(() -> {
@@ -2279,6 +2375,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // Type-specific covering column tests
+    // ===================================================================
+
     @Test
     public void testCoveringLatestOnExplainPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -2335,10 +2435,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_latest_mk WHERE sym IN ('A', 'B') LATEST ON ts PARTITION BY sym");
         });
     }
-
-    // ===================================================================
-    // Type-specific covering column tests
-    // ===================================================================
 
     @Test
     public void testCoveringLatestOnMultiKeyWithSymbol() throws Exception {
@@ -2707,7 +2803,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
                     }
 
                     // Write index with covering, two commits (two gens), do NOT close (no seal)
@@ -2779,7 +2875,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
                     }
                     PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
                     writer.configureCovering(
@@ -2852,7 +2948,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
                     }
                     PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
                     writer.configureCovering(
@@ -2912,7 +3008,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Short.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putShort(colAddr + (long) i * Short.BYTES, (short) (100 + i));
+                        Unsafe.putShort(colAddr + (long) i * Short.BYTES, (short) (100 + i));
                     }
 
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
@@ -3240,6 +3336,99 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertSql("""
                     price
                     """, "SELECT price FROM t_bind_ne WHERE sym = :sym");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryBindVariableRebindPageFrame() throws Exception {
+        // Regression test for the page-frame path (exercised by count()
+        // pushdown, GROUP BY, etc.). Rebinding the symbol must pick up the
+        // new bind value on re-execution.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bind_pf (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_bind_pf VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5),
+                    ('2024-01-01T02:00:00', 'A', 11.5),
+                    ('2024-01-01T03:00:00', 'B', 21.5),
+                    ('2024-01-01T04:00:00', 'B', 22.5)
+                    """);
+            engine.releaseAllWriters();
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "A");
+            try (var factory = select("SELECT count() FROM t_bind_pf WHERE sym = :sym")) {
+                assertCursor("""
+                        count
+                        2
+                        """, factory, false, true);
+
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "B");
+                assertCursor("""
+                        count
+                        3
+                        """, factory, false, true);
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringQueryBindVariableRebindReusesFactory() throws Exception {
+        // Regression test: re-executing a prepared covering-index query with a
+        // different bind value must return rows for the new value. The
+        // single-key path used to cache the resolved symbol key in the cursor
+        // across executions.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bind_rebind (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_bind_rebind VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5),
+                    ('2024-01-01T02:00:00', 'A', 11.5),
+                    ('2024-01-01T03:00:00', 'B', 21.5)
+                    """);
+            engine.releaseAllWriters();
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "A");
+            try (var factory = select("SELECT price FROM t_bind_rebind WHERE sym = :sym")) {
+                assertCursor("""
+                        price
+                        10.5
+                        11.5
+                        """, factory, false, true);
+
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "B");
+                assertCursor("""
+                        price
+                        20.5
+                        21.5
+                        """, factory, false, true);
+
+                // And back to A to cover both directions of the transition.
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "A");
+                assertCursor("""
+                        price
+                        10.5
+                        11.5
+                        """, factory, false, true);
+            }
         });
     }
 
@@ -4361,6 +4550,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== Coverage gap tests ====================
+
     @Test
     public void testCoveringQueryTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -4416,8 +4607,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT id, extra FROM t_uuid WHERE sym = 'A'");
         });
     }
-
-    // ==================== Coverage gap tests ====================
 
     @Test
     public void testCoveringQueryVarchar() throws Exception {
@@ -4917,7 +5106,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 50.0 + i);
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, 50.0 + i);
                     }
 
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
@@ -5133,6 +5322,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableIncludeDuplicatePosition() throws Exception {
+        // The SqlException must point at the duplicated column name, not
+        // position 0.
+        assertMemoryLeak(() -> {
+            String sql = "CREATE TABLE t_cdup (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (price, price), price DOUBLE) TIMESTAMP(ts)";
+            int expected = sql.indexOf("price, price") + "price, ".length();
+            assertException(sql, expected, "duplicate column in INCLUDE");
+        });
+    }
+
+    @Test
     public void testCreateTableIncludeDuplicateRejects() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -5147,6 +5347,27 @@ public class CoveringIndexTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 assertTrue(e.getMessage(), e.getMessage().contains("duplicate column in INCLUDE"));
             }
+        });
+    }
+
+    @Test
+    public void testCreateTableIncludeMissingColumnPosition() throws Exception {
+        // The SqlException must point at the missing column name, not 0.
+        assertMemoryLeak(() -> {
+            String sql = "CREATE TABLE t_cmiss (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (ghost), price DOUBLE) TIMESTAMP(ts)";
+            int expected = sql.indexOf("ghost");
+            assertException(sql, expected, "INCLUDE column");
+        });
+    }
+
+    @Test
+    public void testCreateTableIncludeSelfReferencePosition() throws Exception {
+        // The SqlException must point at the self-referencing column name in
+        // the INCLUDE list, not 0.
+        assertMemoryLeak(() -> {
+            String sql = "CREATE TABLE t_cself (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (sym), price DOUBLE) TIMESTAMP(ts)";
+            int expected = sql.indexOf("INCLUDE (") + "INCLUDE (".length();
+            assertException(sql, expected, "INCLUDE must not contain the indexed column");
         });
     }
 
@@ -5408,8 +5629,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== FSST-compressed covered varchar/string tests ====================
-
     @Test
     public void testDistinctSymExplainPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -5437,6 +5656,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ==================== FSST-compressed covered varchar/string tests ====================
 
     @Test
     public void testDistinctSymFromPostingIndex() throws Exception {
@@ -5651,8 +5872,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== COUNT pushdown tests ====================
-
     @Test
     public void testDistinctWithNoIndexHintFallsBack() throws Exception {
         // no_index hint should prevent PostingIndex distinct
@@ -5684,6 +5903,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT /*+ no_index */ DISTINCT sym FROM t_dist_noidx ORDER BY sym");
         });
     }
+
+    // ==================== COUNT pushdown tests ====================
 
     @Test
     public void testDistinctWithNonIntervalFilterFallsBack() throws Exception {
@@ -5756,8 +5977,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== DISTINCT with WHERE tests ====================
-
     @Test
     public void testDistinctWithTimestampFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -5804,6 +6023,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT DISTINCT sym FROM t_dist_where WHERE ts >= '2024-01-02' ORDER BY sym");
         });
     }
+
+    // ==================== DISTINCT with WHERE tests ====================
 
     @Test
     public void testDistinctWithTimestampRangeNoMatches() throws Exception {
@@ -5937,8 +6158,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== additional coverage tests ====================
-
     @Test
     public void testDropUnrelatedColumnDoesNotBreakCoveringIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -5987,6 +6206,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, qty FROM t_drop_unrel WHERE sym = 'A'");
         });
     }
+
+    // ==================== additional coverage tests ====================
 
     @Test
     public void testFallbackInList3Keys() throws Exception {
@@ -6084,8 +6305,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== var-width page frame tests ====================
-
     @Test
     public void testFallbackInListWithNonCoveredColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -6112,6 +6331,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, extra FROM t_in_fallback WHERE sym IN ('A', 'B')");
         });
     }
+
+    // ==================== var-width page frame tests ====================
 
     @Test
     public void testFallbackSelectStar() throws Exception {
@@ -6389,14 +6610,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 int ord = 0;
                 for (int rep = 0; rep < reps; rep++) {
                     for (byte[] bytes : valueBytes) {
-                        Unsafe.getUnsafe().putLong(srcOffsAddr + (long) ord * Long.BYTES, pos);
+                        Unsafe.putLong(srcOffsAddr + (long) ord * Long.BYTES, pos);
                         for (byte b : bytes) {
-                            Unsafe.getUnsafe().putByte(trainBuf + pos++, b);
+                            Unsafe.putByte(trainBuf + pos++, b);
                         }
                         ord++;
                     }
                 }
-                Unsafe.getUnsafe().putLong(srcOffsAddr + (long) trainCount * Long.BYTES, pos);
+                Unsafe.putLong(srcOffsAddr + (long) trainCount * Long.BYTES, pos);
 
                 long packed = FSSTNative.trainAndCompressBlock(
                         trainBuf, srcOffsAddr, trainCount,
@@ -6413,13 +6634,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertEquals("decoded length must match original", pos, decoded);
 
                 for (int i = 0; i < trainCount; i++) {
-                    long lo = Unsafe.getUnsafe().getLong(decOffsAddr + (long) i * Long.BYTES);
-                    long hi = Unsafe.getUnsafe().getLong(decOffsAddr + (long) (i + 1) * Long.BYTES);
+                    long lo = Unsafe.getLong(decOffsAddr + (long) i * Long.BYTES);
+                    long hi = Unsafe.getLong(decOffsAddr + (long) (i + 1) * Long.BYTES);
                     byte[] expected = valueBytes[i % values.length];
                     assertEquals("value " + i + " length", expected.length, (int) (hi - lo));
                     for (int j = 0; j < expected.length; j++) {
                         assertEquals("value " + i + " byte " + j,
-                                expected[j], Unsafe.getUnsafe().getByte(decBuf + lo + j));
+                                expected[j], Unsafe.getByte(decBuf + lo + j));
                     }
                 }
             } finally {
@@ -6435,8 +6656,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ==================== end new optimization tests ====================
 
     @Test
     public void testInListWithDuplicateKeys() throws Exception {
@@ -6464,6 +6683,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_in_dup WHERE sym IN ('A', 'A', 'B')");
         });
     }
+
+    // ==================== end new optimization tests ====================
 
     @Test
     public void testIncludeOnlyValidWithPosting() throws Exception {
@@ -6574,7 +6795,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) keyCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < keyCount; i++) {
-                        Unsafe.getUnsafe().putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
                     }
 
                     // First writer: write all keys, commit, close (seal → gen0 dense)
@@ -6701,8 +6922,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Wide table and wide INCLUDE edge case tests ----
-
     @Test
     public void testInsertIntoSelectWithPostingIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -6738,6 +6957,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_dst WHERE sym = 'A'");
         });
     }
+
+    // ---- Wide table and wide INCLUDE edge case tests ----
 
     @Test
     public void testLatestByAllColumnTypes() throws Exception {
@@ -7168,8 +7389,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== no_covering hint tests ====================
-
     @Test
     public void testLatestOnMultiKeyNonCovering() throws Exception {
         assertMemoryLeak(() -> {
@@ -7197,6 +7416,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT count() FROM (SELECT * FROM t_latest_nc WHERE sym IN ('A', 'B', 'C') LATEST ON ts PARTITION BY sym)");
         });
     }
+
+    // ==================== no_covering hint tests ====================
 
     @Test
     public void testLatestOnMultiPartitionManyCommits() throws Exception {
@@ -7305,8 +7526,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== no_index hint tests ====================
-
     @Test
     public void testMultiVarcharIncludeFsst() throws Exception {
         // Two VARCHAR columns in INCLUDE — exercises per-includeIdx FSST cache
@@ -7342,6 +7561,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertSql("count\n733\n", "SELECT COUNT(*) FROM t_multi_vc WHERE sym = 'A'");
         });
     }
+
+    // ==================== no_index hint tests ====================
 
     @Test
     public void testNoCoveringHint_DataCorrectness() throws Exception {
@@ -7529,8 +7750,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== residual filter + covering index tests ====================
-
     @Test
     public void testNoIndexHint_ImpliesNoCovering() throws Exception {
         assertMemoryLeak(() -> {
@@ -7555,6 +7774,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     plan.contains("Index"));
         });
     }
+
+    // ==================== residual filter + covering index tests ====================
 
     @Test
     public void testNoIndexHint_InList() throws Exception {
@@ -7707,6 +7928,80 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertFalse(metadata.getColumnMetadata(symIdx).isCovering());
                 assertNull(metadata.getColumnMetadata(symIdx).getCoveringColumnIndices());
             }
+        });
+    }
+
+    @Test
+    public void testO3CommitSealFailureMarksWriterDistressed() throws Exception {
+        // Regression test for #8: when sealPostingIndexesForO3Partitions
+        // throws (e.g. an I/O failure on a covering column file mmap),
+        // finishO3Commit must mark the writer as distressed before
+        // rethrowing. Without that, the writer pool keeps handing the same
+        // half-committed writer to subsequent operations.
+        // The seal opens covering .d column files via openRO and then mmaps
+        // them. Track the fd opened for our covering column and fail its
+        // mmap so a real CairoException propagates from the seal (failing
+        // openRO only flips the seal's internal "mapped=false" flag and
+        // doesn't surface the failure to finishO3Commit).
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        final long[] targetFd = {-1};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (failArmed.get() && fd == targetFd[0]) {
+                    return io.questdb.std.FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
+                if (failArmed.get() && fd != -1 && name != null
+                        && Utf8s.endsWithAscii(name, "price.d")) {
+                    targetFd[0] = fd;
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_seal_fail (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_seal_fail VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-02T00:00:00', 'A', 30.0)
+                    """);
+            engine.releaseAllWriters();
+
+            failArmed.set(true);
+            try (TableWriter w = TestUtils.getWriter(engine, "t_seal_fail")) {
+                // O3 row inserted into day 1 after day 2 already exists —
+                // commit must seal the affected partition's posting index,
+                // and that seal will fail because openRO("...d") returns -1.
+                String tsStr = "2024-01-01T00:30:00.000000Z";
+                TableWriter.Row r = w.newRow(io.questdb.cairo.MicrosTimestampDriver.INSTANCE.parseFloor(tsStr, 0, tsStr.length()));
+                r.putSym(1, "C");
+                r.putDouble(2, 99.0);
+                r.append();
+                try {
+                    w.commit();
+                    fail("expected seal failure to surface");
+                } catch (AssertionError e) {
+                    throw e;
+                } catch (Throwable ignore) {
+                    // expected
+                }
+                assertTrue("writer must be distressed after a seal failure",
+                        w.isDistressed());
+            }
+            failArmed.set(false);
         });
     }
 
@@ -7977,8 +8272,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddrInt = Unsafe.malloc((long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddrDouble + (long) i * Double.BYTES, i * 1.5);
-                        Unsafe.getUnsafe().putInt(colAddrInt + (long) i * Integer.BYTES, i * 10);
+                        Unsafe.putDouble(colAddrDouble + (long) i * Double.BYTES, i * 1.5);
+                        Unsafe.putInt(colAddrInt + (long) i * Integer.BYTES, i * 10);
                     }
 
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
@@ -8029,7 +8324,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 try {
                     // Populate column data: row i has value 10.0 * (i + 1)
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
                     }
 
                     // Write index with covering
@@ -8335,7 +8630,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
                     }
 
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
@@ -8430,7 +8725,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // Check what files exist
             java.io.File partDir = new java.io.File(root, "t_seal~/2024-01-01");
-            String[] pvFiles = partDir.list((d, n) -> n.startsWith("sym.pv"));
+            String[] pvFiles = partDir.list((_, n) -> n.startsWith("sym.pv"));
             System.out.println("PV files: " + java.util.Arrays.toString(pvFiles));
 
             // Full scan without index (SELECT * doesn't use index)
@@ -8528,10 +8823,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // BITMAP index should show indexType=BITMAP and empty indexInclude
             assertSql("""
-                    column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                    ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse
-                    sym\tSYMBOL\ttrue\t256\tBITMAP\t\ttrue\t128\t0\tfalse\tfalse
-                    val\tDOUBLE\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
+                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                    ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                    sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tBITMAP\t
+                    val\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                     """, "SHOW COLUMNS FROM t_show_bmp");
         });
     }
@@ -8550,11 +8845,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // Verify indexType and indexInclude columns are present for POSTING index
             assertSql("""
-                    column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                    ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse
-                    sym\tSYMBOL\ttrue\t256\tPOSTING\t\ttrue\t128\t0\tfalse\tfalse
-                    price\tDOUBLE\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
-                    qty\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
+                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                    ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                    sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\t
+                    price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                    qty\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                     """, "SHOW COLUMNS FROM t_show_cols");
         });
     }
@@ -8597,7 +8892,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
                     }
 
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
@@ -8662,7 +8957,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
                     }
                     FilesFacade ff = configuration.getFilesFacade();
 
@@ -8762,7 +9057,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, i);
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, i);
                     }
 
                     PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);

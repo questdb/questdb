@@ -178,9 +178,15 @@ public class ColumnPurgeOperator implements Closeable {
     private boolean couldNotRemoveIndexFiles(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
         if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
             if (IndexType.isPosting(indexType)) {
-                PostingIndexUtils.removeAllSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
+                boolean sidecarRemovalFailed = PostingIndexUtils.removeAllSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
                 path.trimTo(pathTrimToPartition);
                 if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
+                    return true;
+                }
+                if (sidecarRemovalFailed) {
+                    // .pci or one of the .pc<N>.*.* files survived. Tell the
+                    // caller the purge is incomplete so it retries instead
+                    // of marking the task done and leaking the sidecars.
                     return true;
                 }
             } else {

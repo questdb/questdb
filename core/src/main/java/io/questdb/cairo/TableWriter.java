@@ -5795,7 +5795,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void finishO3Commit(long partitionTimestampHiLimit) {
         if (!o3InError) {
             updateO3ColumnTops();
-            sealPostingIndexesForO3Partitions();
+            try {
+                sealPostingIndexesForO3Partitions();
+            } catch (Throwable e) {
+                // O3 data is already on disk; a partial-seal failure leaves
+                // posting-index sidecars inconsistent with the column data.
+                // Mark the writer distressed so the pool replaces it on the
+                // next acquire instead of handing back a writer that thinks
+                // the commit succeeded.
+                LOG.critical().$("data is committed but posting-index seal failed `").$(e).$('`').$();
+                distressed = true;
+                throw e;
+            }
         }
         if (!isEmptyTable()
                 && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
@@ -6404,10 +6415,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             try {
                 // Check both pages, use the one with the higher valid sequence
-                long seqA = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                long seqEndA = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-                long seqB = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                long seqEndB = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                long seqA = Unsafe.getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                long seqEndA = Unsafe.getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                long seqB = Unsafe.getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                long seqEndB = Unsafe.getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
 
                 long validA = (seqA == seqEndA) ? seqA : 0;
                 long validB = (seqB == seqEndB) ? seqB : 0;
@@ -6420,7 +6431,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     return false; // no valid page
                 }
 
-                int genCount = Unsafe.getUnsafe().getInt(addr + activePage + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+                int genCount = Unsafe.getInt(addr + activePage + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
                 return genCount > 0; // sealed if at least one generation exists
             } finally {
                 ff.munmap(addr, io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED, MemoryTag.MMAP_DEFAULT);
@@ -10795,11 +10806,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long blockIndex = -1;
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
-            long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
+            long partitionTimestamp = Unsafe.getLong(blockAddress);
             // Sink offset 6 holds the original (pre-split) partition ts. Non-split
             // commits leave [0] == [6]; splits overwrite [0] with the new split's
             // ts but leave [6] pointing at the shrunk main partition.
-            long dataPartitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress + 6 * Long.BYTES);
+            long dataPartitionTimestamp = Unsafe.getLong(blockAddress + 6 * Long.BYTES);
 
             if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp)) {
                 anyPartitionProcessed = true;
@@ -10817,7 +10828,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 path.trimTo(pathSize);
                 setPathForNativePartition(path, timestampType, partitionBy, lastOpenPartitionTs, currentNameTxn);
                 int plen = path.size();
-                long partitionSize = txWriter.getPartitionRowCountByTimestamp(lastOpenPartitionTs);
                 try {
                     for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                         if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)

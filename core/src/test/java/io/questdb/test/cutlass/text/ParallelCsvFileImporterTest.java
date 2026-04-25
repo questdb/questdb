@@ -3147,23 +3147,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         assertQueryNoLeakCheck(
                 compiler,
-                "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "bo\tBOOLEAN\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "by\tINT\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "sh\tINT\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "ch\tCHAR\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "in_\tINT\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "lo\tINT\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "dat\tDATE\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "tstmp\tTIMESTAMP\tfalse\t256\t\t\tfalse\t0\t0\ttrue\tfalse\n" +
-                        "ft\tDOUBLE\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "db\tDOUBLE\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "str\t" + stringTypeName + "\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "sym\t" + stringTypeName + "\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "l256\tLONG256\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "ge\t" + stringTypeName + "\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "uid\tUUID\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "dec\tDECIMAL(18,3)\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n",
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                        "bo\tBOOLEAN\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "by\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "sh\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "ch\tCHAR\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "in_\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "lo\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "dat\tDATE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "tstmp\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
+                        "ft\tDOUBLE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "db\tDOUBLE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "str\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "sym\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "l256\tLONG256\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "ge\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "uid\tUUID\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "dec\tDECIMAL(18,3)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n",
                 "show columns from alltypes",
                 null,
                 sqlExecutionContext,
@@ -3379,10 +3379,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         assertQueryNoLeakCheck(
                 compiler,
-                "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "id\tINT\tfalse\t256\t\t\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "ts\tTIMESTAMP\tfalse\t256\t\t\tfalse\t0\t0\t" + (timestampColumn.equals("ts") ? "true" : "false") + "\tfalse\n" +
-                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\t\t\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns") ? "true" : "false") + "\tfalse\n",
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                        "id\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts") ? "true" : "false") + "\tfalse\t\t\n" +
+                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns") ? "true" : "false") + "\tfalse\t\t\n",
                 "show columns from timestamp_test",
                 null,
                 sqlExecutionContext,

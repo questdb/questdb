@@ -41,16 +41,18 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             execute("create table C(col0 double, col1 char, col2 byte)");
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\tA\tcol0\t0\t\tyes\tinteger\n" +
-                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tcharacter varying\n" +
-                            "qdb\tpublic\tA\tcol2\t2\t\tyes\tdouble precision\n" +
-                            "qdb\tpublic\tB\tcol0\t0\t\tyes\tbigint\n" +
-                            "qdb\tpublic\tB\tcol1\t1\t\tyes\tcharacter varying\n" +
-                            "qdb\tpublic\tB\tcol2\t2\t\tyes\treal\n" +
-                            "qdb\tpublic\tC\tcol0\t0\t\tyes\tdouble precision\n" +
-                            "qdb\tpublic\tC\tcol1\t1\t\tyes\tcharacter\n" +
-                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tsmallint\n",
+                    """
+                            table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                            qdb\tpublic\tA\tcol0\t0\t\tyes\tinteger
+                            qdb\tpublic\tA\tcol1\t1\t\tyes\tcharacter varying
+                            qdb\tpublic\tA\tcol2\t2\t\tyes\tdouble precision
+                            qdb\tpublic\tB\tcol0\t0\t\tyes\tbigint
+                            qdb\tpublic\tB\tcol1\t1\t\tyes\tcharacter varying
+                            qdb\tpublic\tB\tcol2\t2\t\tyes\treal
+                            qdb\tpublic\tC\tcol0\t0\t\tyes\tdouble precision
+                            qdb\tpublic\tC\tcol1\t1\t\tyes\tcharacter
+                            qdb\tpublic\tC\tcol2\t2\t\tyes\tsmallint
+                            """,
                     "SELECT * FROM information_schema.columns() ORDER BY table_name",
                     null,
                     null,
@@ -71,8 +73,10 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                 // this mimic behavior of a query cache.
                 try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        assertCursor("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                                        "qdb\tpublic\tx\told\t0\t\tyes\tinteger\n",
+                        assertCursor("""
+                                        table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                                        qdb\tpublic\tx\told\t0\t\tyes\tinteger
+                                        """,
                                 false, true, true, cursor, recordCursorFactory.getMetadata(), false);
                     }
 
@@ -82,8 +86,10 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     drainWalQueue();
 
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        assertCursor("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                                        "qdb\tpublic\tx\tnew\t0\t\tyes\tbigint\n",
+                        assertCursor("""
+                                        table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                                        qdb\tpublic\tx\tnew\t0\t\tyes\tbigint
+                                        """,
                                 false, true, true, cursor, recordCursorFactory.getMetadata(), false);
                     }
                 }
@@ -99,16 +105,20 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             drainWalQueue();
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """,
                     "show columns from test_rename"
             );
 
             assertSql(
-                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\ttest_rename\tts\t0\t\tyes\ttimestamp without time zone\n" +
-                            "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tinteger\n",
+                    """
+                            table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                            qdb\tpublic\ttest_rename\tts\t0\t\tyes\ttimestamp without time zone
+                            qdb\tpublic\ttest_rename\tx\t1\t\tyes\tinteger
+                            """,
                     "information_schema.columns()"
             );
 
@@ -116,16 +126,20 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             drainWalQueue();
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """,
                     "show columns from test_renamed"
             );
 
             assertSql(
-                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\ttest_renamed\tts\t0\t\tyes\ttimestamp without time zone\n" +
-                            "qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tinteger\n",
+                    """
+                            table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                            qdb\tpublic\ttest_renamed\tts\t0\t\tyes\ttimestamp without time zone
+                            qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tinteger
+                            """,
                     "information_schema.columns()"
             );
         });

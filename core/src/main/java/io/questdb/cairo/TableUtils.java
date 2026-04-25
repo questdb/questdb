@@ -206,10 +206,34 @@ public final class TableUtils {
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     public static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
-    static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 3;
-    static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
-    static final int META_FLAG_BIT_COVERING = META_FLAG_BIT_DEDUP_KEY << 1;
-    static final int META_FLAG_INDEX_TYPE_MASK = 0x07; // bits 0-2: index type
+    // Column flag bit layout (on-disk in _meta).
+    // Bits 0, 2, 3 match the pre-posting-index layout, so tables written by
+    // older versions keep meaning when read by new binaries, and tables
+    // written by this version that have no POSTING/COVERING columns are
+    // bit-identical to the old layout (downgrade-safe when no new features
+    // are used).
+    //
+    //   bit 0: INDEXED                 (legacy META_FLAG_BIT_INDEXED)
+    //   bit 1: IS_POSTING              (0 = BITMAP, 1 = posting variant)
+    //   bit 2: SYMBOL_CACHE            (legacy)
+    //   bit 3: DEDUP_KEY               (legacy)
+    //   bit 4: POSTING_VARIANT low     (2-bit variant selector, bits 4-5)
+    //   bit 5: POSTING_VARIANT high
+    //   bit 6: COVERING
+    //
+    // Posting variant encoding (bits 4-5, valid only when IS_POSTING=1):
+    //   00 = POSTING (adaptive)
+    //   01 = POSTING_DELTA
+    //   10 = POSTING_EF
+    //   11 = reserved
+    static final int META_FLAG_BIT_INDEXED = 1;
+    static final int META_FLAG_BIT_IS_POSTING = 1 << 1;
+    static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
+    static final int META_FLAG_BIT_DEDUP_KEY = 1 << 3;
+    static final int META_FLAG_BIT_POSTING_VARIANT_LO = 1 << 4;
+    static final int META_FLAG_BIT_POSTING_VARIANT_HI = 1 << 5;
+    static final int META_FLAG_BIT_COVERING = 1 << 6;
+    static final int META_FLAG_POSTING_VARIANT_MASK = META_FLAG_BIT_POSTING_VARIANT_LO | META_FLAG_BIT_POSTING_VARIANT_HI;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -2616,19 +2640,44 @@ public final class TableUtils {
     }
 
     /**
-     * Decodes the index type from the column flags long.
-     * Index type occupies bits 0-2 (values 0-7).
+     * Decodes the index type from the column flags long. See the comment on
+     * META_FLAG_BIT_INDEXED for the bit layout.
      */
     static byte decodeIndexTypeFlags(long flags) {
-        return (byte) (flags & META_FLAG_INDEX_TYPE_MASK);
+        if ((flags & META_FLAG_BIT_INDEXED) == 0) {
+            return IndexType.NONE;
+        }
+        if ((flags & META_FLAG_BIT_IS_POSTING) == 0) {
+            return IndexType.BITMAP;
+        }
+        long variant = flags & META_FLAG_POSTING_VARIANT_MASK;
+        if (variant == 0) {
+            return IndexType.POSTING;
+        }
+        if (variant == META_FLAG_BIT_POSTING_VARIANT_LO) {
+            return IndexType.POSTING_DELTA;
+        }
+        if (variant == META_FLAG_BIT_POSTING_VARIANT_HI) {
+            return IndexType.POSTING_EF;
+        }
+        throw CairoException.critical(0).put("unknown posting index variant in column metadata [flags=").put(flags).put(']');
     }
 
     /**
-     * Encodes the index type into flag bits for storage.
-     * Index type occupies bits 0-2 (values 0-7).
+     * Encodes the index type into flag bits for storage. See the comment on
+     * META_FLAG_BIT_INDEXED for the bit layout.
      */
     static long encodeIndexTypeFlags(byte indexType) {
-        return indexType & META_FLAG_INDEX_TYPE_MASK;
+        return switch (indexType) {
+            case IndexType.NONE -> 0;
+            case IndexType.BITMAP -> META_FLAG_BIT_INDEXED;
+            case IndexType.POSTING -> META_FLAG_BIT_INDEXED | META_FLAG_BIT_IS_POSTING;
+            case IndexType.POSTING_DELTA ->
+                    META_FLAG_BIT_INDEXED | META_FLAG_BIT_IS_POSTING | META_FLAG_BIT_POSTING_VARIANT_LO;
+            case IndexType.POSTING_EF ->
+                    META_FLAG_BIT_INDEXED | META_FLAG_BIT_IS_POSTING | META_FLAG_BIT_POSTING_VARIANT_HI;
+            default -> throw CairoException.critical(0).put("unknown index type [type=").put(indexType).put(']');
+        };
     }
 
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {

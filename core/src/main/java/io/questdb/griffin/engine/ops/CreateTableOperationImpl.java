@@ -842,22 +842,24 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         for (int i = 0, n = allColumnNames.size(); i < n; i++) {
             CreateTableColumnModel model = modelMap.get(allColumnNames.get(i));
             ObjList<CharSequence> coverNames = model.getCoveringColumnNames();
+            IntList coverPositions = model.getCoveringColumnPositions();
             if (coverNames.size() > 0) {
                 IntList indices = new IntList(coverNames.size());
                 for (int j = 0, m = coverNames.size(); j < m; j++) {
                     CharSequence covName = coverNames.get(j);
+                    int covPos = coverPositions.getQuick(j);
                     int idx = nameToIndex.get(covName);
                     if (idx < 0) {
-                        throw SqlException.position(0)
+                        throw SqlException.position(covPos)
                                 .put("INCLUDE column doesn't exist [column=").put(covName).put(']');
                     }
                     if (idx == i) {
-                        throw SqlException.position(0)
+                        throw SqlException.position(covPos)
                                 .put("INCLUDE must not contain the indexed column [column=").put(covName).put(']');
                     }
                     for (int k = 0; k < j; k++) {
                         if (indices.getQuick(k) == idx) {
-                            throw SqlException.position(0)
+                            throw SqlException.position(covPos)
                                     .put("duplicate column in INCLUDE [column=").put(covName).put(']');
                         }
                     }

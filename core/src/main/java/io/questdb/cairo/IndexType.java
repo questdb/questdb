@@ -29,8 +29,13 @@ import io.questdb.std.str.CharSink;
 
 /**
  * Defines the types of column indexes supported by QuestDB.
- * The index type is stored as a 3-bit value in the column metadata flags
- * (values 0-7).
+ * On-disk, the index type is packed into discrete flag bits in the column
+ * metadata long (see {@code META_FLAG_BIT_INDEXED}, {@code META_FLAG_BIT_IS_POSTING},
+ * and {@code META_FLAG_POSTING_VARIANT_MASK} in {@code TableUtils}). The
+ * layout preserves bits 2 and 3 for {@code SYMBOL_CACHE} and {@code DEDUP_KEY}
+ * so pre-posting-index tables read correctly without migration, and so
+ * tables with no posting/covering columns stay bit-identical to the old
+ * layout.
  */
 public final class IndexType {
     /**

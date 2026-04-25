@@ -59,7 +59,7 @@ public class CreateTableTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "POSTING" : "POSTING");
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
         super.setUp();
     }
 
@@ -558,10 +558,10 @@ public class CreateTableTest extends AbstractCairoTest {
         execute("create table foo_clone ( like foo)");
         assertSql(
                 """
-                        column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                        ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\ttrue
-                        a\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\ttrue
-                        b\tSTRING\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                        a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
+                        b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                         """,
                 "SHOW COLUMNS FROM foo_clone"
         );
@@ -927,9 +927,9 @@ public class CreateTableTest extends AbstractCairoTest {
                     "show create table y;");
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            ns\tTIMESTAMP_NS\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse
-                            s\tSYMBOL\tfalse\t256\t\t\ttrue\t128\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
                             """
                     ,
                     "SHOW COLUMNS FROM y"
@@ -1167,6 +1167,24 @@ public class CreateTableTest extends AbstractCairoTest {
                     2024-01-01T02:00:00.000000Z\tA
                     2024-01-01T05:00:00.000000Z\tA
                     """, "SELECT * FROM t WHERE s = 'A'");
+        });
+    }
+
+    @Test
+    public void testShowColumnsKeepsLegacyOrdinals() throws Exception {
+        // Regression test: SHOW COLUMNS must preserve the column ordering
+        // that existed before the posting-index feature, so that JDBC
+        // clients reading by ordinal (ResultSet.getString(1), etc.) keep
+        // working on upgrade. The two new columns ("indexType" and
+        // "indexInclude") must land AFTER the legacy columns, not between
+        // them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_show_ord (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts)");
+            assertSql("""
+                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                    ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                    s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                    """, "SHOW COLUMNS FROM t_show_ord");
         });
     }
 

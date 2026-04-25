@@ -188,10 +188,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE STRING", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
-                    "2024-05-14T16:00:01.000000Z\t\n" +
-                    "2024-05-14T16:00:02.000000Z\t-99.9999\n", "x");
+            assertSql("""
+                    ts\tcol
+                    2024-05-14T16:00:00.000000Z\t12345.6789
+                    2024-05-14T16:00:01.000000Z\t
+                    2024-05-14T16:00:02.000000Z\t-99.9999
+                    """, "x");
 
             execute("DROP TABLE x");
         });
@@ -209,10 +211,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE VARCHAR", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
-                    "2024-05-14T16:00:01.000000Z\t\n" +
-                    "2024-05-14T16:00:02.000000Z\t-99.9999\n", "x");
+            assertSql("""
+                    ts\tcol
+                    2024-05-14T16:00:00.000000Z\t12345.6789
+                    2024-05-14T16:00:01.000000Z\t
+                    2024-05-14T16:00:02.000000Z\t-99.9999
+                    """, "x");
 
             execute("DROP TABLE x");
         });
@@ -265,12 +269,14 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
-                    "2024-05-14T16:00:01.000000Z\t\n" +
-                    "2024-05-14T16:00:02.000000Z\t\n" +
-                    "2024-05-14T16:00:03.000000Z\t\n" +
-                    "2024-05-14T16:00:04.000000Z\t\n", "x");
+            assertSql("""
+                    ts\tcol
+                    2024-05-14T16:00:00.000000Z\t12345.6789
+                    2024-05-14T16:00:01.000000Z\t
+                    2024-05-14T16:00:02.000000Z\t
+                    2024-05-14T16:00:03.000000Z\t
+                    2024-05-14T16:00:04.000000Z\t
+                    """, "x");
 
             execute("DROP TABLE x");
         });
@@ -290,12 +296,14 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
-                    "2024-05-14T16:00:01.000000Z\t\n" +
-                    "2024-05-14T16:00:02.000000Z\t\n" +
-                    "2024-05-14T16:00:03.000000Z\t\n" +
-                    "2024-05-14T16:00:04.000000Z\t\n", "x");
+            assertSql("""
+                    ts\tcol
+                    2024-05-14T16:00:00.000000Z\t12345.6789
+                    2024-05-14T16:00:01.000000Z\t
+                    2024-05-14T16:00:02.000000Z\t
+                    2024-05-14T16:00:03.000000Z\t
+                    2024-05-14T16:00:04.000000Z\t
+                    """, "x");
 
             execute("DROP TABLE x");
         });
@@ -313,10 +321,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
-                    "2024-05-14T16:00:01.000000Z\t\n" +
-                    "2024-05-14T16:00:02.000000Z\t-99.9999\n", "x");
+            assertSql("""
+                    ts\tcol
+                    2024-05-14T16:00:00.000000Z\t12345.6789
+                    2024-05-14T16:00:01.000000Z\t
+                    2024-05-14T16:00:02.000000Z\t-99.9999
+                    """, "x");
 
             execute("DROP TABLE x");
         });
@@ -335,19 +345,23 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE VARCHAR", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
-                    "2024-05-14T16:00:01.000000Z\t\n" +
-                    "2024-05-14T16:00:02.000000Z\t-99.9999\n", "x");
+            assertSql("""
+                    ts\tcol
+                    2024-05-14T16:00:00.000000Z\t12345.6789
+                    2024-05-14T16:00:01.000000Z\t
+                    2024-05-14T16:00:02.000000Z\t-99.9999
+                    """, "x");
 
             // VARCHAR -> DECIMAL (round trip)
             execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
-                    "2024-05-14T16:00:01.000000Z\t\n" +
-                    "2024-05-14T16:00:02.000000Z\t-99.9999\n", "x");
+            assertSql("""
+                    ts\tcol
+                    2024-05-14T16:00:00.000000Z\t12345.6789
+                    2024-05-14T16:00:01.000000Z\t
+                    2024-05-14T16:00:02.000000Z\t-99.9999
+                    """, "x");
 
             execute("DROP TABLE x");
         });
@@ -645,8 +659,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            ik\tSYMBOL\ttrue\t256\tBITMAP\t\tfalse\t512\t5\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse\tBITMAP\t
                             """,
                     "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
             );
@@ -662,8 +676,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            ik\tSYMBOL\ttrue\t256\tBITMAP\t\tfalse\t1024\t5\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse\tBITMAP\t
                             """,
                     "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
             );

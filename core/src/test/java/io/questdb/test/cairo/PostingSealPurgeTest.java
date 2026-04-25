@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableToken;
@@ -647,6 +648,133 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testSnapshotRestoreRemoveIndexFilesClearsSidecars() throws Exception {
+        // Regression test for #18: TableSnapshotRestore.removeIndexFiles
+        // must clear every sealed .pv.{N}, every .pc<N>.*.* covering file,
+        // and the .pci before re-creating fresh empty index files. Without
+        // this, stale sidecars from before the snapshot survive into the
+        // restored state and shadow the new (empty) index data.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "snap_col";
+                final long postingTxn = io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+                final int plen = path.size();
+                FilesFacade fsFf = configuration.getFilesFacade();
+
+                // Build a real POSTING index so .pk plus one or more sealed
+                // .pv.{txn} files exist on disk.
+                long liveSealTxn;
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path, name, postingTxn)) {
+                    for (int i = 0; i < 8; i++) {
+                        writer.add(i % BATCH_KEYS, i);
+                    }
+                    writer.setMaxValue(7);
+                    writer.commit();
+                    writer.seal();
+                    liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(fsFf,
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, postingTxn));
+                }
+                assertTrue("setup: live sealTxn must be positive", liveSealTxn > 0);
+
+                // Fabricate a stale sealed .pv.{liveSealTxn+1} plus its
+                // covering .pci and .pc0 sidecar files. These represent
+                // residue that the snapshot restore must wipe out before
+                // the index is re-created from snapshot data. Materialize
+                // each filename to a fresh String — LPSZ aliases the same
+                // Path buffer, so we cannot keep multiple LPSZ "snapshots".
+                final long staleSealTxn = liveSealTxn + 1;
+                String stalePvStr = Utf8s.stringFromUtf8Bytes(
+                        PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingTxn, staleSealTxn));
+                String pciStr = Utf8s.stringFromUtf8Bytes(
+                        PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, postingTxn));
+                String stalePcStr = Utf8s.stringFromUtf8Bytes(
+                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
+                                postingTxn, COLUMN_NAME_TXN_NONE, staleSealTxn));
+                String livePvStr = Utf8s.stringFromUtf8Bytes(
+                        PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingTxn, liveSealTxn));
+                String pkStr = Utf8s.stringFromUtf8Bytes(
+                        PostingIndexUtils.keyFileName(path.trimTo(plen), name, postingTxn));
+
+                try (Path scratch = new Path()) {
+                    touchFile(fsFf, scratch.of(stalePvStr).$());
+                    touchFile(fsFf, scratch.of(pciStr).$());
+                    touchFile(fsFf, scratch.of(stalePcStr).$());
+                    assertTrue(fsFf.exists(scratch.of(stalePvStr).$()));
+                    assertTrue(fsFf.exists(scratch.of(pciStr).$()));
+                    assertTrue(fsFf.exists(scratch.of(stalePcStr).$()));
+
+                    // Run the restore-time cleanup.
+                    io.questdb.cairo.TableSnapshotRestore.removeIndexFiles(
+                            fsFf, path, plen, name, postingTxn, IndexType.POSTING);
+
+                    // Live .pv and .pk must go (existing behavior).
+                    assertFalse("live .pv must be removed", fsFf.exists(scratch.of(livePvStr).$()));
+                    assertFalse("live .pk must be removed", fsFf.exists(scratch.of(pkStr).$()));
+                    // The new behavior — every other sealed .pv.{N}, the .pci,
+                    // and every .pc<N>.*.* must also go.
+                    assertFalse("stale .pv.{txn+1} must be removed", fsFf.exists(scratch.of(stalePvStr).$()));
+                    assertFalse(".pci must be removed", fsFf.exists(scratch.of(pciStr).$()));
+                    assertFalse("stale .pc0 must be removed", fsFf.exists(scratch.of(stalePcStr).$()));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveAllSealedFilesReportsFailure() throws Exception {
+        // Regression test for #9: removeAllSealedFiles must report failure
+        // (return true) when at least one sidecar (.pci, .pc<N>) cannot be
+        // removed and is still on disk. Without this, the column purge
+        // operator silently leaves stale sidecars on disk forever.
+        final boolean[] failPc = {true};
+        FilesFacade failingFf = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (failPc[0] && name != null && Utf8s.containsAscii(name, ".pc")) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(failingFf, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "test_col";
+                final long postingTxn = 1L;
+                final long sealTxn = 2L;
+                final int plen = path.size();
+                FilesFacade fsFf = configuration.getFilesFacade();
+
+                // Fabricate a .pci and a .pc0.<C>.<S> on disk.
+                LPSZ pci = PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, postingTxn);
+                touchFile(fsFf, pci);
+                LPSZ pc0 = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
+                        postingTxn, COLUMN_NAME_TXN_NONE, sealTxn);
+                touchFile(fsFf, pc0);
+                assertTrue("setup: .pci must exist", fsFf.exists(pci));
+                assertTrue("setup: .pc0 must exist", fsFf.exists(pc0));
+
+                // Sanity: with the fault active, removal must report failure
+                // and the files must remain on disk.
+                boolean failed = PostingIndexUtils.removeAllSealedFiles(
+                        fsFf, path, plen, name, postingTxn);
+                assertTrue("removeAllSealedFiles must return true when removal fails", failed);
+                assertTrue(".pci must still exist after failed removal", fsFf.exists(pci));
+                assertTrue(".pc0 must still exist after failed removal", fsFf.exists(pc0));
+
+                // With the fault disabled, the same call must clean up and
+                // report success.
+                failPc[0] = false;
+                failed = PostingIndexUtils.removeAllSealedFiles(
+                        fsFf, path, plen, name, postingTxn);
+                assertFalse("removeAllSealedFiles must return false on success", failed);
+                assertFalse(".pci must be gone after successful removal", fsFf.exists(pci));
+                assertFalse(".pc0 must be gone after successful removal", fsFf.exists(pc0));
+            }
+        });
+    }
+
     private void touchFile(FilesFacade ff, LPSZ file) {
         long fd = ff.openRW(file, configuration.getWriterFileOpenOpts());
         assertTrue("must be able to create fabricated file " + file, fd >= 0);
@@ -678,7 +806,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         int pLen = partitionPath.size();
         long colAddr = Unsafe.malloc((long) 8 * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().setMemory(colAddr, (long) 8 * Integer.BYTES, (byte) 0);
+            Unsafe.setMemory(colAddr, (long) 8 * Integer.BYTES, (byte) 0);
             try (PostingIndexWriter writer = new PostingIndexWriter(
                     configuration, partitionPath, colName, COLUMN_NAME_TXN_NONE)) {
                 writer.configureCovering(

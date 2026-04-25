@@ -2116,7 +2116,7 @@ public class SqlParser {
             expectTok(lexer, '(');
             do {
                 tok = tok(lexer, "column name");
-                model.addCoveringColumnName(Chars.toString(tok));
+                model.addCoveringColumnName(Chars.toString(tok), lexer.lastTokenPosition());
                 tok = tok(lexer, "',' or ')'");
             } while (Chars.equals(tok, ','));
             if (!Chars.equals(tok, ')')) {

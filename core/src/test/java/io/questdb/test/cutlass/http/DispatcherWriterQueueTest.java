@@ -80,7 +80,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
     @Test
     public void testAlterTableAddColumn() throws Exception {
         runAlterOnBusyTable(
-                (writer, reader) -> {
+                (writer, _) -> {
                     TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("y");
                     Assert.assertEquals(2, columnIndex);
@@ -118,7 +118,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 });
 
         runAlterOnBusyTable(
-                (writer, reader) -> {
+                (writer, _) -> {
                     // Wait command execution
                     TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("s");
@@ -138,7 +138,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
     @Test
     public void testAlterTableAddIndex() throws Exception {
         runAlterOnBusyTable(
-                (writer, reader) -> {
+                (writer, _) -> {
                     TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("y");
                     Assert.assertEquals(2, columnIndex);
@@ -173,7 +173,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 });
 
         runAlterOnBusyTable(
-                (writer, reader) -> {
+                (writer, _) -> {
                     TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("s");
                     Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
@@ -210,7 +210,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 });
 
         runAlterOnBusyTable(
-                (writer, reader) -> {
+                (writer, _) -> {
                     TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("s");
                     Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
@@ -262,9 +262,9 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             execute("CREATE TABLE foo ( a SYMBOL )");
             drainWalQueue();
 
-            String header = "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n";
-            String left = "a\tSYMBOL\tfalse\t256\t\t\t";
-            String right = "\t128\t0\tfalse\tfalse\n";
+            String header = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n";
+            String left = "a\tSYMBOL\tfalse\t256\t";
+            String right = "\t128\t0\tfalse\tfalse\t\t\n";
 
             // check its true by default
             assertSql(header + left + "true" + right, "table_columns('foo')");
@@ -285,7 +285,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
     @Test
     public void testAlterTableFailsToUpgradeConcurrently() throws Exception {
         runAlterOnBusyTable(
-                (writer, reader) -> {
+                (writer, _) -> {
                     TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndexQuiet("y");
                     int columnIndex2 = metadata.getColumnIndexQuiet("x");
@@ -303,7 +303,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
     @Test
     public void testCanReuseSameJsonContextForMultipleAlterRuns() throws Exception {
         runAlterOnBusyTable(
-                (writer, reader) -> {
+                (writer, _) -> {
                     TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndexQuiet("y");
                     int columnIndex2 = metadata.getColumnIndexQuiet("x");
@@ -331,21 +331,23 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
         // this is JDK8 thing:
         //noinspection CharsetObjectCanBeUsed
         runUpdateOnBusyTable(
-                (writer, reader) -> TestUtils.assertReader(
-                        "s\tx\tts\n" +
-                                "b\t10\t1970-01-01T00:00:00.000001Z\n" +
-                                "c\t2\t1970-01-01T00:00:00.000002Z\n" +
-                                "a\t1\t1970-01-01T00:00:00.000003Z\n" +
-                                "b\t10\t1970-01-01T00:00:00.000004Z\n" +
-                                "c\t5\t1970-01-01T00:00:00.000005Z\n" +
-                                "a\t1\t1970-01-01T00:00:00.000006Z\n" +
-                                "b\t10\t1970-01-01T00:00:00.000007Z\n" +
-                                "c\t8\t1970-01-01T00:00:00.000008Z\n" +
-                                "a\t1\t1970-01-01T00:00:00.000009Z\n",
+                (_, reader) -> TestUtils.assertReader(
+                        """
+                                s\tx\tts
+                                b\t10\t1970-01-01T00:00:00.000001Z
+                                c\t2\t1970-01-01T00:00:00.000002Z
+                                a\t1\t1970-01-01T00:00:00.000003Z
+                                b\t10\t1970-01-01T00:00:00.000004Z
+                                c\t5\t1970-01-01T00:00:00.000005Z
+                                a\t1\t1970-01-01T00:00:00.000006Z
+                                b\t10\t1970-01-01T00:00:00.000007Z
+                                c\t8\t1970-01-01T00:00:00.000008Z
+                                a\t1\t1970-01-01T00:00:00.000009Z
+                                """,
                         reader,
                         new StringSink()
                 ),
-                writer -> {
+                _ -> {
                 },
                 queryTestBuilder,
                 null,
@@ -380,10 +382,10 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 });
 
         runUpdateOnBusyTable(
-                (wrt, rdr) -> {
+                (_, _) -> {
                     // Test no resources leak, update can go through or not, it is not deterministic
                 },
-                writer -> {
+                _ -> {
                 },
                 queryTestBuilder,
                 disconnectLatch,
@@ -459,10 +461,12 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                             } else {
                                 new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                         "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
-                                        "0c\r\n" +
-                                                "{\"ddl\":\"OK\"}\r\n" +
-                                                "00\r\n" +
-                                                "\r\n"
+                                        """
+                                                0c\r
+                                                {"ddl":"OK"}\r
+                                                00\r
+                                                \r
+                                                """
                                 );
                             }
                         } catch (Error e) {
@@ -670,7 +674,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
         final SOCountDownLatch updateScheduled = new SOCountDownLatch(updateScheduledCount);
 
         testUpdateAfterReaderOutOfDateException(
-                (writer, reader) -> {
+                (_, reader) -> {
                     try {
                         reader.getMetadata().getColumnIndex("ts");
                         Assert.fail("InvalidColumnException is expected");
@@ -696,17 +700,19 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 },
                 updateScheduled,
                 startWaitTimeout,
-                "HTTP/1.1 400 Bad request\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "4a\r\n" +
-                        "{\"query\":\"update x set ts=123\",\"error\":\"Invalid column: ts\",\"position\":13}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                """
+                        HTTP/1.1 400 Bad request\r
+                        Server: questDB/1.0\r
+                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                        Transfer-Encoding: chunked\r
+                        Content-Type: application/json; charset=utf-8\r
+                        Keep-Alive: timeout=5, max=10000\r
+                        \r
+                        4a\r
+                        {"query":"update x set ts=123","error":"Invalid column: ts","position":13}\r
+                        00\r
+                        \r
+                        """,
                 -1L,
                 0
         );
@@ -719,7 +725,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
         SOCountDownLatch updateScheduled = new SOCountDownLatch(updateScheduledCount);
 
         testUpdateAfterReaderOutOfDateException(
-                (writer, reader) -> {
+                (_, reader) -> {
                     try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
                         cursor.of(reader);
                         int colIndex = reader.getMetadata().getColumnIndex("ts");
