@@ -4037,24 +4037,36 @@ public class SqlOptimiser implements Mutable {
      * provided the column root is NOT itself that aggregate. Returns -1
      * otherwise.
      * <p>
-     * The rewriter only handles {@code agg(window(x))} when the aggregate is
-     * the column root (e.g. {@code SELECT max(avg(x) OVER ()) FROM t GROUP BY cat}).
-     * Any wrapping around the aggregate falls back to a code path that fails
+     * The rewriter (extractAndRegisterNestedWindowFunctions) handles a window
+     * function nested inside an aggregate as long as that aggregate sits at
+     * the column root, e.g. {@code SELECT max(avg(x) OVER ()) FROM t GROUP BY cat}
+     * or {@code SELECT max(abs(avg(x) OVER ())) FROM t GROUP BY cat}. Arbitrary
+     * non-window subtrees under the root aggregate are fine because the
+     * extractor recurses through them. What is NOT handled is any wrapping
+     * AROUND the aggregate: an operator, function call, or CASE branch that
+     * holds an aggregate-over-window falls back to a code path that fails
      * later with a cryptic "Aggregate function cannot be passed as an
-     * argument" error pointing at the inner window. Reject upfront with a
-     * clear message instead.
+     * argument" error pointing at the inner window. Reject those upfront with
+     * a clear message instead.
      * <p>
      * Caller must invoke findWindowFunctionOutsideAggregatePos first (enforced
      * by an {@code assert}), which rejects any window function sitting outside
      * an aggregate. By the time this walker runs, the only window functions
      * reachable from {@code root} live inside aggregate subtrees and are
      * detected via checkForChildWindowFunctions on each candidate aggregate.
+     * <p>
+     * Time complexity is linear in the AST size: the outer walker skips the
+     * subtree of every aggregate it visits (popping from sqlNodeStack instead
+     * of descending), and aggregate subtrees are mutually disjoint, so each
+     * node is visited at most twice across the outer walk and the
+     * checkForChildWindowFunctions calls.
      */
     private int findInvalidAggregateOverWindowPos(ExpressionNode root) {
         final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
         assert findWindowFunctionOutsideAggregatePos(root) == -1
                 : "caller must invoke findWindowFunctionOutsideAggregatePos first";
-        // Bare aggregate-over-window as the column root is the supported case.
+        // Aggregate at the column root is the supported case; the extractor
+        // recurses through any non-window subtree underneath it.
         if (root.type == FUNCTION && root.windowExpression == null && cache.isGroupBy(root.token)) {
             return -1;
         }
