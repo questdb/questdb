@@ -650,6 +650,22 @@ public class PostingIndexWriter implements IndexWriter {
                             .put(", actual=").put(version).put(']');
                 }
                 this.sealTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
+
+                // Wipe any abandoned tentative state on the inactive page.
+                // Why: an O3 commit that failed mid-flight leaves fd-based
+                // tentative metadata on the inactive page (TableWriter.rollback
+                // doesn't iterate O3Basket writers). The next attempt's
+                // fd-based open would compute newSeq = activeSeq + 1, which
+                // matches the abandoned tentative's seq because the active
+                // (committed) page is unchanged across attempts. A partial
+                // metadata-page write in the new attempt could then leave
+                // start==end with mixed fields, looking consistent but
+                // referencing .pv offsets the new attempt has overwritten.
+                // Zero the inactive slot so any subsequent partial write
+                // remains torn, and a new attempt that doesn't reach
+                // writeMetadataPage at all leaves the inactive page
+                // non-tentative (mergeTentativeIntoActiveIfAny skips it).
+                invalidateStaleTentative();
             }
 
             this.valueMemSize = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
@@ -1038,7 +1054,12 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
-            if (isIncrementalCandidate && gen0KeyCount == keyCount) {
+            // sealIncremental writes via sealValueMem (a fresh .pv file at
+            // newSealTxn) and is path-based-only. fd-based seal (e.g. inline
+            // at MAX_GEN_COUNT during O3) must take sealFull, whose chunked
+            // path now handles fd-based via end-of-valueMem write + memmove
+            // (see openSealValueFile / reencodeWithStrideDecoding).
+            if (isIncrementalCandidate && gen0KeyCount == keyCount && partitionPath.size() > 0) {
                 sealIncremental(newSealTxn, savedSidecarBufs, savedSidecarSizes);
                 // ownership of inner buffers transferred to sealIncremental;
                 // zero entries so the finally cleanup skips them.
@@ -2124,6 +2145,39 @@ public class PostingIndexWriter implements IndexWriter {
         activeKeyIds = Arrays.copyOf(activeKeyIds, newCapacity);
     }
 
+    /**
+     * Zero out any abandoned tentative metadata on the inactive page. Called
+     * at fd-based open so a previous failed O3 attempt's tentative state
+     * cannot be folded in by a later mergeTentativeIntoActiveIfAny. No-op if
+     * the inactive page is committed (sealTxn &gt;= 0) or already zeroed; the
+     * existing seqlock protocol then naturally distinguishes new writes from
+     * the cleared baseline.
+     */
+    private void invalidateStaleTentative() {
+        if (keyMem.size() < PostingIndexUtils.KEY_FILE_RESERVED) {
+            return;
+        }
+        long inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
+                ? PostingIndexUtils.PAGE_B_OFFSET
+                : PostingIndexUtils.PAGE_A_OFFSET;
+        long inactiveSealTxn = keyMem.getLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
+        if (inactiveSealTxn != PostingIndexUtils.SEAL_TXN_TENTATIVE) {
+            return;
+        }
+        // Zero seqStart first (so a partial invalidation leaves the page
+        // torn rather than half-cleared looking valid), then sealTxn, then
+        // seqEnd. After this, the page reads as: sealTxn=0 (non-tentative),
+        // start==end==0 — which mergeTentativeIntoActiveIfAny rejects on
+        // the sealTxn check, and determineActivePageOffset gives validB=0
+        // so the active page picker never selects it over a real committed
+        // page.
+        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 0L);
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN, 0L);
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 0L);
+    }
+
     private boolean isClosed() {
         return coveredColumnNames.size() == 0 && coveredColumnAddrs.size() == 0;
     }
@@ -2301,6 +2355,23 @@ public class PostingIndexWriter implements IndexWriter {
 
     private void openSealValueFile(long newTxn) {
         if (partitionPath.size() == 0) {
+            // fd-based: write encoded output past the current valueMem content
+            // so source [0, valueMemSize) and destination [valueMemSize, ...)
+            // are disjoint regions of the same .pv file. The chunked encoder
+            // can safely read source while writing destination. Pre-extend the
+            // mapping up front so addressOf results stay stable through the
+            // whole encode loop; a runtime extend would invalidate them.
+            // Seal compacts, so outputSize <= inputSize; 2 * inputSize is safe
+            // headroom. The caller memmoves the output down to offset 0 and
+            // shrinks the file after the encode loop. sealTxn is unchanged:
+            // fd-based reuses the existing .pv rather than allocating one at
+            // newTxn.
+            long inputSize = valueMemSize;
+            if (inputSize > 0) {
+                valueMem.jumpTo(inputSize * 2);
+            }
+            valueMem.jumpTo(inputSize);
+            sealTarget = valueMem;
             return;
         }
         Path p = Path.getThreadLocal(partitionPath);
@@ -2920,7 +2991,12 @@ public class PostingIndexWriter implements IndexWriter {
         int siSize = PostingIndexUtils.strideIndexSize(keyCount);
 
         openSealValueFile(newSealTxn);
-        long sealOffset = 0;
+        // Encoded output starts at sealTarget's current append position. For
+        // path-based seal that's offset 0 of a fresh .pv file at newSealTxn.
+        // For fd-based seal that's the current valueMemSize: output is
+        // appended past the source data and memmoved down to offset 0 in the
+        // mode-specific tail below.
+        long sealOffset = sealTarget.getAppendOffset();
         for (int i = 0; i < siSize; i += Long.BYTES) {
             sealTarget.putLong(0L);
         }
@@ -3090,7 +3166,8 @@ public class PostingIndexWriter implements IndexWriter {
             long strideIndexAddr = sealTarget.addressOf(sealOffset);
             Unsafe.getUnsafe().copyMemory(strideIndexBuf, strideIndexAddr, siSize);
 
-            valueMemSize = sealTarget.getAppendOffset();
+            // Defer valueMemSize update until after the mode-specific tail
+            // below: fd-based memmoves output down to offset 0 first.
         } finally {
             if (bpTrialBuf != 0) {
                 Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
@@ -3101,18 +3178,37 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
         }
 
-        sealValueMem.sync(false);
-        switchToSealedValueFile(newSealTxn);
+        final long outputSize = sealTarget.getAppendOffset() - sealOffset;
+        if (partitionPath.size() == 0) {
+            // fd-based: relocate output from [sealOffset, sealOffset+outputSize)
+            // down to [0, outputSize) and shrink the file. sealTxn stays at
+            // its current value because fd-based reuses the existing .pv;
+            // it does not allocate a fresh file at newSealTxn.
+            if (sealOffset > 0 && outputSize > 0) {
+                long srcAddr = valueMem.addressOf(sealOffset);
+                long dstAddr = valueMem.addressOf(0);
+                Unsafe.getUnsafe().copyMemory(srcAddr, dstAddr, outputSize);
+            }
+            valueMem.jumpTo(outputSize);
+            valueMem.setSize(outputSize);
+            valueMemSize = outputSize;
+        } else {
+            valueMemSize = sealTarget.getAppendOffset();
+            sealValueMem.sync(false);
+            switchToSealedValueFile(newSealTxn);
+        }
+        sealTarget = null;
 
         if (coverCount > 0 && sidecarMems.size() > 0) {
             writeSidecarsPerColumn(totalCountsAddr, strideValsAddr);
         }
 
         Unsafe.getUnsafe().storeFence();
+        // genFileOffset is 0 in both modes: path-based wrote at offset 0 of a
+        // fresh .pv, fd-based just memmoved its output to offset 0.
         // genCount must publish after writeMetadataPage so a mid-seal failure
         // leaves the in-memory view consistent with on-disk .pk.
-        writeMetadataPage(1, maxValue,
-                sealOffset, valueMemSize - sealOffset, keyCount, keyCount - 1);
+        writeMetadataPage(1, maxValue, 0, valueMemSize, keyCount, keyCount - 1);
         genCount = 1;
     }
 
@@ -3533,28 +3629,30 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void switchToSealedValueFile(long newTxn) {
+        // fd-based seal does not reach this method: reencodeWithStrideDecoding
+        // memmoves output in place rather than swapping in a new .pv file, and
+        // reencodeMonolithic for fd-based rollback does its own valueMem reuse
+        // inline. Any fd-based caller would silently advance sealTxn here while
+        // the on-disk .pv stayed at the old txn — fail loud in dev builds.
+        assert partitionPath.size() > 0 : "switchToSealedValueFile called in fd-based mode";
         long appendOffset = sealValueMem.getAppendOffset();
-        if (partitionPath.size() > 0) {
-            Path p = Path.getThreadLocal(partitionPath);
-            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
-            long sealedFd = sealValueMem.detachFdClose();
-            try {
-                stagingValueMem.of(ff, sealedFd, false, fileName,
-                        configuration.getDataIndexValueAppendPageSize(),
-                        appendOffset, MemoryTag.MMAP_INDEX_WRITER);
-                stagingValueMem.jumpTo(appendOffset);
-            } catch (Throwable th) {
-                // sealedFd ownership has already transferred to stagingValueMem (or
-                // map0's internal close already released it). Misc.free handles both;
-                // do NOT close sealedFd here or FdCache trips a double-close assertion.
-                Misc.free(stagingValueMem);
-                throw th;
-            }
-            ((MemoryCMARWImpl) valueMem).swapState((MemoryCMARWImpl) stagingValueMem);
+        Path p = Path.getThreadLocal(partitionPath);
+        LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
+        long sealedFd = sealValueMem.detachFdClose();
+        try {
+            stagingValueMem.of(ff, sealedFd, false, fileName,
+                    configuration.getDataIndexValueAppendPageSize(),
+                    appendOffset, MemoryTag.MMAP_INDEX_WRITER);
+            stagingValueMem.jumpTo(appendOffset);
+        } catch (Throwable th) {
+            // sealedFd ownership has already transferred to stagingValueMem (or
+            // map0's internal close already released it). Misc.free handles both;
+            // do NOT close sealedFd here or FdCache trips a double-close assertion.
             Misc.free(stagingValueMem);
-        } else {
-            Misc.free(sealValueMem);
+            throw th;
         }
+        ((MemoryCMARWImpl) valueMem).swapState((MemoryCMARWImpl) stagingValueMem);
+        Misc.free(stagingValueMem);
         sealTxn = newTxn;
     }
 
