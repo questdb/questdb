@@ -106,7 +106,7 @@ public class QwpStringDecoderTest {
 
     @Test
     public void testDecodeVarcharSameAsString() throws Exception {
-        assertRoundTrip(new String[]{"varchar", "test", "values"}, null, TYPE_VARCHAR);
+        assertRoundTrip(new String[]{"varchar", "test", "values"}, null);
     }
 
     @Test
@@ -324,7 +324,7 @@ public class QwpStringDecoderTest {
             boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_string");
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", typeCode, useNullBitmap);
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_VARCHAR, useNullBitmap);
                 QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < values.length; i++) {

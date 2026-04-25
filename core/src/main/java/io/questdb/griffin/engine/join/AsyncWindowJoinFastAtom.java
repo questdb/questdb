@@ -53,7 +53,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
     static final int KEY_SHIFT = 2;
     static final int NULL_KEY = 1;
     static final int SLAVE_MAP_INITIAL_CAPACITY = 16;
-    static final double SLAVE_MAP_LOAD_FACTOR = 0.5;
+    static final double SLAVE_MAP_LOAD_FACTOR = 0.7;
     private final int masterSymbolIndex;
     private final WindowJoinPrevailingCache ownerPrevailingCache;
     private final DirectIntMultiLongHashMap ownerSlaveData;

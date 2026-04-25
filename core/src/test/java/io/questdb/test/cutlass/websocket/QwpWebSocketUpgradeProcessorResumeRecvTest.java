@@ -76,6 +76,10 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
 
     @Test
     public void testAckBlocked() throws Exception {
+        // When a PING arrives and the ACK flush gets PeerIsSlowToReadException,
+        // handlePing swallows it (same pattern as handleClose). State ends up
+        // in RESUME_ACK, pong is skipped, and resumeRecv completes normally.
+        // recv returns -1 on the next call and throws ServerDisconnectException.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
@@ -87,8 +91,8 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
-            // First send = pong, second send = ACK. Throw on ACK.
-            mockRawSocket.throwSlowToReadOnCall = 2;
+            // First send = ACK (via flushPendingAck in handlePing). Throw on ACK.
+            mockRawSocket.throwSlowToReadOnCall = 1;
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
@@ -96,11 +100,12 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 // Set up pending ACK: highestProcessed > lastAcked
                 state.setHighestProcessedSequence(5);
 
+                processor.resumeRecv(context);
                 try {
                     processor.resumeRecv(context);
-                    Assert.fail("Expected PeerIsSlowToReadException");
-                } catch (PeerIsSlowToReadException e) {
-                    // expected: ACK send blocked
+                    Assert.fail("Expected ServerDisconnectException");
+                } catch (ServerDisconnectException e) {
+                    // expected: ack backpressure swallowed, recv returns -1
                 }
                 Assert.assertTrue(state.isSending());
                 // Deferred error should NOT be set (ACK only, no error)
@@ -801,6 +806,85 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     // expected: pong skipped, then socket returns -1
                 }
                 Assert.assertEquals(0, mockRawSocket.sendCallCount);
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPingWhileDurableAckBlockedDoesNotReEnterTrySendDurableAck() throws Exception {
+        // Regression for missing isSendReady() guard in
+        // QwpWebSocketUpgradeProcessor.flushPendingAck. Before the fix:
+        //
+        //   if (state.hasPendingAck()) {
+        //       trySendAck(...);                       // guarded via hasPendingAck()
+        //   }
+        //   if (state.isDurableAckEnabled()) {
+        //       trySendDurableAck(...);                // BUG: no isSendReady() check
+        //   }
+        //
+        // trySendDurableAck has `assert state.isSendReady()` which fires in
+        // -ea (default for mvn test), so entering it while in
+        // SEND_STATE_RESUME_DURABLE_ACK throws AssertionError. In production
+        // (no -ea), it would run collectDurableProgress and clobber the
+        // retained durableProgressSnapshot that onResumeDurableAckComplete
+        // depends on to update lastDurableSeqTxns for the in-flight frame.
+        //
+        // Scenario: a durable-ack send was blocked (state = 4), and the
+        // client sends a PING. handlePing -> flushPendingAck -> without the
+        // isSendReady guard, the durable branch fires again in a wrong state.
+        //
+        // Fix:
+        //   if (state.isDurableAckEnabled() && state.isSendReady()) { ... }
+        //
+        // With the fix: flushPendingAck skips both branches (ACK via
+        // hasPendingAck, durable via isSendReady). handlePing's own
+        // !isSendReady guard then skips the pong. No send happens, state
+        // stays at RESUME_DURABLE_ACK until the real drain path resumes it.
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+
+            byte[] pingFrame = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+            MockNetworkFacade mockNf = new MockNetworkFacade(pingFrame);
+
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(
+                    httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
+            )) {
+                QwpProcessorState state = setupState(httpConfig, context);
+                state.setDurableAckEnabled(true);
+                // Enter SEND_STATE_RESUME_DURABLE_ACK = 4 to simulate a
+                // durable-ack send blocked on OS backpressure.
+                state.onDurableAckBlocked();
+                Assert.assertEquals(4, state.getSendState());
+
+                // Feed the PING. Without the fix, flushPendingAck calls
+                // trySendDurableAck which asserts isSendReady -> AssertionError
+                // propagates out of resumeRecv. With the fix, the guard
+                // skips the durable branch and the test reaches the
+                // ServerDisconnectException below.
+                processor.resumeRecv(context);
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("Expected ServerDisconnectException");
+                } catch (ServerDisconnectException e) {
+                    // expected: ping handled without re-entering the send
+                    // path, recv then returns -1
+                }
+
+                Assert.assertEquals(
+                        "sendState must stay RESUME_DURABLE_ACK; only the real drain path may change it",
+                        4, state.getSendState()
+                );
+                Assert.assertEquals(
+                        "flushPendingAck must not send anything while sendState is RESUME_DURABLE_ACK",
+                        0, mockRawSocket.sendCallCount
+                );
             } finally {
                 Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);

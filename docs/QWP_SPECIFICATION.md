@@ -685,15 +685,46 @@ values in the column.
 
 ## 13. Response Format
 
-Every response includes a 1-byte status code and an 8-byte sequence number that
-correlates the response with the original request.
+Every response starts with a 1-byte status code. OK and error responses include
+an 8-byte sequence number that correlates the response with the original
+request. Durable-ack responses carry only per-table upload watermarks.
 
-### OK Response (9 bytes)
+### OK Response (11+ bytes)
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ status:    uint8   (0x00)                            │
-│ sequence:  int64          Request sequence number    │
+│ status:      uint8   (0x00)                          │
+│ sequence:    int64          Request sequence number   │
+│ tableCount:  uint16         Number of table entries   │
+│ ┌── repeated tableCount times ─────────────────────┐ │
+│ │ nameLen:   uint16         Table name length       │ │
+│ │ name:      bytes          UTF-8 table name        │ │
+│ │ seqTxn:    int64          Sequencer txn for table  │ │
+│ └──────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────┘
+```
+
+The per-table entries report the sequencer txn assigned to each table that
+committed data in the acknowledged batch. `tableCount` is 0 when no WAL
+tables committed (e.g., non-WAL tables or empty batches).
+
+### Durable-Ack Response (3+ bytes)
+
+Emitted only when the client opted in at handshake time (see below) and only
+by servers where primary replication is configured. Each per-table entry
+reports the highest sequencer txn whose WAL segments have been durably
+uploaded to the configured object store. Only tables whose durable watermark
+advanced since the last durable-ack are included.
+
+```
+┌──────────────────────────────────────────────────────┐
+│ status:      uint8   (0x02)                          │
+│ tableCount:  uint16         Number of table entries   │
+│ ┌── repeated tableCount times ─────────────────────┐ │
+│ │ nameLen:   uint16         Table name length       │ │
+│ │ name:      bytes          UTF-8 table name        │ │
+│ │ seqTxn:    int64          Durably-uploaded seqTxn  │ │
+│ └──────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -712,12 +743,39 @@ correlates the response with the original request.
 
 | Code | Hex    | Name            | Description                                          |
 |------|--------|-----------------|------------------------------------------------------|
-| 0    | `0x00` | OK              | Batch accepted                                       |
+| 0    | `0x00` | OK              | Batch accepted (written to WAL)                      |
+| 2    | `0x02` | DURABLE_ACK     | Batch WAL uploaded to object store (opt-in)          |
 | 3    | `0x03` | SCHEMA_MISMATCH | Column type incompatible with existing table         |
 | 5    | `0x05` | PARSE_ERROR     | Malformed message                                    |
 | 6    | `0x06` | INTERNAL_ERROR  | Server-side error                                    |
 | 8    | `0x08` | SECURITY_ERROR  | Authorization failure                                |
 | 9    | `0x09` | WRITE_ERROR     | Write failure (e.g., table not accepting writes)     |
+
+### Durable-Upload Acknowledgment
+
+The base OK frame confirms that a client message has been committed to the
+server's local WAL. It does not confirm durability beyond the primary node.
+
+To receive a second, stronger acknowledgment after the WAL containing the
+commit has reached the configured object store, a client includes
+`X-QWP-Request-Durable-Ack: true` (case-insensitive) in the WebSocket
+upgrade request.
+
+Behavior:
+
+- Servers without primary replication enabled silently ignore the header and
+  never emit `STATUS_DURABLE_ACK` frames.
+- Servers with primary replication emit cumulative `STATUS_DURABLE_ACK` frames
+  as the upload watermark advances. Delivery is piggy-backed on connection
+  activity: frames are flushed whenever the connection next sends or receives
+  a message, a PING, or a CLOSE. Idle connections that need prompt
+  notification should send a WebSocket PING periodically.
+- The durable-ack watermark always trails the regular OK watermark.
+- There is no durable-failure status; persistent upload failures surface only
+  as absence of a durable-ack frame within an expected window.
+- Empty messages (those that produced no WAL commit, e.g. only referencing
+  materialized views) are trivially durable and their sequence advances the
+  durable watermark as soon as all preceding messages are durable.
 
 ## 14. Protocol Limits
 

@@ -118,8 +118,7 @@
           -->
         <uberjar.name>benchmarks</uberjar.name>
 
-        <!-- Java QWiP client version - override with -Dquestdb.client.version=1.1.0 to build against the released client -->
-        <questdb.client.version>1.1.1-SNAPSHOT</questdb.client.version>
+        <questdb.client.version>1.2.0</questdb.client.version>
     </properties>
 
     <build>

@@ -60,6 +60,11 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     public static final Utf8String HEADER_X_QWP_CLIENT_ID = new Utf8String("X-QWP-Client-Id");
     public static final Utf8String HEADER_X_QWP_MAX_BATCH_ROWS = new Utf8String("X-QWP-Max-Batch-Rows");
     public static final Utf8String HEADER_X_QWP_MAX_VERSION = new Utf8String("X-QWP-Max-Version");
+    // Client opt-in for STATUS_DURABLE_ACK frames. Value "true" (case-insensitive) enables.
+    // Any other value, or header absent, leaves the feature disabled for this connection.
+    public static final Utf8String HEADER_X_QWP_REQUEST_DURABLE_ACK = new Utf8String("X-QWP-Request-Durable-Ack");
+    // Expected value for HEADER_X_QWP_REQUEST_DURABLE_ACK to enable durable-ack; compared case-insensitively.
+    public static final Utf8String HEADER_VALUE_DURABLE_ACK_ENABLED = new Utf8String("true");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
     /**
