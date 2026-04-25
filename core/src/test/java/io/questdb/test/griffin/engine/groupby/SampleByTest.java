@@ -4318,6 +4318,39 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByIntCastToSymbolKeyHandlesNullLength() throws Exception {
+        // Regression: AbstractCastToSymbolFunction.symbolTableShortcut used IntIntHashMap
+        // with the default sentinel of -1 for the empty-slot marker. length(null_sym)
+        // returns -1, which collided with the sentinel, so each call inserted a fresh
+        // entry instead of reusing the cached id. Pass 1 (initMap) and pass 2 (buildMap)
+        // of SampleByFillValueRecordCursor consequently produced different keys for
+        // the same row, tripping `assert value != null` in buildMap.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sb_intsym (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_sb_intsym SELECT rnd_symbol(8, 3, 5, 8), " +
+                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 100_000_000L) " +
+                    "FROM long_sequence(200)");
+            // The key is length(sym)::SYMBOL; null symbols produce length=-1 which used
+            // to collide with the IntIntHashMap empty-slot sentinel.
+            try (
+                    RecordCursorFactory f = engine.select(
+                            "SELECT (length(sym))::SYMBOL AS k_a, count() AS agg_a, ts AS ts_a " +
+                                    "FROM t_sb_intsym SAMPLE BY 30s FILL(0) ALIGN TO CALENDAR ORDER BY 3 ASC",
+                            sqlExecutionContext);
+                    RecordCursor c = f.getCursor(sqlExecutionContext)
+            ) {
+                Record r = c.getRecord();
+                while (c.hasNext()) {
+                    // materialize all columns to drive every accessor
+                    r.getSymA(0);
+                    r.getLong(1);
+                    r.getTimestamp(2);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSampleBadFunction() throws Exception {
         String stringType = ColumnType.nameOf(ColumnType.STRING);
         assertException(

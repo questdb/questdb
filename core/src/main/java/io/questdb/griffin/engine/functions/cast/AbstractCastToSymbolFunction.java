@@ -33,9 +33,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-
 import io.questdb.std.Chars;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -53,9 +53,12 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
      */
     protected final StringSink sink = new StringSink();
     /**
-     * Map for symbol table shortcuts.
+     * Map for symbol table shortcuts. The sentinel is Numbers.INT_NULL rather than the
+     * default -1 so that -1 (the value length() returns for a null symbol/string) can be
+     * stored as a key without colliding with the "empty slot" marker. INT_NULL itself
+     * never reaches this map because it is filtered upstream in getInt()/getSymbol().
      */
-    protected final IntIntHashMap symbolTableShortcut = new IntIntHashMap();
+    protected final IntIntHashMap symbolTableShortcut = new IntIntHashMap(16, 0.5, Numbers.INT_NULL);
     /**
      * List of symbol values.
      */
