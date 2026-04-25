@@ -286,6 +286,27 @@ public final class ArrowBulkExport implements QuietCloseable {
     }
 
     /**
+     * @return the entire SYMBOL dictionary for column {@code col} as a
+     *         {@code String[]}, or an empty array when the column isn't
+     *         SYMBOL or the cursor hasn't been opened. Lets callers fetch
+     *         every dictionary entry with one JNI round-trip per column
+     *         instead of one round-trip per dictionary slot.
+     */
+    public String[] getSymbolValues(int col) {
+        int n = getSymbolCount(col);
+        if (n <= 0) {
+            return new String[0];
+        }
+        SymbolTable table = cursor.getSymbolTable(col);
+        String[] values = new String[n];
+        for (int i = 0; i < n; i++) {
+            CharSequence v = table.valueOf(i);
+            values[i] = v == null ? null : v.toString();
+        }
+        return values;
+    }
+
+    /**
      * @return validity bitmap native pointer, or {@code 0} if the column
      *         has no nulls in this batch (caller should pass {@code null}
      *         as the validity buffer to pyarrow).
