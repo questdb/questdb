@@ -514,6 +514,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     PG_UPDATE_CACHE_ENABLED("pg.update.cache.enabled"),
     PG_UPDATE_CACHE_BLOCK_COUNT("pg.update.cache.block.count"),
     PG_UPDATE_CACHE_ROW_COUNT("pg.update.cache.row.count"),
+    CAIRO_POSTING_SEAL_PURGE_OUTBOX_MAX("cairo.posting.seal.purge.outbox.max"),
     CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY("cairo.sql.column.purge.queue.capacity"),
     CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY("cairo.sql.column.purge.task.pool.capacity"),
     CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT("cairo.sql.column.purge.retry.delay.limit"),

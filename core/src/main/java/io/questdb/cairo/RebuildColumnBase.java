@@ -134,7 +134,9 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
                 indexValueBlockCapacity,
-                metadata.getColumnIndexType(columnIndex)
+                metadata.getColumnIndexType(columnIndex),
+                metadata,
+                columnIndex
         );
     }
 
@@ -171,7 +173,9 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 metadata.getTimestampType(),
                 partitionBy,
                 metadata.getIndexValueBlockCapacity(columnIndex),
-                metadata.getColumnIndexType(columnIndex)
+                metadata.getColumnIndexType(columnIndex),
+                metadata,
+                columnIndex
         );
     }
 
@@ -362,7 +366,13 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             int timestampType,
             int partitionBy,
             int indexValueBlockCapacity,
-            byte indexType
+            byte indexType,
+            // The metadata reference and the column's dense index are
+            // required for POSTING covering rebuilds: the seal needs to
+            // look up covering column names/types from metadata. They are
+            // ignored by indexers that don't support covering.
+            RecordMetadata metadata,
+            int columnIndex
     );
 
     protected abstract boolean isSupportedColumn(RecordMetadata metadata, int columnIndex);

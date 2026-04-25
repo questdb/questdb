@@ -77,6 +77,12 @@ Java_io_questdb_cairo_idx_FSSTNative_trainAndCompressBlock0(
     for (jint i = 0; i < count; i++) {
         int64_t lo = srcOffs[i];
         int64_t hi = srcOffs[i + 1];
+        // Reject non-monotonic offsets. Without this, hi < lo wraps to a
+        // ~2^64 length when cast to size_t and fsst_compress reads
+        // arbitrary memory. lo < 0 is similarly invalid.
+        if (lo < 0 || hi < lo) {
+            return -1;
+        }
         ptrsIn[i] = srcBase + lo;
         lensIn[i] = static_cast<size_t>(hi - lo);
     }
@@ -146,9 +152,16 @@ Java_io_questdb_cairo_idx_FSSTNative_decompressBlock0(
     int64_t pos = 0;
     int64_t cap = static_cast<int64_t>(dstCap);
     int64_t prevHi = wide ? srcOffs8[0] : static_cast<int64_t>(srcOffs4[0]);
+    if (prevHi < 0) return -1;
     for (jint i = 0; i < count; i++) {
         int64_t srcLo = prevHi;
         int64_t srcHi = wide ? srcOffs8[i + 1] : static_cast<int64_t>(srcOffs4[i + 1]);
+        // Reject non-monotonic offsets. Without this, srcHi < srcLo wraps
+        // to a ~2^64 length when cast to size_t and fsst_decompress reads
+        // arbitrary memory.
+        if (srcHi < srcLo) {
+            return -1;
+        }
         prevHi = srcHi;
         dstOffs[i] = pos;
         size_t srcLen = static_cast<size_t>(srcHi - srcLo);
@@ -157,6 +170,10 @@ Java_io_questdb_cairo_idx_FSSTNative_decompressBlock0(
         size_t out = fsst_decompress(
                 dec, srcLen, srcBase + srcLo,
                 remaining, dstBase + pos);
+        // fsst_decompress returns the FULL decompressed length, even when
+        // it truncated the output to fit. {@code out > remaining} therefore
+        // correctly signals truncation; the caller doubles dstCap and
+        // retries (see AbstractPostingIndexReader.decompressBlock loop).
         if (out > remaining) {
             return -1;
         }

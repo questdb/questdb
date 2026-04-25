@@ -32,8 +32,11 @@ import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 
 /**
@@ -43,6 +46,14 @@ import io.questdb.std.str.LPSZ;
 public class IndexBuilder extends RebuildColumnBase {
     private static final Log LOG = LogFactory.getLog(IndexBuilder.class);
     private final CairoConfiguration configuration;
+    // Scratch lists used by configureCoveringIfNeeded. Kept as instance
+    // fields so a single-column reindex avoids allocations across partitions.
+    private final IntList coveringIndices = new IntList();
+    private final ObjList<CharSequence> coveringNames = new ObjList<>();
+    private final LongList coveringNameTxns = new LongList();
+    private final IntList coveringShifts = new IntList();
+    private final LongList coveringTops = new LongList();
+    private final IntList coveringTypes = new IntList();
     private final MemoryMAR ddlMem;
     private byte indexType = IndexType.BITMAP;
     private SymbolColumnIndexer indexer;
@@ -144,7 +155,9 @@ public class IndexBuilder extends RebuildColumnBase {
             int timestampType,
             int partitionBy,
             int indexValueBlockCapacity,
-            byte indexType
+            byte indexType,
+            RecordMetadata metadata,
+            int columnIndex
     ) {
         // Update index type and recreate indexer if needed
         if (this.indexType != indexType) {
@@ -171,6 +184,14 @@ public class IndexBuilder extends RebuildColumnBase {
                         long columnDataFd = TableUtils.openRO(ff, TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
                         try {
                             indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, partitionTimestamp, partitionNameTxn);
+                            // Configure covering BEFORE seal: if the index has
+                            // INCLUDE columns, the seal path emits the .pci and
+                            // .pc<N>.*.* sidecar files. Without this configure
+                            // call, removeIndexFiles wipes the sidecars and the
+                            // seal recreates only .pk + .pv, leaving covering
+                            // queries to silently fall back to the slower
+                            // column-file read path.
+                            configureCoveringIfNeeded(metadata, columnIndex, columnVersionReader, partitionTimestamp);
                             indexer.index(ff, columnDataFd, columnTop, partitionSize);
                             indexer.seal();
                         } finally {
@@ -187,6 +208,65 @@ public class IndexBuilder extends RebuildColumnBase {
         } finally {
             path.trimTo(trimTo);
         }
+    }
+
+    private void configureCoveringIfNeeded(
+            RecordMetadata metadata,
+            int columnIndex,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
+    ) {
+        if (metadata == null || columnIndex < 0 || columnIndex >= metadata.getColumnCount()) {
+            return;
+        }
+        if (!IndexType.isPosting(this.indexType)) {
+            return;
+        }
+        TableColumnMetadata colMeta = metadata.getColumnMetadata(columnIndex);
+        IntList coveringWriterIndices = colMeta.getCoveringColumnIndices();
+        if (coveringWriterIndices == null || coveringWriterIndices.size() == 0) {
+            return;
+        }
+        coveringNames.clear();
+        coveringNameTxns.clear();
+        coveringTops.clear();
+        coveringShifts.clear();
+        coveringIndices.clear();
+        coveringTypes.clear();
+        for (int i = 0, n = coveringWriterIndices.size(); i < n; i++) {
+            int covWriterIdx = coveringWriterIndices.getQuick(i);
+            // Resolve writer→dense index. For freshly-loaded TableReaderMetadata
+            // (no DROPs yet) dense and writer indices match; for general
+            // metadata we walk the column list. coverCount is small (a handful
+            // of INCLUDE columns), so the linear scan is negligible.
+            int denseCovIdx = -1;
+            for (int k = 0, m = metadata.getColumnCount(); k < m; k++) {
+                if (metadata.getColumnMetadata(k).getWriterIndex() == covWriterIdx) {
+                    denseCovIdx = k;
+                    break;
+                }
+            }
+            if (denseCovIdx < 0) {
+                // Covering column was dropped — record an "absent" slot. The
+                // seal records this as type=-1 and skips the read.
+                coveringNames.add(null);
+                coveringNameTxns.add(TableUtils.COLUMN_NAME_TXN_NONE);
+                coveringTops.add(0);
+                coveringShifts.add(0);
+                coveringIndices.add(-1);
+                coveringTypes.add(-1);
+                continue;
+            }
+            int covType = metadata.getColumnType(denseCovIdx);
+            coveringNames.add(metadata.getColumnName(denseCovIdx));
+            coveringNameTxns.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, covWriterIdx));
+            coveringTops.add(columnVersionReader.getColumnTop(partitionTimestamp, covWriterIdx));
+            coveringShifts.add(ColumnType.pow2SizeOf(covType));
+            coveringIndices.add(covWriterIdx);
+            coveringTypes.add(covType);
+        }
+        indexer.configureCovering(coveringNames, coveringNameTxns, coveringTops, coveringShifts,
+                coveringIndices, coveringTypes, metadata.getTimestampIndex());
     }
 
     @Override

@@ -54,13 +54,15 @@ public class PostingGenLookup implements Closeable {
     private static final double KEY_TO_SLOT_LOAD_FACTOR = 0.5;
     // Column keys are always >= 0, so Integer.MIN_VALUE is a safe sentinel.
     private static final int NO_ENTRY_KEY = Integer.MIN_VALUE;
-
+    // Double-buffered snapshot. {@code snapshotMetadata} fills the staging
+    // copy in-place; {@code commitSnapshot} swaps the active/staging
+    // pointers only after the seqlock reader has verified the source bytes
+    // were consistent. Until then the active copy still reflects the
+    // previous successful snapshot, so a torn read can never corrupt
+    // observable state.
+    private final Snapshot bufA = new Snapshot();
+    private final Snapshot bufB = new Snapshot();
     private final DirectLongList cacheEntries = new DirectLongList(CACHE_ENTRIES_INITIAL_CAPACITY, MemoryTag.NATIVE_INDEX_READER);
-    private final LongList genDataSizes = new LongList();
-    private final LongList genFileOffsets = new LongList();
-    private final IntList genKeyCounts = new IntList(); // negative = sparse
-    private final IntList genMaxKeys = new IntList();
-    private final IntList genMinKeys = new IntList();
     private final DirectIntLongHashMap keyToCacheSlot = new DirectIntLongHashMap(
             KEY_TO_SLOT_INITIAL_CAPACITY,
             KEY_TO_SLOT_LOAD_FACTOR,
@@ -68,10 +70,11 @@ public class PostingGenLookup implements Closeable {
             CACHE_NOT_PRESENT,
             MemoryTag.NATIVE_INDEX_READER
     );
-    private boolean anySparseGen;
+    private Snapshot active = bufA;
     private long cacheBudget = DEFAULT_CACHE_BUDGET;
     private long cacheUsedBytes;
     private long cacheVersion;
+    private Snapshot staging = bufB;
 
     public static long packCacheEntry(int gen, int posInGen) {
         return ((long) gen << 32) | (posInGen & 0xFFFFFFFFL);
@@ -99,7 +102,7 @@ public class PostingGenLookup implements Closeable {
 
     public long cacheLookup(int key) {
         assert key != NO_ENTRY_KEY : "column key must not equal hash map sentinel";
-        if (!anySparseGen) {
+        if (!active.anySparseGen) {
             return CACHE_NOT_PRESENT;
         }
         return keyToCacheSlot.get(key);
@@ -110,11 +113,20 @@ public class PostingGenLookup implements Closeable {
         Misc.free(keyToCacheSlot);
         Misc.free(cacheEntries);
         cacheUsedBytes = 0;
-        genFileOffsets.clear();
-        genDataSizes.clear();
-        genKeyCounts.clear();
-        genMinKeys.clear();
-        genMaxKeys.clear();
+        bufA.clear();
+        bufB.clear();
+    }
+
+    /**
+     * Promote the staging snapshot (last fill from {@link #snapshotMetadata})
+     * to active. The previous active becomes the new staging buffer. Must
+     * only be called after the seqlock reader has verified the source bytes
+     * were consistent during the fill.
+     */
+    public void commitSnapshot() {
+        Snapshot tmp = active;
+        active = staging;
+        staging = tmp;
     }
 
     public long getCacheVersion() {
@@ -122,33 +134,33 @@ public class PostingGenLookup implements Closeable {
     }
 
     public long getGenDataSize(int gen) {
-        return genDataSizes.getQuick(gen);
+        return active.genDataSizes.getQuick(gen);
     }
 
     public long getGenFileOffset(int gen) {
-        return genFileOffsets.getQuick(gen);
+        return active.genFileOffsets.getQuick(gen);
     }
 
     public int getGenKeyCount(int gen) {
-        return genKeyCounts.getQuick(gen);
+        return active.genKeyCounts.getQuick(gen);
     }
 
     public int getGenMaxKey(int gen) {
-        return genMaxKeys.getQuick(gen);
+        return active.genMaxKeys.getQuick(gen);
     }
 
     public int getGenMinKey(int gen) {
-        return genMinKeys.getQuick(gen);
+        return active.genMinKeys.getQuick(gen);
     }
 
     // prefix-sum sits between encoded data and the SBBF+footer trailer, so
     // we walk back from the gen tail.
     public long getGenPrefixSumOffset(int gen, MemoryMR valueMem) {
-        long genFileOffset = genFileOffsets.getQuick(gen);
-        long genDataSize = genDataSizes.getQuick(gen);
+        long genFileOffset = active.genFileOffsets.getQuick(gen);
+        long genDataSize = active.genDataSizes.getQuick(gen);
         int sbbfNumBlocks = readSbbfNumBlocks(valueMem, genFileOffset, genDataSize);
-        int minKey = genMinKeys.getQuick(gen);
-        int maxKey = genMaxKeys.getQuick(gen);
+        int minKey = active.genMinKeys.getQuick(gen);
+        int maxKey = active.genMaxKeys.getQuick(gen);
         int keyRange = maxKey - minKey + 1;
         return genFileOffset + genDataSize
                 - PostingIndexUtils.SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE
@@ -163,21 +175,14 @@ public class PostingGenLookup implements Closeable {
         cacheVersion++;
     }
 
-    public void reopen() {
-        keyToCacheSlot.reopen();
-        cacheEntries.reopen();
-        cacheUsedBytes = 0;
-        cacheVersion++;
-    }
-
     /**
      * Returns true when the SBBF proves K is absent from the gen. Returns false
      * for "maybe present" or when the gen has no SBBF (numBlocks == 0); in both
      * cases the caller falls back to the prefix-sum verification path.
      */
     public boolean notContainKey(MemoryMR valueMem, int gen, int key) {
-        long genFileOffset = genFileOffsets.getQuick(gen);
-        long genDataSize = genDataSizes.getQuick(gen);
+        long genFileOffset = active.genFileOffsets.getQuick(gen);
+        long genDataSize = active.genDataSizes.getQuick(gen);
         int numBlocks = readSbbfNumBlocks(valueMem, genFileOffset, genDataSize);
         if (numBlocks == 0) {
             return false;
@@ -196,7 +201,7 @@ public class PostingGenLookup implements Closeable {
      */
     public void putCacheEntries(int key, LongList builderEntries) {
         assert key != NO_ENTRY_KEY : "column key must not equal hash map sentinel";
-        if (cacheBudget <= 0 || !anySparseGen || keyToCacheSlot.get(key) != CACHE_NOT_PRESENT) {
+        if (cacheBudget <= 0 || !active.anySparseGen || keyToCacheSlot.get(key) != CACHE_NOT_PRESENT) {
             return;
         }
         int count = builderEntries.size();
@@ -215,6 +220,13 @@ public class PostingGenLookup implements Closeable {
         keyToCacheSlot.put(key, ((long) startIdx << 32) | (count & 0xFFFFFFFFL));
     }
 
+    public void reopen() {
+        keyToCacheSlot.reopen();
+        cacheEntries.reopen();
+        cacheUsedBytes = 0;
+        cacheVersion++;
+    }
+
     public void setCacheMemoryBudget(long budget) {
         this.cacheBudget = budget;
         // budget == 0 disables caching; clear residual empty-hit slots too so the
@@ -225,28 +237,30 @@ public class PostingGenLookup implements Closeable {
     }
 
     /**
-     * Captures the gen directory into stable per-instance arrays. Does NOT touch
-     * the cache because the caller may still discard the snapshot on a post-snapshot
-     * seq recheck; cache invalidation is the caller's responsibility once committed.
+     * Fill the staging snapshot from the writer's metadata page. Caller
+     * must validate the seqlock and then call {@link #commitSnapshot} to
+     * make the snapshot observable. Until the swap, the previous active
+     * snapshot is unchanged — torn reads here cannot corrupt anything.
      */
     public void snapshotMetadata(MemoryMR keyMem, int genCount, long pageOffset) {
-        genFileOffsets.clear();
-        genDataSizes.clear();
-        genKeyCounts.clear();
-        genMinKeys.clear();
-        genMaxKeys.clear();
-        anySparseGen = false;
+        Snapshot s = staging;
+        s.genFileOffsets.clear();
+        s.genDataSizes.clear();
+        s.genKeyCounts.clear();
+        s.genMinKeys.clear();
+        s.genMaxKeys.clear();
+        s.anySparseGen = false;
         for (int i = 0; i < genCount; i++) {
             long dirOffset = PostingIndexUtils.getGenDirOffset(pageOffset, i);
-            genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
-            genDataSizes.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
+            s.genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
+            s.genDataSizes.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
             int kc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            genKeyCounts.add(kc);
+            s.genKeyCounts.add(kc);
             if (kc < 0) {
-                anySparseGen = true;
+                s.anySparseGen = true;
             }
-            genMinKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
-            genMaxKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
+            s.genMinKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
+            s.genMaxKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
         }
     }
 
@@ -255,12 +269,37 @@ public class PostingGenLookup implements Closeable {
             return 0;
         }
         long off = genFileOffset + genDataSize - PostingIndexUtils.SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE;
-        int numBlocks = Unsafe.getUnsafe().getInt(valueMem.addressOf(off));
+        int numBlocks = Unsafe.getInt(valueMem.addressOf(off));
         if (numBlocks <= 0
                 || (long) numBlocks << SplitBlockBloomFilter.BLOCK_SIZE_SHIFT
                 > genDataSize - PostingIndexUtils.SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE) {
             return 0;
         }
         return numBlocks;
+    }
+
+    /**
+     * One side of the active/staging double buffer used for torn-read
+     * safety. The reader fills the staging side, validates the seqlock,
+     * then swaps via {@link #commitSnapshot}. The previous active side
+     * becomes the next staging buffer — its existing storage is reused so
+     * the swap is allocation-free.
+     */
+    private static final class Snapshot {
+        final LongList genDataSizes = new LongList();
+        final LongList genFileOffsets = new LongList();
+        final IntList genKeyCounts = new IntList(); // negative = sparse
+        final IntList genMaxKeys = new IntList();
+        final IntList genMinKeys = new IntList();
+        boolean anySparseGen;
+
+        void clear() {
+            genFileOffsets.clear();
+            genDataSizes.clear();
+            genKeyCounts.clear();
+            genMinKeys.clear();
+            genMaxKeys.clear();
+            anySparseGen = false;
+        }
     }
 }

@@ -649,6 +649,90 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJobSurvivesErrorOverflow() throws Exception {
+        // Regression test for #21 Layer 2: hitting MAX_ERRORS must NOT
+        // permanently disable the job. After a backoff window the job must
+        // resume, and a clean iteration must reset the error count to zero.
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                // Pretend we just hit the error cap.
+                job.setErrorCountForTesting(64);
+                assertTrue("setup: job must report error count >= cap",
+                        job.getErrorCountForTesting() >= 11);
+
+                // Run once; the throttle window starts now. Without the fix,
+                // close() was called here and the job was dead permanently.
+                job.run(0);
+                assertTrue(
+                        "job must remain alive after error overflow (no permanent disable)",
+                        job.isJobAliveForTesting()
+                );
+
+                // Advance past the backoff window and run again with no
+                // outstanding tasks. The fix lets the iteration through,
+                // sees no work + no errors, and resets the error counter.
+                setCurrentMicros(currentMicros + 120L * 1_000_000L);
+                job.run(0);
+                assertEquals(
+                        "clean iteration must reset error count",
+                        0,
+                        job.getErrorCountForTesting()
+                );
+                assertTrue(
+                        "job must remain alive after recovery",
+                        job.isJobAliveForTesting()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testPendingPurgesBoundedUnderSaturation() throws Exception {
+        // Regression test for #21: when the global PostingSealPurge queue is
+        // never drained (e.g. PostingSealPurgeJob disabled or stuck on
+        // errors), the per-writer outbox must NOT grow without bound.
+        //
+        // We never call writer.publishPendingPurges, so every superseded
+        // sealTxn just accumulates in the in-memory list. Without the cap
+        // the list grows linearly with seal count; with the cap it is
+        // bounded.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_PURGE_OUTBOX_MAX, 8);
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "ps_purge_bound";
+                final int plen = path.size();
+                final int seals = 64;
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int s = 0; s < seals; s++) {
+                        for (int i = 0; i < 4; i++) {
+                            writer.add(i % BATCH_KEYS, s * 4L + i);
+                        }
+                        writer.setMaxValue(s * 4L + 3);
+                        writer.commit();
+                        writer.seal();
+                    }
+                    // After 64 seals, 63 supersession events fired. With the
+                    // unbounded outbox today the list holds all 63. With a
+                    // cap (the fix), it caps at the configured value.
+                    int outboxCap = configuration.getPostingSealPurgeOutboxMax();
+                    int actual = writer.getPendingPurgesSizeForTesting();
+                    assertTrue("test setup is broken: outbox cap must be < seals", outboxCap < seals);
+                    assertTrue(
+                            "pendingPurges must be bounded under saturation: actual=" + actual + " cap=" + outboxCap,
+                            actual <= outboxCap
+                    );
+                }
+                path.trimTo(plen);
+            }
+        });
+    }
+
+    @Test
     public void testSnapshotRestoreRemoveIndexFilesClearsSidecars() throws Exception {
         // Regression test for #18: TableSnapshotRestore.removeIndexFiles
         // must clear every sealed .pv.{N}, every .pc<N>.*.* covering file,

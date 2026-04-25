@@ -211,14 +211,35 @@ static void unpack_32bit_avx2(const uint8_t *src, int32_t count, int64_t min_val
 // The widen+store is the bottleneck in the Java scalar path — this eliminates it.
 // Processes 8 values per iteration: scalar extract 8 × uint32, then 2 × AVX2 stores.
 
+// Read exactly the bytes that contain the bit-packed value at position
+// (bo,bs) — never reads past byte (bo + ceil((bs + bit_width) / 8) - 1).
+// Used by the byte-safe tail of the AVX2 unpackers to avoid the 8-byte
+// memcpy overread that affects the last values when the packed buffer is
+// not allocated with trailing slack.
+static inline uint64_t read_bits_safe(const uint8_t *src, int bo, int bs, int bit_width) {
+    uint64_t raw = 0;
+    int bytes_to_read = (bs + bit_width + 7) >> 3;
+    for (int b = 0; b < bytes_to_read; b++) {
+        raw |= (uint64_t) src[bo + b] << (b * 8);
+    }
+    return raw >> bs;
+}
+
 TARGET_AVX2
 static void unpack_general_avx2(const uint8_t *src, int32_t count,
                                  int32_t bit_width, int64_t min_value, int64_t *dest) {
     uint32_t mask32 = (bit_width == 32) ? ~0u : (1u << bit_width) - 1;
     __m256i vbase = _mm256_set1_epi64x(min_value);
 
+    // The 8-byte memcpy below reads bytes [bo, bo+8). For a packed buffer
+    // sized exactly ceil(count*bit_width/8), the last few values' loads
+    // overread past the end. Restrict the AVX2 fast path to values where
+    // the load is provably safe and let the byte-safe tail handle the rest.
+    const int tail_size = (64 + bit_width - 1) / bit_width; // values needing safe reads
+    const int safe_end = count > tail_size ? count - tail_size : 0;
+
     int i = 0;
-    for (; i + 7 < count; i += 8) {
+    for (; i + 7 < safe_end; i += 8) {
         uint32_t vals[8];
         for (int k = 0; k < 8; k++) {
             int64_t bp = (int64_t)(i + k) * bit_width;
@@ -239,9 +260,7 @@ static void unpack_general_avx2(const uint8_t *src, int32_t count,
         int64_t bp = (int64_t)i * bit_width;
         int bo = (int)(bp >> 3);
         int bs = (int)(bp & 7);
-        uint64_t raw;
-        std::memcpy(&raw, src + bo, sizeof(raw));
-        dest[i] = min_value + (int64_t)((raw >> bs) & mask32);
+        dest[i] = min_value + (int64_t)(read_bits_safe(src, bo, bs, bit_width) & mask32);
     }
 }
 
@@ -250,12 +269,25 @@ static void unpack_from_general_avx2(const uint8_t *src, int32_t start_index, in
                                       int32_t bit_width, int64_t min_value, int64_t *dest) {
     uint32_t mask32 = (bit_width == 32) ? ~0u : (1u << bit_width) - 1;
     __m256i vbase = _mm256_set1_epi64x(min_value);
+    // Promote start_index to int64_t before arithmetic so that the
+    // subsequent (start_index + i + k) * bit_width stays in 64-bit even
+    // when start_index alone is close to INT32_MAX.
+    const int64_t start64 = static_cast<int64_t>(start_index);
+
+    // Caller's logical end is start_index + value_count. The buffer is
+    // sized for the FULL value count (covers indices >= start_index +
+    // value_count too), so the last unsafe values are those near the
+    // global end of the buffer. We don't have the global count here, but
+    // we conservatively cap the AVX2 fast path so that even if start_index
+    // + value_count is the global end, the 8-byte loads stay safe.
+    const int tail_size = (64 + bit_width - 1) / bit_width;
+    const int safe_end = value_count > tail_size ? value_count - tail_size : 0;
 
     int i = 0;
-    for (; i + 7 < value_count; i += 8) {
+    for (; i + 7 < safe_end; i += 8) {
         uint32_t vals[8];
         for (int k = 0; k < 8; k++) {
-            int64_t bp = (int64_t)(start_index + i + k) * bit_width;
+            int64_t bp = (start64 + i + k) * (int64_t) bit_width;
             int bo = (int)(bp >> 3);
             int bs = (int)(bp & 7);
             uint64_t raw;
@@ -270,12 +302,10 @@ static void unpack_from_general_avx2(const uint8_t *src, int32_t start_index, in
                             _mm256_add_epi64(_mm256_cvtepu32_epi64(hi4), vbase));
     }
     for (; i < value_count; i++) {
-        int64_t bp = (int64_t)(start_index + i) * bit_width;
+        int64_t bp = (start64 + i) * (int64_t) bit_width;
         int bo = (int)(bp >> 3);
         int bs = (int)(bp & 7);
-        uint64_t raw;
-        std::memcpy(&raw, src + bo, sizeof(raw));
-        dest[i] = min_value + (int64_t)((raw >> bs) & mask32);
+        dest[i] = min_value + (int64_t)(read_bits_safe(src, bo, bs, bit_width) & mask32);
     }
 }
 
@@ -348,16 +378,21 @@ static void unpack_values_from(const uint8_t *src, int32_t start_index, int32_t 
                                 int32_t bit_width, int64_t min_value, int64_t *dest) {
 #if HAS_X86_64
     if (HAS_AVX2) {
-        // For byte-aligned widths, offset the source pointer and use AVX2
+        // For byte-aligned widths, offset the source pointer and use AVX2.
+        // Cast start_index to int64_t before scaling so that posting-index
+        // ordinals above 2^30 (~1.07B values for 32-bit, ~536M for 16-bit)
+        // do not silently overflow the int32_t multiply and produce a
+        // corrupted source pointer.
+        const int64_t start64 = static_cast<int64_t>(start_index);
         switch (bit_width) {
             case 8:
-                unpack_8bit_avx2(src + start_index, value_count, min_value, dest);
+                unpack_8bit_avx2(src + start64, value_count, min_value, dest);
                 return;
             case 16:
-                unpack_16bit_avx2(src + start_index * 2, value_count, min_value, dest);
+                unpack_16bit_avx2(src + start64 * 2, value_count, min_value, dest);
                 return;
             case 32:
-                unpack_32bit_avx2(src + start_index * 4, value_count, min_value, dest);
+                unpack_32bit_avx2(src + start64 * 4, value_count, min_value, dest);
                 return;
             default:
                 if (bit_width > 0 && bit_width < 32) {

@@ -98,6 +98,45 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringVarcharEmptyVsNullDistinction() throws Exception {
+        // Regression test for #14: empty VARCHAR ('') must round-trip
+        // through the covering sidecar as a present-but-empty value, NOT as
+        // SQL NULL. The writer used to emit zero bytes for both NULL and
+        // empty, leaving the reader unable to distinguish them.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_vc_empty (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        v VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_vc_empty VALUES
+                    ('2024-01-01T00:00:00', 'A', NULL),
+                    ('2024-01-01T01:00:00', 'A', ''),
+                    ('2024-01-01T02:00:00', 'A', 'data'),
+                    ('2024-01-01T03:00:00', 'A', '')
+                    """);
+            engine.releaseAllWriters();
+
+            // IS NULL must match exactly the literal NULL row, not the two
+            // empty strings. Without the fix, all three were treated as
+            // NULL and the count was 3.
+            assertSql("""
+                    cnt
+                    1
+                    """, "SELECT count() AS cnt FROM t_vc_empty WHERE sym = 'A' AND v IS NULL");
+
+            // And the empty filter must match exactly two rows.
+            assertSql("""
+                    cnt
+                    2
+                    """, "SELECT count() AS cnt FROM t_vc_empty WHERE sym = 'A' AND v = ''");
+        });
+    }
+
+    @Test
     public void testAlterTableAddIndexIncludesColumnWithColumnTop() throws Exception {
         // Regression test: when an INCLUDE column was added via ALTER TABLE
         // ADD COLUMN after some rows already existed, the column file starts

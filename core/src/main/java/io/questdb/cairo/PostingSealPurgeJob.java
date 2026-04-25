@@ -55,6 +55,13 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private static final int COLUMN_NAME_COLUMN = 3;
     private static final int FROM_TABLE_TXN_COLUMN = 9;
     private static final Log LOG = LogFactory.getLog(PostingSealPurgeJob.class);
+    // Hitting this many consecutive errors switches the job into throttled
+    // mode: subsequent iterations are skipped until ERROR_BACKOFF_MICROS
+    // elapses, at which point one more attempt is allowed. A clean
+    // iteration drops the count back to zero. The job is never permanently
+    // disabled — that would leak orphan sidecar files for the rest of the
+    // process lifetime.
+    private static final long ERROR_BACKOFF_MICROS = 60L * 1_000_000L;
     private static final int MAX_ERRORS = 11;
     private static final int PARTITION_BY_COLUMN = 8;
     private static final int PARTITION_NAME_TXN_COLUMN = 7;
@@ -81,6 +88,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private long completedFdPartitionTimestamp = Long.MIN_VALUE;
     private int errorCount;
     private long longBuf;
+    private long nextErrorRetryAtMicros;
     private PostingSealPurgeOperator operator;
     private SqlExecutionContextImpl sqlExecutionContext;
     private WeakMutableObjectPool<RetryEntry> taskPool;
@@ -161,8 +169,27 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     @TestOnly
+    public int getErrorCountForTesting() {
+        return errorCount;
+    }
+
+    @TestOnly
     public int getOutstandingPurgeTasks() {
         return retryQueue.size();
+    }
+
+    @TestOnly
+    public boolean isJobAliveForTesting() {
+        // Returns true while the job is still attempting work. Before the
+        // fix, hitting MAX_ERRORS called close() and made this false
+        // forever; after the fix, error overflow only throttles via a
+        // backoff window and the job remains alive.
+        return writer != null;
+    }
+
+    @TestOnly
+    public void setErrorCountForTesting(int v) {
+        errorCount = v;
     }
 
     private static int compareRetry(RetryEntry a, RetryEntry b) {
@@ -244,7 +271,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             }
             long localRowId = Rows.toLocalRowID(rowId);
             long offset = localRowId * Long.BYTES;
-            Unsafe.getUnsafe().putLong(longBuf, completionTime);
+            Unsafe.putLong(longBuf, completionTime);
             if (ff.write(completedFd, longBuf, Long.BYTES, offset) != Long.BYTES) {
                 LOG.error().$("posting seal purge: completed-column write failed [errno=").$(ff.errno())
                         .$(", offset=").$(offset)
@@ -427,8 +454,17 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     @Override
     protected boolean runSerially() {
+        // Throttle iterations after consecutive-error overflow: skip until
+        // the backoff window elapses, then allow ONE attempt. If that
+        // attempt is clean, the trailing reset below brings errorCount back
+        // to zero. If it errors again, the next retry slot is pushed out
+        // by another window. The job is never permanently closed.
         if (errorCount >= MAX_ERRORS) {
-            return false;
+            long now = clock.getTicks();
+            if (now < nextErrorRetryAtMicros) {
+                return false;
+            }
+            nextErrorRetryAtMicros = now + ERROR_BACKOFF_MICROS;
         }
         int before = errorCount;
         boolean queueUseful = false;
@@ -442,10 +478,15 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         }
         if (errorCount == before) {
             errorCount = 0;
-        } else if (errorCount >= MAX_ERRORS) {
-            LOG.error().$("posting seal purge: too many errors, disabling job (restart QuestDB to re-enable)").$();
-            close();
-            return false;
+            nextErrorRetryAtMicros = 0L;
+        } else if (errorCount >= MAX_ERRORS && before < MAX_ERRORS) {
+            // First time crossing the threshold — log once and arm the
+            // throttle. We do NOT close() the job: the orphan-scan would
+            // never see those rows again, and a transient I/O glitch must
+            // not permanently disable cleanup.
+            LOG.critical().$("posting seal purge: error count crossed threshold, throttling retries [maxErrors=").$(MAX_ERRORS)
+                    .$(", backoffMicros=").$(ERROR_BACKOFF_MICROS).$(']').$();
+            nextErrorRetryAtMicros = clock.getTicks() + ERROR_BACKOFF_MICROS;
         }
         return queueUseful || retryUseful;
     }

@@ -108,7 +108,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 checkRebuildIndexes(
                         ff,
                         createTableSql,
-                        tablePath -> {
+                        _ -> {
                         },
                         indexBuilder -> indexBuilder.reindexColumn(ff, "sym2")
                 );
@@ -133,7 +133,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         checkRebuildIndexes(
                 ff,
                 createTableSql,
-                (tablePath) -> {
+                (_) -> {
                 },
                 RebuildColumnBase::rebuildAll
         );
@@ -182,7 +182,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             checkRebuildIndexes(
                     ff,
                     createAlterInsertSql,
-                    tablePath -> {
+                    _ -> {
                     },
                     RebuildColumnBase::rebuildAll
             );
@@ -282,7 +282,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     removeValueFilesAtPartition(PartitionBy.NONE, tablePath);
                     removeKeyFileAtPartition("sym2", COLUMN_NAME_TXN_NONE, PartitionBy.NONE, tablePath, 0, -1L);
                 },
-                indexBuilder -> runReindexSql("REINDEX TABLE xxx LOCK EXCLUSIVE")
+                _ -> runReindexSql("REINDEX TABLE xxx LOCK EXCLUSIVE")
         );
     }
 
@@ -348,7 +348,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     removeValueFilesAtPartition(PartitionBy.DAY, tablePath);
                     removeKeyFileAtPartition("sym1", COLUMN_NAME_TXN_NONE, PartitionBy.DAY, tablePath, 0, -1L);
                 },
-                indexBuilder -> runReindexSql("REINDEX TABLE xxx COLUMN sym1 PARTITION '1970-01-01' LOCK EXCLUSIVE")
+                _ -> runReindexSql("REINDEX TABLE xxx COLUMN sym1 PARTITION '1970-01-01' LOCK EXCLUSIVE")
         );
     }
 
@@ -398,7 +398,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 checkRebuildIndexes(
                         ff,
                         createTableSql,
-                        tablePath -> tempWriter = TestUtils.getWriter(engine, "xxx"),
+                        _ -> tempWriter = TestUtils.getWriter(engine, "xxx"),
                         indexBuilder -> {
                             try {
                                 indexBuilder.reindexColumn("sym2");
@@ -429,7 +429,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             checkRebuildIndexes(
                     ff,
                     createTableSql,
-                    tablePath -> {
+                    _ -> {
                     },
                     indexBuilder -> indexBuilder.reindexColumn("sym4")
             );
@@ -470,7 +470,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 checkRebuildIndexes(
                         ff,
                         createTableSql,
-                        tablePath -> {
+                        _ -> {
                         },
                         indexBuilder -> indexBuilder.reindexColumn("sym2"));
                 Assert.fail();
@@ -510,7 +510,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 checkRebuildIndexes(
                         ff,
                         createTableSql,
-                        tablePath -> {
+                        _ -> {
                         },
                         indexBuilder -> indexBuilder.reindexColumn(ff, "sym2"));
                 Assert.fail();
@@ -598,7 +598,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             checkRebuildIndexes(
                     ff,
                     createTableSql,
-                    (tablePath) -> {
+                    (_) -> {
                     },
                     RebuildColumnBase::rebuildAll
             );
@@ -624,7 +624,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             checkRebuildIndexes(
                     ff,
                     createTableSql,
-                    tablePath -> {
+                    _ -> {
                     },
                     indexBuilder -> indexBuilder.reindexColumn("sym3"));
             Assert.fail();
@@ -652,7 +652,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     removeValueFilesAtPartition(PartitionBy.DAY, tablePath);
                     removeKeyFileAtPartition("sym2", COLUMN_NAME_TXN_NONE, PartitionBy.DAY, tablePath, 0, -1L);
                 },
-                indexBuilder -> runReindexSql("REINDEX TABLE xxx PARTITION '1970-01-01' LOCK EXCLUSIVE")
+                _ -> runReindexSql("REINDEX TABLE xxx PARTITION '1970-01-01' LOCK EXCLUSIVE")
         );
 
         assertMemoryLeak(() -> {
@@ -671,6 +671,56 @@ public class IndexBuilderTest extends AbstractCairoTest {
                         reader.getIndexReader(0, columnIndex2, IndexReader.DIR_FORWARD).getValueBlockCapacity()
                 );
             }
+        });
+    }
+
+    @Test
+    public void testReindexRecreatesPostingCoveringSidecars() throws Exception {
+        // Regression test for #20: REINDEX must recreate the .pci and
+        // .pc<N>.*.* sidecar files for a POSTING+covering index. Without
+        // the fix, removeIndexFiles wipes the sidecars and seal recreates
+        // only .pk + .pv, leaving readers to silently fall back to the
+        // slower column-file read path on every covering query.
+        indexType = IndexType.POSTING;
+        ff = TestFilesFacadeImpl.INSTANCE;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_reindex_cov (" +
+                    "ts TIMESTAMP, " +
+                    "sym SYMBOL INDEX TYPE POSTING INCLUDE (price), " +
+                    "price DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_reindex_cov VALUES " +
+                    "('2024-01-01T00:00:00','A',10.0)," +
+                    "('2024-01-01T01:00:00','B',20.0)," +
+                    "('2024-01-01T02:00:00','A',30.0)");
+            engine.releaseAllWriters();
+
+            TableToken tok = engine.verifyTableName("t_reindex_cov");
+            try (Path part = new Path()) {
+                part.of(configuration.getDbRoot()).concat(tok).concat("2024-01-01");
+                String pciPath = io.questdb.std.str.Utf8s.stringFromUtf8Bytes(
+                        PostingIndexUtils.coverInfoFileName(part, "sym", COLUMN_NAME_TXN_NONE));
+
+                // Sanity: sidecars exist after the initial seal.
+                try (Path probe = new Path()) {
+                    Assert.assertTrue("setup: .pci must exist after initial seal",
+                            ff.exists(probe.of(pciPath).$()));
+                }
+
+                runReindexSql("REINDEX TABLE t_reindex_cov LOCK EXCLUSIVE");
+
+                // After REINDEX: .pci must exist again (regenerated by the
+                // seal-with-covering path). Without the fix, it was wiped by
+                // removeIndexFiles and never recreated, leaving covering
+                // queries to silently degrade to the column-file fallback.
+                try (Path probe = new Path()) {
+                    Assert.assertTrue(".pci must exist after REINDEX",
+                            ff.exists(probe.of(pciPath).$()));
+                }
+            }
+
+            // The covering query must still return correct rows.
+            assertSql("price\n10.0\n30.0\n", "SELECT price FROM t_reindex_cov WHERE sym = 'A' ORDER BY ts");
         });
     }
 

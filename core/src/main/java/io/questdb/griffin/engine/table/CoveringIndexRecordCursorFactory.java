@@ -1320,13 +1320,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     case ColumnType.FLOAT -> Unsafe.putFloat(
                             addr + (long) count * Float.BYTES, isNull ? Float.NaN : mem.getFloat(r * Float.BYTES));
                     case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG,
-                         ColumnType.DECIMAL64 ->
-                            Unsafe.putLong(addr + (long) count * Long.BYTES,
-                                    isNull ? Long.MIN_VALUE : mem.getLong(r * Long.BYTES));
+                         ColumnType.DECIMAL64 -> Unsafe.putLong(addr + (long) count * Long.BYTES,
+                            isNull ? Long.MIN_VALUE : mem.getLong(r * Long.BYTES));
                     case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL,
-                         ColumnType.DECIMAL32 ->
-                            Unsafe.putInt(addr + (long) count * Integer.BYTES,
-                                    isNull ? Integer.MIN_VALUE : mem.getInt(r * Integer.BYTES));
+                         ColumnType.DECIMAL32 -> Unsafe.putInt(addr + (long) count * Integer.BYTES,
+                            isNull ? Integer.MIN_VALUE : mem.getInt(r * Integer.BYTES));
                     case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
                             Unsafe.putShort(addr + (long) count * Short.BYTES,
                                     isNull ? (short) 0 : mem.getShort(r * Short.BYTES));
@@ -1429,8 +1427,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
                     case ColumnType.DECIMAL16 ->
                             Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
-                    case ColumnType.DECIMAL8 ->
-                            Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
+                    case ColumnType.DECIMAL8 -> Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
                     case ColumnType.UUID, ColumnType.DECIMAL128 -> {
                         long off128 = (long) count * 16;
                         Unsafe.putLong(addr + off128, crc.getCoveredLong128Lo(includeIdx));
