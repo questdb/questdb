@@ -2066,6 +2066,73 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testMaxGenCountAutoSealFdBased() throws Exception {
+        // Same scenario as testMaxGenCountAutoSeal but exercising the fd-based
+        // of() path used by O3CopyJob. Without the fd-based seal fix, the
+        // inline seal triggered inside flushAllPending NPEs in
+        // reencodeWithStrideDecoding because openSealValueFile early-returned
+        // for fd-based, leaving sealTarget null. After the fix, seal writes
+        // its output past the source data in valueMem, then memmoves down.
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            final String name = "fd_auto_seal_max";
+            try (Path keyPath = new Path().of(configuration.getDbRoot());
+                 Path valPath = new Path().of(configuration.getDbRoot())) {
+                final int plen = keyPath.size();
+
+                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                long keyFd = ff.openRW(keyPath.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue("could not open key file", keyFd > 0);
+                keyPath.trimTo(plen);
+
+                PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, 0);
+                long valueFd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue("could not open value file", valueFd > 0);
+                valPath.trimTo(plen);
+
+                int batchCount = PostingIndexUtils.MAX_GEN_COUNT + 5;
+                int totalValues = batchCount * BP_BATCH;
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(configuration, keyFd, valueFd, true, PostingIndexUtils.BLOCK_CAPACITY);
+                    for (int batch = 0; batch < batchCount; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                    }
+                    Assert.assertTrue(
+                            "genCount should be <= MAX_GEN_COUNT after fd-based auto-seal, was " + writer.getGenCount(),
+                            writer.getGenCount() <= PostingIndexUtils.MAX_GEN_COUNT);
+                    Assert.assertEquals(totalValues - 1, writer.getMaxValue());
+                }
+
+                // Promote the fd-based tentative state via a path-based seal so
+                // a reader can verify every row survived the inline seal cycle.
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(keyPath.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    writer.mergeTentativeIntoActiveIfAny();
+                    writer.seal();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, keyPath.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("val " + count, count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("total count", totalValues, count);
+                    Misc.free(cursor);
+                }
+            }
+        });
+    }
+
     // ===================================================================
     // Concurrent backward reader stress tests
     // ===================================================================
@@ -3184,6 +3251,118 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         Assert.assertEquals(expectedTotal, count);
                         Misc.free(cursor);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStaleTentativeInvalidatedOnFdOpen() throws Exception {
+        // Simulates a failed-and-retried O3 commit. fd-based session 1 writes
+        // tentative metadata to page B and is then abandoned (the encompassing
+        // O3 commit fails and TableWriter rolls back without explicitly
+        // cleaning O3Basket writers). Session 2 opens fd-based on the same
+        // .pk; without the invalidation hook, page B's stale tentative state
+        // is later folded in by mergeTentativeIntoActiveIfAny — referencing
+        // .pv offsets the new attempt has overwritten. With the fix, session
+        // 2's open zeroes the inactive page so the merge skips it.
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            final String name = "stale_tentative";
+            try (Path keyPath = new Path().of(configuration.getDbRoot());
+                 Path valPath = new Path().of(configuration.getDbRoot())) {
+                final int plen = keyPath.size();
+
+                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                long keyFd = ff.openRW(keyPath.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue("could not open key file", keyFd > 0);
+                keyPath.trimTo(plen);
+
+                PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, 0);
+                long valueFd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue("could not open value file", valueFd > 0);
+                valPath.trimTo(plen);
+
+                // Session 1: fd-based init=true, write data and commit.
+                // Leaves page B with SEAL_TXN_TENTATIVE referencing
+                // session-1 .pv content.
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(configuration, keyFd, valueFd, true, PostingIndexUtils.BLOCK_CAPACITY);
+                    for (int i = 0; i < 64; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(63);
+                    writer.commit();
+                }
+
+                // Verify session 1 left page B as TENTATIVE. SEAL_TXN_TENTATIVE
+                // is -1L; readNonNegativeLong returns -1 for negative values,
+                // which is exactly what we want to detect here (the file is
+                // KEY_FILE_RESERVED bytes, so the read itself cannot fail).
+                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                long readFd = ff.openRO(keyPath.$());
+                Assert.assertTrue("could not reopen key file for reading", readFd > 0);
+                long pageBSealTxnAfterSession1;
+                try {
+                    pageBSealTxnAfterSession1 = ff.readNonNegativeLong(readFd,
+                            PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
+                } finally {
+                    ff.close(readFd);
+                }
+                keyPath.trimTo(plen);
+                Assert.assertEquals(
+                        "session 1 should have parked tentative state on page B (sealTxn == -1)",
+                        -1L,
+                        pageBSealTxnAfterSession1);
+
+                // Reopen fds for session 2 (session 1's writer.close() released them).
+                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                keyFd = ff.openRW(keyPath.$(), CairoConfiguration.O_NONE);
+                keyPath.trimTo(plen);
+                PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, 0);
+                valueFd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
+                valPath.trimTo(plen);
+
+                // Session 2: fd-based init=false, no writes. The open itself
+                // must invalidate page B's stale tentative state.
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(configuration, keyFd, valueFd, false, PostingIndexUtils.BLOCK_CAPACITY);
+                }
+
+                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                readFd = ff.openRO(keyPath.$());
+                Assert.assertTrue("could not reopen key file for reading", readFd > 0);
+                long pageBSealTxnAfterSession2;
+                try {
+                    pageBSealTxnAfterSession2 = ff.readNonNegativeLong(readFd,
+                            PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
+                } finally {
+                    ff.close(readFd);
+                }
+                keyPath.trimTo(plen);
+                Assert.assertEquals(
+                        "session 2 open should have invalidated page B's stale tentative (sealTxn == 0)",
+                        0L,
+                        pageBSealTxnAfterSession2);
+
+                // Path-based open + merge must not pick up any tentative
+                // state. keyCount and genCount are published only through
+                // writeMetadataPage (page B for tentative), so they expose
+                // whether a merge happened. The committed page A keeps
+                // keyCount=0 / genCount=0 from initKeyMemory; a folded-in
+                // tentative would lift them to session 1's keyCount=1 and
+                // genCount=1.
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(keyPath.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    writer.mergeTentativeIntoActiveIfAny();
+                    Assert.assertEquals(
+                            "after session 2 invalidation, keyCount must come from page A only",
+                            0,
+                            writer.getKeyCount());
+                    Assert.assertEquals(
+                            "after session 2 invalidation, genCount must come from page A only",
+                            0,
+                            writer.getGenCount());
                 }
             }
         });
