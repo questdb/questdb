@@ -4079,9 +4079,12 @@ public class SqlOptimiser implements Mutable {
                 }
             } else {
                 for (int i = 0, k = node.paramCount; i < k; i++) {
-                    sqlNodeStack.push(node.args.getQuick(i));
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        sqlNodeStack.push(arg);
+                    }
                 }
-                node = sqlNodeStack.poll();
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
             }
         }
         return -1;
@@ -4123,11 +4126,11 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Finds the position of the first window function or pure window function name in an expression tree.
-     * Returns 0 if no window function is found.
+     * Returns -1 if no window function is found.
      */
     private int findWindowFunctionOrNamePosition(ExpressionNode node) {
         if (node == null) {
-            return 0;
+            return -1;
         }
         FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
         if (node.windowExpression != null ||
@@ -4138,19 +4141,19 @@ public class SqlOptimiser implements Mutable {
         if (node.paramCount < 3) {
             if (node.lhs != null) {
                 int pos = findWindowFunctionOrNamePosition(node.lhs);
-                if (pos > 0) return pos;
+                if (pos >= 0) return pos;
             }
             if (node.rhs != null) {
                 int pos = findWindowFunctionOrNamePosition(node.rhs);
-                if (pos > 0) return pos;
+                if (pos >= 0) return pos;
             }
         } else {
             for (int i = 0, n = node.paramCount; i < n; i++) {
                 int pos = findWindowFunctionOrNamePosition(node.args.getQuick(i));
-                if (pos > 0) return pos;
+                if (pos >= 0) return pos;
             }
         }
-        return 0;
+        return -1;
     }
 
     /**

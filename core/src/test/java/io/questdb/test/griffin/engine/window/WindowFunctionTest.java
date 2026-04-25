@@ -198,6 +198,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "Aggregate over window function cannot be combined with other terms. Use a sub-query."
             );
 
+            // SAMPLE BY: implicit grouping via the SAMPLE BY clause; the guard fires on aggregate-over-window in expression.
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, max(avg(x) OVER ()) + 1 FROM t SAMPLE BY 1h",
+                    11,
+                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
+            );
+
             // Bare aggregate-of-window at the column root must still compile.
             assertQueryNoLeakCheck(
                     """
@@ -9720,6 +9727,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "SELECT sum(x) + row_number() FROM t",
                     16,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // SAMPLE BY: implicit grouping via the SAMPLE BY clause; the guard fires on bare window in expression.
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, sum(x) - avg(x) OVER () FROM t SAMPLE BY 1h",
+                    20,
                     "Window function is not allowed in context of aggregation. Use sub-query."
             );
 
