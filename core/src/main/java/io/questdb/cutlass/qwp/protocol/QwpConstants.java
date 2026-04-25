@@ -108,6 +108,18 @@ public final class QwpConstants {
      */
     public static final byte SCHEMA_MODE_FULL = 0x00;
     /**
+     * Status: Per-table durable-upload acknowledgment.
+     * <p>
+     * Sent by the server (only when the client opted in via the
+     * {@code X-QWP-Request-Durable-Ack} handshake header) when WAL segments
+     * have been uploaded to the configured object store. Payload:
+     * 1-byte status + 2-byte tableCount +
+     * [1-byte nameLen + nameLen bytes UTF-8 table name + 8-byte seqTxn] per table.
+     * Only tables whose durable seqTxn progressed since the last durable ack
+     * are included. Not emitted on servers without primary replication enabled.
+     */
+    public static final byte STATUS_DURABLE_ACK = 0x02;
+    /**
      * Status: Server error.
      */
     public static final byte STATUS_INTERNAL_ERROR = 0x06;

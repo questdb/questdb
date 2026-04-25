@@ -136,7 +136,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
     }
 
     public long keyIndex(int key) {
-        long hashCode = Hash.fastHashInt64(key);
+        long hashCode = Hash.hashInt64(key);
         long index = hashCode & mask;
         int k = keyAt(index);
         if (k == noEntryKey) {
@@ -301,7 +301,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         for (long p = oldPtr, lim = oldPtr + entrySize * oldCapacity; p < lim; p += entrySize) {
             int key = Unsafe.getInt(p);
             if (key != noEntryKey) {
-                long hashCode = Hash.fastHashInt64(key);
+                long hashCode = Hash.hashInt64(key);
                 long index = hashCode & mask;
                 while (keyAt(index) != noEntryKey) {
                     index = (index + 1) & mask;

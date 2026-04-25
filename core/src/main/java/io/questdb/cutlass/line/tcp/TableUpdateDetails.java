@@ -253,6 +253,22 @@ public class TableUpdateDetails implements Closeable {
         return lastMeasurementMillis;
     }
 
+    /**
+     * Returns the sequencer txn assigned to the most recent commit on the
+     * underlying writer, or -1 if none.
+     */
+    public long getLastSeqTxn() {
+        return writerAPI != null ? writerAPI.getLastSeqTxn() : -1L;
+    }
+
+    public int getSegmentId() {
+        return writerAPI != null ? writerAPI.getSegmentId() : -1;
+    }
+
+    public int getWalId() {
+        return writerAPI != null ? writerAPI.getWalId() : -1;
+    }
+
     public MillisecondClock getMillisecondClock() {
         return millisecondClock;
     }
@@ -275,6 +291,10 @@ public class TableUpdateDetails implements Closeable {
 
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    public TableWriterAPI getWriter() {
+        return writerAPI;
     }
 
     public int getWriterThreadId() {
@@ -432,10 +452,6 @@ public class TableUpdateDetails implements Closeable {
 
     int getTimestampIndex() {
         return timestampIndex;
-    }
-
-    TableWriterAPI getWriter() {
-        return writerAPI;
     }
 
     void releaseWriter(boolean commit) {

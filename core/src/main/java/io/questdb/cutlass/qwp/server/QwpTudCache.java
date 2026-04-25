@@ -171,16 +171,34 @@ public class QwpTudCache implements QuietCloseable {
      * that propagate the error to the client (e.g. HTTP/WebSocket).
      */
     public void commitAll() throws Throwable {
+        commitAll(null);
+    }
+
+    /**
+     * Same as {@link #commitAll()} but invokes {@code consumer} for every table
+     * that actually committed new data (had uncommitted rows), passing the
+     * sequencer txn assigned to that commit. Used by QWP durable-ack tracking
+     * to record which client messages still need an object-store upload.
+     */
+    public void commitAll(CommittedTxnConsumer consumer) throws Throwable {
         boolean droppedTableFound;
         do {
             droppedTableFound = false;
             ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
+                Utf8Sequence tableName = keys.get(i);
                 WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
                 try {
                     if (!tud.isDropped()) {
+                        final boolean willAdvance = consumer != null && !tud.isFirstRow();
                         tud.commit(false);
+                        if (willAdvance && !tud.isDropped()) {
+                            consumer.accept(
+                                    tud.getTableToken().getTableName(),
+                                    tud.getTableToken().getDirName(),
+                                    tud.getLastSeqTxn()
+                            );
+                        }
                     }
                 } catch (CommitFailedException e) {
                     if (!e.isTableDropped()) {
@@ -212,7 +230,7 @@ public class QwpTudCache implements QuietCloseable {
             droppedTableFound = false;
             ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
+                Utf8Sequence tableName = keys.get(i);
                 WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
                 try {
                     if (!tud.isDropped()) {
@@ -245,7 +263,7 @@ public class QwpTudCache implements QuietCloseable {
             droppedTableFound = false;
             ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
+                Utf8Sequence tableName = keys.get(i);
                 WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
                 try {
                     if (!tud.isDropped()) {
@@ -344,6 +362,15 @@ public class QwpTudCache implements QuietCloseable {
 
     public void setDistressed() {
         this.isDistressed = true;
+    }
+
+    /**
+     * Callback invoked by {@link #commitAll(CommittedTxnConsumer)} for every
+     * table that actually advanced its sequencer txn during the commit.
+     */
+    @FunctionalInterface
+    public interface CommittedTxnConsumer {
+        void accept(String tableName, String tableDirName, long seqTxn);
     }
 
     private static boolean isValidQwpSchemaColumnName(QwpColumnDef columnDef, int maxFileNameLength) {
