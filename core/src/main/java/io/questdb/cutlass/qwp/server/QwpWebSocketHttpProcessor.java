@@ -283,27 +283,27 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
 
         // Write prefix
         for (byte b : RESPONSE_PREFIX) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
+            Unsafe.putByte(buf + offset++, b);
         }
 
         // Write accept key
         byte[] acceptBytes = acceptKey.getBytes(StandardCharsets.US_ASCII);
         for (byte b : acceptBytes) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
+            Unsafe.putByte(buf + offset++, b);
         }
 
         // Write X-QWP-Version header
         for (byte b : RESPONSE_AFTER_ACCEPT) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
+            Unsafe.putByte(buf + offset++, b);
         }
         byte[] versionBytes = Integer.toString(qwpVersion).getBytes(StandardCharsets.US_ASCII);
         for (byte b : versionBytes) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
+            Unsafe.putByte(buf + offset++, b);
         }
 
         // Write suffix
         for (byte b : RESPONSE_SUFFIX) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
+            Unsafe.putByte(buf + offset++, b);
         }
 
         return offset;

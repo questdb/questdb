@@ -75,7 +75,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                 long hi = dataAddr + rowCount - 1;
                 long offset = rowCount - 1;
                 for (; hi >= dataAddr; hi--) {
-                    byte value = Unsafe.getUnsafe().getByte(hi);
+                    byte value = Unsafe.getByte(hi);
                     if (value != GeoHashes.BYTE_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
@@ -128,7 +128,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                 long hi = dataAddr + (rowCount - 1) * 4L;
                 long offset = rowCount - 1;
                 for (; hi >= dataAddr; hi -= 4L) {
-                    int value = Unsafe.getUnsafe().getInt(hi);
+                    int value = Unsafe.getInt(hi);
                     if (value != GeoHashes.INT_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
@@ -181,7 +181,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                 long hi = dataAddr + (rowCount - 1) * 8L;
                 long offset = rowCount - 1;
                 for (; hi >= dataAddr; hi -= 8L) {
-                    long value = Unsafe.getUnsafe().getLong(hi);
+                    long value = Unsafe.getLong(hi);
                     if (value != GeoHashes.NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
@@ -234,7 +234,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                 long hi = dataAddr + (rowCount - 1) * 2L;
                 long offset = rowCount - 1;
                 for (; hi >= dataAddr; hi -= 2L) {
-                    short value = Unsafe.getUnsafe().getShort(hi);
+                    short value = Unsafe.getShort(hi);
                     if (value != GeoHashes.SHORT_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
