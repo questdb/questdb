@@ -408,11 +408,11 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
      * to the expected status name.
      */
     private static void assertClientDecodesStatus(byte statusByte, String expectedName) {
-        // Build a raw response: status (1) + sequence (8) + [error: msgLen (2) + msg]
+        // Build a raw response: status (1) + sequence (8) + tableCount (2) or error
         int payloadSize;
         byte[] errorMsg = "test error".getBytes(StandardCharsets.UTF_8);
         if (statusByte == QwpConstants.STATUS_OK) {
-            payloadSize = 9; // status + sequence only
+            payloadSize = 11; // status + sequence + tableCount
         } else {
             payloadSize = 11 + errorMsg.length; // status + sequence + msgLen + msg
         }
@@ -421,7 +421,9 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
         try {
             Unsafe.putByte(ptr, statusByte);
             Unsafe.putLong(ptr + 1, 1L); // sequence = 1
-            if (statusByte != QwpConstants.STATUS_OK) {
+            if (statusByte == QwpConstants.STATUS_OK) {
+                Unsafe.putShort(ptr + 9, (short) 0); // tableCount = 0
+            } else {
                 Unsafe.putShort(ptr + 9, (short) errorMsg.length);
                 for (int i = 0; i < errorMsg.length; i++) {
                     Unsafe.putByte(ptr + 11 + i, errorMsg[i]);

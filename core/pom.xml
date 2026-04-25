@@ -46,8 +46,7 @@
         -->
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
 
-        <!-- Java QWiP client version - override with -Dquestdb.client.version=1.1.1-SNAPSHOT for local dev -->
-        <questdb.client.version>1.1.0</questdb.client.version>
+        <questdb.client.version>1.2.0</questdb.client.version>
     </properties>
 
     <version>9.3.6-SNAPSHOT</version>
