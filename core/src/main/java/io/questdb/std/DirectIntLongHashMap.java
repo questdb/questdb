@@ -91,7 +91,7 @@ public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable
     }
 
     public long keyIndex(int key) {
-        long hashCode = Hash.fastHashInt64(key);
+        long hashCode = Hash.hashInt64(key);
         long index = hashCode & mask;
         int k = keyAt(index);
         if (k == noEntryKey) {
@@ -205,7 +205,7 @@ public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable
         for (long p = oldPtr, lim = oldPtr + 12L * oldCapacity; p < lim; p += 12L) {
             int key = Unsafe.getInt(p);
             if (key != noEntryKey) {
-                long hashCode = Hash.fastHashInt64(key);
+                long hashCode = Hash.hashInt64(key);
                 long index = hashCode & mask;
                 while (keyAt(index) != noEntryKey) {
                     index = (index + 1) & mask;
