@@ -81,17 +81,17 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static void appendPlainValue(long dataMemAddr, @Nullable Utf8Sequence value, boolean eraseAsciiFlag) {
         if (value == null) {
-            Unsafe.getUnsafe().putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
+            Unsafe.putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
             return;
         }
         final int hi = value.size();
         value.writeTo(dataMemAddr + Integer.BYTES, 0, hi);
         if (eraseAsciiFlag) {
-            Unsafe.getUnsafe().putInt(dataMemAddr, hi);
+            Unsafe.putInt(dataMemAddr, hi);
         } else {
             final boolean ascii = value.isAscii();
             // ASCII flag is signaled with the highest bit
-            Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
+            Unsafe.putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
         }
     }
 
@@ -191,7 +191,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static Utf8Sequence getPlainValue(@NotNull MemoryR dataMem, long offset) {
         long address = dataMem.addressOf(offset);
-        int header = Unsafe.getUnsafe().getInt(address);
+        int header = Unsafe.getInt(address);
         assert header != 0;
         return isNull(header)
                 ? null
@@ -206,7 +206,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @return the provided UTF8 wrapper or null.
      */
     public static DirectUtf8Sequence getPlainValue(long dataMemAddr, @NotNull DirectUtf8String sequence) {
-        int header = Unsafe.getUnsafe().getInt(dataMemAddr);
+        int header = Unsafe.getInt(dataMemAddr);
         if (isNull(header)) {
             return null;
         }
@@ -232,7 +232,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param dataMemAddr memory with header and UTF8 bytes
      */
     public static int getPlainValueSize(long dataMemAddr) {
-        int header = Unsafe.getUnsafe().getInt(dataMemAddr);
+        int header = Unsafe.getInt(dataMemAddr);
         if (isNull(header)) {
             return TableUtils.NULL_LEN;
         }
@@ -249,13 +249,13 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static Utf8Sequence getSliceValue(long auxAddr, long rowNum, Utf8SplitString utf8SplitView) {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
-        int header = Unsafe.getUnsafe().getInt(auxEntry);
+        int header = Unsafe.getInt(auxEntry);
         if ((header & VARCHAR_HEADER_FLAG_NULL) != 0) {
             return null;
         }
         int length = header >>> 4;
         boolean ascii = (header & 2) != 0;
-        long ptr = Unsafe.getUnsafe().getLong(auxEntry + 8);
+        long ptr = Unsafe.getLong(auxEntry + 8);
         return utf8SplitView.of(ptr, ptr, ptr + length, length, ascii);
     }
 
@@ -267,7 +267,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return TableUtils.NULL_LEN;
         }
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
-        int header = Unsafe.getUnsafe().getInt(auxEntry);
+        int header = Unsafe.getInt(auxEntry);
         if ((header & VARCHAR_HEADER_FLAG_NULL) != 0) {
             return TableUtils.NULL_LEN;
         }
@@ -322,7 +322,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static Utf8Sequence getSplitValue(long auxAddr, long auxLim, long dataAddr, long dataLim, long rowNum, Utf8SplitString utf8SplitView) {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
-        int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        int raw = Unsafe.getInt(auxEntry);
         assert raw != 0;
         if (hasNullFlag(raw)) {
             return null;
@@ -352,7 +352,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return TableUtils.NULL_LEN;
         }
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
-        int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        int raw = Unsafe.getInt(auxEntry);
         if (hasNullFlag(raw)) {
             return TableUtils.NULL_LEN;
         }
@@ -482,7 +482,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
         long auxEntry = auxMemAddr + VARCHAR_AUX_WIDTH_BYTES * row;
-        assert Unsafe.getUnsafe().getInt(auxEntry) != 0;
+        assert Unsafe.getInt(auxEntry) != 0;
         return getDataOffset(auxEntry);
     }
 
@@ -687,7 +687,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     private static long getDataOffset(long auxEntry) {
-        return Unsafe.getUnsafe().getLong(auxEntry + Long.BYTES) >>> 16;
+        return Unsafe.getLong(auxEntry + Long.BYTES) >>> 16;
     }
 
     private static long getDataOffset(MemoryR auxMem, long offset) {
@@ -695,7 +695,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     private static long getDataVectorSize(long auxEntry) {
-        final int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        final int raw = Unsafe.getInt(auxEntry);
         assert raw != 0;
         final long dataOffset = getDataOffset(auxEntry);
         if (hasNullOrInlinedFlag(raw)) {

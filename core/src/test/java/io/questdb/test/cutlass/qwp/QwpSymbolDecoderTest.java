@@ -55,7 +55,7 @@ public class QwpSymbolDecoderTest {
         int allocSize = 1 + QwpVarint.encodedLength(0); // flag byte + dictionary size
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             QwpVarint.encode(address + 1, 0); // empty dictionary
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
             int consumed = cursor.of(address, allocSize, 0);
@@ -92,11 +92,11 @@ public class QwpSymbolDecoderTest {
             int totalSize = HEADER_SIZE + payloadSize;
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
-                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
-                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
-                Unsafe.getUnsafe().putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
-                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
+                Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
+                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
+                Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
+                Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
 
                 long pos = address + HEADER_SIZE;
                 pos = QwpVarint.encode(pos, deltaStartId);
@@ -130,18 +130,18 @@ public class QwpSymbolDecoderTest {
             int totalSize = HEADER_SIZE + payloadSize;
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
-                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
-                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
-                Unsafe.getUnsafe().putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
-                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
+                Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
+                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
+                Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
+                Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
 
                 long pos = address + HEADER_SIZE;
                 pos = QwpVarint.encode(pos, deltaStartId);
                 pos = QwpVarint.encode(pos, deltaCount);
                 pos = QwpVarint.encode(pos, symbolBytes.length);
                 for (byte b : symbolBytes) {
-                    Unsafe.getUnsafe().putByte(pos++, b);
+                    Unsafe.putByte(pos++, b);
                 }
 
                 QwpMessageCursor cursor = new QwpMessageCursor();
@@ -167,7 +167,7 @@ public class QwpSymbolDecoderTest {
             long pos = address;
 
             // null bitmap present
-            Unsafe.getUnsafe().putByte(pos, (byte) 1);
+            Unsafe.putByte(pos, (byte) 1);
             pos++;
 
             // Null bitmap (all nulls)
@@ -216,7 +216,7 @@ public class QwpSymbolDecoderTest {
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             long pos = address;
-            Unsafe.getUnsafe().putByte(pos++, (byte) 0);
+            Unsafe.putByte(pos++, (byte) 0);
             pos = QwpVarint.encode(pos, Long.MIN_VALUE);
 
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
@@ -237,7 +237,7 @@ public class QwpSymbolDecoderTest {
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             long pos = address;
-            Unsafe.getUnsafe().putByte(pos++, (byte) 0);
+            Unsafe.putByte(pos++, (byte) 0);
             pos = QwpVarint.encode(pos, 1);
             pos = QwpVarint.encode(pos, -1L);
 
@@ -260,7 +260,7 @@ public class QwpSymbolDecoderTest {
         try {
             long pos = address;
             // no null bitmap
-            Unsafe.getUnsafe().putByte(pos, (byte) 0);
+            Unsafe.putByte(pos, (byte) 0);
             pos++;
             // Dictionary size = 1
             pos = QwpVarint.encode(pos, 1);
@@ -285,7 +285,7 @@ public class QwpSymbolDecoderTest {
             long pos = address;
 
             // no null bitmap
-            Unsafe.getUnsafe().putByte(pos, (byte) 0);
+            Unsafe.putByte(pos, (byte) 0);
             pos++;
 
             // Dictionary: 1 entry
@@ -295,7 +295,7 @@ public class QwpSymbolDecoderTest {
             byte[] aBytes = "a".getBytes(StandardCharsets.UTF_8);
             pos = QwpVarint.encode(pos, aBytes.length);
             for (byte b : aBytes) {
-                Unsafe.getUnsafe().putByte(pos++, b);
+                Unsafe.putByte(pos++, b);
             }
 
             // Value: index 5 (invalid, only 1 entry in dictionary)
@@ -322,7 +322,7 @@ public class QwpSymbolDecoderTest {
             long pos = address;
 
             // no null bitmap
-            Unsafe.getUnsafe().putByte(pos, (byte) 0);
+            Unsafe.putByte(pos, (byte) 0);
             pos++;
 
             // Value: index 3 (invalid, connection dictionary has only 2 entries)
@@ -358,10 +358,10 @@ public class QwpSymbolDecoderTest {
         try {
             long pos = address;
 
-            Unsafe.getUnsafe().putByte(pos++, (byte) 0);
+            Unsafe.putByte(pos++, (byte) 0);
             pos = QwpVarint.encode(pos, 1);
             pos = QwpVarint.encode(pos, 1);
-            Unsafe.getUnsafe().putByte(pos++, (byte) 'a');
+            Unsafe.putByte(pos++, (byte) 'a');
             pos = QwpVarint.encode(pos, Long.MIN_VALUE);
 
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
@@ -395,7 +395,7 @@ public class QwpSymbolDecoderTest {
             long pos = address;
 
             // no null bitmap
-            Unsafe.getUnsafe().putByte(pos, (byte) 0);
+            Unsafe.putByte(pos, (byte) 0);
             pos++;
 
             // Dictionary: 2 entries
@@ -405,14 +405,14 @@ public class QwpSymbolDecoderTest {
             byte[] aBytes = "a".getBytes(StandardCharsets.UTF_8);
             pos = QwpVarint.encode(pos, aBytes.length);
             for (byte b : aBytes) {
-                Unsafe.getUnsafe().putByte(pos++, b);
+                Unsafe.putByte(pos++, b);
             }
 
             // Entry "b"
             byte[] bBytes = "b".getBytes(StandardCharsets.UTF_8);
             pos = QwpVarint.encode(pos, bBytes.length);
             for (byte b : bBytes) {
-                Unsafe.getUnsafe().putByte(pos++, b);
+                Unsafe.putByte(pos++, b);
             }
 
             // Values: index 0 for row 0, then index 1 for row 1

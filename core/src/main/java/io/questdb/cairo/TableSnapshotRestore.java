@@ -1000,7 +1000,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     final long addr = rowGroupBuffers.getChunkDataPtr(i);
                     final long size = rowGroupBuffers.getChunkDataSize(i);
                     for (long p = addr + startOffset * 4, lim = addr + size; p < lim; p += 4, rowId++) {
-                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(p)), rowId);
+                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
                     }
                 }
 

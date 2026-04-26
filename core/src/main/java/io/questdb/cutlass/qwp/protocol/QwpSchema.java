@@ -83,7 +83,7 @@ public final class QwpSchema {
      * @return address after encoded reference
      */
     public static long encodeReference(long address, int schemaId) {
-        Unsafe.getUnsafe().putByte(address, SCHEMA_MODE_REFERENCE);
+        Unsafe.putByte(address, SCHEMA_MODE_REFERENCE);
         return QwpVarint.encode(address + 1, schemaId);
     }
 
@@ -150,7 +150,7 @@ public final class QwpSchema {
             throw QwpParseException.headerTooShort();
         }
 
-        byte schemaMode = Unsafe.getUnsafe().getByte(address);
+        byte schemaMode = Unsafe.getByte(address);
         int offset = 1;
 
         if (schemaMode == SCHEMA_MODE_REFERENCE) {
@@ -196,7 +196,7 @@ public final class QwpSchema {
      * @return address after encoded schema
      */
     public long encode(long address, int schemaId) {
-        Unsafe.getUnsafe().putByte(address, SCHEMA_MODE_FULL);
+        Unsafe.putByte(address, SCHEMA_MODE_FULL);
         long pos = address + 1;
         pos = QwpVarint.encode(pos, schemaId);
 
@@ -205,9 +205,9 @@ public final class QwpSchema {
             byte[] nameBytes = col.getNameUtf8();
             pos = QwpVarint.encode(pos, nameBytes.length);
             for (byte b : nameBytes) {
-                Unsafe.getUnsafe().putByte(pos++, b);
+                Unsafe.putByte(pos++, b);
             }
-            Unsafe.getUnsafe().putByte(pos++, col.getWireTypeCode());
+            Unsafe.putByte(pos++, col.getWireTypeCode());
         }
 
         return pos;
@@ -319,13 +319,13 @@ public final class QwpSchema {
             // Read column name bytes
             byte[] nameBytes = new byte[nameLenInt];
             for (int j = 0; j < nameLenInt; j++) {
-                nameBytes[j] = Unsafe.getUnsafe().getByte(address + offset + j);
+                nameBytes[j] = Unsafe.getByte(address + offset + j);
             }
             String columnName = new String(nameBytes, StandardCharsets.UTF_8);
             offset += nameLenInt;
 
             // Read column type
-            byte typeCode = Unsafe.getUnsafe().getByte(address + offset);
+            byte typeCode = Unsafe.getByte(address + offset);
             offset++;
 
             QwpColumnDef colDef = new QwpColumnDef(columnName, typeCode);

@@ -6509,7 +6509,6 @@ public class SampleByTest extends AbstractCairoTest {
             columns.add(col);
 
             new SampleByFirstLastRecordCursorFactory(
-                    configuration,
                     null,
                     new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
@@ -6550,7 +6549,6 @@ public class SampleByTest extends AbstractCairoTest {
             columns.add(col);
 
             new SampleByFirstLastRecordCursorFactory(
-                    configuration,
                     null,
                     new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
@@ -18084,7 +18082,7 @@ public class SampleByTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> workerCount)) {
             assertMemoryLeak(() -> TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute(
                                 "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp) timestamp(k) partition by day;",
                                 sqlExecutionContext

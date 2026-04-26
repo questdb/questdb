@@ -55,7 +55,7 @@ public abstract class AbstractJsonParser implements JsonParser, Mutable, QuietCl
 
     private static void strcpyw(final CharSequence value, final int len, final long address) {
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + ((long) i << 1), value.charAt(i));
+            Unsafe.putChar(address + ((long) i << 1), value.charAt(i));
         }
     }
 
@@ -85,7 +85,7 @@ public abstract class AbstractJsonParser implements JsonParser, Mutable, QuietCl
 
         @Override
         public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(buf + offset + index * 2L);
+            return Unsafe.getChar(buf + offset + index * 2L);
         }
 
         @Override

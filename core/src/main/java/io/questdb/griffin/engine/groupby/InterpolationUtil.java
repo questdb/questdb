@@ -61,9 +61,9 @@ public class InterpolationUtil {
                 (byte) interpolate(
                         x,
                         x1,
-                        Unsafe.getUnsafe().getByte(y1Address),
+                        Unsafe.getByte(y1Address),
                         x2,
-                        Unsafe.getUnsafe().getByte(y2Address)
+                        Unsafe.getByte(y2Address)
                 )
         );
     }
@@ -82,9 +82,9 @@ public class InterpolationUtil {
                 (float) interpolate(
                         x,
                         x1,
-                        Unsafe.getUnsafe().getFloat(y1Address),
+                        Unsafe.getFloat(y1Address),
                         x2,
-                        Unsafe.getUnsafe().getFloat(y2Address)
+                        Unsafe.getFloat(y2Address)
                 )
         );
     }
@@ -103,9 +103,9 @@ public class InterpolationUtil {
                 (int) interpolate(
                         x,
                         x1,
-                        Unsafe.getUnsafe().getInt(y1Address),
+                        Unsafe.getInt(y1Address),
                         x2,
-                        Unsafe.getUnsafe().getInt(y2Address)
+                        Unsafe.getInt(y2Address)
                 )
         );
     }
@@ -124,9 +124,9 @@ public class InterpolationUtil {
                 (long) interpolate(
                         x,
                         x1,
-                        Unsafe.getUnsafe().getLong(y1Address),
+                        Unsafe.getLong(y1Address),
                         x2,
-                        Unsafe.getUnsafe().getLong(y2Address)
+                        Unsafe.getLong(y2Address)
                 )
         );
     }
@@ -145,9 +145,9 @@ public class InterpolationUtil {
                 (short) interpolate(
                         x,
                         x1,
-                        Unsafe.getUnsafe().getShort(y1Address),
+                        Unsafe.getShort(y1Address),
                         x2,
-                        Unsafe.getUnsafe().getShort(y2Address)
+                        Unsafe.getShort(y2Address)
                 )
         );
     }
@@ -185,9 +185,9 @@ public class InterpolationUtil {
                 interpolate(
                         x,
                         x1,
-                        Unsafe.getUnsafe().getDouble(y1Address),
+                        Unsafe.getDouble(y1Address),
                         x2,
-                        Unsafe.getUnsafe().getDouble(y2Address)
+                        Unsafe.getDouble(y2Address)
                 )
         );
     }
@@ -212,27 +212,27 @@ public class InterpolationUtil {
     }
 
     static void storeYByte(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putByte(targetAddress, function.getByte(mapValue));
+        Unsafe.putByte(targetAddress, function.getByte(mapValue));
     }
 
     static void storeYDouble(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putDouble(targetAddress, function.getDouble(mapValue));
+        Unsafe.putDouble(targetAddress, function.getDouble(mapValue));
     }
 
     static void storeYFloat(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putFloat(targetAddress, function.getFloat(mapValue));
+        Unsafe.putFloat(targetAddress, function.getFloat(mapValue));
     }
 
     static void storeYInt(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putInt(targetAddress, function.getInt(mapValue));
+        Unsafe.putInt(targetAddress, function.getInt(mapValue));
     }
 
     static void storeYLong(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putLong(targetAddress, function.getLong(mapValue));
+        Unsafe.putLong(targetAddress, function.getLong(mapValue));
     }
 
     static void storeYShort(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putShort(targetAddress, function.getShort(mapValue));
+        Unsafe.putShort(targetAddress, function.getShort(mapValue));
     }
 
     interface InterpolatorFunction {

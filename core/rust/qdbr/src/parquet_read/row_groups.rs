@@ -142,6 +142,37 @@ fn decompress_varchar_slice_dict<'bufs>(
 }
 
 impl ParquetDecoder {
+    pub fn row_group_column_has_encoding(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+        parquet_encoding: i32,
+    ) -> ParquetResult<bool> {
+        if row_group_index >= self.row_group_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                self.row_group_count
+            ));
+        }
+        if column_index >= self.col_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column index {} out of range [0,{})",
+                column_index,
+                self.col_count
+            ));
+        }
+
+        let row_group = &self.metadata.row_groups[row_group_index as usize];
+        let column = &row_group.columns()[column_index as usize];
+        Ok(column
+            .column_encoding()
+            .iter()
+            .any(|encoding| encoding.0 == parquet_encoding))
+    }
+
     pub fn decode_row_group(
         &self,
         ctx: &mut DecodeContext,

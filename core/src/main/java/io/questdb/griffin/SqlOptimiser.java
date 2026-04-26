@@ -1028,6 +1028,49 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Lower-indexed inner window models can't resolve the literal from their
+    // nested chain, and the referencing site itself already exposes it, so only
+    // models strictly above the literal's origin and below upToExclusive get it.
+    private void addLiteralPassThroughToInnerWindowModels(
+            ExpressionNode node,
+            ObjList<IQueryModel> innerWindowModels,
+            int upToExclusive
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.type == LITERAL) {
+                    int ownerIdx = findInnerWindowModelOwnerIdx(innerWindowModels, node.token);
+                    for (int i = ownerIdx + 1; i < upToExclusive; i++) {
+                        IQueryModel innerWm = innerWindowModels.getQuick(i);
+                        if (innerWm.getAliasToColumnMap().excludes(node.token)) {
+                            innerWm.addBottomUpColumn(nextColumn(node.token));
+                        }
+                    }
+                }
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        sqlNodeStack.push(node.rhs);
+                    }
+                    node = node.lhs;
+                } else {
+                    for (int i = 0, k = node.paramCount; i < k; i++) {
+                        ExpressionNode arg = node.args.getQuick(i);
+                        if (arg != null) {
+                            sqlNodeStack.push(arg);
+                        }
+                    }
+                    node = null;
+                }
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+    }
+
     // add table prefix to all column references to make it easier to compare expressions
     private void addMissingTablePrefixesForGroupByQueries(ExpressionNode node, IQueryModel baseModel, IQueryModel innerVirtualModel) throws SqlException {
         sqlNodeStack.clear();
@@ -3980,6 +4023,88 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
+    private int findInnerWindowModelOwnerIdx(ObjList<IQueryModel> innerWindowModels, CharSequence token) {
+        for (int i = 0, n = innerWindowModels.size(); i < n; i++) {
+            if (!innerWindowModels.getQuick(i).getAliasToColumnMap().excludes(token)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Walks the AST of a SELECT column and returns the position of the first
+     * aggregate function that contains a window function in its arguments,
+     * provided the column root is NOT itself that aggregate. Returns -1
+     * otherwise.
+     * <p>
+     * The rewriter (extractAndRegisterNestedWindowFunctions) handles a window
+     * function nested inside an aggregate as long as that aggregate sits at
+     * the column root, e.g. {@code SELECT max(avg(x) OVER ()) FROM t GROUP BY cat}
+     * or {@code SELECT max(abs(avg(x) OVER ())) FROM t GROUP BY cat}. Arbitrary
+     * non-window subtrees under the root aggregate are fine because the
+     * extractor recurses through them. What is NOT handled is any wrapping
+     * AROUND the aggregate: an operator, function call, or CASE branch that
+     * holds an aggregate-over-window falls back to a code path that fails
+     * later with a cryptic "Aggregate function cannot be passed as an
+     * argument" error pointing at the inner window. Reject those upfront with
+     * a clear message instead.
+     * <p>
+     * Caller must invoke findWindowFunctionOutsideAggregatePos first (enforced
+     * by an {@code assert}), which rejects any window function sitting outside
+     * an aggregate. By the time this walker runs, the only window functions
+     * reachable from {@code root} live inside aggregate subtrees and are
+     * detected via checkForChildWindowFunctions on each candidate aggregate.
+     * <p>
+     * Time complexity is linear in the AST size: the outer walker skips the
+     * subtree of every aggregate it visits (popping from sqlNodeStack instead
+     * of descending), and aggregate subtrees are mutually disjoint, so each
+     * node is visited at most twice across the outer walk and the
+     * checkForChildWindowFunctions calls.
+     */
+    private int findInvalidAggregateOverWindowPos(ExpressionNode root) {
+        final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
+        assert findWindowFunctionOutsideAggregatePos(root) == -1
+                : "caller must invoke findWindowFunctionOutsideAggregatePos first";
+        // Aggregate at the column root is the supported case; the extractor
+        // recurses through any non-window subtree underneath it.
+        if (root.type == FUNCTION && root.windowExpression == null && cache.isGroupBy(root.token)) {
+            return -1;
+        }
+        sqlNodeStack.clear();
+        ExpressionNode node = root;
+        while (node != null) {
+            if (node.type == FUNCTION && cache.isGroupBy(node.token)) {
+                if (checkForChildWindowFunctions(sqlNodeStack2, node)) {
+                    return node.position;
+                }
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+                continue;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                if (node.lhs != null) {
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+            }
+        }
+        return -1;
+    }
+
     private QueryColumn findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
         for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -4016,11 +4141,11 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Finds the position of the first window function or pure window function name in an expression tree.
-     * Returns 0 if no window function is found.
+     * Returns -1 if no window function is found.
      */
     private int findWindowFunctionOrNamePosition(ExpressionNode node) {
         if (node == null) {
-            return 0;
+            return -1;
         }
         FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
         if (node.windowExpression != null ||
@@ -4031,19 +4156,79 @@ public class SqlOptimiser implements Mutable {
         if (node.paramCount < 3) {
             if (node.lhs != null) {
                 int pos = findWindowFunctionOrNamePosition(node.lhs);
-                if (pos > 0) return pos;
+                if (pos >= 0) return pos;
             }
             if (node.rhs != null) {
                 int pos = findWindowFunctionOrNamePosition(node.rhs);
-                if (pos > 0) return pos;
+                if (pos >= 0) return pos;
             }
         } else {
             for (int i = 0, n = node.paramCount; i < n; i++) {
                 int pos = findWindowFunctionOrNamePosition(node.args.getQuick(i));
-                if (pos > 0) return pos;
+                if (pos >= 0) return pos;
             }
         }
-        return 0;
+        return -1;
+    }
+
+    /**
+     * Walks the AST of a SELECT column and returns the position of the first
+     * window function that is NOT wrapped inside an aggregate function.
+     * Returns -1 if no such window function exists.
+     * <p>
+     * A window function here means either a function node carrying an OVER
+     * clause ({@code windowExpression != null}) or a pure window function name
+     * (e.g. {@code row_number}, {@code rank}) that cannot be an aggregate.
+     * Functions that also exist as aggregates ({@code sum}, {@code avg}, ...)
+     * only qualify when they carry an OVER clause.
+     * <p>
+     * Window functions inside aggregates (e.g. {@code max(avg(x) OVER (...))})
+     * are handled by the inner window model propagation pipeline and must not
+     * be flagged here. Window functions outside aggregates mixed with
+     * aggregates or GROUP BY (e.g. {@code avg(x) - avg(x) OVER ()}) have no
+     * valid execution plan and must be rejected by the caller.
+     */
+    private int findWindowFunctionOutsideAggregatePos(ExpressionNode node) {
+        sqlNodeStack.clear();
+        final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
+        // ExpressionNode.paramCount invariants (documented on the field):
+        // paramCount == 1: rhs only; paramCount == 2: lhs and rhs; paramCount > 2: args.
+        while (node != null) {
+            if (node.windowExpression != null
+                    || (node.type == FUNCTION && cache.isPureWindowFunction(node.token))) {
+                return node.position;
+            }
+            // Skip subtrees rooted at an aggregate function. The parser never
+            // attaches windowExpression to a plain aggregate, and the check
+            // above has already returned for any window function node, so any
+            // isGroupBy FUNCTION reaching this point is a genuine aggregate.
+            if (node.type == FUNCTION && cache.isGroupBy(node.token)) {
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+                continue;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                if (node.lhs != null) {
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                // Variadic nodes (e.g. CASE expressions) store children in args.
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+            }
+        }
+        return -1;
     }
 
     private void fixTimestampAndCollectMissingTokens(
@@ -9279,6 +9464,29 @@ public class SqlOptimiser implements Mutable {
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
+            // Detect window functions mixed with aggregation that have no valid plan.
+            // A window function nested inside an aggregate (e.g. max(avg(x) OVER ())) is
+            // lowered into an inner window model and handled by the rewrite pipeline.
+            // A window function sitting outside any aggregate alongside a GROUP BY or
+            // a sibling aggregate (e.g. avg(x) - avg(x) OVER ()) has no such plan and
+            // previously bypassed the top-level REWRITE_STATUS check, silently producing
+            // wrong results. Walk the AST, skipping aggregate subtrees, and reject the
+            // query when such a window function appears.
+            //
+            // Skip top-level window columns: a column whose AST is itself a window
+            // expression sets REWRITE_STATUS_USE_WINDOW_MODEL and is caught by the
+            // REWRITE_STATUS_USE_WINDOW_MODEL + REWRITE_STATUS_USE_GROUP_BY_MODEL check
+            // below.
+            if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0 && !qc.isWindowExpression()) {
+                int windowFnPos = findWindowFunctionOutsideAggregatePos(qc.getAst());
+                if (windowFnPos >= 0) {
+                    throw SqlException.$(windowFnPos, "Window function is not allowed in context of aggregation. Use sub-query.");
+                }
+                int aggOverWindowPos = findInvalidAggregateOverWindowPos(qc.getAst());
+                if (aggOverWindowPos >= 0) {
+                    throw SqlException.$(aggOverWindowPos, "Aggregate over window function cannot be combined with other terms. Use a sub-query.");
+                }
+            }
             IQueryModel translatingModel0 = isWindowJoin ? windowJoinModel : (isHorizonJoin ? horizonJoinModel : translatingModel);
             switch (qc.getAst().type) {
                 case LITERAL:
@@ -9702,6 +9910,58 @@ public class SqlOptimiser implements Mutable {
                                     laterModel.getAliasToColumnMap().excludes(alias)) {
                                 laterModel.addBottomUpColumn(nextColumn(alias));
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // With an aggregate wrapping a nested window, the inner window model sits
+        // between groupByModel and translatingModel, so groupByModel can only see
+        // its GROUP BY keys and aggregate-arg literals if they pass through the
+        // inner chain.
+        if (innerWindowModels.size() > 0 && (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
+            final int nInner = innerWindowModels.size();
+            ObjList<QueryColumn> groupByCols = groupByModel.getBottomUpColumns();
+            for (int i = 0, n = groupByCols.size(); i < n; i++) {
+                QueryColumn col = groupByCols.getQuick(i);
+                ExpressionNode ast = col.getAst();
+                if (ast.type == LITERAL) {
+                    for (int j = 0; j < nInner; j++) {
+                        IQueryModel innerWm = innerWindowModels.getQuick(j);
+                        if (innerWm.getAliasToColumnMap().excludes(col.getAlias())) {
+                            innerWm.addBottomUpColumn(nextColumn(col.getAlias()));
+                        }
+                    }
+                } else {
+                    // Covers both aggregates wrapping nested windows (sum(avg(x) OVER ...))
+                    // and non-aggregate GROUP BY expressions (GROUP BY upper(cat)). In both
+                    // cases the inner window model needs the underlying literal references,
+                    // not the outer column's alias, so walk the AST.
+                    addLiteralPassThroughToInnerWindowModels(ast, innerWindowModels, nInner);
+                }
+            }
+
+            // A later inner window model's OVER clause may reference literals that
+            // deeper models don't yet expose; forward them through the chain.
+            if (nInner > 1) {
+                for (int i = 1; i < nInner; i++) {
+                    IQueryModel laterModel = innerWindowModels.getQuick(i);
+                    ObjList<QueryColumn> laterCols = laterModel.getBottomUpColumns();
+                    for (int k = 0, m = laterCols.size(); k < m; k++) {
+                        QueryColumn laterCol = laterCols.getQuick(k);
+                        if (laterCol instanceof WindowExpression wc) {
+                            addLiteralPassThroughToInnerWindowModels(wc.getAst(), innerWindowModels, i);
+                            ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
+                            for (int p = 0, pN = partitionBy.size(); p < pN; p++) {
+                                addLiteralPassThroughToInnerWindowModels(partitionBy.getQuick(p), innerWindowModels, i);
+                            }
+                            ObjList<ExpressionNode> orderBy = wc.getOrderBy();
+                            for (int p = 0, pN = orderBy.size(); p < pN; p++) {
+                                addLiteralPassThroughToInnerWindowModels(orderBy.getQuick(p), innerWindowModels, i);
+                            }
+                            addLiteralPassThroughToInnerWindowModels(wc.getRowsLoExpr(), innerWindowModels, i);
+                            addLiteralPassThroughToInnerWindowModels(wc.getRowsHiExpr(), innerWindowModels, i);
                         }
                     }
                 }

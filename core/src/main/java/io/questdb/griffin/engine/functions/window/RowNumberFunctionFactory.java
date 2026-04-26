@@ -231,7 +231,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rowNumber);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), rowNumber);
         }
 
         @Override
@@ -295,7 +295,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), ++rowNumber);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), ++rowNumber);
         }
 
         @Override
