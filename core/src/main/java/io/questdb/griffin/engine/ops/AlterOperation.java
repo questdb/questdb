@@ -137,7 +137,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return (flags & FLAGS_V1_BIT_INDEXED) != 0 ? IndexType.BITMAP : IndexType.NONE;
     }
 
-    /** See {@link #decodeIndexType(long)}. */
+    /**
+     * See {@link #decodeIndexType(long)}.
+     */
     public static boolean decodeIsDedupKey(long flags) {
         if ((flags & FLAGS_FORMAT_V2) != 0) {
             return (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
