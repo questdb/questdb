@@ -12220,6 +12220,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectUnclosedParenPointsToOpeningParen() throws Exception {
+        assertSyntaxError(
+                "select abs(100000*rnd_double(), timestamp_sequence('2022-07-01', 1000000) from long_sequence(1000000)",
+                10,
+                "unbalanced ("
+        );
+    }
+
+    @Test
     public void testSelectNoFromUnion() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) sum from (select-virtual [1 a, 1 b] 1 a, 1 b from (long_sequence(1)) union all select-virtual [333 333, 1 1] 333 333, 1 1 from (long_sequence(1))) x",
