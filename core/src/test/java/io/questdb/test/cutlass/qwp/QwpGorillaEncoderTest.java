@@ -290,8 +290,8 @@ public class QwpGorillaEncoderTest {
                     int bytesWritten = encoder.encodeTimestamps(dst, 64, src, tc.length);
                     Assert.assertTrue("Failed to encode: " + java.util.Arrays.toString(tc), bytesWritten > 0);
 
-                    long first = Unsafe.getUnsafe().getLong(dst);
-                    long second = Unsafe.getUnsafe().getLong(dst + 8);
+                    long first = Unsafe.getLong(dst);
+                    long second = Unsafe.getLong(dst + 8);
                     Assert.assertEquals(tc[0], first);
                     Assert.assertEquals(tc[1], second);
 
@@ -332,7 +332,7 @@ public class QwpGorillaEncoderTest {
             try {
                 int bytesWritten = encoder.encodeTimestamps(dst, 64, src, 1);
                 Assert.assertEquals(8, bytesWritten);
-                Assert.assertEquals(1_234_567_890L, Unsafe.getUnsafe().getLong(dst));
+                Assert.assertEquals(1_234_567_890L, Unsafe.getLong(dst));
             } finally {
                 Unsafe.free(src, 8, MemoryTag.NATIVE_ILP_RSS);
                 Unsafe.free(dst, 64, MemoryTag.NATIVE_ILP_RSS);
@@ -365,8 +365,8 @@ public class QwpGorillaEncoderTest {
                 int bytesWritten = encoder.encodeTimestamps(dst, capacity, src, timestamps.length);
                 Assert.assertTrue(bytesWritten > 0);
 
-                long first = Unsafe.getUnsafe().getLong(dst);
-                long second = Unsafe.getUnsafe().getLong(dst + 8);
+                long first = Unsafe.getLong(dst);
+                long second = Unsafe.getLong(dst + 8);
                 Assert.assertEquals(timestamps[0], first);
                 Assert.assertEquals(timestamps[1], second);
 
@@ -406,8 +406,8 @@ public class QwpGorillaEncoderTest {
                 int bytesWritten = encoder.encodeTimestamps(dst, capacity, src, timestamps.length);
                 Assert.assertTrue(bytesWritten > 0);
 
-                long first = Unsafe.getUnsafe().getLong(dst);
-                long second = Unsafe.getUnsafe().getLong(dst + 8);
+                long first = Unsafe.getLong(dst);
+                long second = Unsafe.getLong(dst + 8);
                 Assert.assertEquals(timestamps[0], first);
                 Assert.assertEquals(timestamps[1], second);
 
@@ -455,8 +455,8 @@ public class QwpGorillaEncoderTest {
                 Assert.assertTrue(bytesWritten > 0);
                 Assert.assertTrue("Should compress better than uncompressed", bytesWritten < count * 8);
 
-                long first = Unsafe.getUnsafe().getLong(dst);
-                long second = Unsafe.getUnsafe().getLong(dst + 8);
+                long first = Unsafe.getLong(dst);
+                long second = Unsafe.getLong(dst + 8);
                 Assert.assertEquals(timestamps[0], first);
                 Assert.assertEquals(timestamps[1], second);
 
@@ -499,8 +499,8 @@ public class QwpGorillaEncoderTest {
                 int bytesWritten = encoder.encodeTimestamps(dst, capacity, src, timestamps.length);
                 Assert.assertTrue(bytesWritten > 0);
 
-                long first = Unsafe.getUnsafe().getLong(dst);
-                long second = Unsafe.getUnsafe().getLong(dst + 8);
+                long first = Unsafe.getLong(dst);
+                long second = Unsafe.getLong(dst + 8);
                 Assert.assertEquals(timestamps[0], first);
                 Assert.assertEquals(timestamps[1], second);
 
@@ -546,8 +546,8 @@ public class QwpGorillaEncoderTest {
                 int bytesWritten = encoder.encodeTimestamps(dst, capacity, src, timestamps.length);
                 Assert.assertTrue(bytesWritten > 0);
 
-                long first = Unsafe.getUnsafe().getLong(dst);
-                long second = Unsafe.getUnsafe().getLong(dst + 8);
+                long first = Unsafe.getLong(dst);
+                long second = Unsafe.getLong(dst + 8);
                 Assert.assertEquals(timestamps[0], first);
                 Assert.assertEquals(timestamps[1], second);
 
@@ -579,8 +579,8 @@ public class QwpGorillaEncoderTest {
             try {
                 int bytesWritten = encoder.encodeTimestamps(dst, 64, src, 2);
                 Assert.assertEquals(16, bytesWritten);
-                Assert.assertEquals(1_000_000_000L, Unsafe.getUnsafe().getLong(dst));
-                Assert.assertEquals(1_000_001_000L, Unsafe.getUnsafe().getLong(dst + 8));
+                Assert.assertEquals(1_000_000_000L, Unsafe.getLong(dst));
+                Assert.assertEquals(1_000_001_000L, Unsafe.getLong(dst + 8));
             } finally {
                 Unsafe.free(src, 16, MemoryTag.NATIVE_ILP_RSS);
                 Unsafe.free(dst, 64, MemoryTag.NATIVE_ILP_RSS);
@@ -704,7 +704,7 @@ public class QwpGorillaEncoderTest {
         long size = (long) timestamps.length * 8;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_ILP_RSS);
         for (int i = 0; i < timestamps.length; i++) {
-            Unsafe.getUnsafe().putLong(address + (long) i * 8, timestamps[i]);
+            Unsafe.putLong(address + (long) i * 8, timestamps[i]);
         }
         return address;
     }

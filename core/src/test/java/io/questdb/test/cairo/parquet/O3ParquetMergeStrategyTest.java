@@ -1025,8 +1025,8 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     private long allocateSortedTimestamps(long... timestamps) {
         long addr = Unsafe.malloc(timestamps.length * 16L, MemoryTag.NATIVE_O3);
         for (int i = 0; i < timestamps.length; i++) {
-            Unsafe.getUnsafe().putLong(addr + i * 16L, timestamps[i]);
-            Unsafe.getUnsafe().putLong(addr + i * 16L + 8, i);
+            Unsafe.putLong(addr + i * 16L, timestamps[i]);
+            Unsafe.putLong(addr + i * 16L + 8, i);
         }
         return addr;
     }

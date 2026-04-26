@@ -796,7 +796,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // We have to be sure the last txn is acquired in Scoreboard
             // otherwise the writer can delete partition version files
             // between reading txn file and acquiring txn in the Scoreboard.
-            Unsafe.getUnsafe().loadFence();
+            Unsafe.loadFence();
             return txFile.getVersion() == txFile.unsafeReadVersion();
         }
         return false;

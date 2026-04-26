@@ -61,7 +61,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapTest extends AbstractCairoTest {
-    private final static SymbolValueCountCollector NOOP_COLLECTOR = (symbolIndexInTxWriter, count) -> {
+    private final static SymbolValueCountCollector NOOP_COLLECTOR = (_, _) -> {
     };
 
     public static void create(Path path, CharSequence name, int symbolCapacity, boolean useCache) {
@@ -287,7 +287,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         configuration.getWriterFileOpenOpts()
                 )) {
                     for (long l = SymbolMapWriter.HEADER_SIZE; l < mem.size(); l += 8) {
-                        Unsafe.getUnsafe().putLong(mem.addressOf(l), 0);
+                        Unsafe.putLong(mem.addressOf(l), 0);
                     }
                     mem.jumpTo(mem.size());
                 }
@@ -899,9 +899,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         // Create longer symbols to hit various mapping page sizes
         int symbolPrefixSize = (rnd.nextInt(200) + 5) / 3;
         StringBuilder symbolPrefix = new StringBuilder("abc");
-        for (int i = 0; i < symbolPrefixSize; i++) {
-            symbolPrefix.append("abc");
-        }
+        symbolPrefix.repeat("abc", Math.max(0, symbolPrefixSize));
         String prefix = symbolPrefix.toString();
 
         TestUtils.assertMemoryLeak(() -> {
@@ -1188,7 +1186,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
             long address = TableUtils.mapRW(ff, fd, size, MemoryTag.MMAP_DEFAULT);
             for (long i = keyToOffset(cleanCount); i + 4 < size; i += 4) {
-                Unsafe.getUnsafe().putInt(address + i, rnd.nextInt());
+                Unsafe.putInt(address + i, rnd.nextInt());
             }
 
             ff.munmap(address, size, MemoryTag.MMAP_DEFAULT);

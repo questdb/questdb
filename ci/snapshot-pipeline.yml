@@ -17,8 +17,8 @@ stages:
         displayName: "Build on Linux"
         pool: hetzner-incus
         variables:
-          JAVA_HOME_17_X64: "/opt/graalvm"
-          JAVA_HOME: "/opt/graalvm"
+          JAVA_HOME_25_X64: "/opt/graalvm-25"
+          JAVA_HOME: "/opt/graalvm-25"
         steps:
           - checkout: self
             fetchDepth: 1
@@ -31,7 +31,7 @@ stages:
               goals: "package"
               options:
                 "--batch-mode --quiet -DskipTests -P build-web-console,build-binaries -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: 1.17
+              jdkVersionOption: 1.25
           - bash: |
               cd "$(Build.SourcesDirectory)"/core
               find target \( -name "*rt-linux*.tar.gz" -o -name "*no-jre*.tar.gz" \) -exec mv '{}' "$(Build.BinariesDirectory)"/ \;

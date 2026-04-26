@@ -66,7 +66,7 @@ public class ParseDoubleCharSequenceBenchmark {
         for (int i = 0; i < N; i++) {
             String s = Double.toString(rnd.nextDouble());
             doubles.add(s);
-            Unsafe.getUnsafe().putInt(p, s.length());
+            Unsafe.putInt(p, s.length());
             Utf8s.strCpyAscii(s, p + 4);
             p += s.length() + 4;
         }
@@ -95,7 +95,7 @@ public class ParseDoubleCharSequenceBenchmark {
         long p = mem;
         double sum = 0;
         for (int i = 0; i < N; i++) {
-            int len = Unsafe.getUnsafe().getInt(p);
+            int len = Unsafe.getInt(p);
             sum += Numbers.parseDouble(p + 4, len);
             p += 4 + len;
         }
@@ -107,7 +107,7 @@ public class ParseDoubleCharSequenceBenchmark {
         long p = mem;
         double sum = 0;
         for (int i = 0; i < N; i++) {
-            int len = Unsafe.getUnsafe().getInt(p);
+            int len = Unsafe.getInt(p);
             flyweight.of(p + 4, p + 4 + len);
             sum += Numbers.parseDouble(flyweight.asAsciiCharSequence());
             p += 4 + len;

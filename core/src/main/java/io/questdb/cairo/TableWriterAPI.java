@@ -86,6 +86,23 @@ public interface TableWriterAPI extends Closeable {
 
     void commit();
 
+    /**
+     * Returns the sequencer txn assigned to the most recent commit on this writer,
+     * or -1 if no commit has happened yet or the writer does not participate in a
+     * sequencer (non-WAL writers).
+     */
+    default long getLastSeqTxn() {
+        return -1L;
+    }
+
+    default int getSegmentId() {
+        return -1;
+    }
+
+    default int getWalId() {
+        return -1;
+    }
+
     TableRecordMetadata getMetadata();
 
     /**

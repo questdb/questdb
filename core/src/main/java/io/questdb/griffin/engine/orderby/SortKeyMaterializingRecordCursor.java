@@ -73,7 +73,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             colToBufferIndex[i] = -1;
         }
 
-        this.rowIdToOrdinal = new DirectLongLongHashMap(64, 0.5, Long.MIN_VALUE, -1L, MemoryTag.NATIVE_TREE_CHAIN);
+        this.rowIdToOrdinal = new DirectLongLongHashMap(64, 0.7, Long.MIN_VALUE, -1L, MemoryTag.NATIVE_TREE_CHAIN);
         try {
             for (int i = 0; i < bufferCount; i++) {
                 final int colIndex = materializedColIndices.getQuick(i);

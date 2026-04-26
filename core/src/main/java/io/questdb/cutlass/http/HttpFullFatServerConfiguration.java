@@ -46,6 +46,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
         add("/write/v4");
         add("/api/v4/write");
     }};
+    ObjHashSet<String> CONTEXT_PATH_QWP_READ = new ObjHashSet<>() {{
+        add("/read/v1");
+        add("/api/v1/read");
+    }};
     ObjHashSet<String> CONTEXT_PATH_IMPORT = new ObjHashSet<>() {{
         add("/imp");
     }};
@@ -85,6 +89,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     default ObjHashSet<String> getContextPathQWP() {
         return CONTEXT_PATH_QWP;
+    }
+
+    default ObjHashSet<String> getContextPathQWPRead() {
+        return CONTEXT_PATH_QWP_READ;
     }
 
     default ObjHashSet<String> getContextPathILPPing() {

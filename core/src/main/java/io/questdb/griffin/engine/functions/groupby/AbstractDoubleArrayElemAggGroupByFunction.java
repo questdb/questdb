@@ -206,7 +206,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         long dataPtr = ptr + headerSize;
         if (array.isVanilla()) {
             for (int i = 0; i < flatCardinality; i++) {
-                Unsafe.getUnsafe().putDouble(dataPtr + (long) i * Double.BYTES, array.getDouble(i));
+                Unsafe.putDouble(dataPtr + (long) i * Double.BYTES, array.getDouble(i));
             }
         } else {
             // Non-vanilla: iterate by coordinate, use array strides to read, write in row-major order.
@@ -220,7 +220,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
                 for (int d = 0; d < nDims; d++) {
                     inputFi += coords[d] * array.getStride(d);
                 }
-                Unsafe.getUnsafe().putDouble(dataPtr + (long) outFi * Double.BYTES, array.getDouble(inputFi));
+                Unsafe.putDouble(dataPtr + (long) outFi * Double.BYTES, array.getDouble(inputFi));
                 outFi++;
             } while (ArrayView.incrementCoords(coords, inputShape));
         }
@@ -465,7 +465,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
                 remapData(ptr + headerSize, accFlatCardinality, accStrides, newDataPtr, newStrides);
             } else {
                 // Flat layout preserved: bulk copy + NaN-fill tail.
-                Unsafe.getUnsafe().copyMemory(ptr + headerSize, newDataPtr, (long) accFlatCardinality * Double.BYTES);
+                Unsafe.copyMemory(ptr + headerSize, newDataPtr, (long) accFlatCardinality * Double.BYTES);
                 nanFill(newDataPtr, accFlatCardinality, newCapacity);
             }
 
@@ -484,9 +484,9 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         for (int fi = 0; fi < oldFlatCardinality; fi++) {
             ArrayView.flatIndexToCoords(fi, oldStrides, coords);
             int newFi = ArrayView.coordsToFlatIndex(coords, targetStrides);
-            Unsafe.getUnsafe().putDouble(
+            Unsafe.putDouble(
                     newDataPtr + (long) newFi * Double.BYTES,
-                    Unsafe.getUnsafe().getDouble(oldDataPtr + (long) fi * Double.BYTES)
+                    Unsafe.getDouble(oldDataPtr + (long) fi * Double.BYTES)
             );
         }
     }
@@ -496,10 +496,10 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * Callers must ensure flatCardinality does not exceed maxArrayElementCount.
      */
     private void writeHeader(long ptr, int[] shape, int flatCardinality) {
-        Unsafe.getUnsafe().putInt(ptr, flatCardinality * Double.BYTES);
+        Unsafe.putInt(ptr, flatCardinality * Double.BYTES);
         long shapePtr = ptr + Integer.BYTES;
         for (int d = 0; d < nDims; d++) {
-            Unsafe.getUnsafe().putInt(shapePtr + (long) d * Integer.BYTES, shape[d]);
+            Unsafe.putInt(shapePtr + (long) d * Integer.BYTES, shape[d]);
         }
     }
 
@@ -508,10 +508,10 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * Callers must ensure flatCardinality does not exceed maxArrayElementCount.
      */
     private void writeHeaderFromArray(long ptr, ArrayView array, int flatCardinality) {
-        Unsafe.getUnsafe().putInt(ptr, flatCardinality * Double.BYTES);
+        Unsafe.putInt(ptr, flatCardinality * Double.BYTES);
         long shapePtr = ptr + Integer.BYTES;
         for (int d = 0; d < nDims; d++) {
-            Unsafe.getUnsafe().putInt(shapePtr + (long) d * Integer.BYTES, array.getDimLen(d));
+            Unsafe.putInt(shapePtr + (long) d * Integer.BYTES, array.getDimLen(d));
         }
     }
 
@@ -652,7 +652,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         if (innerDimsMatch(srcShape, destShape)) {
             // Flat path: inner dimensions match, so flat indices are identical.
             for (int i = 0; i < srcFlatCardinality; i++) {
-                double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) i * Double.BYTES);
+                double srcVal = Unsafe.getDouble(srcDataPtr + (long) i * Double.BYTES);
                 if (Numbers.isFinite(srcVal)) {
                     mergeOne(destDataPtr, i, srcVal, i);
                 }
@@ -661,7 +661,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
             ArrayView.computeRowMajorStrides(destShape, accStrides);
             ArrayView.computeRowMajorStrides(srcShape, newStrides);
             for (int fi = 0; fi < srcFlatCardinality; fi++) {
-                double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) fi * Double.BYTES);
+                double srcVal = Unsafe.getDouble(srcDataPtr + (long) fi * Double.BYTES);
                 if (Numbers.isFinite(srcVal)) {
                     ArrayView.flatIndexToCoords(fi, newStrides, coords);
                     int destFi = ArrayView.coordsToFlatIndex(coords, accStrides);
@@ -742,7 +742,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     protected void readShapeFromHeader(long ptr, int[] shape) {
         long shapePtr = ptr + Integer.BYTES;
         for (int d = 0; d < nDims; d++) {
-            shape[d] = Unsafe.getUnsafe().getInt(shapePtr + (long) d * Integer.BYTES);
+            shape[d] = Unsafe.getInt(shapePtr + (long) d * Integer.BYTES);
         }
     }
 

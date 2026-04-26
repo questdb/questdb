@@ -122,6 +122,7 @@ import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
 import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
@@ -389,7 +390,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_NANO_HOUR_INT = 2;
     public static final int GKK_VANILLA_INT = 0;
     public static final boolean[] joinsRequiringTimestamp = new boolean[IQueryModel.JOIN_MAX + 1];
-    private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, timestampIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
+    private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, _, _, _) -> new CountVectorAggregateFunction(keyKind);
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
     private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
@@ -1434,7 +1435,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnSizeShifts.add(Numbers.msb(typeSize));
                     }
 
-                    queryMeta.add(new TableColumnMetadata(
+                    TableColumnMetadata columnMetadata = new TableColumnMetadata(
                             metadata.getColumnName(columnIndex),
                             type,
                             metadata.isColumnIndexed(columnIndex),
@@ -1446,7 +1447,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             0,
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
-                    ));
+                    );
+                    columnMetadata.setParquetEncodingConfig(
+                            metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig()
+                    );
+                    queryMeta.add(columnMetadata);
 
                     if (columnIndex == readerTimestampIndex) {
                         queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
@@ -1456,11 +1461,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // select timestamp when it is required but not already selected
                 if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
                     int timestampType = metadata.getColumnType(readerTimestampIndex);
-                    queryMeta.add(new TableColumnMetadata(
+                    TableColumnMetadata timestampColumnMetadata = new TableColumnMetadata(
                             metadata.getColumnName(readerTimestampIndex),
                             timestampType,
                             metadata.getMetadata(readerTimestampIndex)
-                    ));
+                    );
+                    timestampColumnMetadata.setParquetEncodingConfig(
+                            metadata.getColumnMetadata(readerTimestampIndex).getParquetEncodingConfig()
+                    );
+                    queryMeta.add(timestampColumnMetadata);
                     queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
 
                     if (columnIndexes != null) {
@@ -7067,7 +7076,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int symbolColIndex = getSampleBySymbolKeyIndex(model, baseMetadata);
                     if (symbolColIndex == -1 || symbolFilter.getColumnIndex() == symbolColIndex) {
                         return new SampleByFirstLastRecordCursorFactory(
-                                configuration,
                                 factory,
                                 timestampSampler,
                                 projectionMetadata,
@@ -7459,16 +7467,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (queryColumn.getAlias() == null) {
                 queryMetadata.add(metadata.getColumnMetadata(index));
             } else {
-                queryMetadata.add(
-                        new TableColumnMetadata(
-                                Chars.toString(queryColumn.getAlias()),
-                                metadata.getColumnType(index),
-                                metadata.isColumnIndexed(index),
-                                metadata.getIndexValueBlockCapacity(index),
-                                metadata.isSymbolTableStatic(index),
-                                metadata.getMetadata(index)
-                        )
+                TableColumnMetadata aliasedColumn = new TableColumnMetadata(
+                        Chars.toString(queryColumn.getAlias()),
+                        metadata.getColumnType(index),
+                        metadata.isColumnIndexed(index),
+                        metadata.getIndexValueBlockCapacity(index),
+                        metadata.isSymbolTableStatic(index),
+                        metadata.getMetadata(index)
                 );
+                aliasedColumn.setParquetEncodingConfig(
+                        metadata.getColumnMetadata(index).getParquetEncodingConfig()
+                );
+                queryMetadata.add(aliasedColumn);
             }
 
             if (index == timestampIndex) {
@@ -7488,16 +7498,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            queryMetadata.add(
-                    new TableColumnMetadata(
-                            "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
-                            colMetadata.getColumnType(),
-                            colMetadata.isSymbolIndexFlag(),
-                            colMetadata.getIndexValueBlockCapacity(),
-                            colMetadata.isSymbolTableStatic(),
-                            metadata
-                    )
+            TableColumnMetadata implicitTs = new TableColumnMetadata(
+                    "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
+                    colMetadata.getColumnType(),
+                    colMetadata.isSymbolIndexFlag(),
+                    colMetadata.getIndexValueBlockCapacity(),
+                    colMetadata.isSymbolTableStatic(),
+                    metadata
             );
+            implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
+            queryMetadata.add(implicitTs);
             queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
         }
@@ -8154,6 +8164,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
                 assert m != null;
+                final ColumnFunction cf = ColumnFunction.unwrap(function);
+                if (cf != null) {
+                    final int baseColIdx = cf.getColumnIndex();
+                    if (baseColIdx >= 0) {
+                        m.setParquetEncodingConfig(
+                                priorityMetadata.getColumnMetadata(baseColIdx).getParquetEncodingConfig()
+                        );
+                    }
+                }
                 virtualMetadata.add(m);
                 priorityMetadata.add(m);
             }
@@ -10512,16 +10531,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         minConstructors.put(DOUBLE, MinDoubleVectorAggregateFunction::new);
         minConstructors.put(LONG, MinLongVectorAggregateFunction::new);
         minConstructors.put(DATE, MinDateVectorAggregateFunction::new);
-        minConstructors.put(TIMESTAMP_MICRO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_MICRO, timestampIndex));
-        minConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
+        minConstructors.put(TIMESTAMP_MICRO, (int keyKind, int columnIndex, int timestampIndex, int _) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_MICRO, timestampIndex));
+        minConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int _) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
         minConstructors.put(INT, MinIntVectorAggregateFunction::new);
         minConstructors.put(SHORT, MinShortVectorAggregateFunction::new);
 
         maxConstructors.put(DOUBLE, MaxDoubleVectorAggregateFunction::new);
         maxConstructors.put(LONG, MaxLongVectorAggregateFunction::new);
         maxConstructors.put(DATE, MaxDateVectorAggregateFunction::new);
-        maxConstructors.put(TIMESTAMP_MICRO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_MICRO, timestampIndex));
-        maxConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
+        maxConstructors.put(TIMESTAMP_MICRO, (int keyKind, int columnIndex, int timestampIndex, int _) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_MICRO, timestampIndex));
+        maxConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int _) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
         maxConstructors.put(INT, MaxIntVectorAggregateFunction::new);
         maxConstructors.put(SHORT, MaxShortVectorAggregateFunction::new);
     }
