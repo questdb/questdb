@@ -475,17 +475,18 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         // +1 byte for putChar's 4-byte write safety on the last BMP char
         long out = allocator.malloc(barBytes + labelBytes + 1);
 
-        // Render: blank outside wick, wick from low to high, body within.
+        // Render: body only, blank everywhere else. Per-group scaling
+        // means low=0 and high=width-1, so wicks would span the full
+        // width and carry no information. The body position within
+        // blank space shows where O/C sit relative to the H/L range.
         for (int i = 0; i < width; i++) {
             char c;
-            if (i < lowPos || i > highPos) {
-                c = BLANK;
-            } else if (isDoji && i == bodyStart) {
+            if (isDoji && i == bodyStart) {
                 c = DOJI;
             } else if (i >= bodyStart && i <= bodyEnd) {
                 c = isBullish ? BODY_BULL : BODY_BEAR;
             } else {
-                c = WICK;
+                c = BLANK;
             }
             putChar(out, i, c);
         }

@@ -88,7 +88,7 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
             // wick at 0 (low), wick at 8-9 (high)
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2500\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2500\u2500\n",
+                            "\u2800\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2800\u2800\n",
                     "SELECT ohlc_bar(price, 10) FROM t"
             );
         });
@@ -112,7 +112,7 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
             // wick at 0 (low), wick at 8-9 (high)
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500\n",
+                            "\u2800\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2800\u2800\n",
                     "SELECT ohlc_bar(price, 10) FROM t"
             );
         });
@@ -133,7 +133,7 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
             // Positions: open=2, close=2 -> doji at 2
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2500\u2500\u2502\u2500\u2500\n",
+                            "\u2800\u2800\u2502\u2800\u2800\n",
                     "SELECT ohlc_bar(price, 5) FROM t"
             );
         });
@@ -155,7 +155,7 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
             // Width=10: open_pos=4, close_pos=4 -> doji at 4
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2500\u2500\u2500\u2500\u2502\u2500\u2500\u2500\u2500\u2500\n",
+                            "\u2800\u2800\u2800\u2800\u2502\u2800\u2800\u2800\u2800\u2800\n",
                     "SELECT ohlc_bar(price, 10) FROM t"
             );
         });
@@ -326,7 +326,7 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
             // Same as testBullishCandle but with INT input
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500\n",
+                            "\u2800\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2800\u2800\n",
                     "SELECT ohlc_bar(price, 10) FROM t"
             );
         });
@@ -346,7 +346,7 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
             // Bullish candle with labels
             assertSql(
                     "ohlc_bar_labels\n" +
-                            "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500 O:20.0 H:100.0 L:0.0 C:80.0\n",
+                            "\u2800\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2800\u2800 O:20.0 H:100.0 L:0.0 C:80.0\n",
                     "SELECT ohlc_bar_labels(price, 10) FROM t"
             );
         });
@@ -366,7 +366,7 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
             // Doji with labels, width=5
             assertSql(
                     "ohlc_bar_labels\n" +
-                            "\u2500\u2500\u2502\u2500\u2500 O:50.0 H:100.0 L:0.0 C:50.0\n",
+                            "\u2800\u2800\u2502\u2800\u2800 O:50.0 H:100.0 L:0.0 C:50.0\n",
                     "SELECT ohlc_bar_labels(price, 5) FROM t"
             );
         });
