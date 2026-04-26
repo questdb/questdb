@@ -36,6 +36,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 import java.nio.charset.StandardCharsets;
+import java.security.DigestException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
@@ -55,7 +56,9 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // Header names (case-insensitive)
     public static final Utf8String HEADER_UPGRADE = new Utf8String("Upgrade");
     // QWP version negotiation headers
+    public static final Utf8String HEADER_X_QWP_ACCEPT_ENCODING = new Utf8String("X-QWP-Accept-Encoding");
     public static final Utf8String HEADER_X_QWP_CLIENT_ID = new Utf8String("X-QWP-Client-Id");
+    public static final Utf8String HEADER_X_QWP_MAX_BATCH_ROWS = new Utf8String("X-QWP-Max-Batch-Rows");
     public static final Utf8String HEADER_X_QWP_MAX_VERSION = new Utf8String("X-QWP-Max-Version");
     // Client opt-in for STATUS_DURABLE_ACK frames. Value "true" (case-insensitive) enables.
     // Any other value, or header absent, leaves the feature disabled for this connection.
@@ -81,11 +84,24 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     private static final String ERROR_MISSING_UPGRADE_HEADER = "Missing Upgrade header";
     private static final String ERROR_ORIGIN_HEADER_NOT_ALLOWED = "Origin header not allowed on QWP WebSocket";
     private static final String ERROR_UNSUPPORTED_WEBSOCKET_VERSION = "Unsupported WebSocket version (must be 13)";
+    // Sec-WebSocket-Key is defined by RFC 6455 as a 16-byte base64 value --
+    // exactly 24 ASCII bytes on the wire. 64 bytes leaves defensive headroom
+    // for callers that bypass {@link #isValidKey}.
+    private static final int KEY_SCRATCH_SIZE = 64;
+    // Per-thread scratch so the accept-key computation runs with zero byte[] allocs
+    // under sustained reconnect load. The String returned to the caller still
+    // allocates (28 chars) but that's the only irreducible cost without changing
+    // the writeResponse contract to consume raw bytes.
+    private static final ThreadLocal<byte[]> KEY_SCRATCH = ThreadLocal.withInitial(() -> new byte[KEY_SCRATCH_SIZE]);
     private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] RESPONSE_CONTENT_ENCODING_PREFIX =
+            "\r\nX-QWP-Content-Encoding: ".getBytes(StandardCharsets.US_ASCII);
     // Response template
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
+    private static final int SHA1_BASE64_SIZE = 28;
+    private static final ThreadLocal<byte[]> BASE64_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
     private static final ThreadLocal<MessageDigest> SHA1_DIGEST = ThreadLocal.withInitial(() -> {
         try {
@@ -94,6 +110,11 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             throw new RuntimeException("SHA-1 not available", e);
         }
     });
+    // SHA-1 output is always 20 bytes; 28 is the base64 length of a 20-byte input
+    // (ceil(20/3)*4 = 28, with no padding needed for inputs divisible by 3... but 20
+    // is not, so one '=' padding byte lands in slot 27). The exact 28 matches both.
+    private static final int SHA1_DIGEST_SIZE = 20;
+    private static final ThreadLocal<byte[]> HASH_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_DIGEST_SIZE]);
     private static final byte[] WEBSOCKET_GUID_BYTES = WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII);
     private final QwpWebSocketUpgradeProcessor processor;
 
@@ -117,17 +138,37 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         MessageDigest sha1 = SHA1_DIGEST.get();
         sha1.reset();
 
-        // Concatenate key + GUID
-        byte[] keyBytes = new byte[key.size()];
-        for (int i = 0; i < key.size(); i++) {
+        // Copy the base64-ASCII key bytes into a thread-local scratch so the
+        // MessageDigest.update(byte[],int,int) overload can consume them without
+        // a per-call allocation. Key length is always 24 for a valid handshake,
+        // but we fall back to the caller-supplied size in case isValidKey was
+        // skipped (e.g. in tests).
+        int n = key.size();
+        byte[] keyBytes = n <= KEY_SCRATCH_SIZE
+                ? KEY_SCRATCH.get()
+                // Defensive fallback: caller handed us an oversized key. Allocate
+                // locally so we don't blow the scratch invariant for other calls
+                // on this thread. Never fires in the validated path.
+                : new byte[n];
+        for (int i = 0; i < n; i++) {
             keyBytes[i] = key.byteAt(i);
         }
-        sha1.update(keyBytes);
+        sha1.update(keyBytes, 0, n);
         sha1.update(WEBSOCKET_GUID_BYTES);
 
-        // Compute SHA-1 hash and base64 encode
-        byte[] hash = sha1.digest();
-        return Base64.getEncoder().encodeToString(hash);
+        // digest(byte[],int,int) writes into the supplied buffer -- no per-call
+        // byte[] from sha1.digest() and no per-call byte[] from the Base64
+        // encoder (which also has a no-alloc encode(byte[],byte[]) overload).
+        // Only the returned String is still allocated.
+        try {
+            byte[] hash = HASH_SCRATCH.get();
+            sha1.digest(hash, 0, SHA1_DIGEST_SIZE);
+            byte[] b64 = BASE64_SCRATCH.get();
+            int b64Len = Base64.getEncoder().encode(hash, b64);
+            return new String(b64, 0, b64Len, StandardCharsets.US_ASCII);
+        } catch (DigestException e) {
+            throw new RuntimeException("SHA-1 digest failed", e);
+        }
     }
 
     /**
@@ -217,9 +258,22 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @return the total response size in bytes
      */
     public static int responseSize(String acceptKey, int qwpVersion) {
-        return RESPONSE_PREFIX.length + acceptKey.length()
+        return responseSize(acceptKey, qwpVersion, null);
+    }
+
+    /**
+     * Same as {@link #responseSize(String, int)} but accounts for an optional
+     * {@code X-QWP-Content-Encoding} header that echoes the compression codec
+     * the server chose during negotiation. Pass {@code null} for no header.
+     */
+    public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding) {
+        int size = RESPONSE_PREFIX.length + acceptKey.length()
                 + RESPONSE_AFTER_ACCEPT.length + digitCount(qwpVersion)
                 + RESPONSE_SUFFIX.length;
+        if (contentEncoding != null) {
+            size += RESPONSE_CONTENT_ENCODING_PREFIX.length + contentEncoding.length();
+        }
+        return size;
     }
 
     /**
@@ -284,6 +338,15 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @return the number of bytes written
      */
     public static int writeResponse(long buf, String acceptKey, int qwpVersion) {
+        return writeResponse(buf, acceptKey, qwpVersion, null);
+    }
+
+    /**
+     * Same as {@link #writeResponse(long, String, int)} but appends an optional
+     * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
+     * codec (e.g. {@code zstd;level=3}). Pass {@code null} for no header.
+     */
+    public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding) {
         int offset = 0;
 
         // Write prefix
@@ -304,6 +367,20 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         byte[] versionBytes = Integer.toString(qwpVersion).getBytes(StandardCharsets.US_ASCII);
         for (byte b : versionBytes) {
             Unsafe.putByte(buf + offset++, b);
+        }
+
+        // Optional X-QWP-Content-Encoding header. Emitted only when the
+        // handshake negotiated a compression codec; omitted entirely when the
+        // wire stays raw so clients that ignore the header see the same bytes
+        // as before.
+        if (contentEncoding != null) {
+            for (byte b : RESPONSE_CONTENT_ENCODING_PREFIX) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+            byte[] encBytes = contentEncoding.getBytes(StandardCharsets.US_ASCII);
+            for (byte b : encBytes) {
+                Unsafe.putByte(buf + offset++, b);
+            }
         }
 
         // Write suffix
