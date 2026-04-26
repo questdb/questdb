@@ -1254,7 +1254,8 @@ public class GroupByTest extends AbstractCairoTest {
                       sample by 1h fill(prev)
                     )
                     select vch, sum(min)
-                    from samp;""";
+                    from samp
+                    order by vch;""";
 
             assertQueryNoLeakCheck(
                     """

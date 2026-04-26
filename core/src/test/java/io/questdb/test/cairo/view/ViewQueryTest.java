@@ -250,7 +250,7 @@ public class ViewQueryTest extends AbstractViewTest {
                     VIEW1
             );
 
-            query = "DECLARE @x := 1, @y := 2 select ts, @x as one, @y * v_max from " + VIEW1 + " where v_max > 6";
+            query = "DECLARE @x := 1, @y := 2 select ts, @x as one, @y * v_max from " + VIEW1 + " where v_max > 6 order by ts";
             assertQueryAndPlan(
                     """
                             ts\tone\tcolumn
@@ -258,23 +258,25 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\t1\t16
                             """,
                     query,
-                    null,
+                    "ts",
                     true,
                     false,
                     """
                             QUERY PLAN
-                            VirtualRecord
-                              functions: [ts,1,2*v_max]
+                            Encode sort light
+                              keys: [ts]
                                 VirtualRecord
-                                  functions: [ts,v_max]
-                                    Filter filter: 6<v_max
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          values: [max(v)]
-                                          filter: 5<v
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: table1
+                                  functions: [ts,1,2*v_max]
+                                    VirtualRecord
+                                      functions: [ts,v_max]
+                                        Filter filter: 6<v_max
+                                            Async Group By workers: 1
+                                              keys: [ts]
+                                              values: [max(v)]
+                                              filter: 5<v
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: table1
                             """,
                     VIEW1
             );

@@ -207,7 +207,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
             );
         }
         int nullCount;
-        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+        if (Unsafe.getByte(dataAddress + offset) != 0) {
             offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
@@ -232,7 +232,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
                     "decimal column data truncated: expected scale byte"
             );
         }
-        this.scale = Unsafe.getUnsafe().getByte(dataAddress + offset);
+        this.scale = Unsafe.getByte(dataAddress + offset);
         offset += 1;
 
         int valueCount = rowCount - nullCount;
@@ -268,16 +268,16 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
 
     private void readCurrentValue(long address) {
         switch (typeCode) {
-            case TYPE_DECIMAL64 -> currentValue64 = Unsafe.getUnsafe().getLong(address);
+            case TYPE_DECIMAL64 -> currentValue64 = Unsafe.getLong(address);
             case TYPE_DECIMAL128 -> {
-                currentValue128Lo = Unsafe.getUnsafe().getLong(address);
-                currentValue128Hi = Unsafe.getUnsafe().getLong(address + 8);
+                currentValue128Lo = Unsafe.getLong(address);
+                currentValue128Hi = Unsafe.getLong(address + 8);
             }
             case TYPE_DECIMAL256 -> {
-                currentValue256Ll = Unsafe.getUnsafe().getLong(address);
-                currentValue256Lh = Unsafe.getUnsafe().getLong(address + 8);
-                currentValue256Hl = Unsafe.getUnsafe().getLong(address + 16);
-                currentValue256Hh = Unsafe.getUnsafe().getLong(address + 24);
+                currentValue256Ll = Unsafe.getLong(address);
+                currentValue256Lh = Unsafe.getLong(address + 8);
+                currentValue256Hl = Unsafe.getLong(address + 16);
+                currentValue256Hh = Unsafe.getLong(address + 24);
             }
         }
     }

@@ -50,7 +50,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFactory {
-    public static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> true);
+    public static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((_, _) -> true);
 
     @Override
     public String getSignature() {
@@ -331,7 +331,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -426,7 +426,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), getLong(null));
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), getLong(null));
         }
 
         @Override

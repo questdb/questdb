@@ -1,11 +1,18 @@
+//! Numeric primitive encoders, organized around the `SimdEncodable` trait.
+//!
+//! This file holds the leaf-level page encoders for SIMD-encodable types
+//! (i32, i64, f32, f64, plus widening helpers for Byte/Short/Char/IPv4/Geo*)
+//! and the matching decimal encoders. Both the Plain and DeltaBinaryPacked
+//! encoding paths route through here — `slice_to_page_simd` /
+//! `int_slice_to_page_*` take an `Encoding` parameter and dispatch internally.
+
 use std::collections::HashSet;
 use std::fmt::Debug;
-use std::hash::Hash;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter, MaxMin,
+    build_plain_page, encode_primitive_def_levels, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
 use parquet2::bloom_filter::hash_native;
@@ -14,81 +21,9 @@ use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::schema::Repetition;
-use parquet2::statistics::{
-    serialize_statistics, FixedLenStatistics, ParquetStatistics, PrimitiveStatistics,
-};
+use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
-use parquet2::write::DynIter;
 use qdb_core::col_type::nulls;
-use rapidhash::RapidHashMap;
-
-pub fn decimal_slice_to_page_plain<T>(
-    slice: &[T],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<Page>
-where
-    T: Nullable + NativeType + Debug,
-{
-    assert!(primitive_type.field_info.repetition == Repetition::Optional);
-    let num_rows = column_top + slice.len();
-    let mut null_count = 0;
-    let write_stats = options.write_statistics;
-    let mut statistics = MaxMin::new();
-
-    let deflevels_iter = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
-        } else {
-            let value = slice[i - column_top];
-            if value.is_null() {
-                null_count += 1;
-                false
-            } else {
-                if write_stats {
-                    statistics.update(value);
-                }
-                if let Some(ref mut h) = bloom_hashes {
-                    h.insert(hash_native(value));
-                }
-                true
-            }
-        }
-    });
-    let mut buffer = vec![];
-    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
-
-    let definition_levels_byte_length = buffer.len();
-    let buffer = encode_plain_nullable_direct(slice, null_count, buffer);
-
-    let statistics = if options.write_statistics {
-        let s = &FixedLenStatistics {
-            primitive_type: primitive_type.clone(),
-            null_count: Some((column_top + null_count) as i64),
-            distinct_count: None,
-            max_value: statistics.max.map(|x| x.to_bytes().as_ref().to_vec()),
-            min_value: statistics.min.map(|x| x.to_bytes().as_ref().to_vec()),
-        } as &dyn parquet2::statistics::Statistics;
-        Some(serialize_statistics(s))
-    } else {
-        None
-    };
-
-    build_plain_page(
-        buffer,
-        num_rows,
-        column_top + null_count,
-        definition_levels_byte_length,
-        statistics,
-        primitive_type,
-        options,
-        Encoding::Plain,
-        false,
-    )
-    .map(Page::Data)
-}
 
 pub fn int_slice_to_page_nullable<T, P, const UNSIGNED_STATS: bool>(
     slice: &[T],
@@ -385,17 +320,6 @@ where
     buffer
 }
 
-fn encode_plain_nullable_direct<T>(slice: &[T], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8>
-where
-    T: Nullable + NativeType,
-{
-    buffer.reserve(std::mem::size_of::<T>() * (slice.len() - null_count));
-    for x in slice.iter().filter(|x| !x.is_null()) {
-        buffer.extend_from_slice(x.to_bytes().as_ref())
-    }
-    buffer
-}
-
 fn encode_delta_nullable<T, P>(slice: &[T], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
@@ -415,7 +339,7 @@ where
     buffer
 }
 
-fn build_statistics<P: NativeType>(
+pub(crate) fn build_statistics<P: NativeType>(
     null_count: Option<i64>,
     statistics: MaxMin<P>,
     primitive_type: PrimitiveType,
@@ -429,10 +353,6 @@ fn build_statistics<P: NativeType>(
     } as &dyn parquet2::statistics::Statistics;
     serialize_statistics(statistics)
 }
-
-// =============================================================================
-// SIMD-optimized functions for common types
-// =============================================================================
 
 use crate::parquet_write::simd::{
     encode_f32_def_levels, encode_f64_def_levels, encode_i32_def_levels, encode_i64_def_levels,
@@ -502,6 +422,10 @@ pub trait SimdEncodable: NativeType {
             other => Err(fmt_err!(Unsupported, "unsupported encoding {other:?}")),
         }
     }
+
+    fn min() -> Self;
+
+    fn max() -> Self;
 }
 
 impl SimdEncodable for i64 {
@@ -525,6 +449,14 @@ impl SimdEncodable for i64 {
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode(iterator, buffer);
         true
+    }
+
+    fn min() -> Self {
+        i64::MIN
+    }
+
+    fn max() -> Self {
+        i64::MAX
     }
 }
 
@@ -553,6 +485,14 @@ impl SimdEncodable for i32 {
         encode_i32(iterator, buffer);
         true
     }
+
+    fn min() -> Self {
+        i32::MIN
+    }
+
+    fn max() -> Self {
+        i32::MAX
+    }
 }
 
 impl SimdEncodable for f64 {
@@ -570,6 +510,14 @@ impl SimdEncodable for f64 {
     fn is_null(&self) -> bool {
         self.is_nan()
     }
+
+    fn min() -> Self {
+        f64::MIN
+    }
+
+    fn max() -> Self {
+        f64::MAX
+    }
 }
 
 impl SimdEncodable for f32 {
@@ -586,6 +534,14 @@ impl SimdEncodable for f32 {
     #[inline(always)]
     fn is_null(&self) -> bool {
         self.is_nan()
+    }
+
+    fn min() -> Self {
+        f32::MIN
+    }
+
+    fn max() -> Self {
+        f32::MAX
     }
 }
 
@@ -659,353 +615,367 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
     .map(Page::Data)
 }
 
-// =============================================================================
-// Dictionary encoding functions
-// =============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parquet::error::ParquetErrorReason;
+    use crate::parquet_write::schema::column_type_to_parquet_type;
+    use parquet2::compression::CompressionOptions;
+    use parquet2::page::DataPageHeader;
+    use parquet2::schema::types::{ParquetType, PrimitiveType};
+    use parquet2::write::Version;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
-/// Dictionary encoding for SIMD-encodable nullable types (i32, i64, f32, f64).
-/// Uses the byte representation as HashMap key to avoid float Eq/Hash issues.
-pub fn slice_to_dict_pages_simd<T: SimdEncodable>(
-    slice: &[T],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
-where
-    T::Bytes: Eq + Hash,
-{
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
-    let num_rows = column_top + slice.len();
-    let value_size = size_of::<T>();
-
-    // Build dictionary: use byte representation as key
-    let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
-    let mut dict_entries: Vec<T> = Vec::new();
-    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
-    let mut null_count = 0usize;
-    let mut statistics = MaxMin::new();
-
-    for &value in slice {
-        if value.is_null() {
-            null_count += 1;
-        } else {
-            statistics.update(value);
-            let bytes = value.to_bytes();
-            let next_id = u32::try_from(dict_entries.len())
-                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
-            let key = *dict_map.entry(bytes).or_insert_with(|| {
-                dict_entries.push(value);
-                next_id
-            });
-            keys.push(key);
+    fn write_options() -> WriteOptions {
+        WriteOptions {
+            write_statistics: true,
+            version: Version::V2,
+            compression: CompressionOptions::Uncompressed,
+            row_group_size: None,
+            data_page_size: None,
+            raw_array_encoding: false,
+            bloom_filter_fpp: 0.01,
+            min_compression_ratio: 0.0,
         }
     }
 
-    // Build dict buffer: raw native bytes per unique value
-    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
-    for &entry in &dict_entries {
-        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
-        if let Some(ref mut h) = bloom_hashes {
-            h.insert(hash_native(entry));
+    fn optional_type_for(tag: ColumnTypeTag) -> PrimitiveType {
+        let column_type = ColumnType::new(tag, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+        match parquet_type {
+            ParquetType::PrimitiveType(pt) => pt,
+            _ => panic!("expected primitive type"),
         }
     }
 
-    // Encode data page: def levels + bit_width + RLE-encoded keys
-    let total_null_count = column_top + null_count;
-    let mut data_buffer = Vec::new();
-
-    let def_levels = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
-        } else {
-            !slice[i - column_top].is_null()
-        }
-    });
-    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-    let definition_levels_byte_length = data_buffer.len();
-
-    let non_null_len = slice.len() - null_count;
-    let stats = if options.write_statistics {
-        Some(build_statistics(
-            Some(total_null_count as i64),
-            statistics,
-            primitive_type.clone(),
-        ))
-    } else {
-        None
-    };
-
-    encode_dict_rle_pages(
-        dict_buffer,
-        dict_entries.len(),
-        keys,
-        non_null_len,
-        data_buffer,
-        definition_levels_byte_length,
-        num_rows,
-        total_null_count,
-        stats,
-        primitive_type,
-        options,
-        false,
-    )
-}
-
-/// Dictionary encoding for nullable int types that need type conversion (Geo*, IPv4).
-pub fn int_slice_to_dict_pages_nullable<T, P>(
-    slice: &[T],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
-where
-    P: NativeType,
-    P::Bytes: Eq + Hash,
-    T: Nullable + num_traits::AsPrimitive<P> + Copy + Debug,
-{
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
-    let num_rows = column_top + slice.len();
-    let value_size = size_of::<P>();
-
-    let mut dict_map: RapidHashMap<P::Bytes, u32> = RapidHashMap::default();
-    let mut dict_entries: Vec<P> = Vec::new();
-    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
-    let mut null_count = 0usize;
-    let mut statistics = MaxMin::new();
-
-    for &value in slice {
-        if value.is_null() {
-            null_count += 1;
-        } else {
-            let p: P = value.as_();
-            statistics.update(p);
-            let bytes = p.to_bytes();
-            let next_id = u32::try_from(dict_entries.len())
-                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
-            let key = *dict_map.entry(bytes).or_insert_with(|| {
-                dict_entries.push(p);
-                next_id
-            });
-            keys.push(key);
+    fn required_type_for(tag: ColumnTypeTag) -> PrimitiveType {
+        let column_type = ColumnType::new(tag, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, true, false).expect("type");
+        match parquet_type {
+            ParquetType::PrimitiveType(pt) => pt,
+            _ => panic!("expected primitive type"),
         }
     }
 
-    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
-    for &entry in &dict_entries {
-        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
-        if let Some(ref mut h) = bloom_hashes {
-            h.insert(hash_native(entry));
+    fn v2_header(page: &Page) -> (i32, i32, i32) {
+        match page {
+            Page::Data(d) => match &d.header {
+                DataPageHeader::V2(h) => (h.num_values, h.num_nulls, h.encoding.0),
+                DataPageHeader::V1(_) => panic!("expected V2 header"),
+            },
+            _ => panic!("expected data page"),
         }
     }
 
-    let total_null_count = column_top + null_count;
-    let mut data_buffer = Vec::new();
-
-    let def_levels = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
-        } else {
-            !slice[i - column_top].is_null()
-        }
-    });
-    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-    let definition_levels_byte_length = data_buffer.len();
-
-    let non_null_len = slice.len() - null_count;
-    let stats = if options.write_statistics {
-        Some(build_statistics(
-            Some(total_null_count as i64),
-            statistics,
-            primitive_type.clone(),
-        ))
-    } else {
-        None
-    };
-
-    encode_dict_rle_pages(
-        dict_buffer,
-        dict_entries.len(),
-        keys,
-        non_null_len,
-        data_buffer,
-        definition_levels_byte_length,
-        num_rows,
-        total_null_count,
-        stats,
-        primitive_type,
-        options,
-        false,
-    )
-}
-
-/// Dictionary encoding for not-null int types (Byte, Short, Char) — Required repetition,
-/// no def levels. Column top rows use T::default() as the dict value.
-pub fn int_slice_to_dict_pages_notnull<T, P>(
-    slice: &[T],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
-where
-    P: NativeType,
-    P::Bytes: Eq + Hash,
-    T: Default + num_traits::AsPrimitive<P> + Copy + Debug,
-{
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
-    let num_rows = column_top + slice.len();
-    let value_size = size_of::<P>();
-
-    let mut dict_map: RapidHashMap<P::Bytes, u32> = RapidHashMap::default();
-    let mut dict_entries: Vec<P> = Vec::new();
-    let mut keys: Vec<u32> = Vec::with_capacity(num_rows);
-    let mut statistics = MaxMin::new();
-
-    // Column top rows use the default value
-    if column_top > 0 {
-        let default_p: P = T::default().as_();
-        let bytes = default_p.to_bytes();
-        let next_id = u32::try_from(dict_entries.len())
-            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
-        let key = *dict_map.entry(bytes).or_insert_with(|| {
-            dict_entries.push(default_p);
-            next_id
-        });
-        for _ in 0..column_top {
-            keys.push(key);
-        }
+    #[test]
+    fn int_slice_to_page_nullable_plain() {
+        use crate::parquet_write::IPv4;
+        // IPv4 null sentinel is 0
+        let data: Vec<IPv4> = vec![IPv4(1), IPv4(0), IPv4(3)];
+        let pt = optional_type_for(ColumnTypeTag::IPv4);
+        let page = int_slice_to_page_nullable::<IPv4, i32, true>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+        assert_eq!(num_nulls, 1);
     }
 
-    for &value in slice {
-        let p: P = value.as_();
-        statistics.update(p);
-        let bytes = p.to_bytes();
-        let next_id = u32::try_from(dict_entries.len())
-            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
-        let key = *dict_map.entry(bytes).or_insert_with(|| {
-            dict_entries.push(p);
-            next_id
-        });
-        keys.push(key);
+    #[test]
+    fn int_slice_to_page_nullable_delta() {
+        use crate::parquet_write::IPv4;
+        let data: Vec<IPv4> = vec![IPv4(1), IPv4(0), IPv4(3)];
+        let pt = optional_type_for(ColumnTypeTag::IPv4);
+        let page = int_slice_to_page_nullable::<IPv4, i32, true>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+        assert_eq!(num_nulls, 1);
     }
 
-    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
-    for &entry in &dict_entries {
-        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
-        if let Some(ref mut h) = bloom_hashes {
-            h.insert(hash_native(entry));
-        }
+    #[test]
+    fn int_slice_to_page_nullable_unsupported_encoding() {
+        use crate::parquet_write::GeoByte;
+        let data: Vec<GeoByte> = vec![GeoByte(1)];
+        let pt = optional_type_for(ColumnTypeTag::GeoByte);
+        let err = int_slice_to_page_nullable::<GeoByte, i32, false>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::RleDictionary,
+            None,
+        )
+        .expect_err("expected error");
+        assert!(matches!(err.reason(), ParquetErrorReason::Unsupported));
     }
 
-    let stats = if options.write_statistics {
-        Some(build_statistics(
-            Some(column_top as i64),
-            statistics,
-            primitive_type.clone(),
-        ))
-    } else {
-        None
-    };
-
-    encode_dict_rle_pages(
-        dict_buffer,
-        dict_entries.len(),
-        keys,
-        num_rows,
-        Vec::new(),
-        0,
-        num_rows,
-        column_top,
-        stats,
-        primitive_type,
-        options,
-        true,
-    )
-}
-
-/// Dictionary encoding for Decimal types (FixedLenByteArray).
-pub fn decimal_slice_to_dict_pages<T>(
-    slice: &[T],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
-where
-    T: Nullable + NativeType + Debug,
-    T::Bytes: Eq + Hash,
-{
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
-    let num_rows = column_top + slice.len();
-
-    let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
-    let mut dict_entries: Vec<T> = Vec::new();
-    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
-    let mut null_count = 0usize;
-    let mut statistics = MaxMin::new();
-
-    for &value in slice {
-        if value.is_null() {
-            null_count += 1;
-        } else {
-            statistics.update(value);
-            let bytes = value.to_bytes();
-            let next_id = u32::try_from(dict_entries.len())
-                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
-            let key = *dict_map.entry(bytes).or_insert_with(|| {
-                dict_entries.push(value);
-                next_id
-            });
-            keys.push(key);
-        }
+    #[test]
+    fn int_slice_to_page_nullable_no_stats() {
+        use crate::parquet_write::GeoByte;
+        let data: Vec<GeoByte> = vec![GeoByte(1), GeoByte(2)];
+        let pt = optional_type_for(ColumnTypeTag::GeoByte);
+        let opts = WriteOptions { write_statistics: false, ..write_options() };
+        let page = int_slice_to_page_nullable::<GeoByte, i32, false>(
+            &data,
+            0,
+            opts,
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 2);
+        assert_eq!(num_nulls, 0);
     }
 
-    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * size_of::<T>());
-    for &entry in &dict_entries {
-        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
-        if let Some(ref mut h) = bloom_hashes {
-            h.insert(hash_native(entry));
-        }
+    #[test]
+    fn int_slice_to_page_notnull_plain() {
+        let data: Vec<i8> = vec![1, 2, 3, 4, 5];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 5);
     }
 
-    let total_null_count = column_top + null_count;
-    let mut data_buffer = Vec::new();
+    #[test]
+    fn int_slice_to_page_notnull_delta() {
+        let data: Vec<i8> = vec![1, 2, 3];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+    }
 
-    let def_levels = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
-        } else {
-            !slice[i - column_top].is_null()
-        }
-    });
-    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-    let definition_levels_byte_length = data_buffer.len();
+    #[test]
+    fn int_slice_to_page_notnull_unsupported_encoding() {
+        let data: Vec<i8> = vec![1];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let err = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::RleDictionary,
+            None,
+        )
+        .expect_err("expected error");
+        assert!(matches!(err.reason(), ParquetErrorReason::Unsupported));
+    }
 
-    let non_null_len = slice.len() - null_count;
-    let stats = if options.write_statistics {
-        Some(build_statistics(
-            Some(total_null_count as i64),
-            statistics,
-            primitive_type.clone(),
-        ))
-    } else {
-        None
-    };
+    #[test]
+    fn int_slice_to_page_notnull_with_bloom_and_stats() {
+        let data: Vec<i8> = vec![1, 2, 3];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let mut bloom = HashSet::new();
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::Plain,
+            Some(&mut bloom),
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+        assert_eq!(bloom.len(), 3);
+    }
 
-    encode_dict_rle_pages(
-        dict_buffer,
-        dict_entries.len(),
-        keys,
-        non_null_len,
-        data_buffer,
-        definition_levels_byte_length,
-        num_rows,
-        total_null_count,
-        stats,
-        primitive_type,
-        options,
-        false,
-    )
+    #[test]
+    fn int_slice_to_page_notnull_bloom_no_stats() {
+        let data: Vec<i8> = vec![1, 2];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let opts = WriteOptions { write_statistics: false, ..write_options() };
+        let mut bloom = HashSet::new();
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            0,
+            opts,
+            pt,
+            Encoding::Plain,
+            Some(&mut bloom),
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 2);
+        assert_eq!(bloom.len(), 2);
+    }
+
+    #[test]
+    fn int_slice_to_page_notnull_no_bloom_no_stats() {
+        let data: Vec<i8> = vec![1, 2];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let opts = WriteOptions { write_statistics: false, ..write_options() };
+        let page = int_slice_to_page_notnull::<i8, i32>(&data, 0, opts, pt, Encoding::Plain, None)
+            .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 2);
+    }
+
+    #[test]
+    fn int_slice_to_page_notnull_with_column_top() {
+        let data: Vec<i8> = vec![1, 2];
+        let pt = required_type_for(ColumnTypeTag::Byte);
+        let page = int_slice_to_page_notnull::<i8, i32>(
+            &data,
+            3,
+            write_options(),
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
+        let (num_values, _, _) = v2_header(&page);
+        assert_eq!(num_values, 5);
+    }
+
+    #[test]
+    fn slice_to_page_simd_plain_i64() {
+        let data: Vec<i64> = vec![1, 2, i64::MIN, 4];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let page = slice_to_page_simd(&data, 0, write_options(), pt, Encoding::Plain, None)
+            .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 4);
+        assert_eq!(num_nulls, 1);
+    }
+
+    #[test]
+    fn slice_to_page_simd_delta_i64() {
+        let data: Vec<i64> = vec![1, 2, i64::MIN, 4];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let page = slice_to_page_simd(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 4);
+        assert_eq!(num_nulls, 1);
+    }
+
+    #[test]
+    fn slice_to_page_simd_delta_i32() {
+        let data: Vec<i32> = vec![1, 2, i32::MIN, 4];
+        let pt = optional_type_for(ColumnTypeTag::Int);
+        let page = slice_to_page_simd(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 4);
+        assert_eq!(num_nulls, 1);
+    }
+
+    #[test]
+    fn slice_to_page_simd_delta_f64_unsupported() {
+        let data: Vec<f64> = vec![1.0];
+        let pt = optional_type_for(ColumnTypeTag::Double);
+        let err = slice_to_page_simd(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect_err("expected error");
+        assert!(matches!(err.reason(), ParquetErrorReason::Unsupported));
+    }
+
+    #[test]
+    fn slice_to_page_simd_unsupported_encoding() {
+        let data: Vec<i64> = vec![1];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let err = slice_to_page_simd(&data, 0, write_options(), pt, Encoding::RleDictionary, None)
+            .expect_err("expected error");
+        assert!(matches!(err.reason(), ParquetErrorReason::Unsupported));
+    }
+
+    #[test]
+    fn slice_to_page_simd_no_stats() {
+        let data: Vec<i64> = vec![1, 2, 3];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let opts = WriteOptions { write_statistics: false, ..write_options() };
+        let page = slice_to_page_simd(&data, 0, opts, pt, Encoding::Plain, None).expect("ok");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+        assert_eq!(num_nulls, 0);
+    }
+
+    #[test]
+    fn slice_to_page_simd_f32_round_trip() {
+        // Exercises f32 SimdEncodable impl including min/max.
+        let data: Vec<f32> = vec![1.0, f32::NAN, 3.0, -1.5];
+        let pt = optional_type_for(ColumnTypeTag::Float);
+        let page = slice_to_page_simd(&data, 0, write_options(), pt, Encoding::Plain, None)
+            .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 4);
+        assert_eq!(num_nulls, 1);
+    }
+
+    #[test]
+    fn slice_to_page_simd_with_column_top() {
+        let data: Vec<i64> = vec![1, 2, 3];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let page = slice_to_page_simd(&data, 5, write_options(), pt, Encoding::Plain, None)
+            .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 8);
+        assert_eq!(num_nulls, 5);
+    }
+
+    #[test]
+    fn slice_to_page_simd_all_nulls() {
+        let data: Vec<i64> = vec![i64::MIN; 5];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let page = slice_to_page_simd(&data, 0, write_options(), pt, Encoding::Plain, None)
+            .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 5);
+        assert_eq!(num_nulls, 5);
+    }
 }
