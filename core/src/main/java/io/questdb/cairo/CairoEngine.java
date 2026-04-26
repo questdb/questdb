@@ -2068,6 +2068,7 @@ public class CairoEngine implements Closeable, WriterSource {
             while (!lockTableCreate(tableToken)) {
                 Os.pause();
             }
+            boolean filesystemCreated = false;
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
                 boolean locked = true;
@@ -2078,6 +2079,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         } else {
                             createTableOrViewOrMatViewUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         }
+                        filesystemCreated = true;
 
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
@@ -2111,6 +2113,29 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (struct.isWalEnabled()) {
                     // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
                     tableSequencerAPI.dropTable(tableToken, true);
+                } else if (filesystemCreated) {
+                    final FilesFacade ff = configuration.getFilesFacade();
+                    try {
+                        path.of(configuration.getDbRoot()).concat(tableToken).$();
+                        Path volumeTarget = null;
+                        if (ff.isSoftLink(path.$())) {
+                            volumeTarget = Path.getThreadLocal2("");
+                            if (!ff.readLink(path, volumeTarget)) {
+                                volumeTarget = null;
+                            }
+                        }
+                        if (!ff.unlinkOrRemove(path, LOG)) {
+                            LOG.error().$("could not clean up partial table after failed create [table=").$(tableToken)
+                                    .$(", errno=").$(ff.errno()).I$();
+                        }
+                        if (volumeTarget != null && !ff.unlinkOrRemove(volumeTarget, LOG)) {
+                            LOG.error().$("could not clean up partial table in volume [table=").$(tableToken)
+                                    .$(", errno=").$(ff.errno()).I$();
+                        }
+                    } catch (Throwable cleanupEx) {
+                        LOG.error().$("cleanup after failed create threw [table=").$(tableToken)
+                                .$(", err=").$(cleanupEx).I$();
+                    }
                 }
                 throw th;
             } finally {
