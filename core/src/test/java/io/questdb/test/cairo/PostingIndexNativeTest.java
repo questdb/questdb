@@ -85,33 +85,33 @@ public class PostingIndexNativeTest {
             long nativeUnpackedAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             long fallbackUnpackedAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
-            for (int i = 0; i < count; i++) {
-                Unsafe.getUnsafe().putLong(valuesAddr + (long) i * Long.BYTES, minValue + i * 3L);
-            }
+                for (int i = 0; i < count; i++) {
+                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * Long.BYTES, minValue + i * 3L);
+                }
 
-            // Pack with native
-            PostingIndexNative.packValuesNative(valuesAddr, count, minValue, bitWidth, nativePackedAddr);
-            // Pack with fallback
-            PostingIndexNative.packValuesNativeFallback(valuesAddr, count, minValue, bitWidth, fallbackPackedAddr);
+                // Pack with native
+                PostingIndexNative.packValuesNative(valuesAddr, count, minValue, bitWidth, nativePackedAddr);
+                // Pack with fallback
+                PostingIndexNative.packValuesNativeFallback(valuesAddr, count, minValue, bitWidth, fallbackPackedAddr);
 
-            // Packed output should be identical (only meaningful bytes)
-            for (int b = 0; b < meaningfulPackedBytes; b++) {
-                Assert.assertEquals("packed byte mismatch at " + b,
-                        Unsafe.getUnsafe().getByte(nativePackedAddr + b),
-                        Unsafe.getUnsafe().getByte(fallbackPackedAddr + b));
-            }
+                // Packed output should be identical (only meaningful bytes)
+                for (int b = 0; b < meaningfulPackedBytes; b++) {
+                    Assert.assertEquals("packed byte mismatch at " + b,
+                            Unsafe.getUnsafe().getByte(nativePackedAddr + b),
+                            Unsafe.getUnsafe().getByte(fallbackPackedAddr + b));
+                }
 
-            // Unpack with native
-            PostingIndexNative.unpackAllValuesNative(nativePackedAddr, count, bitWidth, minValue, nativeUnpackedAddr);
-            // Unpack with fallback
-            PostingIndexNative.unpackAllValuesNativeFallback(nativePackedAddr, count, bitWidth, minValue, fallbackUnpackedAddr);
+                // Unpack with native
+                PostingIndexNative.unpackAllValuesNative(nativePackedAddr, count, bitWidth, minValue, nativeUnpackedAddr);
+                // Unpack with fallback
+                PostingIndexNative.unpackAllValuesNativeFallback(nativePackedAddr, count, bitWidth, minValue, fallbackUnpackedAddr);
 
-            // Unpacked output should be identical
-            for (int i = 0; i < count; i++) {
-                Assert.assertEquals("unpack mismatch at " + i,
-                        Unsafe.getUnsafe().getLong(nativeUnpackedAddr + (long) i * Long.BYTES),
-                        Unsafe.getUnsafe().getLong(fallbackUnpackedAddr + (long) i * Long.BYTES));
-            }
+                // Unpacked output should be identical
+                for (int i = 0; i < count; i++) {
+                    Assert.assertEquals("unpack mismatch at " + i,
+                            Unsafe.getUnsafe().getLong(nativeUnpackedAddr + (long) i * Long.BYTES),
+                            Unsafe.getUnsafe().getLong(fallbackUnpackedAddr + (long) i * Long.BYTES));
+                }
             } finally {
                 Unsafe.free(valuesAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(nativePackedAddr, allocBytes, MemoryTag.NATIVE_DEFAULT);
