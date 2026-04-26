@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -97,6 +98,10 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
 
         if (windowContext.getNullsDescPos() > 0) {
             throw SqlException.$(windowContext.getNullsDescPos(), "RESPECT/IGNORE NULLS is not supported for current window function");
+        }
+
+        if (windowContext.getExclusionKind() != WindowExpression.EXCLUDE_NO_OTHERS) {
+            throw SqlException.$(windowContext.getExclusionKindPos(), "cume_dist() does not support EXCLUDE clause");
         }
 
         if (!windowContext.isDefaultFrame()) {
@@ -261,6 +266,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             prevRank = 0;
             deferredSize = 0;
             Misc.freeObjListAndKeepObjects(rankMaps);
+            // Releases native pages so cursor RSS budget after close stays within limits;
+            // reopen() relies on MemoryCARWImpl.appendAddressFor lazily re-allocating from
+            // pageAddress=0. Same pattern as FirstValue/LastValue/Avg sibling factories.
             deferredOffsets.close();
         }
 
@@ -548,6 +556,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void reset() {
+            // Releases native pages so cursor RSS budget after close stays within limits;
+            // reopen() relies on map.reopen() and MemoryCARWImpl.appendAddressFor lazily
+            // re-allocating from pageAddress=0. Same pattern as FirstValue/LastValue/Avg.
             Misc.free(map);
             Misc.freeObjListAndKeepObjects(rankMaps);
             deferredOffsets.close();

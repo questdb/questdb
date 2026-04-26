@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -88,20 +89,24 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
             throw SqlException.$(windowContext.getNullsDescPos(), "RESPECT/IGNORE NULLS is not supported for current window function");
         }
 
+        if (windowContext.getExclusionKind() != WindowExpression.EXCLUDE_NO_OTHERS) {
+            throw SqlException.$(windowContext.getExclusionKindPos(), "ntile() does not support EXCLUDE clause");
+        }
+
         if (!windowContext.isDefaultFrame()) {
             throw SqlException.$(windowContext.getRowsLoKindPos(), "ntile() does not support framing; remove the frame clause");
         }
 
         Function bucketCountFunc = args.get(0);
         if (!bucketCountFunc.isConstant()) {
-            throw SqlException.$(argPositions.getQuick(0), "bucket count must be a constant");
+            throw SqlException.$(argPositions.getQuick(0), "ntile() bucket count must be a constant");
         }
         long bucketCountLong = bucketCountFunc.getLong(null);
-        if (bucketCountLong == Numbers.LONG_NULL) {
-            throw SqlException.$(argPositions.getQuick(0), "bucket count cannot be NULL");
+        if (bucketCountFunc.isNullConstant() || bucketCountLong == Numbers.LONG_NULL || bucketCountLong == Numbers.INT_NULL) {
+            throw SqlException.$(argPositions.getQuick(0), "ntile() bucket count cannot be NULL");
         }
         if (bucketCountLong <= 0 || bucketCountLong > Integer.MAX_VALUE) {
-            throw SqlException.$(argPositions.getQuick(0), "bucket count must be a positive integer");
+            throw SqlException.$(argPositions.getQuick(0), "ntile() bucket count must be a positive integer");
         }
         int bucketCount = (int) bucketCountLong;
 

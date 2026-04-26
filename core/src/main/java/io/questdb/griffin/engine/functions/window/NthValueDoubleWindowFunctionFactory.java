@@ -53,7 +53,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 /**
  * nth_value(expr, n) window function.
@@ -89,7 +88,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             throw SqlException.$(argPositions.getQuick(1), "n must be a constant");
         }
         long nLong = nFunc.getLong(null);
-        if (nLong == Numbers.LONG_NULL) {
+        if (nFunc.isNullConstant() || nLong == Numbers.LONG_NULL || nLong == Numbers.INT_NULL) {
             throw SqlException.$(argPositions.getQuick(1), "n cannot be NULL");
         }
         if (nLong <= 0 || nLong > Integer.MAX_VALUE) {
@@ -108,6 +107,16 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                     windowContext.getFramingMode() == WindowExpression.FRAMING_RANGE,
                     windowContext.getPartitionByRecord()
             );
+        }
+        // ROWS frame bounds map to int-sized ring-buffer indices; RANGE uses time deltas
+        // (microseconds/nanoseconds) and only ever participates in long arithmetic.
+        if (windowContext.getFramingMode() == WindowExpression.FRAMING_ROWS) {
+            if (rowsLo != Long.MIN_VALUE && Math.abs(rowsLo) > Integer.MAX_VALUE) {
+                throw SqlException.$(windowContext.getRowsLoKindPos(), "frame start exceeds maximum supported size");
+            }
+            if (rowsHi != Long.MAX_VALUE && Math.abs(rowsHi) > Integer.MAX_VALUE) {
+                throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end exceeds maximum supported size");
+            }
         }
 
         int framingMode = windowContext.getFramingMode();
@@ -698,11 +707,15 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             super.reopen();
             freeList.clear();
             nthValue = Double.NaN;
+            // memory will allocate on first use via MemoryCARWImpl.appendAddressFor
         }
 
         @Override
         public void reset() {
             super.reset();
+            // Releases native pages so cursor RSS budget after close stays within limits;
+            // reopen() relies on MemoryCARWImpl.appendAddressFor lazily re-allocating from
+            // pageAddress=0. Same pattern as FirstValue/LastValue/Avg sibling factories.
             memory.close();
             freeList.clear();
         }
@@ -715,8 +728,12 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" range between ");
-            sink.val(maxDiff);
-            sink.val(" preceding and ");
+            if (frameLoBounded) {
+                sink.val(maxDiff).val(" preceding");
+            } else {
+                sink.val("unbounded preceding");
+            }
+            sink.val(" and ");
             if (minDiff == 0) {
                 sink.val("current row");
             } else {
@@ -987,9 +1004,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         protected static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
+        protected final LongList freeList = new LongList();
         protected final long initialCapacity;
         protected final long maxDiff;
         protected final MemoryARW memory;
+        protected final RingBufferDesc memoryDesc = new RingBufferDesc();
         protected final long minDiff;
         protected final int n;
         protected final int timestampIndex;
@@ -1073,23 +1092,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
             // add new element
             if (size == capacity) { // buffer full
-                long newAddress = memory.appendAddressFor(capacity * RECORD_SIZE);
-                // call above can end up resizing and thus changing memory start address
-                long oldAddress = memory.getPageAddress(0) + startOffset;
-
-                if (firstIdx == 0) {
-                    Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
-                } else {
-                    // size == capacity on this branch, so the two memcpy calls below cover the
-                    // whole ring: [firstIdx .. size) followed by [0 .. firstIdx).
-                    long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
-                    Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
-                    Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
-                    firstIdx = 0;
-                }
-
-                startOffset = newAddress - memory.getPageAddress(0);
-                capacity <<= 1;
+                memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                capacity = memoryDesc.capacity;
+                startOffset = memoryDesc.startOffset;
+                firstIdx = memoryDesc.firstIdx;
             }
 
             // add element to buffer
@@ -1161,12 +1168,14 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             firstIdx = 0;
             frameSize = 0;
             size = 0;
+            freeList.clear();
         }
 
         @Override
         public void reset() {
             super.reset();
             memory.close();
+            freeList.clear();
         }
 
         @Override
@@ -1175,8 +1184,12 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             sink.val('(').val(arg).val(',').val(n).val(')');
             sink.val(" over (");
             sink.val("range between ");
-            sink.val(maxDiff);
-            sink.val(" preceding and ");
+            if (frameLoBounded) {
+                sink.val(maxDiff).val(" preceding");
+            } else {
+                sink.val("unbounded preceding");
+            }
+            sink.val(" and ");
             if (minDiff == 0) {
                 sink.val("current row");
             } else {
@@ -1195,6 +1208,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             firstIdx = 0;
             frameSize = 0;
             size = 0;
+            freeList.clear();
         }
     }
 
@@ -1429,8 +1443,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     // Handles:
     // - nth_value(a, n) over (partition by x rows between unbounded preceding and current row)
     // - nth_value(a, n) over (partition by x order by ts range between unbounded preceding and current row)
-    // The RANGE variant matches ROWS semantics here (frame ends at the current row without
-    // looking ahead to peers); the flag only affects the EXPLAIN output.
+    // RANGE follows the project-wide QuestDB convention (shared with sum/avg/min/max/first_value/
+    // last_value): a frame ending at CURRENT ROW does not look ahead to peer rows that share the
+    // same ORDER BY value. The isRange flag only affects EXPLAIN output. This diverges from the
+    // SQL standard (Postgres) on tied ORDER BY values; revisiting peer semantics is tracked as a
+    // project-wide follow-up that should cover all 20+ RANGE-supporting window factories together.
     static class NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         protected final boolean isRange;
