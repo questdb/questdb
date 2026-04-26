@@ -622,8 +622,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Release the reader's native handle (which borrows from the mmap) before munmap.
             // See ParquetMetaFileReader lifecycle contract.
             ctx.releaseResources();
-            final long fileSize = parquetMetaReader.getFileSize();
             parquetMetaReader.unmapAndClear(ff);
+            path.of(pathToTable);
+            if (isRewrite) {
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn);
+            } else {
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+            }
+            final long fileSize = Files.length(path.$());
             Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
             Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
             Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize - duplicateCount);
