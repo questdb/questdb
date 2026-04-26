@@ -30,16 +30,16 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.cutlass.qwp.client.RowView;
 import io.questdb.client.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.client.std.Unsafe;
-import io.questdb.client.std.bytes.DirectByteSequence;
 import io.questdb.client.std.Long256Impl;
 import io.questdb.client.std.Uuid;
+import io.questdb.client.std.bytes.DirectByteSequence;
 import io.questdb.client.std.str.StringSink;
 import io.questdb.client.std.str.Utf8Sequence;
 import io.questdb.client.std.str.Utf8StringSink;
 import io.questdb.client.std.str.Utf8s;
 import io.questdb.std.BoolList;
 import io.questdb.std.LongList;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -205,8 +205,8 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                 }
                 // Dual-view holds two cells without clobber
                 Assert.assertFalse("dual-view A and B should have captured two non-null cells", dualA.isEmpty());
-                Assert.assertFalse(Arrays.equals(dualA.get(0), dualB.get(0)) && dualA.get(0).length == dualB.get(0).length
-                        && (dualA.get(0).length == 0));
+                Assert.assertFalse(Arrays.equals(dualA.getFirst(), dualB.getFirst()) && dualA.getFirst().length == dualB.getFirst().length
+                        && (dualA.getFirst().length == 0));
             }
         });
     }
@@ -378,11 +378,11 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                             stride[0] = col.bytesPerValue();
                             nonNullCount[0] = col.nonNullCount();
                             // Null bitmap: row 2 NULL; LSB-first within byte 0 -> bit 2 set.
-                            byte bm = Unsafe.getUnsafe().getByte(nullBitmapAddr[0]);
+                            byte bm = Unsafe.getByte(nullBitmapAddr[0]);
                             nullForRow2[0] = (bm & (1 << 2)) != 0;
                             // Walk the dense values array directly.
                             for (int i = 0; i < nonNullCount[0]; i++) {
-                                decoded[i] = Unsafe.getUnsafe().getDouble(valuesAddr[0] + (long) stride[0] * i);
+                                decoded[i] = Unsafe.getDouble(valuesAddr[0] + (long) stride[0] * i);
                             }
                         }
 
@@ -788,7 +788,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                 Assert.assertEquals("forEachRow reuses the same RowView", 1, seenInstances.size());
                 Assert.assertEquals(3, rows.size());
 
-                Object[] r0 = rows.get(0);
+                Object[] r0 = rows.getFirst();
                 Assert.assertEquals(0, r0[0]);
                 Assert.assertEquals(Boolean.FALSE, r0[1]);
                 Assert.assertEquals(1, r0[2]);
@@ -1021,8 +1021,8 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                     });
                 }
                 // 0x01 = {1, 0, 0, 0}
-                Assert.assertEquals(1L, words.get(0)[0]);
-                Assert.assertEquals(0L, words.get(0)[1]);
+                Assert.assertEquals(1L, words.getFirst()[0]);
+                Assert.assertEquals(0L, words.getFirst()[1]);
                 Assert.assertEquals(0L, words.get(0)[2]);
                 Assert.assertEquals(0L, words.get(0)[3]);
                 // 0xFFFF...FF in low word
@@ -1534,7 +1534,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                 Assert.assertEquals(QwpConstants.TYPE_UUID, wireType[0]);
                 // 00000000-...0 = both halves zero (this *is* the all-zeros UUID, treated as non-null
                 // because QuestDB UUID NULL is both halves Long.MIN_VALUE, not zero).
-                Assert.assertNotNull(values.get(0));
+                Assert.assertNotNull(values.getFirst());
                 Assert.assertEquals(0L, values.get(0)[0]);
                 Assert.assertEquals(0L, values.get(0)[1]);
                 // mid-range UUID

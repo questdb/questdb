@@ -126,7 +126,7 @@ public class QwpEgressRequestDecoder {
         if (payloadLen < 9) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("CANCEL frame too short: ").put(payloadLen);
         }
-        return Unsafe.getUnsafe().getLong(payload + 1);
+        return Unsafe.getLong(payload + 1);
     }
 
     /**
@@ -163,7 +163,7 @@ public class QwpEgressRequestDecoder {
         if (p + 8 > limit) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: header truncated");
         }
-        requestId = Unsafe.getUnsafe().getLong(p);
+        requestId = Unsafe.getLong(p);
         p += 8;
 
         QwpVarint.decode(p, limit, varintScratch);
@@ -204,7 +204,7 @@ public class QwpEgressRequestDecoder {
      * Returns the {@link QwpEgressMsgKind} byte at the start of the payload.
      */
     public byte peekMsgKind(long payload) {
-        return Unsafe.getUnsafe().getByte(payload);
+        return Unsafe.getByte(payload);
     }
 
     /**
@@ -222,7 +222,7 @@ public class QwpEgressRequestDecoder {
         if (start >= limit) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind ").put(index).put(": truncated type code");
         }
-        byte type = Unsafe.getUnsafe().getByte(start);
+        byte type = Unsafe.getByte(start);
         long p = readNullFlag(start + 1, limit);
         boolean isNull = bindIsNull;
 
@@ -233,7 +233,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p >= limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated BOOLEAN");
-                    byte bits = Unsafe.getUnsafe().getByte(p++);
+                    byte bits = Unsafe.getByte(p++);
                     bindVars.setBoolean(index, (bits & 0x01) != 0);
                 }
             }
@@ -243,7 +243,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p >= limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated BYTE");
-                    bindVars.setByte(index, Unsafe.getUnsafe().getByte(p++));
+                    bindVars.setByte(index, Unsafe.getByte(p++));
                 }
             }
             case QwpConstants.TYPE_SHORT -> {
@@ -252,7 +252,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 2 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated SHORT");
-                    bindVars.setShort(index, Unsafe.getUnsafe().getShort(p));
+                    bindVars.setShort(index, Unsafe.getShort(p));
                     p += 2;
                 }
             }
@@ -262,7 +262,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 2 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated CHAR");
-                    bindVars.setChar(index, (char) Unsafe.getUnsafe().getShort(p));
+                    bindVars.setChar(index, (char) Unsafe.getShort(p));
                     p += 2;
                 }
             }
@@ -272,7 +272,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 4 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated INT");
-                    bindVars.setInt(index, Unsafe.getUnsafe().getInt(p));
+                    bindVars.setInt(index, Unsafe.getInt(p));
                     p += 4;
                 }
             }
@@ -282,7 +282,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 8 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated LONG");
-                    bindVars.setLong(index, Unsafe.getUnsafe().getLong(p));
+                    bindVars.setLong(index, Unsafe.getLong(p));
                     p += 8;
                 }
             }
@@ -292,7 +292,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 8 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DATE");
-                    bindVars.setDate(index, Unsafe.getUnsafe().getLong(p));
+                    bindVars.setDate(index, Unsafe.getLong(p));
                     p += 8;
                 }
             }
@@ -302,7 +302,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 8 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated TIMESTAMP");
-                    bindVars.setTimestamp(index, Unsafe.getUnsafe().getLong(p));
+                    bindVars.setTimestamp(index, Unsafe.getLong(p));
                     p += 8;
                 }
             }
@@ -316,7 +316,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 8 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated TIMESTAMP_NANOS");
-                    bindVars.setTimestampNano(index, Unsafe.getUnsafe().getLong(p));
+                    bindVars.setTimestampNano(index, Unsafe.getLong(p));
                     p += 8;
                 }
             }
@@ -326,7 +326,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 4 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated FLOAT");
-                    bindVars.setFloat(index, Float.intBitsToFloat(Unsafe.getUnsafe().getInt(p)));
+                    bindVars.setFloat(index, Float.intBitsToFloat(Unsafe.getInt(p)));
                     p += 4;
                 }
             }
@@ -336,7 +336,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 8 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DOUBLE");
-                    bindVars.setDouble(index, Double.longBitsToDouble(Unsafe.getUnsafe().getLong(p)));
+                    bindVars.setDouble(index, Double.longBitsToDouble(Unsafe.getLong(p)));
                     p += 8;
                 }
             }
@@ -352,8 +352,8 @@ public class QwpEgressRequestDecoder {
                     // and must be rejected).
                     if (p + 8 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated SYMBOL offsets");
-                    int offset0 = Unsafe.getUnsafe().getInt(p);
-                    int strLen = Unsafe.getUnsafe().getInt(p + 4);
+                    int offset0 = Unsafe.getInt(p);
+                    int strLen = Unsafe.getInt(p + 4);
                     if (offset0 != 0 || strLen < 0)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY)
                                 .put("bind: SYMBOL offsets invalid [offset0=").put(offset0).put(", strLen=").put(strLen).put("]");
@@ -374,8 +374,8 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 8 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated VARCHAR offsets");
-                    int offset0 = Unsafe.getUnsafe().getInt(p);
-                    int strLen = Unsafe.getUnsafe().getInt(p + 4);
+                    int offset0 = Unsafe.getInt(p);
+                    int strLen = Unsafe.getInt(p + 4);
                     if (offset0 != 0 || strLen < 0)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY)
                                 .put("bind: VARCHAR offsets invalid [offset0=").put(offset0).put(", strLen=").put(strLen).put("]");
@@ -394,8 +394,8 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 16 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated UUID");
-                    long lo = Unsafe.getUnsafe().getLong(p);
-                    long hi = Unsafe.getUnsafe().getLong(p + 8);
+                    long lo = Unsafe.getLong(p);
+                    long hi = Unsafe.getLong(p + 8);
                     bindVars.setUuid(index, lo, hi);
                     p += 16;
                 }
@@ -406,10 +406,10 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 32 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated LONG256");
-                    long l0 = Unsafe.getUnsafe().getLong(p);
-                    long l1 = Unsafe.getUnsafe().getLong(p + 8);
-                    long l2 = Unsafe.getUnsafe().getLong(p + 16);
-                    long l3 = Unsafe.getUnsafe().getLong(p + 24);
+                    long l0 = Unsafe.getLong(p);
+                    long l1 = Unsafe.getLong(p + 8);
+                    long l2 = Unsafe.getLong(p + 16);
+                    long l3 = Unsafe.getLong(p + 24);
                     bindVars.setLong256(index, l0, l1, l2, l3);
                     p += 32;
                 }
@@ -436,7 +436,7 @@ public class QwpEgressRequestDecoder {
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated GEOHASH");
                     long bits = 0;
                     for (int b = 0; b < bytesPerValue; b++) {
-                        bits |= ((long) (Unsafe.getUnsafe().getByte(p + b) & 0xFF)) << (b * 8);
+                        bits |= ((long) (Unsafe.getByte(p + b) & 0xFF)) << (b * 8);
                     }
                     bindVars.setGeoHash(index, bits, geoType);
                     p += bytesPerValue;
@@ -445,7 +445,7 @@ public class QwpEgressRequestDecoder {
             case QwpConstants.TYPE_DECIMAL64 -> {
                 if (p >= limit)
                     throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL64 scale");
-                int scale = Unsafe.getUnsafe().getByte(p++) & 0xFF;
+                int scale = Unsafe.getByte(p++) & 0xFF;
                 validateDecimalScale(index, scale);
                 if (isNull) {
                     bindVars.setDecimal(index, 0, 0, 0, Decimals.DECIMAL64_NULL,
@@ -453,7 +453,7 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 8 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL64 value");
-                    long ll = Unsafe.getUnsafe().getLong(p);
+                    long ll = Unsafe.getLong(p);
                     bindVars.setDecimal(index, 0, 0, 0, ll,
                             ColumnType.getDecimalType(18, scale));
                     p += 8;
@@ -462,7 +462,7 @@ public class QwpEgressRequestDecoder {
             case QwpConstants.TYPE_DECIMAL128 -> {
                 if (p >= limit)
                     throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL128 scale");
-                int scale = Unsafe.getUnsafe().getByte(p++) & 0xFF;
+                int scale = Unsafe.getByte(p++) & 0xFF;
                 validateDecimalScale(index, scale);
                 int decimalType = ColumnType.getDecimalType(38, scale);
                 if (isNull) {
@@ -472,8 +472,8 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 16 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL128 value");
-                    long lo = Unsafe.getUnsafe().getLong(p);
-                    long hi = Unsafe.getUnsafe().getLong(p + 8);
+                    long lo = Unsafe.getLong(p);
+                    long hi = Unsafe.getLong(p + 8);
                     bindVars.setDecimal(index, 0, 0, hi, lo, decimalType);
                     p += 16;
                 }
@@ -481,7 +481,7 @@ public class QwpEgressRequestDecoder {
             case QwpConstants.TYPE_DECIMAL256 -> {
                 if (p >= limit)
                     throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL256 scale");
-                int scale = Unsafe.getUnsafe().getByte(p++) & 0xFF;
+                int scale = Unsafe.getByte(p++) & 0xFF;
                 validateDecimalScale(index, scale);
                 // DECIMAL256 stores values that fit in 76 digits of precision
                 // (see Decimals.MAX_PRECISION). getDecimalType asserts on > MAX_PRECISION.
@@ -496,10 +496,10 @@ public class QwpEgressRequestDecoder {
                 } else {
                     if (p + 32 > limit)
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated DECIMAL256 value");
-                    long ll = Unsafe.getUnsafe().getLong(p);
-                    long lh = Unsafe.getUnsafe().getLong(p + 8);
-                    long hl = Unsafe.getUnsafe().getLong(p + 16);
-                    long hh = Unsafe.getUnsafe().getLong(p + 24);
+                    long ll = Unsafe.getLong(p);
+                    long lh = Unsafe.getLong(p + 8);
+                    long hl = Unsafe.getLong(p + 16);
+                    long hh = Unsafe.getLong(p + 24);
                     bindVars.setDecimal(index, hh, hl, lh, ll, decimalType);
                     p += 32;
                 }
@@ -522,7 +522,7 @@ public class QwpEgressRequestDecoder {
         if (start >= limit) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated null flag");
         }
-        byte flag = Unsafe.getUnsafe().getByte(start);
+        byte flag = Unsafe.getByte(start);
         long p = start + 1;
         if (flag == 0) {
             bindIsNull = false;
@@ -531,7 +531,7 @@ public class QwpEgressRequestDecoder {
         if (p >= limit) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated null bitmap");
         }
-        byte bitmap = Unsafe.getUnsafe().getByte(p);
+        byte bitmap = Unsafe.getByte(p);
         bindIsNull = (bitmap & 0x01) != 0;
         return p + 1;
     }

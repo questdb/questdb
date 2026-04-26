@@ -45,16 +45,6 @@ public final class QwpEgressSchemaWriter {
     public static final byte SCHEMA_MODE_REFERENCE = 0x01;
 
     /**
-     * Writes a schema reference (mode 0x01 + schema_id varint).
-     *
-     * @return address just past the reference
-     */
-    public static long writeReference(long bufAddr, long schemaId) {
-        Unsafe.getUnsafe().putByte(bufAddr, SCHEMA_MODE_REFERENCE);
-        return QwpVarint.encode(bufAddr + 1, schemaId);
-    }
-
-    /**
      * Writes a full-mode schema (mode 0x00 + schema_id + per-column definitions).
      * Column name is UTF-8 encoded (pre-cached on the column def); length is
      * varint-prefixed.
@@ -62,18 +52,28 @@ public final class QwpEgressSchemaWriter {
      * @return address just past the schema block
      */
     public static long writeFull(long bufAddr, long schemaId, ObjList<QwpEgressColumnDef> columns) {
-        Unsafe.getUnsafe().putByte(bufAddr, QwpConstants.SCHEMA_MODE_FULL);
+        Unsafe.putByte(bufAddr, QwpConstants.SCHEMA_MODE_FULL);
         long p = QwpVarint.encode(bufAddr + 1, schemaId);
         for (int i = 0, n = columns.size(); i < n; i++) {
             QwpEgressColumnDef col = columns.getQuick(i);
             byte[] nameBytes = col.getNameUtf8();
             p = QwpVarint.encode(p, nameBytes.length);
             for (byte b : nameBytes) {
-                Unsafe.getUnsafe().putByte(p++, b);
+                Unsafe.putByte(p++, b);
             }
-            Unsafe.getUnsafe().putByte(p++, col.getWireType());
+            Unsafe.putByte(p++, col.getWireType());
         }
         return p;
+    }
+
+    /**
+     * Writes a schema reference (mode 0x01 + schema_id varint).
+     *
+     * @return address just past the reference
+     */
+    public static long writeReference(long bufAddr, long schemaId) {
+        Unsafe.putByte(bufAddr, SCHEMA_MODE_REFERENCE);
+        return QwpVarint.encode(bufAddr + 1, schemaId);
     }
 
     /**

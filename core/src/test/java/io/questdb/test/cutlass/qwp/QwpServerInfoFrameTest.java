@@ -99,7 +99,7 @@ public class QwpServerInfoFrameTest {
     @Test(expected = QwpDecodeException.class)
     public void testRejectsFrameWithNonServerInfoMsgKind() throws Exception {
         int cap = 128;
-        long buf = Unsafe.getUnsafe().allocateMemory(cap);
+        long buf = Unsafe.allocateMemory(cap);
         try {
             long bodyStart = QwpEgressFrameWriter.writeMessageHeader(buf, QwpConstants.VERSION_2, (byte) 0, 0, 0);
             // Write a RESULT_END body instead of SERVER_INFO; decoder must reject.
@@ -109,14 +109,14 @@ public class QwpServerInfoFrameTest {
             QwpEgressFrameWriter.patchPayloadLength(buf, payloadLen);
             QwpServerInfoDecoder.decode(buf, qwpSize);
         } finally {
-            Unsafe.getUnsafe().freeMemory(buf);
+            Unsafe.freeMemory(buf);
         }
     }
 
     @Test(expected = QwpDecodeException.class)
     public void testRejectsTruncatedFrame() throws Exception {
         int cap = 128;
-        long buf = Unsafe.getUnsafe().allocateMemory(cap);
+        long buf = Unsafe.allocateMemory(cap);
         try {
             long bodyStart = QwpEgressFrameWriter.writeMessageHeader(buf, QwpConstants.VERSION_2, (byte) 0, 0, 0);
             long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
@@ -128,7 +128,7 @@ public class QwpServerInfoFrameTest {
             // Shave off the last 4 bytes so node_id length declares more than is present.
             QwpServerInfoDecoder.decode(buf, fullQwpSize - 4);
         } finally {
-            Unsafe.getUnsafe().freeMemory(buf);
+            Unsafe.freeMemory(buf);
         }
     }
 
@@ -172,7 +172,7 @@ public class QwpServerInfoFrameTest {
             String nodeId
     ) throws Exception {
         int cap = 128 + (clusterId.length() + nodeId.length()) * 4;
-        long buf = Unsafe.getUnsafe().allocateMemory(cap);
+        long buf = Unsafe.allocateMemory(cap);
         try {
             long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
                     buf, QwpConstants.VERSION_2, (byte) 0, 0, 0);
@@ -185,7 +185,7 @@ public class QwpServerInfoFrameTest {
             QwpEgressFrameWriter.patchPayloadLength(buf, payloadLen);
             return QwpServerInfoDecoder.decode(buf, qwpSize);
         } finally {
-            Unsafe.getUnsafe().freeMemory(buf);
+            Unsafe.freeMemory(buf);
         }
     }
 

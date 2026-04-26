@@ -93,7 +93,7 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
         }
         int id = size;
         ensureEntriesCapacity(4 * (size + 1));
-        Unsafe.getUnsafe().putInt(entriesAddr + 4L * size, heapPos);
+        Unsafe.putInt(entriesAddr + 4L * size, heapPos);
         size++;
         // putAt copies probe's bytes into a fresh Utf8String -- a one-time
         // allocation per unique value per connection.
@@ -133,7 +133,7 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
      * {@code [entryStart(id)..entryEnd(id))} in {@link #getHeapAddr()}.
      */
     public int entryEnd(int id) {
-        return Unsafe.getUnsafe().getInt(entriesAddr + 4L * id);
+        return Unsafe.getInt(entriesAddr + 4L * id);
     }
 
     /**
@@ -141,7 +141,7 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
      * otherwise the end offset of entry {@code id - 1}.
      */
     public int entryStart(int id) {
-        return id == 0 ? 0 : Unsafe.getUnsafe().getInt(entriesAddr + 4L * (id - 1));
+        return id == 0 ? 0 : Unsafe.getInt(entriesAddr + 4L * (id - 1));
     }
 
     public long getHeapAddr() {
@@ -203,22 +203,22 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
         for (int i = 0; i < charLen; i++) {
             char c = cs.charAt(i);
             if (c < 0x80) {
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) c);
+                Unsafe.putByte(heapAddr + pos++, (byte) c);
             } else if (c < 0x800) {
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xC0 | (c >> 6)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0xC0 | (c >> 6)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
             } else if (Character.isHighSurrogate(c) && i + 1 < charLen
                     && Character.isLowSurrogate(cs.charAt(i + 1))) {
                 int cp = Character.toCodePoint(c, cs.charAt(i + 1));
                 i++;
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xF0 | (cp >> 18)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 12) & 0x3F)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 6) & 0x3F)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (cp & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0xF0 | (cp >> 18)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 12) & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 6) & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | (cp & 0x3F)));
             } else {
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xE0 | (c >> 12)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((c >> 6) & 0x3F)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0xE0 | (c >> 12)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | ((c >> 6) & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
             }
         }
         return pos;

@@ -154,30 +154,30 @@ final class QwpColumnScratch implements QuietCloseable {
         for (int i = 0; i < charLen; i++) {
             char c = cs.charAt(i);
             if (c < 0x80) {
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) c);
+                Unsafe.putByte(heapAddr + pos++, (byte) c);
             } else if (c < 0x800) {
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xC0 | (c >> 6)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0xC0 | (c >> 6)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
             } else if (Character.isHighSurrogate(c) && i + 1 < charLen
                     && Character.isLowSurrogate(cs.charAt(i + 1))) {
                 int cp = Character.toCodePoint(c, cs.charAt(i + 1));
                 i++;
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xF0 | (cp >> 18)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 12) & 0x3F)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 6) & 0x3F)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (cp & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0xF0 | (cp >> 18)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 12) & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | ((cp >> 6) & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | (cp & 0x3F)));
             } else if (Character.isSurrogate(c)) {
                 // RFC 3629 forbids encoding U+D800..U+DFFF directly. A lone
                 // surrogate (unpaired high, or any low) is substituted with the
                 // Unicode replacement character U+FFFD so the wire bytes always
                 // round-trip through a strict UTF-8 decoder.
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) 0xEF);
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) 0xBF);
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) 0xBD);
+                Unsafe.putByte(heapAddr + pos++, (byte) 0xEF);
+                Unsafe.putByte(heapAddr + pos++, (byte) 0xBF);
+                Unsafe.putByte(heapAddr + pos++, (byte) 0xBD);
             } else {
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0xE0 | (c >> 12)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | ((c >> 6) & 0x3F)));
-                Unsafe.getUnsafe().putByte(heapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0xE0 | (c >> 12)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | ((c >> 6) & 0x3F)));
+                Unsafe.putByte(heapAddr + pos++, (byte) (0x80 | (c & 0x3F)));
             }
         }
         return pos;
@@ -191,7 +191,7 @@ final class QwpColumnScratch implements QuietCloseable {
         nullBitmapAddr = Unsafe.realloc(nullBitmapAddr, oldCap, newCap, MemoryTag.NATIVE_HTTP_CONN);
         nullBitmapCapacity = newCap;
         // Zero the newly added bytes so appendNull() can OR in bits without per-byte init.
-        Unsafe.getUnsafe().setMemory(nullBitmapAddr + oldCap, newCap - oldCap, (byte) 0);
+        Unsafe.setMemory(nullBitmapAddr + oldCap, newCap - oldCap, (byte) 0);
     }
 
     private void ensureStringHeapCapacity(int required) {
@@ -216,16 +216,6 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
-     * Sets bit {@code rowIdx} in the null bitmap. Caller must have already
-     * called {@link #ensureNullBitmapCapacity} to cover at least rowIdx.
-     */
-    private void setNullBit(int rowIdx) {
-        long byteAddr = nullBitmapAddr + (rowIdx >>> 3);
-        byte cur = Unsafe.getUnsafe().getByte(byteAddr);
-        Unsafe.getUnsafe().putByte(byteAddr, (byte) (cur | (1 << (rowIdx & 7))));
-    }
-
-    /**
      * STRING/VARCHAR: record the end-offset of the value just written. Offsets are stored
      * at {@code 4 * (nonNullCount + 1)} in {@link #stringOffsetsAddr}; offset[0] is the
      * implicit zero (written at emit time to keep parsing simple).
@@ -238,7 +228,17 @@ final class QwpColumnScratch implements QuietCloseable {
             stringOffsetsAddr = Unsafe.realloc(stringOffsetsAddr, stringOffsetsCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
             stringOffsetsCapacity = newCap;
         }
-        Unsafe.getUnsafe().putInt(stringOffsetsAddr + 4L * slotIdx, stringHeapPos);
+        Unsafe.putInt(stringOffsetsAddr + 4L * slotIdx, stringHeapPos);
+    }
+
+    /**
+     * Sets bit {@code rowIdx} in the null bitmap. Caller must have already
+     * called {@link #ensureNullBitmapCapacity} to cover at least rowIdx.
+     */
+    private void setNullBit(int rowIdx) {
+        long byteAddr = nullBitmapAddr + (rowIdx >>> 3);
+        byte cur = Unsafe.getByte(byteAddr);
+        Unsafe.putByte(byteAddr, (byte) (cur | (1 << (rowIdx & 7))));
     }
 
     /**
@@ -270,19 +270,26 @@ final class QwpColumnScratch implements QuietCloseable {
         long byteAddr = valuesAddr + byteIdx;
         if ((bitIdx & 7) == 0) {
             // First bit in a new byte: zero it before OR-ing.
-            Unsafe.getUnsafe().putByte(byteAddr, (byte) 0);
+            Unsafe.putByte(byteAddr, (byte) 0);
         }
         if (v) {
-            byte cur = Unsafe.getUnsafe().getByte(byteAddr);
-            Unsafe.getUnsafe().putByte(byteAddr, (byte) (cur | (1 << (bitIdx & 7))));
+            byte cur = Unsafe.getByte(byteAddr);
+            Unsafe.putByte(byteAddr, (byte) (cur | (1 << (bitIdx & 7))));
         }
         markNonNullAndAdvanceRow();
     }
 
     void appendByte(byte v) {
         ensureValuesCapacity(valuesPos + 1);
-        Unsafe.getUnsafe().putByte(valuesAddr + valuesPos, v);
+        Unsafe.putByte(valuesAddr + valuesPos, v);
         valuesPos += 1;
+        markNonNullAndAdvanceRow();
+    }
+
+    void appendChar(char v) {
+        ensureValuesCapacity(valuesPos + 2);
+        Unsafe.putShort(valuesAddr + valuesPos, (short) v);
+        valuesPos += 2;
         markNonNullAndAdvanceRow();
     }
 
@@ -303,43 +310,14 @@ final class QwpColumnScratch implements QuietCloseable {
             if ((bitIdx & 7) == 0) {
                 // First bit in a new byte: zero it before OR-ing. Matches the
                 // single-row appendBool convention.
-                Unsafe.getUnsafe().putByte(byteAddr, (byte) 0);
+                Unsafe.putByte(byteAddr, (byte) 0);
             }
-            if (Unsafe.getUnsafe().getByte(srcAddr + i) != 0) {
-                byte cur = Unsafe.getUnsafe().getByte(byteAddr);
-                Unsafe.getUnsafe().putByte(byteAddr, (byte) (cur | (1 << (bitIdx & 7))));
+            if (Unsafe.getByte(srcAddr + i) != 0) {
+                byte cur = Unsafe.getByte(byteAddr);
+                Unsafe.putByte(byteAddr, (byte) (cur | (1 << (bitIdx & 7))));
             }
         }
         nonNullCount += n;
-        rowCount += n;
-    }
-
-    /**
-     * DOUBLE / FLOAT-as-double column bulk append: reads {@code n} 8-byte
-     * values from {@code srcAddr} (QuestDB stores DOUBLE NULL as NaN). Values
-     * that are NaN go into the null bitmap; non-null values are packed dense
-     * into {@code valuesAddr}. Uses {@code v != v} for the NaN test so every
-     * NaN bit-pattern is treated as null (spec 11.5).
-     */
-    void appendColumnDouble8(long srcAddr, int n) {
-        int startRow = rowCount;
-        ensureNullBitmapCapacity(startRow + n);
-        ensureValuesCapacity(valuesPos + n * 8);
-        long dst = valuesAddr + valuesPos;
-        int nonNullWritten = 0;
-        for (int i = 0; i < n; i++) {
-            double v = Unsafe.getUnsafe().getDouble(srcAddr + i * 8L);
-            if (Double.isNaN(v)) {
-                setNullBit(startRow + i);
-                nullCount++;
-            } else {
-                Unsafe.getUnsafe().putDouble(dst, v);
-                dst += 8;
-                nonNullWritten++;
-            }
-        }
-        valuesPos += nonNullWritten * 8;
-        nonNullCount += nonNullWritten;
         rowCount += n;
     }
 
@@ -358,6 +336,35 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
+     * DOUBLE / FLOAT-as-double column bulk append: reads {@code n} 8-byte
+     * values from {@code srcAddr} (QuestDB stores DOUBLE NULL as NaN). Values
+     * that are NaN go into the null bitmap; non-null values are packed dense
+     * into {@code valuesAddr}. Uses {@code v != v} for the NaN test so every
+     * NaN bit-pattern is treated as null (spec 11.5).
+     */
+    void appendColumnDouble8(long srcAddr, int n) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 8);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            double v = Unsafe.getDouble(srcAddr + i * 8L);
+            if (Double.isNaN(v)) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.putDouble(dst, v);
+                dst += 8;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 8;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
      * FLOAT column bulk append: reads {@code n} 4-byte floats from
      * {@code srcAddr}. QuestDB stores FLOAT NULL as NaN. NaN values go into
      * the null bitmap; non-null values pack dense into {@code valuesAddr}.
@@ -369,12 +376,12 @@ final class QwpColumnScratch implements QuietCloseable {
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            float v = Unsafe.getUnsafe().getFloat(srcAddr + i * 4L);
+            float v = Unsafe.getFloat(srcAddr + i * 4L);
             if (Float.isNaN(v)) {
                 setNullBit(startRow + i);
                 nullCount++;
             } else {
-                Unsafe.getUnsafe().putFloat(dst, v);
+                Unsafe.putFloat(dst, v);
                 dst += 4;
                 nonNullWritten++;
             }
@@ -397,12 +404,12 @@ final class QwpColumnScratch implements QuietCloseable {
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            int v = Unsafe.getUnsafe().getInt(srcAddr + i * 4L);
+            int v = Unsafe.getInt(srcAddr + i * 4L);
             if (v == sentinel) {
                 setNullBit(startRow + i);
                 nullCount++;
             } else {
-                Unsafe.getUnsafe().putInt(dst, v);
+                Unsafe.putInt(dst, v);
                 dst += 4;
                 nonNullWritten++;
             }
@@ -425,12 +432,12 @@ final class QwpColumnScratch implements QuietCloseable {
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            long v = Unsafe.getUnsafe().getLong(srcAddr + i * 8L);
+            long v = Unsafe.getLong(srcAddr + i * 8L);
             if (v == Numbers.LONG_NULL) {
                 setNullBit(startRow + i);
                 nullCount++;
             } else {
-                Unsafe.getUnsafe().putLong(dst, v);
+                Unsafe.putLong(dst, v);
                 dst += 8;
                 nonNullWritten++;
             }
@@ -459,7 +466,7 @@ final class QwpColumnScratch implements QuietCloseable {
         IntIntHashMap k2c = connKeyToConnId;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            int key = Unsafe.getUnsafe().getInt(srcAddr + i * 4L);
+            int key = Unsafe.getInt(srcAddr + i * 4L);
             if (key == SymbolTable.VALUE_IS_NULL) {
                 setNullBit(startRow + i);
                 nullCount++;
@@ -473,7 +480,7 @@ final class QwpColumnScratch implements QuietCloseable {
                     k2c.putAt(mapIdx, key, connId);
                 }
                 int slot = nonNullCount + nonNullWritten;
-                Unsafe.getUnsafe().putInt(symbolIdsAddr + 4L * slot, connId);
+                Unsafe.putInt(symbolIdsAddr + 4L * slot, connId);
                 nonNullWritten++;
             }
         }
@@ -481,34 +488,27 @@ final class QwpColumnScratch implements QuietCloseable {
         rowCount += n;
     }
 
-    void appendChar(char v) {
-        ensureValuesCapacity(valuesPos + 2);
-        Unsafe.getUnsafe().putShort(valuesAddr + valuesPos, (short) v);
-        valuesPos += 2;
-        markNonNullAndAdvanceRow();
-    }
-
     void appendDecimal128(long lo, long hi) {
         ensureValuesCapacity(valuesPos + 16);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos, lo);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos + 8, hi);
+        Unsafe.putLong(valuesAddr + valuesPos, lo);
+        Unsafe.putLong(valuesAddr + valuesPos + 8, hi);
         valuesPos += 16;
         markNonNullAndAdvanceRow();
     }
 
     void appendDecimal256(long ll, long lh, long hl, long hh) {
         ensureValuesCapacity(valuesPos + 32);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos, ll);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos + 8, lh);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos + 16, hl);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos + 24, hh);
+        Unsafe.putLong(valuesAddr + valuesPos, ll);
+        Unsafe.putLong(valuesAddr + valuesPos + 8, lh);
+        Unsafe.putLong(valuesAddr + valuesPos + 16, hl);
+        Unsafe.putLong(valuesAddr + valuesPos + 24, hh);
         valuesPos += 32;
         markNonNullAndAdvanceRow();
     }
 
     void appendDouble(double v) {
         ensureValuesCapacity(valuesPos + 8);
-        Unsafe.getUnsafe().putDouble(valuesAddr + valuesPos, v);
+        Unsafe.putDouble(valuesAddr + valuesPos, v);
         valuesPos += 8;
         markNonNullAndAdvanceRow();
     }
@@ -523,7 +523,7 @@ final class QwpColumnScratch implements QuietCloseable {
 
     void appendFloat(float v) {
         ensureValuesCapacity(valuesPos + 4);
-        Unsafe.getUnsafe().putFloat(valuesAddr + valuesPos, v);
+        Unsafe.putFloat(valuesAddr + valuesPos, v);
         valuesPos += 4;
         markNonNullAndAdvanceRow();
     }
@@ -542,7 +542,7 @@ final class QwpColumnScratch implements QuietCloseable {
     void appendGeohash(long bits, int bytesPerValue) {
         ensureValuesCapacity(valuesPos + bytesPerValue);
         for (int b = 0; b < bytesPerValue; b++) {
-            Unsafe.getUnsafe().putByte(valuesAddr + valuesPos + b, (byte) (bits >>> (b * 8)));
+            Unsafe.putByte(valuesAddr + valuesPos + b, (byte) (bits >>> (b * 8)));
         }
         valuesPos += bytesPerValue;
         markNonNullAndAdvanceRow();
@@ -561,7 +561,7 @@ final class QwpColumnScratch implements QuietCloseable {
 
     void appendInt(int v) {
         ensureValuesCapacity(valuesPos + 4);
-        Unsafe.getUnsafe().putInt(valuesAddr + valuesPos, v);
+        Unsafe.putInt(valuesAddr + valuesPos, v);
         valuesPos += 4;
         markNonNullAndAdvanceRow();
     }
@@ -576,17 +576,17 @@ final class QwpColumnScratch implements QuietCloseable {
 
     void appendLong(long v) {
         ensureValuesCapacity(valuesPos + 8);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos, v);
+        Unsafe.putLong(valuesAddr + valuesPos, v);
         valuesPos += 8;
         markNonNullAndAdvanceRow();
     }
 
     void appendLong256(long l0, long l1, long l2, long l3) {
         ensureValuesCapacity(valuesPos + 32);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos, l0);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos + 8, l1);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos + 16, l2);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos + 24, l3);
+        Unsafe.putLong(valuesAddr + valuesPos, l0);
+        Unsafe.putLong(valuesAddr + valuesPos + 8, l1);
+        Unsafe.putLong(valuesAddr + valuesPos + 16, l2);
+        Unsafe.putLong(valuesAddr + valuesPos + 24, l3);
         valuesPos += 32;
         markNonNullAndAdvanceRow();
     }
@@ -603,8 +603,8 @@ final class QwpColumnScratch implements QuietCloseable {
         ensureNullBitmapCapacity(rowCount);
         // The bitmap is zeroed at beginBatch and at every grow, so we can OR in unconditionally.
         long byteAddr = nullBitmapAddr + (rowCount >>> 3);
-        byte cur = Unsafe.getUnsafe().getByte(byteAddr);
-        Unsafe.getUnsafe().putByte(byteAddr, (byte) (cur | (1 << (rowCount & 7))));
+        byte cur = Unsafe.getByte(byteAddr);
+        Unsafe.putByte(byteAddr, (byte) (cur | (1 << (rowCount & 7))));
         nullCount++;
         rowCount++;
     }
@@ -632,27 +632,27 @@ final class QwpColumnScratch implements QuietCloseable {
             // All n bits (n <= 8) sit in a single byte at offset firstBitInFirstByte.
             int mask = ((1 << n) - 1) << firstBitInFirstByte;
             long addr = nullBitmapAddr + firstByte;
-            byte cur = Unsafe.getUnsafe().getByte(addr);
-            Unsafe.getUnsafe().putByte(addr, (byte) (cur | mask));
+            byte cur = Unsafe.getByte(addr);
+            Unsafe.putByte(addr, (byte) (cur | mask));
         } else {
             // First (possibly partial) byte: bits [firstBitInFirstByte, 8).
             int firstMask = (0xFF << firstBitInFirstByte) & 0xFF;
             long firstAddr = nullBitmapAddr + firstByte;
-            byte firstCur = Unsafe.getUnsafe().getByte(firstAddr);
-            Unsafe.getUnsafe().putByte(firstAddr, (byte) (firstCur | firstMask));
+            byte firstCur = Unsafe.getByte(firstAddr);
+            Unsafe.putByte(firstAddr, (byte) (firstCur | firstMask));
             // Middle bytes [firstByte + 1, lastByte) are entirely owned by this
             // column-top (rows haven't been written yet) and were left zero by
             // the most recent grow / beginBatch, so memset is correct.
             int middleStart = firstByte + 1;
             int middleLen = lastByte - middleStart;
             if (middleLen > 0) {
-                Unsafe.getUnsafe().setMemory(nullBitmapAddr + middleStart, middleLen, (byte) 0xFF);
+                Unsafe.setMemory(nullBitmapAddr + middleStart, middleLen, (byte) 0xFF);
             }
             // Last (possibly partial) byte: bits [0, lastBitInLastByte + 1).
             int lastMask = (1 << (lastBitInLastByte + 1)) - 1;
             long lastAddr = nullBitmapAddr + lastByte;
-            byte lastCur = Unsafe.getUnsafe().getByte(lastAddr);
-            Unsafe.getUnsafe().putByte(lastAddr, (byte) (lastCur | lastMask));
+            byte lastCur = Unsafe.getByte(lastAddr);
+            Unsafe.putByte(lastAddr, (byte) (lastCur | lastMask));
         }
         nullCount += n;
         rowCount += n;
@@ -660,7 +660,7 @@ final class QwpColumnScratch implements QuietCloseable {
 
     void appendShort(short v) {
         ensureValuesCapacity(valuesPos + 2);
-        Unsafe.getUnsafe().putShort(valuesAddr + valuesPos, v);
+        Unsafe.putShort(valuesAddr + valuesPos, v);
         valuesPos += 2;
         markNonNullAndAdvanceRow();
     }
@@ -687,14 +687,14 @@ final class QwpColumnScratch implements QuietCloseable {
      */
     void appendSymbolConnId(int connId) {
         ensureSymbolIdsCapacity(symbolIdsCapacity == 0 ? INITIAL_BYTES : 4 * (nonNullCount + 1));
-        Unsafe.getUnsafe().putInt(symbolIdsAddr + 4L * nonNullCount, connId);
+        Unsafe.putInt(symbolIdsAddr + 4L * nonNullCount, connId);
         markNonNullAndAdvanceRow();
     }
 
     void appendUuid(long lo, long hi) {
         ensureValuesCapacity(valuesPos + 16);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos, lo);
-        Unsafe.getUnsafe().putLong(valuesAddr + valuesPos + 8, hi);
+        Unsafe.putLong(valuesAddr + valuesPos, lo);
+        Unsafe.putLong(valuesAddr + valuesPos + 8, hi);
         valuesPos += 16;
         markNonNullAndAdvanceRow();
     }
@@ -739,7 +739,7 @@ final class QwpColumnScratch implements QuietCloseable {
         // Zero the null bitmap so appendNull() can OR in bits without per-byte init.
         // This costs nullBitmapCapacity bytes per batch (e.g. 512 B for 4096 rows). Cheap.
         if (nullBitmapAddr != 0 && nullBitmapCapacity > 0) {
-            Unsafe.getUnsafe().setMemory(nullBitmapAddr, nullBitmapCapacity, (byte) 0);
+            Unsafe.setMemory(nullBitmapAddr, nullBitmapCapacity, (byte) 0);
         }
     }
 

@@ -75,7 +75,7 @@ public class QwpBitWriter {
             if (currentAddress >= endAddress) {
                 throw CairoException.critical(0).put("QWP egress: QwpBitWriter buffer overflow on flush");
             }
-            Unsafe.getUnsafe().putByte(currentAddress++, (byte) bitBuffer);
+            Unsafe.putByte(currentAddress++, (byte) bitBuffer);
             bitBuffer = 0;
             bitsInBuffer = 0;
         }
@@ -145,7 +145,7 @@ public class QwpBitWriter {
                 if (currentAddress >= endAddress) {
                     throw CairoException.critical(0).put("QWP egress: QwpBitWriter buffer overflow on write");
                 }
-                Unsafe.getUnsafe().putByte(currentAddress++, (byte) bitBuffer);
+                Unsafe.putByte(currentAddress++, (byte) bitBuffer);
                 bitBuffer >>>= 8;
                 bitsInBuffer -= 8;
             }

@@ -71,8 +71,8 @@ public class QwpEgressReviewFindingsTest {
             long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 long p = buf;
-                Unsafe.getUnsafe().putByte(p++, QwpEgressMsgKind.CREDIT);
-                Unsafe.getUnsafe().putLong(p, 1L);
+                Unsafe.putByte(p++, QwpEgressMsgKind.CREDIT);
+                Unsafe.putLong(p, 1L);
                 p += 8;
                 // A varint whose decoded long is Long.MIN_VALUE -- sign bit set.
                 p = QwpVarint.encode(p, Long.MIN_VALUE);
@@ -124,21 +124,21 @@ public class QwpEgressReviewFindingsTest {
                      QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
                     batch.beginBatch(cols, null, dict);
 
-                    Unsafe.getUnsafe().setMemory(buf, bufCapacity, (byte) 0);
+                    Unsafe.setMemory(buf, bufCapacity, (byte) 0);
                     final byte guard = (byte) 0xAB;
                     // Leave 2 bytes of usable wire ([wireBuf .. wireLimit)):
                     //   byte 0: name length  (written unconditionally)
                     //   byte 1: rowCount varint (written without any preflight)
                     //   byte 2: columnCount varint   <-- must not be written
                     long wireLimit = buf + 2;
-                    Unsafe.getUnsafe().putByte(wireLimit, guard);
+                    Unsafe.putByte(wireLimit, guard);
 
                     // writeFullSchema=false isolates the bug: the reference-mode
                     // branch has its own preflight, the prelude (name + row + col
                     // varints) does not.
                     int written = batch.emitTableBlock(buf, wireLimit, 0L, false);
 
-                    byte guardAfter = Unsafe.getUnsafe().getByte(wireLimit);
+                    byte guardAfter = Unsafe.getByte(wireLimit);
                     Assert.assertEquals(
                             "emitTableBlock returned " + written + " on a wireLimit that"
                                     + " cannot fit the name byte + both varints; it should"
@@ -182,7 +182,7 @@ public class QwpEgressReviewFindingsTest {
 
                 byte[] emitted = new byte[written];
                 for (int i = 0; i < written; i++) {
-                    emitted[i] = Unsafe.getUnsafe().getByte(buf + i);
+                    emitted[i] = Unsafe.getByte(buf + i);
                 }
                 assertValidUtf8(emitted);
             } finally {
@@ -207,7 +207,7 @@ public class QwpEgressReviewFindingsTest {
 
                 byte[] emitted = new byte[written];
                 for (int i = 0; i < written; i++) {
-                    emitted[i] = Unsafe.getUnsafe().getByte(buf + i);
+                    emitted[i] = Unsafe.getByte(buf + i);
                 }
                 assertValidUtf8(emitted);
             } finally {

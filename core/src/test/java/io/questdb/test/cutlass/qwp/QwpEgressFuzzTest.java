@@ -1158,7 +1158,7 @@ public class QwpEgressFuzzTest extends AbstractBootstrapTest {
             if (negative) sb.append('-');
             sb.append(whole).append('.');
             String fs = Long.toString(frac);
-            sb.append("0".repeat(Math.max(0, scale - fs.length())));
+            sb.repeat("0", Math.max(0, scale - fs.length()));
             sb.append(fs).append('m');
             return sb.toString();
         }

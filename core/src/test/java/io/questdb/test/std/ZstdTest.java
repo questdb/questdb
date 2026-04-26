@@ -47,7 +47,7 @@ public class ZstdTest {
             long src = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(src + i, (byte) (i / 1024));
+                    Unsafe.putByte(src + i, (byte) (i / 1024));
                 }
                 roundTrip(src, len);
             } finally {
@@ -64,7 +64,7 @@ public class ZstdTest {
             try {
                 Rnd rnd = new Rnd();
                 for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(src + i, (byte) rnd.nextInt());
+                    Unsafe.putByte(src + i, (byte) rnd.nextInt());
                 }
                 roundTrip(src, len);
             } finally {
@@ -85,7 +85,7 @@ public class ZstdTest {
             long cctx = Zstd.createCCtx(3);
             try {
                 for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(src + i, (byte) i);
+                    Unsafe.putByte(src + i, (byte) i);
                 }
                 long result = Zstd.compress(cctx, src, len, dst, 1);
                 Assert.assertTrue("expected negative error, got " + result, result < 0);
@@ -107,7 +107,7 @@ public class ZstdTest {
             try {
                 // Zeros are not a valid zstd frame header; the library must reject them.
                 for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(src + i, (byte) 0);
+                    Unsafe.putByte(src + i, (byte) 0);
                 }
                 long result = Zstd.decompress(dctx, src, len, dst, len);
                 Assert.assertTrue("expected negative error, got " + result, result < 0);
@@ -130,7 +130,7 @@ public class ZstdTest {
             long dctx = Zstd.createDCtx();
             try {
                 for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(src + i, (byte) (i & 0x3F));
+                    Unsafe.putByte(src + i, (byte) (i & 0x3F));
                 }
                 long compLen = Zstd.compress(cctx, src, len, comp, len + 128);
                 Assert.assertTrue(compLen > 0);
@@ -207,7 +207,7 @@ public class ZstdTest {
                 Rnd rnd = new Rnd();
                 for (int iter = 0; iter < 100; iter++) {
                     for (int i = 0; i < len; i++) {
-                        Unsafe.getUnsafe().putByte(src + i, (byte) (rnd.nextInt() & (iter < 50 ? 0x03 : 0xFF)));
+                        Unsafe.putByte(src + i, (byte) (rnd.nextInt() & (iter < 50 ? 0x03 : 0xFF)));
                     }
                     long compLen = Zstd.compress(cctx, src, len, comp, len + 128);
                     Assert.assertTrue("compressLen=" + compLen, compLen > 0);
@@ -216,8 +216,8 @@ public class ZstdTest {
                     for (int i = 0; i < len; i++) {
                         Assert.assertEquals(
                                 "iter=" + iter + " pos=" + i,
-                                Unsafe.getUnsafe().getByte(src + i),
-                                Unsafe.getUnsafe().getByte(decomp + i)
+                                Unsafe.getByte(src + i),
+                                Unsafe.getByte(decomp + i)
                         );
                     }
                 }
@@ -250,8 +250,8 @@ public class ZstdTest {
             for (int i = 0; i < srcLen; i++) {
                 Assert.assertEquals(
                         "byte mismatch at " + i,
-                        Unsafe.getUnsafe().getByte(srcAddr + i),
-                        Unsafe.getUnsafe().getByte(decomp + i)
+                        Unsafe.getByte(srcAddr + i),
+                        Unsafe.getByte(decomp + i)
                 );
             }
         } finally {

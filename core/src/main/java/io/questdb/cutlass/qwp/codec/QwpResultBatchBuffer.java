@@ -385,7 +385,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         // loop walks past wireLimit whenever the caller's budget is tight.
         if (p + 1 + 2L * QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
         // Anonymous result-set: empty name
-        Unsafe.getUnsafe().putByte(p++, (byte) 0);
+        Unsafe.putByte(p++, (byte) 0);
         p = QwpVarint.encode(p, rowCount);
         p = QwpVarint.encode(p, columnCount);
         if (writeFullSchema) {
@@ -472,19 +472,19 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         int totalBytes = 1 + 4 * nDims + 8 * (int) elements;
         scratch.ensureArrayHeapCapacity(scratch.arrayHeapPos + totalBytes);
         long p = scratch.arrayHeapAddr + scratch.arrayHeapPos;
-        Unsafe.getUnsafe().putByte(p++, (byte) nDims);
+        Unsafe.putByte(p++, (byte) nDims);
         for (int d = 0; d < nDims; d++) {
-            Unsafe.getUnsafe().putInt(p, av.getDimLen(d));
+            Unsafe.putInt(p, av.getDimLen(d));
             p += 4;
         }
         if (wireType == QwpConstants.TYPE_DOUBLE_ARRAY) {
             for (int i = 0; i < elements; i++) {
-                Unsafe.getUnsafe().putLong(p, Double.doubleToRawLongBits(av.getDouble(i)));
+                Unsafe.putLong(p, Double.doubleToRawLongBits(av.getDouble(i)));
                 p += 8;
             }
         } else {
             for (int i = 0; i < elements; i++) {
-                Unsafe.getUnsafe().putLong(p, av.getLong(i));
+                Unsafe.putLong(p, av.getLong(i));
                 p += 8;
             }
         }
@@ -498,7 +498,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         long bytesBytes = scratch.stringHeapPos;
         if (p + offsetsBytes + bytesBytes > wireLimit) return -1;
         // offset[0] = 0; offsets[1..nonNull] were populated during append.
-        Unsafe.getUnsafe().putInt(p, 0);
+        Unsafe.putInt(p, 0);
         // Copy offsets[1..nonNull] from scratch.stringOffsetsAddr (which stores them at indices 1..nonNull)
         // to p + 4 .. p + 4 * nonNull + 4.
         Vect.memcpy(p + 4L, scratch.stringOffsetsAddr + 4L, 4L * nonNull);
@@ -515,7 +515,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         final long idsAddr = scratch.symbolIdsAddr;
         for (int i = 0; i < nonNull; i++) {
             if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-            int connId = Unsafe.getUnsafe().getInt(idsAddr + 4L * i);
+            int connId = Unsafe.getInt(idsAddr + 4L * i);
             p = QwpVarint.encode(p, connId);
         }
         return p;
@@ -728,11 +728,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         // 1. Null flag + optional bitmap
         if (scratch.nullCount == 0) {
             if (p >= wireLimit) return -1;
-            Unsafe.getUnsafe().putByte(p++, (byte) 0);
+            Unsafe.putByte(p++, (byte) 0);
         } else {
             int bitmapBytes = (rowCount + 7) >>> 3;
             if (p + 1 + bitmapBytes > wireLimit) return -1;
-            Unsafe.getUnsafe().putByte(p++, (byte) 1);
+            Unsafe.putByte(p++, (byte) 1);
             Vect.memcpy(p, scratch.nullBitmapAddr, bitmapBytes);
             p += bitmapBytes;
         }
@@ -772,7 +772,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 || wire == QwpConstants.TYPE_DECIMAL128
                 || wire == QwpConstants.TYPE_DECIMAL256) {
             if (p + 1 > wireLimit) return -1;
-            Unsafe.getUnsafe().putByte(p++, (byte) scratch.def.getScale());
+            Unsafe.putByte(p++, (byte) scratch.def.getScale());
             if (p + scratch.valuesPos > wireLimit) return -1;
             Vect.memcpy(p, scratch.valuesAddr, scratch.valuesPos);
             return p + scratch.valuesPos;
@@ -802,7 +802,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         // 0, 1, 2 values have no delta-of-delta to emit; ship raw int64s under the
         // uncompressed discriminator so the decoder sees a consistent layout.
         if (nonNull < 3) {
-            Unsafe.getUnsafe().putByte(p++, ENCODING_UNCOMPRESSED);
+            Unsafe.putByte(p++, ENCODING_UNCOMPRESSED);
             if (p + rawBytes > wireLimit) return -1;
             if (rawBytes > 0) {
                 Vect.memcpy(p, scratch.valuesAddr, rawBytes);
@@ -814,12 +814,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         int gorillaBytes = QwpGorillaEncoder.calculateEncodedSizeIfSupported(scratch.valuesAddr, nonNull);
         if (gorillaBytes >= 0 && gorillaBytes < rawBytes) {
             if (p + 1 + gorillaBytes > wireLimit) return -1;
-            Unsafe.getUnsafe().putByte(p++, ENCODING_GORILLA);
+            Unsafe.putByte(p++, ENCODING_GORILLA);
             int written = gorillaEncoder.encodeTimestamps(p, wireLimit - p, scratch.valuesAddr, nonNull);
             return p + written;
         }
         if (p + 1 + rawBytes > wireLimit) return -1;
-        Unsafe.getUnsafe().putByte(p++, ENCODING_UNCOMPRESSED);
+        Unsafe.putByte(p++, ENCODING_UNCOMPRESSED);
         Vect.memcpy(p, scratch.valuesAddr, rawBytes);
         return p + rawBytes;
     }

@@ -68,7 +68,7 @@ public final class QwpEgressMsgKind {
     /**
      * Role value on {@code SERVER_INFO.role}: the authoritative write node. Reads
      * here see the most recent commits without replication lag. A cluster has at
-     * most one {@link #ROLE_PRIMARY} at any given epoch.
+     * most one ROLE_PRIMARY at any given epoch.
      */
     public static final byte ROLE_PRIMARY = 1;
     /**

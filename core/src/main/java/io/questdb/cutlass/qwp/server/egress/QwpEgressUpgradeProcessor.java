@@ -569,7 +569,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long frameStart = qwpStart - wsHeaderSize;
         if (frameStart != bufAddr) {
             // memmove QWP bytes so the frame abuts offset 0
-            Unsafe.getUnsafe().copyMemory(qwpStart, bufAddr + wsHeaderSize, qwpSize);
+            Unsafe.copyMemory(qwpStart, bufAddr + wsHeaderSize, qwpSize);
         }
         WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwpSize);
         rawSocket.send(wsHeaderSize + qwpSize);
@@ -630,7 +630,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             if (bufSize < wsHeaderSize + qwpSize) {
                 return -1;
             }
-            Unsafe.getUnsafe().copyMemory(qwpStart, bufAddr + wsHeaderSize, qwpSize);
+            Unsafe.copyMemory(qwpStart, bufAddr + wsHeaderSize, qwpSize);
         }
         WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwpSize);
         return wsHeaderSize + qwpSize;
@@ -809,8 +809,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private void handleClose(HttpConnectionContext context, long payload, int length) {
         int closeCode = -1;
         if (length >= 2) {
-            int high = Unsafe.getUnsafe().getByte(payload) & 0xFF;
-            int low = Unsafe.getUnsafe().getByte(payload + 1) & 0xFF;
+            int high = Unsafe.getByte(payload) & 0xFF;
+            int low = Unsafe.getByte(payload + 1) & 0xFF;
             closeCode = (high << 8) | low;
         }
         LOG.info().$("Egress WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
@@ -846,7 +846,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // inside the declared frame; the earlier order let a truncated
             // CREDIT frame read past payload+length.
             long additional = state.getDecoder().decodeCredit(payload, length);
-            long targetRequestId = Unsafe.getUnsafe().getLong(payload + 1);
+            long targetRequestId = Unsafe.getLong(payload + 1);
             if (additional <= 0) {
                 LOG.error().$("Egress CREDIT rejected [fd=").$(context.getFd())
                         .$(", requestId=").$(targetRequestId)
@@ -922,7 +922,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // (msg_kind + requestId), so we can peek it without invoking the full decoder.
         if (state.isStreamingActive()) {
             if (length >= 9) {
-                requestId = Unsafe.getUnsafe().getLong(payload + 1);
+                requestId = Unsafe.getLong(payload + 1);
             }
             sendQueryError(context, state, requestId, QwpConstants.STATUS_PARSE_ERROR,
                     "Phase 1 egress supports a single in-flight query per connection");
@@ -1224,7 +1224,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         } finally {
             int remaining = (int) (bufferEnd - pos);
             if (remaining > 0 && pos > buffer) {
-                Unsafe.getUnsafe().copyMemory(pos, buffer, remaining);
+                Unsafe.copyMemory(pos, buffer, remaining);
             }
             state.setRecvBufferLen(remaining);
         }
@@ -1404,8 +1404,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     // already wrote FLAG_DELTA_SYMBOL_DICT | FLAG_GORILLA; we OR in
                     // the zstd bit without re-serialising the whole header.
                     long flagsAddr = qwpStart + QwpConstants.HEADER_OFFSET_FLAGS;
-                    byte flags = Unsafe.getUnsafe().getByte(flagsAddr);
-                    Unsafe.getUnsafe().putByte(flagsAddr, (byte) (flags | QwpConstants.FLAG_ZSTD));
+                    byte flags = Unsafe.getByte(flagsAddr);
+                    Unsafe.putByte(flagsAddr, (byte) (flags | QwpConstants.FLAG_ZSTD));
                 } else if (compLen < 0) {
                     LOG.error().$("zstd compress error [fd=").$(context.getFd())
                             .$(", code=").$(compLen).I$();
@@ -1497,8 +1497,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     qwp1End = preludeEnd + compLen;
                     metrics.markBytesCompressedSaved((int) (bodyLen - compLen));
                     long flagsAddr = qwp1Start + QwpConstants.HEADER_OFFSET_FLAGS;
-                    byte flags = Unsafe.getUnsafe().getByte(flagsAddr);
-                    Unsafe.getUnsafe().putByte(flagsAddr, (byte) (flags | QwpConstants.FLAG_ZSTD));
+                    byte flags = Unsafe.getByte(flagsAddr);
+                    Unsafe.putByte(flagsAddr, (byte) (flags | QwpConstants.FLAG_ZSTD));
                 } else if (compLen < 0) {
                     LOG.error().$("zstd compress error [fd=").$(context.getFd())
                             .$(", code=").$(compLen).I$();
@@ -1521,7 +1521,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // Batch fills the buffer: cannot coalesce. Fall back to two sends,
             // matching the pre-coalesce shape.
             if (qwp1Start - ws1HeaderSize != bufAddr) {
-                Unsafe.getUnsafe().copyMemory(qwp1Start, bufAddr + ws1HeaderSize, qwp1Size);
+                Unsafe.copyMemory(qwp1Start, bufAddr + ws1HeaderSize, qwp1Size);
             }
             WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwp1Size);
             // Record the RESULT_BATCH metric BEFORE rawSocket.send: the send can
@@ -1537,7 +1537,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         // Shift RESULT_BATCH so it abuts offset 0 and write its WS header.
         if (qwp1Start - ws1HeaderSize != bufAddr) {
-            Unsafe.getUnsafe().copyMemory(qwp1Start, bufAddr + ws1HeaderSize, qwp1Size);
+            Unsafe.copyMemory(qwp1Start, bufAddr + ws1HeaderSize, qwp1Size);
         }
         WebSocketFrameWriter.writeBinaryFrameHeader(bufAddr, qwp1Size);
 
@@ -1553,7 +1553,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         int ws2HeaderSize = WebSocketFrameWriter.headerSize(qwp2Size, false);
         long frame2Start = bufAddr + frame1Size;
         if (qwp2Start != frame2Start + ws2HeaderSize) {
-            Unsafe.getUnsafe().copyMemory(qwp2Start, frame2Start + ws2HeaderSize, qwp2Size);
+            Unsafe.copyMemory(qwp2Start, frame2Start + ws2HeaderSize, qwp2Size);
         }
         WebSocketFrameWriter.writeBinaryFrameHeader(frame2Start, qwp2Size);
 

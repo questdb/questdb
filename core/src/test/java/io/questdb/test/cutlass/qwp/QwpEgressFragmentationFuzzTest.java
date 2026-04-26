@@ -31,6 +31,7 @@ import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -125,7 +126,7 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
                             long base = batch.valuesAddr(0);
                             int[] idx = batch.nonNullIndex(0);
                             for (int r = 0; r < n; r++) {
-                                idSum[0] += io.questdb.client.std.Unsafe.getUnsafe().getLong(base + 8L * idx[r]);
+                                idSum[0] += Unsafe.getLong(base + 8L * idx[r]);
                             }
                             rows[0] += n;
                         }
@@ -209,7 +210,7 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
                 long base = batch.valuesAddr(0);
                 int[] idx = batch.nonNullIndex(0);
                 for (int r = 0; r < n; r++) {
-                    idSum[0] += io.questdb.client.std.Unsafe.getUnsafe().getLong(base + 8L * idx[r]);
+                    idSum[0] += Unsafe.getLong(base + 8L * idx[r]);
                 }
                 rows[0] += n;
             }

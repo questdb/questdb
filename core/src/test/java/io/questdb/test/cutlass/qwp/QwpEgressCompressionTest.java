@@ -29,6 +29,7 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -126,7 +127,7 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
                         public void onBatch(QwpColumnBatch batch) {
                             batchesSeen[0]++;
                             // QWP header layout: byte[5] is the flags field.
-                            byte flags = io.questdb.client.std.Unsafe.getUnsafe().getByte(
+                            byte flags = Unsafe.getByte(
                                     batch.payloadAddr() + QwpConstants.HEADER_OFFSET_FLAGS);
                             Assert.assertEquals(
                                     "default connection must not receive zstd-compressed batches "
@@ -240,7 +241,7 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
                 long base = batch.valuesAddr(0);
                 int[] idx = batch.nonNullIndex(0);
                 for (int r = 0; r < n; r++) {
-                    sum[0] += io.questdb.client.std.Unsafe.getUnsafe().getLong(base + 8L * idx[r]);
+                    sum[0] += Unsafe.getLong(base + 8L * idx[r]);
                 }
                 rows[0] += n;
             }

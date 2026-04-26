@@ -375,11 +375,11 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         // as before.
         if (contentEncoding != null) {
             for (byte b : RESPONSE_CONTENT_ENCODING_PREFIX) {
-                Unsafe.getUnsafe().putByte(buf + offset++, b);
+                Unsafe.putByte(buf + offset++, b);
             }
             byte[] encBytes = contentEncoding.getBytes(StandardCharsets.US_ASCII);
             for (byte b : encBytes) {
-                Unsafe.getUnsafe().putByte(buf + offset++, b);
+                Unsafe.putByte(buf + offset++, b);
             }
         }
 

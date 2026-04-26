@@ -89,12 +89,12 @@ public class QwpGorillaEncoder {
             return (int) size;
         }
 
-        long prevTimestamp = Unsafe.getUnsafe().getLong(srcAddress + 8);
-        long prevDelta = prevTimestamp - Unsafe.getUnsafe().getLong(srcAddress);
+        long prevTimestamp = Unsafe.getLong(srcAddress + 8);
+        long prevDelta = prevTimestamp - Unsafe.getLong(srcAddress);
         long totalBits = 0;
 
         for (int i = 2; i < count; i++) {
-            long ts = Unsafe.getUnsafe().getLong(srcAddress + (long) i * 8);
+            long ts = Unsafe.getLong(srcAddress + (long) i * 8);
             long delta = ts - prevTimestamp;
             long deltaOfDelta = delta - prevDelta;
 
@@ -202,8 +202,8 @@ public class QwpGorillaEncoder {
                     .put("QWP egress: Gorilla encoder buffer overflow on first timestamp [capacity=")
                     .put(capacity).put(']');
         }
-        long ts0 = Unsafe.getUnsafe().getLong(srcAddress);
-        Unsafe.getUnsafe().putLong(destAddress, ts0);
+        long ts0 = Unsafe.getLong(srcAddress);
+        Unsafe.putLong(destAddress, ts0);
         pos = 8;
 
         if (count == 1) {
@@ -215,8 +215,8 @@ public class QwpGorillaEncoder {
                     .put("QWP egress: Gorilla encoder buffer overflow on second timestamp [capacity=")
                     .put(capacity).put(']');
         }
-        long ts1 = Unsafe.getUnsafe().getLong(srcAddress + 8);
-        Unsafe.getUnsafe().putLong(destAddress + pos, ts1);
+        long ts1 = Unsafe.getLong(srcAddress + 8);
+        Unsafe.putLong(destAddress + pos, ts1);
         pos += 8;
 
         if (count == 2) {
@@ -228,7 +228,7 @@ public class QwpGorillaEncoder {
         long prevDelta = ts1 - ts0;
 
         for (int i = 2; i < count; i++) {
-            long ts = Unsafe.getUnsafe().getLong(srcAddress + (long) i * 8);
+            long ts = Unsafe.getLong(srcAddress + (long) i * 8);
             long delta = ts - prevTs;
             long dod = delta - prevDelta;
             encodeDoD(dod);

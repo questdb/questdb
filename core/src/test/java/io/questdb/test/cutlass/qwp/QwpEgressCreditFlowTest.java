@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -92,7 +93,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
                             long base = batch.valuesAddr(0);
                             int[] idx = batch.nonNullIndex(0);
                             for (int r = 0; r < n; r++) {
-                                idSum[0] += io.questdb.client.std.Unsafe.getUnsafe().getLong(base + 8L * idx[r]);
+                                idSum[0] += Unsafe.getLong(base + 8L * idx[r]);
                             }
                             rows[0] += n;
                         }
