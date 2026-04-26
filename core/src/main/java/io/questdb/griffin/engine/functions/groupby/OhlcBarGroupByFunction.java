@@ -53,9 +53,11 @@ import org.jetbrains.annotations.Nullable;
  * Open is the first non-NULL value (smallest rowId), Close is the last
  * (largest rowId), High is the maximum, Low is the minimum.
  * <p>
- * Each candle is scaled against its own High/Low range: the wick spans
- * the full width and the body position within the wick shows where
- * Open/Close sit relative to the High/Low range. For cross-group
+ * Each candle is self-contained: the wick occupies the middle ~80% of
+ * the bar width with blank padding on each side, and the body is
+ * positioned within the wick proportionally to where Open/Close sit
+ * in the High/Low range. Candles with narrow bodies relative to their
+ * wicks show high exploration (long wicks, small body). For cross-group
  * comparable scaling, use the scalar variant
  * {@code ohlc_bar(open, high, low, close, min, max, width)} with
  * window functions to provide explicit bounds.
@@ -439,22 +441,48 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
         int width = effectiveWidth();
 
-        // Scale each candle against its own low/high range.
-        // For cross-group comparable scaling, use the scalar variant
-        // ohlc_bar(o,h,l,c,min,max,width) with window functions.
-        double scaleMin = low;
-        double scaleMax = high;
-        double scaleRange = scaleMax - scaleMin;
-
-        int lowPos = mapPosition(low, scaleMin, scaleRange, width);
-        int highPos = mapPosition(high, scaleMin, scaleRange, width);
-        int openPos = mapPosition(open, scaleMin, scaleRange, width);
-        int closePos = mapPosition(close, scaleMin, scaleRange, width);
-
-        int bodyStart = Math.min(openPos, closePos);
-        int bodyEnd = Math.max(openPos, closePos);
-        boolean isDoji = openPos == closePos;
+        // Per-group proportional layout: the wick occupies the full
+        // inner region and the body is positioned within it. Padding
+        // on each side keeps the wick from spanning edge to edge.
+        // The padding size reflects how much of the H/L range lies
+        // outside the O/C range on each side.
+        double range = high - low;
+        double bodyLow = Math.min(open, close);
+        double bodyHigh = Math.max(open, close);
+        boolean isDoji = (open == close) || (range > 0 && Math.abs(open - close) / range * width < 1);
         boolean isBullish = close >= open;
+
+        // Compute wick and body positions within [0, width-1].
+        // Wick spans [wickStart, wickEnd], body spans [bodyStart, bodyEnd].
+        int wickStart, wickEnd, bodyStart, bodyEnd;
+        if (range == 0.0) {
+            // Flat candle: doji at center
+            wickStart = width / 2;
+            wickEnd = width / 2;
+            bodyStart = width / 2;
+            bodyEnd = width / 2;
+            isDoji = true;
+        } else {
+            // Reserve 10% padding on each side minimum, scale wick within middle 80%
+            int padChars = Math.max(1, width / 10);
+            int innerWidth = width - 2 * padChars;
+            if (innerWidth < 3) {
+                // Too narrow for padding, use full width
+                padChars = 0;
+                innerWidth = width;
+            }
+            wickStart = padChars;
+            wickEnd = padChars + innerWidth - 1;
+
+            // Body within the wick region
+            double bodyLowProp = (bodyLow - low) / range;
+            double bodyHighProp = (bodyHigh - low) / range;
+            bodyStart = wickStart + (int) (bodyLowProp * (innerWidth - 1));
+            bodyEnd = wickStart + (int) (bodyHighProp * (innerWidth - 1));
+            if (bodyStart == bodyEnd) {
+                isDoji = true;
+            }
+        }
 
         // Calculate output size
         long barBytes = (long) width * 3;
@@ -475,18 +503,17 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         // +1 byte for putChar's 4-byte write safety on the last BMP char
         long out = allocator.malloc(barBytes + labelBytes + 1);
 
-        // Render: body only, blank everywhere else. Per-group scaling
-        // means low=0 and high=width-1, so wicks would span the full
-        // width and carry no information. The body position within
-        // blank space shows where O/C sit relative to the H/L range.
+        // Render: blank, wick, body, wick, blank
         for (int i = 0; i < width; i++) {
             char c;
-            if (isDoji && i == bodyStart) {
+            if (i < wickStart || i > wickEnd) {
+                c = BLANK;
+            } else if (isDoji && i == bodyStart) {
                 c = DOJI;
             } else if (i >= bodyStart && i <= bodyEnd) {
                 c = isBullish ? BODY_BULL : BODY_BEAR;
             } else {
-                c = BLANK;
+                c = WICK;
             }
             putChar(out, i, c);
         }
