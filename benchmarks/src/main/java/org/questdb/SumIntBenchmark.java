@@ -76,7 +76,7 @@ public class SumIntBenchmark {
         long p = intAddr;
         for (int i = 0; i < intCount; i++) {
             int d = rnd.nextInt();
-            Unsafe.getUnsafe().putInt(p, d);
+            Unsafe.putInt(p, d);
             intArray[i] = d;
             p += Integer.BYTES;
         }
@@ -101,7 +101,7 @@ public class SumIntBenchmark {
     public long testJavaNativeSum() {
         long result = 0;
         for (int i = 0; i < intCount; i++) {
-            result += Unsafe.getUnsafe().getInt(intAddr + i * 4);
+            result += Unsafe.getInt(intAddr + i * 4);
         }
         return result;
     }

@@ -28,13 +28,13 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
 
 public final class Hash {
-
-    // Constant from Rust compiler's FxHasher.
+    // Polynomial hash multiplier (from Rust compiler's FxHasher).
     private static final long M2 = 0x517cc1b727220a95L;
     private static final int MURMUR3_SEED = 95967;
     private static final long MURMUR3_X64_128_C1 = 0x87c37b91114253d5L;
     private static final long MURMUR3_X64_128_C2 = 0x4cf5ad432745937fL;
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
+    private static final long XXH3_PRIME_MX1 = 0x165667919E3779F9L;
 
     private Hash() {
     }
@@ -50,26 +50,8 @@ public final class Hash {
         return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
     }
 
-    /**
-     * A fast hash function based on Rust compiler's FxHasher. It's of worse quality than
-     * {@link #hashInt64(int)}, so make sure to compensate that with a low load factor,
-     * e.g. 0.5, when used in a hash table.
-     */
-    public static long fastHashInt64(int k) {
-        return Integer.toUnsignedLong(k) * M2;
-    }
-
-    /**
-     * A fast hash function based on Rust compiler's FxHasher. It's of worse quality than
-     * {@link #hashLong64(long)}, so make sure to compensate that with a low load factor,
-     * e.g. 0.5, when used in a hash table.
-     */
-    public static long fastHashLong64(long k) {
-        return k * M2;
-    }
-
     public static long hashInt64(int k) {
-        return fmix64(Integer.toUnsignedLong(k));
+        return xxh3Avalanche64(Integer.toUnsignedLong(k));
     }
 
     public static int hashLong128_32(long key1, long key2) {
@@ -77,11 +59,11 @@ public final class Hash {
     }
 
     public static long hashLong128_64(long key1, long key2) {
-        return fmix64(key1 * M2 + key2);
+        return xxh3Avalanche64(key1 * M2 + key2);
     }
 
     public static long hashLong256_64(long key1, long key2, long key3, long key4) {
-        return fmix64(key1 * M2 * M2 * M2 + key2 * M2 * M2 + key3 * M2 + key4);
+        return xxh3Avalanche64(key1 * M2 * M2 * M2 + key2 * M2 * M2 + key3 * M2 + key4);
     }
 
     public static int hashLong32(long k) {
@@ -89,7 +71,7 @@ public final class Hash {
     }
 
     public static long hashLong64(long k) {
-        return fmix64(k);
+        return xxh3Avalanche64(k);
     }
 
     /**
@@ -108,16 +90,16 @@ public final class Hash {
         long h = 0;
         long i = 0;
         for (; i + 7 < len; i += 8) {
-            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
+            h = h * M2 + Unsafe.getLong(p + i);
         }
         if (i + 3 < len) {
-            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
+            h = h * M2 + Unsafe.getInt(p + i);
             i += 4;
         }
         for (; i < len; i++) {
-            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
+            h = h * M2 + Unsafe.getByte(p + i);
         }
-        return fmix64(h);
+        return xxh3Avalanche64(h);
     }
 
     /**
@@ -146,7 +128,7 @@ public final class Hash {
         for (; i < len; i++) {
             h = h * M2 + us.byteAt(i);
         }
-        return (int) fmix64(h);
+        return (int) xxh3Avalanche64(h);
     }
 
     /**
@@ -188,7 +170,10 @@ public final class Hash {
     }
 
     /**
-     * Murmur finalizer.
+     * Murmur3 finalizer. Kept as a private helper exclusively for
+     * {@link #murmur3ToLong(long, int)} to preserve the bit-identical
+     * Murmur3 128-bit algorithm; other hash paths use
+     * {@link #xxh3Avalanche64(long)}.
      */
     private static long fmix64(long h) {
         h = (h ^ (h >>> 33)) * 0xff51afd7ed558ccdL;
@@ -221,5 +206,14 @@ public final class Hash {
         h2 = fmix64(h2);
         h1 += h2;
         return h1;
+    }
+
+    /**
+     * xxh3 64-bit avalanche: 1 multiply + 2 shift-XORs on the critical path.
+     */
+    private static long xxh3Avalanche64(long h) {
+        h ^= h >>> 37;
+        h *= XXH3_PRIME_MX1;
+        return h ^ (h >>> 32);
     }
 }

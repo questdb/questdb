@@ -252,7 +252,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
             );
         }
         int nullCount;
-        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+        if (Unsafe.getByte(dataAddress + offset) != 0) {
             offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
@@ -295,24 +295,23 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
 
     private void readCurrentValue(long address) {
         switch (typeCode) {
-            case TYPE_BYTE -> currentLong = Unsafe.getUnsafe().getByte(address);
-            case TYPE_SHORT, TYPE_CHAR -> currentLong = Unsafe.getUnsafe().getShort(address);
-            case TYPE_INT -> currentLong = Unsafe.getUnsafe().getInt(address);
-            case TYPE_LONG, TYPE_DATE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS ->
-                    currentLong = Unsafe.getUnsafe().getLong(address);
-            case TYPE_FLOAT -> currentDouble = Unsafe.getUnsafe().getFloat(address);
-            case TYPE_DOUBLE -> currentDouble = Unsafe.getUnsafe().getDouble(address);
+            case TYPE_BYTE -> currentLong = Unsafe.getByte(address);
+            case TYPE_SHORT, TYPE_CHAR -> currentLong = Unsafe.getShort(address);
+            case TYPE_INT -> currentLong = Unsafe.getInt(address);
+            case TYPE_LONG, TYPE_DATE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> currentLong = Unsafe.getLong(address);
+            case TYPE_FLOAT -> currentDouble = Unsafe.getFloat(address);
+            case TYPE_DOUBLE -> currentDouble = Unsafe.getDouble(address);
             case TYPE_UUID -> {
                 // UUID is stored little-endian: lo bytes first, then hi bytes
-                currentUuidLo = Unsafe.getUnsafe().getLong(address);
-                currentUuidHi = Unsafe.getUnsafe().getLong(address + 8);
+                currentUuidLo = Unsafe.getLong(address);
+                currentUuidHi = Unsafe.getLong(address + 8);
             }
             case TYPE_LONG256 -> {
                 // LONG256 is stored little-endian: 4 longs, least significant first
-                currentLong256_0 = Unsafe.getUnsafe().getLong(address);
-                currentLong256_1 = Unsafe.getUnsafe().getLong(address + 8);
-                currentLong256_2 = Unsafe.getUnsafe().getLong(address + 16);
-                currentLong256_3 = Unsafe.getUnsafe().getLong(address + 24);
+                currentLong256_0 = Unsafe.getLong(address);
+                currentLong256_1 = Unsafe.getLong(address + 8);
+                currentLong256_2 = Unsafe.getLong(address + 16);
+                currentLong256_3 = Unsafe.getLong(address + 24);
             }
         }
     }
