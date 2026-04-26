@@ -297,6 +297,11 @@ public class PartitionDecoder implements ParquetDecoder, ParquetRowGroupSkipper,
         owned = false;
     }
 
+    public void rowGroupColumnHasEncoding(int rowGroupIndex, int columnIndex, int encoding) {
+        assert ptr != 0;
+        rowGroupColumnHasEncoding(ptr, rowGroupIndex, columnIndex, encoding);
+    }
+
     public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
         assert ptr != 0;
         return rowGroupMaxTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
