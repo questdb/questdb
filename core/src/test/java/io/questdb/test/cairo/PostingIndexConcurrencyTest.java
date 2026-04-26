@@ -29,9 +29,15 @@ import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -296,8 +302,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                                             }
                                             prev = val;
                                         }
-                                        cursor = Misc.free(cursor);
-                                        ;
+                                        Misc.free(cursor);
                                     } catch (io.questdb.cairo.CairoException e) {
                                         // Transient corrupt reads are expected during truncate
                                         // cycles — the reader's seqlock snapshot can lag the
@@ -417,6 +422,83 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
         runConcurrentTest("conc_high", 16, true, false);
     }
 
+    /**
+     * Red test for the torn-read bug in {@link PostingIndexUtils#readSealTxnFromKeyFd}.
+     * The function performs four independent {@code pread} calls to validate the
+     * A-B seqlock, then issues a fifth, separate {@code pread} for SEAL_TXN with
+     * no post-validation. A writer that bumps SEQUENCE_START on the chosen page
+     * between the seqlock check and the SEAL_TXN read can hand the caller a
+     * sealTxn from a different generation than the seqlock it validated.
+     * <p>
+     * Layout:
+     * <pre>
+     *   page A: seqStart=2, seqEnd=2, sealTxn=100   (newest, picked by reader)
+     *   page B: seqStart=1, seqEnd=1, sealTxn=99    (older)
+     * </pre>
+     * The injected FilesFacade fires on the 5th {@code readNonNegativeLong}
+     * (the SEAL_TXN read) and rewrites page A as if a writer had started a new
+     * seal: seqStart=4, sealTxn=200. The caller then reads sealTxn=200.
+     * <p>
+     * After the fix, the function must re-read SEQUENCE_START on the chosen
+     * page after the SEAL_TXN read; a mismatch must produce either the
+     * fallback sealTxn from page B (99) or -1. Returning 200 means the caller
+     * walked away with a sealTxn from a generation it never validated.
+     */
+    @Test
+    public void testReadSealTxnFromKeyFdRejectsTornSealTxnRead() throws Exception {
+        assertMemoryLeak(64, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot()).concat("torn_seal_test.pk")) {
+                final LPSZ pathLpsz = path.$();
+                seedConsistentKeyFile(TestFilesFacadeImpl.INSTANCE, pathLpsz);
+
+                final AtomicInteger readCount = new AtomicInteger();
+                FilesFacade injectedFf = new TestFilesFacadeImpl() {
+                    @Override
+                    public long readNonNegativeLong(long readFd, long offset) {
+                        // The 5th readNonNegativeLong is the SEAL_TXN fetch (calls 1..4
+                        // are the four seqlock fields). Fire the writer-mid-flight injection
+                        // exactly once, just before that read goes to the kernel.
+                        if (readCount.incrementAndGet() == 5) {
+                            long w = openRW(pathLpsz, 0);
+                            if (w > 0) {
+                                try {
+                                    writeRawLong(this, w,
+                                            PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START,
+                                            4L);
+                                    writeRawLong(this, w,
+                                            PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN,
+                                            200L);
+                                } finally {
+                                    close(w);
+                                }
+                            }
+                        }
+                        return super.readNonNegativeLong(readFd, offset);
+                    }
+                };
+
+                long readFd = injectedFf.openRO(pathLpsz);
+                Assert.assertTrue("openRO failed for " + path, readFd > 0);
+                try {
+                    long sealTxn = PostingIndexUtils.readSealTxnFromKeyFd(injectedFf, readFd);
+                    Assert.assertNotEquals(
+                            "readSealTxnFromKeyFd returned 200, the post-mutation sealTxn from a "
+                                    + "generation (seq=4) the reader never seqlock-validated. The reader "
+                                    + "observed page A consistent at seq=2; once the writer bumped page A "
+                                    + "to seq=4 between the seqlock check and the SEAL_TXN read, the "
+                                    + "function must re-validate and return 99 (fallback to page B at "
+                                    + "seq=1) or -1 (race detected).",
+                            200L, sealTxn);
+                    Assert.assertTrue(
+                            "expected sealTxn in {99, -1} after a mid-read seqStart flip on page A; got " + sealTxn,
+                            sealTxn == 99L || sealTxn == -1L);
+                } finally {
+                    injectedFf.close(readFd);
+                }
+            }
+        });
+    }
+
     private static void joinReaders(Thread[] readers) throws InterruptedException {
         for (Thread t : readers) {
             t.join(JOIN_MS);
@@ -454,8 +536,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                 if (count % BP_BATCH != 0) {
                     throw new AssertionError("bwd " + id + ": partial batch, count=" + count);
                 }
-                cursor = Misc.free(cursor);
-                ;
+                Misc.free(cursor);
             }
         }
     }
@@ -485,8 +566,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                 if (count % BP_BATCH != 0) {
                     throw new AssertionError("fwd " + id + ": partial batch, count=" + count);
                 }
-                cursor = Misc.free(cursor);
-                ;
+                Misc.free(cursor);
             }
         }
     }
@@ -554,6 +634,37 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                     Misc.free(cursor);
                 }
             }
+        }
+    }
+
+    private static void seedConsistentKeyFile(FilesFacade ff, LPSZ path) {
+        long fd = ff.openRW(path, configuration.getWriterFileOpenOpts());
+        Assert.assertTrue("openRW failed for " + path, fd > 0);
+        try {
+            Assert.assertTrue("allocate failed", ff.allocate(fd, PostingIndexUtils.KEY_FILE_RESERVED));
+            // Page A: newest consistent snapshot (seq=2, sealTxn=100)
+            writeRawLong(ff, fd, PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 2L);
+            writeRawLong(ff, fd, PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN, 100L);
+            writeRawLong(ff, fd, PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 2L);
+            // Page B: older consistent snapshot (seq=1, sealTxn=99)
+            writeRawLong(ff, fd, PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 1L);
+            writeRawLong(ff, fd, PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN, 99L);
+            writeRawLong(ff, fd, PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 1L);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    private static void writeRawLong(FilesFacade ff, long fd, long offset, long value) {
+        long bufAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putLong(bufAddr, value);
+            Assert.assertEquals(
+                    "short write at offset " + offset,
+                    Long.BYTES,
+                    ff.write(fd, bufAddr, Long.BYTES, offset));
+        } finally {
+            Unsafe.free(bufAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

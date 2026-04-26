@@ -211,6 +211,12 @@ public final class PostingIndexUtils {
     // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
     static final int EF_HEADER_SIZE = 17;
     private static final long PARSE_FAIL = Long.MIN_VALUE;
+    // Bounded retry budget for the seqlock loop in readSealTxnFromKeyFd. The
+    // writer always leaves one of the two pages stable across a write, so a
+    // consistent snapshot is normally found within one or two iterations.
+    // Eight attempts gives ample slack under heavy seal contention before the
+    // function gives up and returns -1.
+    private static final int SEAL_TXN_READ_ATTEMPTS = 8;
 
     private PostingIndexUtils() {
     }
@@ -992,29 +998,62 @@ public final class PostingIndexUtils {
      * descriptor. Useful when the caller has just opened the .pk file for write
      * and would otherwise pay an extra openRO/close pair.
      * <p>
-     * Returns -1 if the file is too short or both metadata pages fail seq-lock validation.
+     * Reads the four seqlock fields, picks the consistent page, reads SEAL_TXN,
+     * then re-reads SEQUENCE_START / SEQUENCE_END on the chosen page to confirm
+     * a writer did not begin a new generation between the seqlock check and the
+     * SEAL_TXN read. The two-page seqlock guarantees one of A or B is always
+     * stable across a single write, so a consistent snapshot is normally found
+     * within one or two iterations. Mirrors the in-process post-validation in
+     * {@code AbstractPostingIndexReader#readIndexMetadataFromBestPage}.
+     * <p>
+     * Returns -1 if the file is too short, both metadata pages fail seq-lock
+     * validation, or every retry observes a torn read.
      */
     public static long readSealTxnFromKeyFd(FilesFacade ff, long keyFd) {
         long fileSize = ff.length(keyFd);
         if (fileSize < KEY_FILE_RESERVED) {
             return -1;
         }
-        long seqA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_START);
-        long seqEndA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_END);
-        long seqB = ff.readNonNegativeLong(keyFd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_START);
-        long seqEndB = ff.readNonNegativeLong(keyFd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+        for (int attempt = 0; attempt < SEAL_TXN_READ_ATTEMPTS; attempt++) {
+            long seqA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_START);
+            long seqEndA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+            long seqB = ff.readNonNegativeLong(keyFd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_START);
+            long seqEndB = ff.readNonNegativeLong(keyFd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_END);
 
-        long pageOffset;
-        if (seqA == seqEndA && seqB == seqEndB) {
-            pageOffset = seqA >= seqB ? PAGE_A_OFFSET : PAGE_B_OFFSET;
-        } else if (seqA == seqEndA) {
-            pageOffset = PAGE_A_OFFSET;
-        } else if (seqB == seqEndB) {
-            pageOffset = PAGE_B_OFFSET;
-        } else {
-            return -1;
+            long pageOffset;
+            long expectedSeq;
+            if (seqA == seqEndA && seqB == seqEndB) {
+                if (seqA >= seqB) {
+                    pageOffset = PAGE_A_OFFSET;
+                    expectedSeq = seqA;
+                } else {
+                    pageOffset = PAGE_B_OFFSET;
+                    expectedSeq = seqB;
+                }
+            } else if (seqA == seqEndA) {
+                pageOffset = PAGE_A_OFFSET;
+                expectedSeq = seqA;
+            } else if (seqB == seqEndB) {
+                pageOffset = PAGE_B_OFFSET;
+                expectedSeq = seqB;
+            } else {
+                // Both pages mid-write — uncommon; retry.
+                continue;
+            }
+
+            long sealTxn = ff.readNonNegativeLong(keyFd, pageOffset + PAGE_OFFSET_SEAL_TXN);
+
+            // Post-check: re-read seqStart/seqEnd on the chosen page. If
+            // either differs from the pre-read seq, the writer started a
+            // new generation between the seqlock check and the SEAL_TXN
+            // read, so sealTxn may be from that uncommitted generation.
+            long postSeqStart = ff.readNonNegativeLong(keyFd, pageOffset + PAGE_OFFSET_SEQUENCE_START);
+            long postSeqEnd = ff.readNonNegativeLong(keyFd, pageOffset + PAGE_OFFSET_SEQUENCE_END);
+            if (postSeqStart == expectedSeq && postSeqEnd == expectedSeq) {
+                return sealTxn;
+            }
         }
-        return ff.readNonNegativeLong(keyFd, pageOffset + PAGE_OFFSET_SEAL_TXN);
+        return -1;
     }
 
     /**
