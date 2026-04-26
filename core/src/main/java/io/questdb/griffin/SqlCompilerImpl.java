@@ -1197,20 +1197,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
 
-        if (coveringColumnNames != null && coveringColumnNames.size() > 0
-                && IndexType.isPosting(indexType)
-                && configuration.isPostingIndexAutoIncludeTimestamp()) {
+        // Auto-append the designated timestamp on POSTING indexes, even
+        // when the user gave no INCLUDE clause. This is the bare
+        // ALTER TABLE ... ADD INDEX TYPE POSTING case; without the
+        // append the default config's covering benefit silently
+        // disappears.
+        if (IndexType.isPosting(indexType) && configuration.isPostingIndexAutoIncludeTimestamp()) {
             int tsIndex = metadata.getTimestampIndex();
-            if (tsIndex >= 0) {
+            if (tsIndex >= 0 && tsIndex != columnIndex) {
                 CharSequence tsName = metadata.getColumnName(tsIndex);
                 boolean isTimestampAlreadyIncluded = false;
-                for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
-                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
-                        isTimestampAlreadyIncluded = true;
-                        break;
+                if (coveringColumnNames != null) {
+                    for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                        if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
+                            isTimestampAlreadyIncluded = true;
+                            break;
+                        }
                     }
                 }
                 if (!isTimestampAlreadyIncluded) {
+                    if (coveringColumnNames == null) {
+                        coveringColumnNames = new ObjList<>(1);
+                    }
                     coveringColumnNames.add(tsName);
                 }
             }

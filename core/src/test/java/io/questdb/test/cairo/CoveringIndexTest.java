@@ -760,6 +760,44 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAutoIncludeTimestampAlterNoInclude() throws Exception {
+        // ALTER TABLE ... ADD INDEX TYPE POSTING with no INCLUDE clause
+        // must still auto-append the designated timestamp so the bare
+        // alter case picks up the same covering benefit as inline CREATE.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ts_alter_noinc (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("ALTER TABLE t_ts_alter_noinc ALTER COLUMN sym ADD INDEX TYPE POSTING");
+
+            try (TableReader reader = getReader("t_ts_alter_noinc")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int symIdx = metadata.getColumnIndex("sym");
+                IntList coveringIndices = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertNotNull("covering INCLUDE list missing for ALTER POSTING with auto-include",
+                        coveringIndices);
+                assertEquals(1, coveringIndices.size());
+                assertEquals(metadata.getColumnIndex("ts"), coveringIndices.getQuick(0));
+            }
+
+            execute("""
+                    INSERT INTO t_ts_alter_noinc VALUES
+                        ('2024-01-01T00:00:00', 'A', 10.0),
+                        ('2024-01-01T01:00:00', 'A', 20.0)
+                    """);
+            engine.releaseAllWriters();
+
+            String plan = getPlan("SELECT ts FROM t_ts_alter_noinc WHERE sym = 'A'");
+            assertTrue("Expected CoveringIndex plan for ts-only projection after ALTER:\n" + plan,
+                    plan.contains("CoveringIndex"));
+        });
+    }
+
+    @Test
     public void testAutoIncludeTimestampAlterTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -841,6 +879,42 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAutoIncludeTimestampCreateTableAsSelectNoInclude() throws Exception {
+        // CREATE TABLE AS SELECT with an out-of-line INDEX(... TYPE POSTING)
+        // clause goes through resolveCoveringFromAugmented and must also
+        // auto-append the designated timestamp when no INCLUDE is given.
+        // The out-of-line parser does not accept INCLUDE today, so this
+        // is the only way users can request a posting index for CTAS, and
+        // the default config promises auto-include here too.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_src_noinc (ts TIMESTAMP, sym SYMBOL, price DOUBLE)
+                        TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_src_noinc VALUES
+                        ('2024-01-01T00:00:00', 'A', 10.0),
+                        ('2024-01-01T01:00:00', 'A', 20.0)
+                    """);
+            execute("""
+                    CREATE TABLE t_ctas_noinc AS (SELECT * FROM t_src_noinc),
+                        INDEX(sym TYPE POSTING)
+                        TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            try (TableReader reader = getReader("t_ctas_noinc")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int symIdx = metadata.getColumnIndex("sym");
+                IntList coveringIndices = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertNotNull("covering INCLUDE list missing for CTAS POSTING with auto-include",
+                        coveringIndices);
+                assertEquals(1, coveringIndices.size());
+                assertEquals(metadata.getColumnIndex("ts"), coveringIndices.getQuick(0));
+            }
+        });
+    }
+
+    @Test
     public void testAutoIncludeTimestampCreateTableWal() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -892,7 +966,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testAutoIncludeTimestampPostingNoInclude() throws Exception {
-        // POSTING index without INCLUDE clause — auto-include should NOT trigger
+        // POSTING index without INCLUDE clause — auto-include must still
+        // append the designated timestamp so the common
+        // SELECT ts FROM t WHERE sym = ... pattern can use a CoveringIndex
+        // plan. Otherwise turning on a posting index silently produces an
+        // empty INCLUDE list and no covering benefit at all.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_ts_noinc (
@@ -901,6 +979,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         price DOUBLE
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
+
+            // Verify metadata: covering should contain just ts.
+            try (TableReader reader = getReader("t_ts_noinc")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int symIdx = metadata.getColumnIndex("sym");
+                IntList coveringIndices = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertNotNull("covering INCLUDE list missing for POSTING with auto-include", coveringIndices);
+                assertEquals(1, coveringIndices.size());
+                assertEquals(metadata.getColumnIndex("ts"), coveringIndices.getQuick(0));
+            }
+
             execute("""
                     INSERT INTO t_ts_noinc VALUES
                         ('2024-01-01T00:00:00', 'A', 10.0),
@@ -908,9 +997,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // No INCLUDE at all — CoveringIndex should not be used
-            String plan = getPlan("SELECT ts, price FROM t_ts_noinc WHERE sym = 'A'");
-            assertFalse("Should not use CoveringIndex without INCLUDE:\n" + plan,
+            // Query that selects only sym and ts must use CoveringIndex
+            // because ts is auto-included.
+            String plan = getPlan("SELECT ts FROM t_ts_noinc WHERE sym = 'A'");
+            assertTrue("Expected CoveringIndex plan for ts-only projection:\n" + plan,
                     plan.contains("CoveringIndex"));
         });
     }
@@ -8110,6 +8200,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testNonCoveringTableUnchanged() throws Exception {
+        // POSTING index without INCLUDE: with the default
+        // cairo.posting.index.auto.include.timestamp=true the designated
+        // timestamp is auto-appended so the bare INDEX TYPE POSTING case
+        // still gets covering on the latest-by query path.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE plain (
@@ -8124,8 +8218,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 int symIdx = metadata.getColumnIndex("sym");
                 assertTrue(metadata.isColumnIndexed(symIdx));
                 assertEquals(IndexType.POSTING, metadata.getColumnIndexType(symIdx));
-                assertFalse(metadata.getColumnMetadata(symIdx).isCovering());
-                assertNull(metadata.getColumnMetadata(symIdx).getCoveringColumnIndices());
+                assertTrue(metadata.getColumnMetadata(symIdx).isCovering());
+                IntList coveringIndices = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertNotNull(coveringIndices);
+                assertEquals(1, coveringIndices.size());
+                assertEquals(metadata.getColumnIndex("ts"), coveringIndices.getQuick(0));
             }
         });
     }

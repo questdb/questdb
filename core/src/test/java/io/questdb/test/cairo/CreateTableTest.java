@@ -1071,10 +1071,13 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTablePostingIndexShowCreate() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // The default cairo.posting.index.auto.include.timestamp=true
+            // appends the designated timestamp to the covering list, so
+            // SHOW CREATE TABLE renders an explicit INCLUDE (ts) clause.
             assertSql("""
                             ddl
                             CREATE TABLE 'tab' (\s
-                            \ts SYMBOL INDEX TYPE POSTING,
+                            \ts SYMBOL INDEX TYPE POSTING INCLUDE (ts),
                             \tts TIMESTAMP
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
