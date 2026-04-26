@@ -53,14 +53,10 @@ import org.jetbrains.annotations.Nullable;
  * Open is the first non-NULL value (smallest rowId), Close is the last
  * (largest rowId), High is the maximum, Low is the minimum.
  * <p>
- * Each candle is self-contained: the wick occupies the middle ~80% of
- * the bar width with blank padding on each side, and the body is
- * positioned within the wick proportionally to where Open/Close sit
- * in the High/Low range. Candles with narrow bodies relative to their
- * wicks show high exploration (long wicks, small body). For cross-group
- * comparable scaling, use the scalar variant
- * {@code ohlc_bar(open, high, low, close, min, max, width)} with
- * window functions to provide explicit bounds.
+ * Global auto-scaling: the function tracks global min/max across ALL
+ * groups during accumulation and merge. At render time each candle is
+ * scaled against this global range, so wicks and bodies reflect actual
+ * price proportions and candles are directly comparable across rows.
  * <p>
  * <b>MapValue layout</b> (6 slots):
  * <pre>
@@ -106,6 +102,12 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     private final @Nullable Function widthFunc;
     private final int widthPosition;
     private GroupByAllocator allocator;
+    // Global min/max across ALL groups for auto-scaling. Updated in
+    // computeFirst, computeNext, and merge. Reset in clear() only -
+    // NOT in toTop(), because SAMPLE BY calls toTop() between buckets
+    // and we need the bounds to accumulate across all buckets.
+    private double globalMax = Double.NEGATIVE_INFINITY;
+    private double globalMin = Double.POSITIVE_INFINITY;
     // Render caches - one per flyweight side, keyed by the
     // (firstRowId, lastRowId) pair that identifies a group's state.
     private long cachedKeyA1;
@@ -152,6 +154,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         cachedRenderLenB = 0;
         cachedRenderPtrA = 0;
         cachedRenderPtrB = 0;
+        globalMax = Double.NEGATIVE_INFINITY;
+        globalMin = Double.POSITIVE_INFINITY;
         lastRenderPtr = 0;
     }
 
@@ -181,6 +185,12 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         mapValue.putDouble(valueIndex + 3, value);
         mapValue.putDouble(valueIndex + 4, value);
         mapValue.putDouble(valueIndex + 5, value);
+        if (value < globalMin) {
+            globalMin = value;
+        }
+        if (value > globalMax) {
+            globalMax = value;
+        }
     }
 
     @Override
@@ -214,6 +224,12 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         double currentMax = mapValue.getDouble(valueIndex + 5);
         if (value > currentMax) {
             mapValue.putDouble(valueIndex + 5, value);
+        }
+        if (value < globalMin) {
+            globalMin = value;
+        }
+        if (value > globalMax) {
+            globalMax = value;
         }
     }
 
@@ -325,6 +341,13 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         }
         double srcMin = srcValue.getDouble(valueIndex + 4);
         double srcMax = srcValue.getDouble(valueIndex + 5);
+        // Track global bounds before any early return
+        if (srcMin < globalMin) {
+            globalMin = srcMin;
+        }
+        if (srcMax > globalMax) {
+            globalMax = srcMax;
+        }
         long destFirstRowId = destValue.getLong(valueIndex);
         if (destFirstRowId == Numbers.LONG_NULL) {
             // Dest is empty, adopt src's state.
@@ -441,48 +464,18 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
         int width = effectiveWidth();
 
-        // Per-group proportional layout: the wick occupies the full
-        // inner region and the body is positioned within it. Padding
-        // on each side keeps the wick from spanning edge to edge.
-        // The padding size reflects how much of the H/L range lies
-        // outside the O/C range on each side.
-        double range = high - low;
-        double bodyLow = Math.min(open, close);
-        double bodyHigh = Math.max(open, close);
-        boolean isDoji = (open == close) || (range > 0 && Math.abs(open - close) / range * width < 1);
+        // Scale against global bounds so candles are comparable.
+        double scaleRange = globalMax - globalMin;
+
+        int lowPos = mapPosition(low, globalMin, scaleRange, width);
+        int highPos = mapPosition(high, globalMin, scaleRange, width);
+        int openPos = mapPosition(open, globalMin, scaleRange, width);
+        int closePos = mapPosition(close, globalMin, scaleRange, width);
+
+        int bodyStart = Math.min(openPos, closePos);
+        int bodyEnd = Math.max(openPos, closePos);
+        boolean isDoji = openPos == closePos;
         boolean isBullish = close >= open;
-
-        // Compute wick and body positions within [0, width-1].
-        // Wick spans [wickStart, wickEnd], body spans [bodyStart, bodyEnd].
-        int wickStart, wickEnd, bodyStart, bodyEnd;
-        if (range == 0.0) {
-            // Flat candle: doji at center
-            wickStart = width / 2;
-            wickEnd = width / 2;
-            bodyStart = width / 2;
-            bodyEnd = width / 2;
-            isDoji = true;
-        } else {
-            // Reserve 10% padding on each side minimum, scale wick within middle 80%
-            int padChars = Math.max(1, width / 10);
-            int innerWidth = width - 2 * padChars;
-            if (innerWidth < 3) {
-                // Too narrow for padding, use full width
-                padChars = 0;
-                innerWidth = width;
-            }
-            wickStart = padChars;
-            wickEnd = padChars + innerWidth - 1;
-
-            // Body within the wick region
-            double bodyLowProp = (bodyLow - low) / range;
-            double bodyHighProp = (bodyHigh - low) / range;
-            bodyStart = wickStart + (int) (bodyLowProp * (innerWidth - 1));
-            bodyEnd = wickStart + (int) (bodyHighProp * (innerWidth - 1));
-            if (bodyStart == bodyEnd) {
-                isDoji = true;
-            }
-        }
 
         // Calculate output size
         long barBytes = (long) width * 3;
@@ -503,10 +496,10 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         // +1 byte for putChar's 4-byte write safety on the last BMP char
         long out = allocator.malloc(barBytes + labelBytes + 1);
 
-        // Render: blank, wick, body, wick, blank
+        // Render: blank outside wick, wick from low to high, body within.
         for (int i = 0; i < width; i++) {
             char c;
-            if (i < wickStart || i > wickEnd) {
+            if (i < lowPos || i > highPos) {
                 c = BLANK;
             } else if (isDoji && i == bodyStart) {
                 c = DOJI;

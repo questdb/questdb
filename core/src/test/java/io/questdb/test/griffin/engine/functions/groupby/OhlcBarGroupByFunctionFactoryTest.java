@@ -80,11 +80,11 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0.0, '2024-01-01T00:02:00.000000Z'),
                     (20.0, '2024-01-01T00:03:00.000000Z')
                     """);
-            // O=80, H=100, L=0, C=20. Width=10, pad=1, inner=8.
-            // bodyLow=20 -> pos 1+(20/100*7)=2, bodyHigh=80 -> pos 1+(80/100*7)=6
+            // O=80, H=100, L=0, C=20. Single group: global=per-group.
+            // Width=10, open pos=7, close pos=1, body 1-7 bearish
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2800\u2500\u2591\u2591\u2591\u2591\u2591\u2500\u2500\u2800\n",
+                            "\u2500\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2500\u2500\n",
                     "SELECT ohlc_bar(price, 10) FROM t"
             );
         });
@@ -102,9 +102,10 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (80.0, '2024-01-01T00:03:00.000000Z')
                     """);
             // O=20, H=100, L=0, C=80. Width=10, pad=1, inner=8.
+            // Single group: global=per-group. Wick spans full width.
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2800\u2500\u2588\u2588\u2588\u2588\u2588\u2500\u2500\u2800\n",
+                            "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500\n",
                     "SELECT ohlc_bar(price, 10) FROM t"
             );
         });
@@ -121,10 +122,10 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0.0, '2024-01-01T00:02:00.000000Z'),
                     (50.0, '2024-01-01T00:03:00.000000Z')
                     """);
-            // O=C=50, doji. Width=5, pad=1, inner=3. Doji at 1+(50/100*2)=2
+            // O=C=50. Single group. Doji at pos 2.
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2800\u2500\u2502\u2500\u2800\n",
+                            "\u2500\u2500\u2502\u2500\u2500\n",
                     "SELECT ohlc_bar(price, 5) FROM t"
             );
         });
@@ -141,10 +142,10 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0.0, '2024-01-01T00:02:00.000000Z'),
                     (50.0, '2024-01-01T00:03:00.000000Z')
                     """);
-            // O=C=50. Width=10, pad=1, inner=8. Doji at 1+(50/100*7)=4
+            // O=C=50. Single group. Doji at pos 4.
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2800\u2500\u2500\u2500\u2502\u2500\u2500\u2500\u2500\u2800\n",
+                            "\u2500\u2500\u2500\u2500\u2502\u2500\u2500\u2500\u2500\u2500\n",
                     "SELECT ohlc_bar(price, 10) FROM t"
             );
         });
@@ -250,15 +251,15 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:10:00.000000Z'),
                     (40.0, '2024-01-01T02:20:00.000000Z')
                     """);
-            // Per-group: each candle self-contained. Width=5, pad=1, inner=3.
-            // Hour 00: O=10,C=20,L=10,H=20 -> bullish body fills inner
+            // Global range: 10-40. Width=5.
+            // Hour 00: O=10(pos 0), C=20(pos 1) -> bullish pos 0-1
             // Hour 01: NULL
-            // Hour 02: O=30,C=40,L=30,H=40 -> bullish body fills inner
+            // Hour 02: O=30(pos 2), C=40(pos 4) -> bullish pos 2-4
             assertSql(
                     "ts\tohlc_bar\n" +
-                            "2024-01-01T00:00:00.000000Z\t\u2800\u2588\u2588\u2588\u2800\n" +
+                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2800\u2800\u2800\n" +
                             "2024-01-01T01:00:00.000000Z\t\n" +
-                            "2024-01-01T02:00:00.000000Z\t\u2800\u2588\u2588\u2588\u2800\n",
+                            "2024-01-01T02:00:00.000000Z\t\u2800\u2800\u2588\u2588\u2588\n",
                     "SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h FILL(NULL)"
             );
         });
@@ -275,11 +276,15 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:10:00.000000Z'),
                     (40.0, '2024-01-01T02:20:00.000000Z')
                     """);
+            // FILL(PREV) uses a serial cursor that renders each bucket
+            // before the next is processed. Hour 00 sees only its own
+            // data (global range 10-20), so body fills full width.
+            // Hour 01 copies hour 00. Hour 02 sees range 10-40.
             assertSql(
                     "ts\tohlc_bar\n" +
-                            "2024-01-01T00:00:00.000000Z\t\u2800\u2588\u2588\u2588\u2800\n" +
-                            "2024-01-01T01:00:00.000000Z\t\u2800\u2588\u2588\u2588\u2800\n" +
-                            "2024-01-01T02:00:00.000000Z\t\u2800\u2588\u2588\u2588\u2800\n",
+                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588\n" +
+                            "2024-01-01T01:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588\n" +
+                            "2024-01-01T02:00:00.000000Z\t\u2800\u2800\u2588\u2588\u2588\n",
                     "SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h FILL(PREV)"
             );
         });
@@ -296,12 +301,11 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (90.0, 'B', '2024-01-01T00:00:00.000000Z'),
                     (10.0, 'B', '2024-01-01T01:00:00.000000Z')
                     """);
-            // A: bullish O=10,C=90 -> body fills inner. Width=5, pad=1, inner=3.
-            // B: bearish O=90,C=10 -> body fills inner.
+            // Global range: 10-90. Both A and B span the full range.
             assertSql(
                     "symbol\tohlc_bar\n" +
-                            "A\t\u2800\u2588\u2588\u2588\u2800\n" +
-                            "B\t\u2800\u2591\u2591\u2591\u2800\n",
+                            "A\t\u2588\u2588\u2588\u2588\u2588\n" +
+                            "B\t\u2591\u2591\u2591\u2591\u2591\n",
                     "SELECT symbol, ohlc_bar(price, 5) FROM t ORDER BY symbol"
             );
         });
@@ -318,9 +322,10 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0, '2024-01-01T00:02:00.000000Z'),
                     (80, '2024-01-01T00:03:00.000000Z')
                     """);
+            // Single group: wick spans full width
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2800\u2500\u2588\u2588\u2588\u2588\u2588\u2500\u2500\u2800\n",
+                            "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500\n",
                     "SELECT ohlc_bar(price, 10) FROM t"
             );
         });
@@ -337,9 +342,10 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0.0, '2024-01-01T00:02:00.000000Z'),
                     (80.0, '2024-01-01T00:03:00.000000Z')
                     """);
+            // Single group: wick spans full width
             assertSql(
                     "ohlc_bar_labels\n" +
-                            "\u2800\u2500\u2588\u2588\u2588\u2588\u2588\u2500\u2500\u2800 O:20.0 H:100.0 L:0.0 C:80.0\n",
+                            "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500 O:20.0 H:100.0 L:0.0 C:80.0\n",
                     "SELECT ohlc_bar_labels(price, 10) FROM t"
             );
         });
@@ -356,9 +362,10 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0.0, '2024-01-01T00:02:00.000000Z'),
                     (50.0, '2024-01-01T00:03:00.000000Z')
                     """);
+            // Single group: wick spans full width
             assertSql(
                     "ohlc_bar_labels\n" +
-                            "\u2800\u2500\u2502\u2500\u2800 O:50.0 H:100.0 L:0.0 C:50.0\n",
+                            "\u2500\u2500\u2502\u2500\u2500 O:50.0 H:100.0 L:0.0 C:50.0\n",
                     "SELECT ohlc_bar_labels(price, 5) FROM t"
             );
         });
@@ -377,8 +384,8 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """);
             assertSql(
                     "ts\tohlc_bar_labels\n" +
-                            "2024-01-01T00:00:00.000000Z\t\u2800\u2588\u2588\u2588\u2800 O:10.0 H:50.0 L:10.0 C:50.0\n" +
-                            "2024-01-01T01:00:00.000000Z\t\u2800\u2591\u2591\u2591\u2800 O:80.0 H:80.0 L:60.0 C:60.0\n",
+                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2800\u2800 O:10.0 H:50.0 L:10.0 C:50.0\n" +
+                            "2024-01-01T01:00:00.000000Z\t\u2800\u2800\u2591\u2591\u2591 O:80.0 H:80.0 L:60.0 C:60.0\n",
                     "SELECT ts, ohlc_bar_labels(price, 5) FROM t SAMPLE BY 1h"
             );
         });
@@ -396,10 +403,10 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (80.0, '2024-01-01T00:03:00.000000Z'),
                     (NULL, '2024-01-01T00:04:00.000000Z')
                     """);
-            // O=20,C=80,L=20,H=80 -> bullish body fills inner. Width=10.
+            // O=20,C=80,L=20,H=80. Single group: body spans full width.
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2800\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2800\n",
+                            "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\n",
                     "SELECT ohlc_bar(price, 10) FROM t"
             );
         });
@@ -469,11 +476,13 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (80.0, '2024-01-01T01:00:00.000000Z'),
                     (60.0, '2024-01-01T01:30:00.000000Z')
                     """);
-            // Per-group: each candle self-contained. Width=5, pad=1, inner=3.
+            // Global range: 10-80. Width=5.
+            // Hour 00: O=10(pos 0), C=50(pos 2) -> bullish pos 0-2
+            // Hour 01: O=80(pos 4), C=60(pos 2) -> bearish pos 2-4
             assertSql(
                     "ts\tohlc_bar\n" +
-                            "2024-01-01T00:00:00.000000Z\t\u2800\u2588\u2588\u2588\u2800\n" +
-                            "2024-01-01T01:00:00.000000Z\t\u2800\u2591\u2591\u2591\u2800\n",
+                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2800\u2800\n" +
+                            "2024-01-01T01:00:00.000000Z\t\u2800\u2800\u2591\u2591\u2591\n",
                     "SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h"
             );
         });
@@ -502,10 +511,10 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0.0, '2024-01-01T00:00:00.000000Z'),
                     (100.0, '2024-01-01T00:01:00.000000Z')
                     """);
-            // O=0,C=100,L=0,H=100 -> bullish, body fills inner
+            // O=0,C=100. Single group: body spans full width.
             assertSql(
                     "ohlc_bar\n" +
-                            "\u2800\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2800\n",
+                            "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\n",
                     "SELECT ohlc_bar(price, 10) FROM t"
             );
         });
