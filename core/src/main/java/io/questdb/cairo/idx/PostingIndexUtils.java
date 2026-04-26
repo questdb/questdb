@@ -1658,11 +1658,8 @@ public final class PostingIndexUtils {
             }
             long needed = computeMaxEncodedSize(count);
             if (needed > efTrialCapacity) {
-                if (efTrialAddr != 0) {
-                    Unsafe.free(efTrialAddr, efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
-                }
+                efTrialAddr = Unsafe.realloc(efTrialAddr, efTrialCapacity, needed, MemoryTag.NATIVE_INDEX_READER);
                 efTrialCapacity = needed;
-                efTrialAddr = Unsafe.malloc(efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
             }
         }
     }

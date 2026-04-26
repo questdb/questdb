@@ -848,10 +848,21 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int siSize = PostingIndexUtils.strideIndexSize(sealedGenKeyCount);
             long strideIdxOffset = PostingIndexUtils.PC_HEADER_SIZE + (long) stride * Long.BYTES;
-            if (strideIdxOffset + Long.BYTES > mem.size()) {
+            // Read this stride's offset and the next one. The stride index has
+            // strideCount + 1 entries, so reading [stride+1] is in-bounds for
+            // any stride < strideCount.
+            if (strideIdxOffset + 2 * Long.BYTES > mem.size()) {
                 return -1;
             }
             long strideOff = Unsafe.getLong(mem.addressOf(strideIdxOffset));
+            long nextStrideOff = Unsafe.getLong(mem.addressOf(strideIdxOffset + Long.BYTES));
+            // Empty stride: writer records strideOff[s] == strideOff[s+1] when
+            // the stride contributed no bytes. Returning siSize + strideOff
+            // would land in the next stride's data — see the patched peer at
+            // getDenseGenKeyCount(). Mirrors that guard.
+            if (nextStrideOff == strideOff) {
+                return -1;
+            }
             return siSize + strideOff;
         }
 
@@ -1260,23 +1271,23 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 return true;
             }
 
-            // Buffers are overwritten end-to-end on each miss; free + malloc skips realloc's stale-copy.
+            // Use realloc so an OOM throw leaves the previous (addr, capacity)
+            // intact. The buffers are overwritten end-to-end on each miss, so
+            // realloc's potential stale-copy is harmless.
             long offsetsBytes = (long) (count + 1) * Long.BYTES;
             if (fsstOffsetsCapacities[includeIdx] < offsetsBytes) {
-                if (fsstOffsetsAddrs[includeIdx] != 0) {
-                    Unsafe.free(fsstOffsetsAddrs[includeIdx], fsstOffsetsCapacities[includeIdx], MemoryTag.NATIVE_INDEX_READER);
-                }
-                fsstOffsetsAddrs[includeIdx] = Unsafe.malloc(offsetsBytes, MemoryTag.NATIVE_INDEX_READER);
+                fsstOffsetsAddrs[includeIdx] = Unsafe.realloc(
+                        fsstOffsetsAddrs[includeIdx], fsstOffsetsCapacities[includeIdx],
+                        offsetsBytes, MemoryTag.NATIVE_INDEX_READER);
                 fsstOffsetsCapacities[includeIdx] = offsetsBytes;
             }
 
             long totalCompressed = readVarBlockOffset(offsetsAddr, count, longOffsets);
             long initialDstCap = Math.max(totalCompressed * 4L, 256L);
             if (fsstDstCapacities[includeIdx] < initialDstCap) {
-                if (fsstDstAddrs[includeIdx] != 0) {
-                    Unsafe.free(fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx], MemoryTag.NATIVE_INDEX_READER);
-                }
-                fsstDstAddrs[includeIdx] = Unsafe.malloc(initialDstCap, MemoryTag.NATIVE_INDEX_READER);
+                fsstDstAddrs[includeIdx] = Unsafe.realloc(
+                        fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx],
+                        initialDstCap, MemoryTag.NATIVE_INDEX_READER);
                 fsstDstCapacities[includeIdx] = initialDstCap;
             }
 
@@ -1292,8 +1303,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     break;
                 }
                 long newCap = fsstDstCapacities[includeIdx] * 2L;
-                Unsafe.free(fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx], MemoryTag.NATIVE_INDEX_READER);
-                fsstDstAddrs[includeIdx] = Unsafe.malloc(newCap, MemoryTag.NATIVE_INDEX_READER);
+                fsstDstAddrs[includeIdx] = Unsafe.realloc(
+                        fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx],
+                        newCap, MemoryTag.NATIVE_INDEX_READER);
                 fsstDstCapacities[includeIdx] = newCap;
             }
 
@@ -1329,11 +1341,24 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     continue;
                 }
                 long strideIdxOffset = PostingIndexUtils.PC_HEADER_SIZE + (long) stride * Long.BYTES;
-                if (strideIdxOffset + Long.BYTES > mem.size()) {
+                // Need both this stride's offset and the next one for the
+                // empty-stride guard. The stride index has strideCount + 1
+                // entries so reading [stride+1] is in-bounds.
+                if (strideIdxOffset + 2 * Long.BYTES > mem.size()) {
                     keyBlockAddrs[c] = 0;
                     continue;
                 }
                 long strideOff = mem.getLong(strideIdxOffset);
+                long nextStrideOff = mem.getLong(strideIdxOffset + Long.BYTES);
+                // Empty stride: writer records strideOff[s] == strideOff[s+1]
+                // when the stride contributed no bytes. Continuing would
+                // interpret the next stride's keyOffsets as ours and yield
+                // garbage keyBlockStart pointers. Mirrors the patched peer at
+                // PostingIndexFwdReader/BwdReader.
+                if (nextStrideOff == strideOff) {
+                    keyBlockAddrs[c] = 0;
+                    continue;
+                }
                 long strideDataStart = siSize + strideOff;
                 if (strideDataStart >= mem.size()) {
                     keyBlockAddrs[c] = 0;
@@ -1425,11 +1450,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             int elemSize = ColumnType.sizeOf(colType);
             int needed = count * elemSize;
             if (needed > colCacheCapacities[includeIdx]) {
-                if (colCacheAddrs[includeIdx] != 0) {
-                    Unsafe.free(colCacheAddrs[includeIdx], colCacheCapacities[includeIdx], MemoryTag.NATIVE_INDEX_READER);
-                }
+                colCacheAddrs[includeIdx] = Unsafe.realloc(
+                        colCacheAddrs[includeIdx], colCacheCapacities[includeIdx],
+                        needed, MemoryTag.NATIVE_INDEX_READER);
                 colCacheCapacities[includeIdx] = needed;
-                colCacheAddrs[includeIdx] = Unsafe.malloc(needed, MemoryTag.NATIVE_INDEX_READER);
             }
             ensureDecodeWorkspaceCapacity(count);
             switch (ColumnType.tagOf(colType)) {

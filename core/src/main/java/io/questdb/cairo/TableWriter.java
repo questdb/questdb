@@ -10706,7 +10706,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3SealTops.setPos(coverCount);
                     o3SealShifts.setPos(coverCount);
                     o3SealTypes.setPos(coverCount);
-                    boolean mapped = true;
 
                     try {
                         for (int c = 0; c < coverCount; c++) {
@@ -10728,14 +10727,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             LPSZ colFile = TableUtils.dFile(path.trimTo(plen), metadata.getColumnName(covCol), covColNameTxn);
                             long fd = ff.openRO(colFile);
                             if (fd < 0) {
-                                mapped = false;
-                                break;
+                                throw CairoException.critical(ff.errno())
+                                        .put("could not open covering column file [path=").put(colFile).put(']');
                             }
                             try {
                                 long fileSize = ff.length(fd);
                                 if (fileSize <= 0) {
-                                    mapped = false;
-                                    break;
+                                    throw CairoException.critical(0)
+                                            .put("covering column file is empty [path=").put(colFile)
+                                            .put(", size=").put(fileSize).put(']');
                                 }
                                 long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
                                 o3SealAddrs.setQuick(c, addr);
@@ -10745,24 +10745,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                         }
 
-                        if (mapped) {
-                            indexer.configureFollowerAndWriter(
-                                    path.trimTo(plen), colName, colNameTxn,
-                                    getPrimaryColumn(colIdx), columnTop,
-                                    partitionTimestamp, partitionNameTxn
-                            );
-                            // Fold the fd-based O3 tentative state into
-                            // the writer view before the reseal.
-                            indexer.mergeTentativeIntoActiveIfAny();
-                            // Evict stale rowids left from a prior shrink
-                            // (O3 split of this partition, replace-range,
-                            // dedup-replace). No-op when maxValue < size.
-                            indexer.getWriter().rollbackConditionally(partitionSize);
-                            indexer.configureCovering(o3SealAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount);
-                            indexer.setCoveredColumnNameTxns(o3SealNameTxns);
-                            indexer.rebuildSidecars();
-                            indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
-                        }
+                        indexer.configureFollowerAndWriter(
+                                path.trimTo(plen), colName, colNameTxn,
+                                getPrimaryColumn(colIdx), columnTop,
+                                partitionTimestamp, partitionNameTxn
+                        );
+                        // Fold the fd-based O3 tentative state into
+                        // the writer view before the reseal.
+                        indexer.mergeTentativeIntoActiveIfAny();
+                        // Evict stale rowids left from a prior shrink
+                        // (O3 split of this partition, replace-range,
+                        // dedup-replace). No-op when maxValue < size.
+                        indexer.getWriter().rollbackConditionally(partitionSize);
+                        indexer.configureCovering(o3SealAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount);
+                        indexer.setCoveredColumnNameTxns(o3SealNameTxns);
+                        indexer.rebuildSidecars();
+                        indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
                         for (int c = 0; c < coverCount; c++) {
                             if (o3SealAddrs.getQuick(c) != 0) {

@@ -260,7 +260,12 @@ public class IndexBuilder extends RebuildColumnBase {
             int covType = metadata.getColumnType(denseCovIdx);
             coveringNames.add(metadata.getColumnName(denseCovIdx));
             coveringNameTxns.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, covWriterIdx));
-            coveringTops.add(columnVersionReader.getColumnTop(partitionTimestamp, covWriterIdx));
+            // getColumnTop returns -1 when the cover column does not exist
+            // in this partition (added later). Clamp to 0 — the writer
+            // treats colTop as an inclusive lower bound and would otherwise
+            // bypass the null sentinel branch for every row. Mirrors
+            // TableSnapshotRestore.java:686.
+            coveringTops.add(Math.max(0L, columnVersionReader.getColumnTop(partitionTimestamp, covWriterIdx)));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covWriterIdx);
             coveringTypes.add(covType);

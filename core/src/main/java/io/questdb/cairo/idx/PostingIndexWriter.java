@@ -52,6 +52,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -704,7 +705,7 @@ public class PostingIndexWriter implements IndexWriter {
                     if (actualFileSize >= 0 && actualFileSize < valueMemSize) {
                         LOG.advisory().$("value file shorter than header claims [expected=").$(valueMemSize)
                                 .$(", actual=").$(actualFileSize).$(", fd=").$(valueFd)
-                                .$("] — possible incomplete seal").$();
+                                .$("] - possible incomplete seal").$();
                     }
                     valueMem.jumpTo(valueMemSize);
                 }
@@ -1334,12 +1335,38 @@ public class PostingIndexWriter implements IndexWriter {
                 Unsafe.putLong(addr, GeoHashes.NULL);
                 return;
             }
+            case ColumnType.INT, ColumnType.SYMBOL, ColumnType.DECIMAL32 -> {
+                Unsafe.putInt(addr, Numbers.INT_NULL);
+                return;
+            }
+            case ColumnType.DECIMAL16 -> {
+                Unsafe.putShort(addr, Decimals.DECIMAL16_NULL);
+                return;
+            }
+            case ColumnType.DECIMAL8 -> {
+                Unsafe.putByte(addr, Decimals.DECIMAL8_NULL);
+                return;
+            }
+            case ColumnType.DECIMAL128 -> {
+                Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
+                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+                return;
+            }
+            case ColumnType.DECIMAL256 -> {
+                Unsafe.putLong(addr, Decimals.DECIMAL256_HH_NULL);
+                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+                Unsafe.putLong(addr + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+                Unsafe.putLong(addr + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
+                return;
+            }
             default -> {
             }
         }
-        // Generic null sentinel by size for types not handled by the switch above
+        // Generic null sentinel by size for types not handled by the switch above.
+        // Falls through for: BYTE, BOOLEAN, CHAR, SHORT (NULL == 0), and for
+        // LONG/TIMESTAMP/DATE/DECIMAL64/UUID/LONG256 where every 8-byte slot
+        // is Long.MIN_VALUE (covered by the overlay loop below).
         Unsafe.setMemory(addr, valueSize, (byte) 0);
-        // Overlay Long.MIN_VALUE for each 8-byte slot (standard QuestDB null sentinel)
         for (int off = 0; off + Long.BYTES <= valueSize; off += Long.BYTES) {
             Unsafe.putLong(addr + off, Long.MIN_VALUE);
         }
@@ -1355,16 +1382,28 @@ public class PostingIndexWriter implements IndexWriter {
             case ColumnType.INT, ColumnType.SYMBOL, ColumnType.DECIMAL32 -> mem.putInt(Numbers.INT_NULL);
             case ColumnType.IPv4 -> mem.putInt(Numbers.IPv4_NULL);
             case ColumnType.GEOINT -> mem.putInt(GeoHashes.INT_NULL);
-            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.DECIMAL16 -> mem.putShort((short) 0);
+            case ColumnType.CHAR, ColumnType.SHORT -> mem.putShort((short) 0);
+            case ColumnType.DECIMAL16 -> mem.putShort(Decimals.DECIMAL16_NULL);
             case ColumnType.GEOSHORT -> mem.putShort(GeoHashes.SHORT_NULL);
-            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.DECIMAL8 -> mem.putByte((byte) 0);
+            case ColumnType.BYTE, ColumnType.BOOLEAN -> mem.putByte((byte) 0);
+            case ColumnType.DECIMAL8 -> mem.putByte(Decimals.DECIMAL8_NULL);
             case ColumnType.GEOBYTE -> mem.putByte(GeoHashes.BYTE_NULL);
-            case ColumnType.UUID, ColumnType.DECIMAL128 -> {
+            case ColumnType.UUID -> {
                 mem.putLong(Numbers.LONG_NULL);
                 mem.putLong(Numbers.LONG_NULL);
             }
-            case ColumnType.LONG256, ColumnType.DECIMAL256 -> {
+            case ColumnType.DECIMAL128 -> {
+                mem.putLong(Decimals.DECIMAL128_HI_NULL);
+                mem.putLong(Decimals.DECIMAL128_LO_NULL);
+            }
+            case ColumnType.LONG256 -> {
                 for (int i = 0; i < 4; i++) mem.putLong(Numbers.LONG_NULL);
+            }
+            case ColumnType.DECIMAL256 -> {
+                mem.putLong(Decimals.DECIMAL256_HH_NULL);
+                mem.putLong(Decimals.DECIMAL256_HL_NULL);
+                mem.putLong(Decimals.DECIMAL256_LH_NULL);
+                mem.putLong(Decimals.DECIMAL256_LL_NULL);
             }
             default -> {
                 // Generic fallback: write zero bytes for the value size
@@ -1847,13 +1886,13 @@ public class PostingIndexWriter implements IndexWriter {
         // Use sparse format: keyIds + counts + offsets (3 arrays of activeKeyCount)
         int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
 
-        // Reuse header buffer, growing if needed
+        // Reuse header buffer, growing if needed. Use realloc so an OOM
+        // throw leaves the previous (addr, capacity) intact — a free-then-
+        // malloc pair would dangle the freed pointer if malloc failed.
         if (headerSize > flushHeaderBufCapacity) {
-            if (flushHeaderBuf != 0) {
-                Unsafe.free(flushHeaderBuf, flushHeaderBufCapacity, MemoryTag.NATIVE_INDEX_READER);
-            }
-            flushHeaderBufCapacity = Math.max(headerSize, flushHeaderBufCapacity * 2);
-            flushHeaderBuf = Unsafe.malloc(flushHeaderBufCapacity, MemoryTag.NATIVE_INDEX_READER);
+            int newCapacity = Math.max(headerSize, flushHeaderBufCapacity * 2);
+            flushHeaderBuf = Unsafe.realloc(flushHeaderBuf, flushHeaderBufCapacity, newCapacity, MemoryTag.NATIVE_INDEX_READER);
+            flushHeaderBufCapacity = newCapacity;
         }
 
         Unsafe.setMemory(flushHeaderBuf, headerSize, (byte) 0);
@@ -2349,11 +2388,10 @@ public class PostingIndexWriter implements IndexWriter {
                         long flatDataAddr = strideAddr + flatHdrSize;
                         if (count > unpackBatchCapacity) {
                             int newCap = Math.max(count, unpackBatchCapacity * 2);
-                            if (unpackBatchAddr != 0) {
-                                Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                            }
+                            unpackBatchAddr = Unsafe.realloc(unpackBatchAddr,
+                                    (long) unpackBatchCapacity * Long.BYTES,
+                                    (long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                             unpackBatchCapacity = newCap;
-                            unpackBatchAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                         }
                         BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, unpackBatchAddr);
                         for (int i = 0; i < count; i++) {
@@ -2719,11 +2757,10 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             if (maxStrideTotal > packedResidualsCapacity) {
-                if (packedResidualsAddr != 0) {
-                    Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
+                packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
+                        (long) packedResidualsCapacity * Long.BYTES,
+                        (long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 packedResidualsCapacity = maxStrideTotal;
-                packedResidualsAddr = Unsafe.malloc((long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
 
             if (maxValueCutoff < Long.MAX_VALUE) {
@@ -3503,19 +3540,17 @@ public class PostingIndexWriter implements IndexWriter {
 
             // Pre-allocate seal-path arrays to avoid per-stride allocations
             if (preAllocPerKey > unpackBatchCapacity) {
-                if (unpackBatchAddr != 0) {
-                    Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
+                unpackBatchAddr = Unsafe.realloc(unpackBatchAddr,
+                        (long) unpackBatchCapacity * Long.BYTES,
+                        (long) preAllocPerKey * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 unpackBatchCapacity = preAllocPerKey;
-                unpackBatchAddr = Unsafe.malloc((long) preAllocPerKey * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
             int preAllocPerStride = (int) Math.min(maxPerStride, Integer.MAX_VALUE);
             if (preAllocPerStride > packedResidualsCapacity) {
-                if (packedResidualsAddr != 0) {
-                    Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
+                packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
+                        (long) packedResidualsCapacity * Long.BYTES,
+                        (long) preAllocPerStride * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 packedResidualsCapacity = preAllocPerStride;
-                packedResidualsAddr = Unsafe.malloc((long) preAllocPerStride * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
 
             // Write sealed data to a NEW value file — the old .pv is untouched
@@ -4004,11 +4039,10 @@ public class PostingIndexWriter implements IndexWriter {
             if (totalValues > 0 && localBitWidth > 0) {
                 if (totalValues > packedResidualsCapacity) {
                     int newCap = Math.max(totalValues, packedResidualsCapacity * 2);
-                    if (packedResidualsAddr != 0) {
-                        Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    }
+                    packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
+                            (long) packedResidualsCapacity * Long.BYTES,
+                            (long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                     packedResidualsCapacity = newCap;
-                    packedResidualsAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 }
                 int idx = 0;
                 for (int j = 0; j < ks; j++) {
@@ -4124,20 +4158,25 @@ public class PostingIndexWriter implements IndexWriter {
         int[] keyCounts = strideKeyCounts;
         long[] keyOffsets = strideKeyOffsets;
 
-        long sidecarStrideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
-        for (int i = 0; i < siSize; i += Long.BYTES) {
-            mem.putLong(0L); // stride index placeholders
-        }
-
+        // Init to 0 so the finally block can free what was actually allocated.
+        // Allocations happen inside the try so any throw mid-init is caught.
+        long sidecarStrideIndexBuf = 0;
         long sidecarBuf = 0;
         long sidecarBufSize = 0;
         long longWorkspaceSize = (long) globalMaxKeyCount * Long.BYTES;
-        long longWorkspaceAddr = shift >= 0 && globalMaxKeyCount > 0
-                ? Unsafe.malloc(longWorkspaceSize, MemoryTag.NATIVE_INDEX_READER) : 0;
-        long exceptionWorkspaceAddr = shift >= 0 && globalMaxKeyCount > 0
-                ? Unsafe.malloc(globalMaxKeyCount, MemoryTag.NATIVE_INDEX_READER) : 0;
+        long longWorkspaceAddr = 0;
+        long exceptionWorkspaceAddr = 0;
 
         try {
+            sidecarStrideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
+            for (int i = 0; i < siSize; i += Long.BYTES) {
+                mem.putLong(0L); // stride index placeholders
+            }
+            if (shift >= 0 && globalMaxKeyCount > 0) {
+                longWorkspaceAddr = Unsafe.malloc(longWorkspaceSize, MemoryTag.NATIVE_INDEX_READER);
+                exceptionWorkspaceAddr = Unsafe.malloc(globalMaxKeyCount, MemoryTag.NATIVE_INDEX_READER);
+            }
+
             for (int s = 0; s < sc; s++) {
                 int ks = PostingIndexUtils.keysInStride(keyCount, s);
                 int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
@@ -4176,11 +4215,8 @@ public class PostingIndexWriter implements IndexWriter {
                     int valueSize = 1 << shift;
                     long needed = (long) strideValCount * valueSize;
                     if (needed > sidecarBufSize) {
-                        if (sidecarBuf != 0) {
-                            Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-                        }
+                        sidecarBuf = Unsafe.realloc(sidecarBuf, sidecarBufSize, needed, MemoryTag.NATIVE_INDEX_READER);
                         sidecarBufSize = needed;
-                        sidecarBuf = Unsafe.malloc(sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
                     }
                     writeSidecarFixedStrideForColumn(mem, c, colTop, colType, shift,
                             ks, keyCounts, keyOffsets, strideValsAddr, sidecarBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
@@ -4193,7 +4229,9 @@ public class PostingIndexWriter implements IndexWriter {
             long sidecarIdxAddr = mem.addressOf(PostingIndexUtils.PC_HEADER_SIZE);
             Unsafe.copyMemory(sidecarStrideIndexBuf, sidecarIdxAddr, siSize);
         } finally {
-            Unsafe.free(sidecarStrideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
+            if (sidecarStrideIndexBuf != 0) {
+                Unsafe.free(sidecarStrideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
+            }
             if (sidecarBuf != 0) {
                 Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
             }
@@ -4278,10 +4316,17 @@ public class PostingIndexWriter implements IndexWriter {
         for (int j = 0; j < ks; j++) {
             maxKeyCount = Math.max(maxKeyCount, keyCounts[j]);
         }
-        long longWorkspaceAddr = maxKeyCount > 0 ? Unsafe.malloc((long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER) : 0;
-        long exceptionWorkspaceAddr = maxKeyCount > 0 ? Unsafe.malloc(maxKeyCount, MemoryTag.NATIVE_INDEX_READER) : 0;
+        // Init to 0 so the finally frees only what was allocated. If the
+        // second malloc throws OOM, the first one would leak otherwise.
+        long longWorkspaceAddr = 0;
+        long exceptionWorkspaceAddr = 0;
 
         try {
+            if (maxKeyCount > 0) {
+                longWorkspaceAddr = Unsafe.malloc((long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                exceptionWorkspaceAddr = Unsafe.malloc(maxKeyCount, MemoryTag.NATIVE_INDEX_READER);
+            }
+
             for (int c = 0; c < coverCount; c++) {
                 int colType = coveredColumnTypes.getQuick(c);
                 int shift = coveredColumnShifts.getQuick(c);

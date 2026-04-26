@@ -3803,6 +3803,58 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringQueryDecimalNullSentinel() throws Exception {
+        // Red test for PostingIndexWriter.writeNullSentinel
+        // (PostingIndexWriter.java:1340 and :1348) — both overloads write
+        // zero bytes for DECIMAL8 / DECIMAL16 NULL sentinels instead of
+        // Decimals.DECIMAL8_NULL (Byte.MIN_VALUE) / DECIMAL16_NULL
+        // (Short.MIN_VALUE). The bug only fires for rows where the cover
+        // column did not exist (rowId < colTop, e.g., column added later
+        // via ALTER), since rows that have data are copied byte-for-byte
+        // via Unsafe.copyMemory. CursorPrinter (CursorPrinter.java:301,
+        // :330) compares against the proper sentinel — when the sidecar
+        // holds zero, the covering path renders "0.0"/"0.00" instead of
+        // NULL, while the no_covering fallback correctly renders NULL.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dec_null (
+                        ts TIMESTAMP,
+                        sym SYMBOL
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Two pre-ALTER rows: d8 and d16 will not yet exist for these.
+            execute("""
+                    INSERT INTO t_dec_null VALUES
+                        ('2024-01-01T00:00:00', 'A'),
+                        ('2024-01-01T01:00:00', 'A')
+                    """);
+            execute("ALTER TABLE t_dec_null ADD COLUMN d8 DECIMAL(2,1)");
+            execute("ALTER TABLE t_dec_null ADD COLUMN d16 DECIMAL(4,2)");
+            // One post-ALTER row with real values: d8 and d16 exist for it.
+            execute("""
+                    INSERT INTO t_dec_null VALUES
+                        ('2024-01-01T02:00:00', 'A', 1.5::DECIMAL(2,1), 12.34::DECIMAL(4,2))
+                    """);
+            // Add the POSTING+covering index. Seal walks rowId 0,1
+            // (rowId < colTop) for d8/d16 and writes the buggy zero
+            // sentinel into the sidecar.
+            execute("ALTER TABLE t_dec_null ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (d8, d16)");
+            engine.releaseAllWriters();
+
+            // Both covering and no_covering paths must produce identical
+            // output. Capture the fallback first; if covering disagrees
+            // (because NULL was sealed into the sidecar as zero), the
+            // assertion fails.
+            sink.clear();
+            printSql("SELECT /*+ no_covering */ d8, d16 FROM t_dec_null WHERE sym = 'A' ORDER BY ts");
+            String fallback = sink.toString();
+
+            // Covering must agree with fallback for the same rows.
+            assertSql(fallback, "SELECT d8, d16 FROM t_dec_null WHERE sym = 'A' ORDER BY ts");
+        });
+    }
+
+    @Test
     public void testCoveringQueryEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -8146,6 +8198,71 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // expected
                 }
                 assertTrue("writer must be distressed after a seal failure",
+                        w.isDistressed());
+            }
+            failArmed.set(false);
+        });
+    }
+
+    @Test
+    public void testO3CommitSealFailureOnOpenROMarksWriterDistressed() throws Exception {
+        // Red test for TableWriter.sealPostingIndexForPartition (around
+        // TableWriter.java:10729). When openRO on a covering column file
+        // returns -1, the seal silently sets mapped=false and skips the
+        // entire seal block including indexer.mergeTentativeIntoActiveIfAny()
+        // and rebuildSidecars(). finishO3Commit catches throws from
+        // sealPostingIndexesForO3Partitions and marks the writer distressed,
+        // but a silent mapped=false produces no throw — the writer stays
+        // healthy from the pool's perspective while the partition's posting
+        // index is half-rebuilt. Subsequent operations get handed the same
+        // half-committed writer.
+        //
+        // The companion test testO3CommitSealFailureMarksWriterDistressed
+        // validates the mmap-failure path (which does throw) and was the
+        // workaround the author noted for this exact bug. After the fix,
+        // openRO failure must propagate the same way.
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failArmed.get() && name != null && Utf8s.endsWithAscii(name, "price.d")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_seal_fail_open (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_seal_fail_open VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-02T00:00:00', 'A', 30.0)
+                    """);
+            engine.releaseAllWriters();
+
+            failArmed.set(true);
+            try (TableWriter w = TestUtils.getWriter(engine, "t_seal_fail_open")) {
+                String tsStr = "2024-01-01T00:30:00.000000Z";
+                TableWriter.Row r = w.newRow(io.questdb.cairo.MicrosTimestampDriver.INSTANCE.parseFloor(tsStr, 0, tsStr.length()));
+                r.putSym(1, "C");
+                r.putDouble(2, 99.0);
+                r.append();
+                try {
+                    w.commit();
+                    fail("expected seal failure to surface");
+                } catch (AssertionError e) {
+                    throw e;
+                } catch (Throwable ignore) {
+                    // expected
+                }
+                assertTrue("writer must be distressed after a covering openRO failure",
                         w.isDistressed());
             }
             failArmed.set(false);

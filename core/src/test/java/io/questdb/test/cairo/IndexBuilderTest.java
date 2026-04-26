@@ -724,6 +724,69 @@ public class IndexBuilderTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReindexWithCoveringColumnAddedLater() throws Exception {
+        // Red test for the cluster of bugs around column-added-later +
+        // POSTING covering index. Two distinct issues both fail this test:
+        //
+        // 1. IndexBuilder.java:263 propagates the -1 returned by
+        //    ColumnVersionReader.getColumnTop (per
+        //    ColumnVersionReader.java:148) without clamping. The peer code
+        //    at TableSnapshotRestore.java:686 clamps with Math.max(0, ...);
+        //    IndexBuilder must do the same.
+        //
+        // 2. PostingIndexWriter.writeNullSentinel(long addr, int valueSize,
+        //    int columnType) at PostingIndexWriter.java:1307 only branches
+        //    on GEO/IPv4/FLOAT/DOUBLE — every other type (INT, SHORT, BYTE,
+        //    SYMBOL, DECIMAL32, DECIMAL64, TIMESTAMP, DATE, ...) falls
+        //    through to the generic zero-fill. For widths < 8 bytes the
+        //    Long.MIN_VALUE overlay loop never runs, so an INT NULL is
+        //    sealed as four zero bytes, colliding with a valid INT value 0.
+        //    CursorPrinter has no way to detect NULL on read.
+        //
+        // Both bugs converge here: REINDEX walks the column-added-later
+        // partition, hits writeNullSentinel for the rows whose rowId is
+        // before columnTop, and the sidecar ends up holding zero where the
+        // column file would correctly read NULL via columnTop fallback.
+        // Covering and no_covering paths must agree.
+        indexType = IndexType.POSTING;
+        ff = TestFilesFacadeImpl.INSTANCE;
+        assertMemoryLeak(() -> {
+            // sym + price exist from table creation. qty is added later, so
+            // partition 2024-01-01 has rowId < colTop for qty (or -1 if the
+            // partition predates the column add entirely).
+            execute("CREATE TABLE t_reindex_top (" +
+                    "ts TIMESTAMP, " +
+                    "sym SYMBOL, " +
+                    "price DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_reindex_top VALUES " +
+                    "('2024-01-01T00:00:00','A',10.0)," +
+                    "('2024-01-01T01:00:00','B',20.0)");
+            execute("ALTER TABLE t_reindex_top ADD COLUMN qty INT");
+            execute("INSERT INTO t_reindex_top VALUES " +
+                    "('2024-01-02T00:00:00','A',30.0,100)," +
+                    "('2024-01-02T01:00:00','B',40.0,200)");
+            execute("ALTER TABLE t_reindex_top ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            engine.releaseAllWriters();
+
+            // Force the IndexBuilder path to walk both partitions, including
+            // the one where qty did not exist at row time.
+            runReindexSql("REINDEX TABLE t_reindex_top LOCK EXCLUSIVE");
+            engine.releaseAllReaders();
+
+            // Both paths must agree: the column-added-later rows render as
+            // NULL.
+            String expected = """
+                    qty
+                    null
+                    100
+                    """;
+            assertSql(expected, "SELECT /*+ no_covering */ qty FROM t_reindex_top WHERE sym = 'A' ORDER BY ts");
+            assertSql(expected, "SELECT qty FROM t_reindex_top WHERE sym = 'A' ORDER BY ts");
+        });
+    }
+
     private static void runReindexSql(String query) {
         try {
             execute(query);
