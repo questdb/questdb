@@ -53,9 +53,12 @@ import org.jetbrains.annotations.Nullable;
  * Open is the first non-NULL value (smallest rowId), Close is the last
  * (largest rowId), High is the maximum, Low is the minimum.
  * <p>
- * Auto-scales per group: the wick spans the full width, and the body
- * position within the wick shows where Open/Close sit relative to the
- * High/Low range.
+ * Each candle is scaled against its own High/Low range: the wick spans
+ * the full width and the body position within the wick shows where
+ * Open/Close sit relative to the High/Low range. For cross-group
+ * comparable scaling, use the scalar variant
+ * {@code ohlc_bar(open, high, low, close, min, max, width)} with
+ * window functions to provide explicit bounds.
  * <p>
  * <b>MapValue layout</b> (6 slots):
  * <pre>
@@ -66,12 +69,7 @@ import org.jetbrains.annotations.Nullable;
  *   +4  DOUBLE  minValue     (low price)
  *   +5  DOUBLE  maxValue     (high price)
  * </pre>
- * <b>Auto-scaling.</b> The function tracks a global min/max across ALL
- * groups during accumulation and merge. At render time, each candle is
- * scaled against this global range so candles are comparable across
- * groups and their wicks reflect actual price range, not just filling
- * edge to edge.
- * <p>
+ *
  * <b>Rendering characters</b> (all 3-byte BMP):
  * <pre>
  *   U+2800  ⠀  Braille Blank               (padding beyond wick)
@@ -106,10 +104,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     private final @Nullable Function widthFunc;
     private final int widthPosition;
     private GroupByAllocator allocator;
-    // Global min/max across ALL groups for auto-scaling.
-    // Updated in computeFirst, computeNext, and merge.
-    private double globalMax = Double.NEGATIVE_INFINITY;
-    private double globalMin = Double.POSITIVE_INFINITY;
     // Render caches - one per flyweight side, keyed by the
     // (firstRowId, lastRowId) pair that identifies a group's state.
     private long cachedKeyA1;
@@ -156,8 +150,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         cachedRenderLenB = 0;
         cachedRenderPtrA = 0;
         cachedRenderPtrB = 0;
-        globalMax = Double.NEGATIVE_INFINITY;
-        globalMin = Double.POSITIVE_INFINITY;
         lastRenderPtr = 0;
     }
 
@@ -187,13 +179,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         mapValue.putDouble(valueIndex + 3, value);
         mapValue.putDouble(valueIndex + 4, value);
         mapValue.putDouble(valueIndex + 5, value);
-        // Track global bounds for auto-scaling across all groups
-        if (value < globalMin) {
-            globalMin = value;
-        }
-        if (value > globalMax) {
-            globalMax = value;
-        }
     }
 
     @Override
@@ -227,13 +212,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         double currentMax = mapValue.getDouble(valueIndex + 5);
         if (value > currentMax) {
             mapValue.putDouble(valueIndex + 5, value);
-        }
-        // Track global bounds
-        if (value < globalMin) {
-            globalMin = value;
-        }
-        if (value > globalMax) {
-            globalMax = value;
         }
     }
 
@@ -343,17 +321,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         if (srcFirstRowId == Numbers.LONG_NULL) {
             return;
         }
-        // Track global bounds from merged groups (must happen before
-        // any early return so the owner's globalMin/globalMax reflects
-        // all data from all workers).
         double srcMin = srcValue.getDouble(valueIndex + 4);
         double srcMax = srcValue.getDouble(valueIndex + 5);
-        if (srcMin < globalMin) {
-            globalMin = srcMin;
-        }
-        if (srcMax > globalMax) {
-            globalMax = srcMax;
-        }
         long destFirstRowId = destValue.getLong(valueIndex);
         if (destFirstRowId == Numbers.LONG_NULL) {
             // Dest is empty, adopt src's state.
@@ -424,9 +393,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         if (widthFunc != null) {
             widthFunc.toTop();
         }
-        // Do not reset globalMin/globalMax here. toTop() rewinds the
-        // cursor for re-iteration over the same data (e.g., sort operator).
-        // The global bounds from the first pass remain valid and correct.
     }
 
     private int effectiveWidth() {
@@ -473,9 +439,11 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
         int width = effectiveWidth();
 
-        // Use global bounds for scaling so candles are comparable
-        double scaleMin = globalMin;
-        double scaleMax = globalMax;
+        // Scale each candle against its own low/high range.
+        // For cross-group comparable scaling, use the scalar variant
+        // ohlc_bar(o,h,l,c,min,max,width) with window functions.
+        double scaleMin = low;
+        double scaleMax = high;
         double scaleRange = scaleMax - scaleMin;
 
         int lowPos = mapPosition(low, scaleMin, scaleRange, width);

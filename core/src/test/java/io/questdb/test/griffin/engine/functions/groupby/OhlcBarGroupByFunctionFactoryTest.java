@@ -252,15 +252,15 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:10:00.000000Z'),
                     (40.0, '2024-01-01T02:20:00.000000Z')
                     """);
-            // Global range: 10-40. Width=5.
-            // Hour 00: O=10(pos 0), C=20(pos 1), L=10, H=20 -> bullish pos 0-1
+            // Per-group scaling: each candle fills its own H/L range.
+            // Hour 00: O=10, C=20, L=10, H=20 -> bullish, full width
             // Hour 01: no data -> NULL
-            // Hour 02: O=30(pos 2), C=40(pos 4), L=30, H=40 -> bullish pos 2-4
+            // Hour 02: O=30, C=40, L=30, H=40 -> bullish, full width
             assertSql(
                     "ts\tohlc_bar\n" +
-                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2800\u2800\u2800\n" +
+                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588\n" +
                             "2024-01-01T01:00:00.000000Z\t\n" +
-                            "2024-01-01T02:00:00.000000Z\t\u2800\u2800\u2588\u2588\u2588\n",
+                            "2024-01-01T02:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588\n",
                     "SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h FILL(NULL)"
             );
         });
@@ -277,15 +277,13 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:10:00.000000Z'),
                     (40.0, '2024-01-01T02:20:00.000000Z')
                     """);
+            // Per-group scaling: each candle fills its own H/L range.
             // FILL(PREV) copies the rendered candle from the previous bucket.
-            // Hour 00 is rendered with global range known at that point (10-20),
-            // so it fills the full width. Hour 01 copies that. Hour 02 sees
-            // the full global range (10-40) and renders proportionally.
             assertSql(
                     "ts\tohlc_bar\n" +
                             "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588\n" +
                             "2024-01-01T01:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588\n" +
-                            "2024-01-01T02:00:00.000000Z\t\u2800\u2800\u2588\u2588\u2588\n",
+                            "2024-01-01T02:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588\n",
                     "SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h FILL(PREV)"
             );
         });
@@ -442,13 +440,13 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (80.0, '2024-01-01T01:00:00.000000Z'),
                     (60.0, '2024-01-01T01:30:00.000000Z')
                     """);
-            // Global range: 10-80. Width=5.
-            // Hour 00: open=10(pos 0), close=50(pos 2), low=10, high=50 -> bullish pos 0-2
-            // Hour 01: open=80(pos 4), close=60(pos 2), low=60, high=80 -> bearish pos 2-4
+            // Per-group scaling: each candle fills its own H/L range.
+            // Hour 00: O=10, C=50, L=10, H=50 -> bullish, full width
+            // Hour 01: O=80, C=60, L=60, H=80 -> bearish, full width
             assertSql(
                     "ts\tohlc_bar\n" +
-                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2800\u2800\n" +
-                            "2024-01-01T01:00:00.000000Z\t\u2800\u2800\u2591\u2591\u2591\n",
+                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588\n" +
+                            "2024-01-01T01:00:00.000000Z\t\u2591\u2591\u2591\u2591\u2591\n",
                     "SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h"
             );
         });
@@ -543,11 +541,11 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (80.0, '2024-01-01T01:00:00.000000Z'),
                     (60.0, '2024-01-01T01:30:00.000000Z')
                     """);
-            // Labels variant with SAMPLE BY
+            // Labels variant with SAMPLE BY, per-group scaling
             assertSql(
                     "ts\tohlc_bar_labels\n" +
-                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2800\u2800 O:10.0 H:50.0 L:10.0 C:50.0\n" +
-                            "2024-01-01T01:00:00.000000Z\t\u2800\u2800\u2591\u2591\u2591 O:80.0 H:80.0 L:60.0 C:60.0\n",
+                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588 O:10.0 H:50.0 L:10.0 C:50.0\n" +
+                            "2024-01-01T01:00:00.000000Z\t\u2591\u2591\u2591\u2591\u2591 O:80.0 H:80.0 L:60.0 C:60.0\n",
                     "SELECT ts, ohlc_bar_labels(price, 5) FROM t SAMPLE BY 1h"
             );
         });
