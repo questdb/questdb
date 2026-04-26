@@ -115,7 +115,8 @@ public class QwpWalAppenderTest {
 
     @Test
     public void testMapQuestDBTypeToQwpString() {
-        assertEquals(QwpConstants.TYPE_STRING, mapQuestDBTypeToQwp(ColumnType.STRING));
+        // QuestDB STRING maps to wire TYPE_VARCHAR -- the wire protocol has no separate STRING code.
+        assertEquals(QwpConstants.TYPE_VARCHAR, mapQuestDBTypeToQwp(ColumnType.STRING));
     }
 
     @Test
@@ -233,12 +234,6 @@ public class QwpWalAppenderTest {
     }
 
     @Test
-    public void testMapQwpTypeToQuestDBString() {
-        // QWP v1 TYPE_STRING maps to VARCHAR (not STRING) for consistency
-        assertEquals(ColumnType.VARCHAR, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_STRING));
-    }
-
-    @Test
     public void testMapQwpTypeToQuestDBSymbol() {
         assertEquals(ColumnType.SYMBOL, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_SYMBOL));
     }
@@ -271,8 +266,6 @@ public class QwpWalAppenderTest {
     @Test
     public void testRoundTripAllTypes() {
         // Test that supported types round-trip correctly
-        // Note: TYPE_STRING is excluded because it intentionally maps to VARCHAR
-        // (both TYPE_STRING and TYPE_VARCHAR map to QuestDB VARCHAR)
         int[] ilpTypes = {
                 QwpConstants.TYPE_BOOLEAN,
                 QwpConstants.TYPE_BYTE,
@@ -298,17 +291,6 @@ public class QwpWalAppenderTest {
         }
     }
 
-    @Test
-    public void testStringToVarcharMapping() {
-        // TYPE_STRING intentionally maps to VARCHAR (lossy conversion)
-        // This is by design: both STRING and VARCHAR in QWP v1 become VARCHAR in QuestDB
-        int questdbType = QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_STRING);
-        assertEquals(ColumnType.VARCHAR, questdbType);
-
-        byte mappedBack = mapQuestDBTypeToQwp(questdbType);
-        assertEquals(QwpConstants.TYPE_VARCHAR, mappedBack);
-    }
-
     private static byte mapQuestDBTypeToQwp(int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN -> TYPE_BOOLEAN;
@@ -319,8 +301,7 @@ public class QwpWalAppenderTest {
             case ColumnType.FLOAT -> TYPE_FLOAT;
             case ColumnType.DOUBLE -> TYPE_DOUBLE;
             case ColumnType.CHAR -> TYPE_CHAR;
-            case ColumnType.STRING -> TYPE_STRING;
-            case ColumnType.VARCHAR -> TYPE_VARCHAR;
+            case ColumnType.STRING, ColumnType.VARCHAR -> TYPE_VARCHAR;
             case ColumnType.SYMBOL -> TYPE_SYMBOL;
             case ColumnType.TIMESTAMP ->
                     columnType == ColumnType.TIMESTAMP_NANO ? TYPE_TIMESTAMP_NANOS : TYPE_TIMESTAMP;

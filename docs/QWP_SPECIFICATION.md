@@ -277,7 +277,7 @@ lifetime of a single connection. They are global across all tables on the
 connection (not per-table). Clients typically assign them sequentially starting
 at 0, but the server does not require any particular ordering.
 
-The `type_code` byte contains the column type (0x01 through 0x16).
+The `type_code` byte contains the column type (0x01 through 0x18).
 
 A column with an **empty name** (length 0) and type TIMESTAMP denotes the
 designated timestamp column.
@@ -325,6 +325,8 @@ the server accepts any ID within the per-connection schema-ID limit.
 | 20   | `0x14` | DECIMAL128      | 16      | Decimal (38 digits precision)      |
 | 21   | `0x15` | DECIMAL256      | 32      | Decimal (77 digits precision)      |
 | 22   | `0x16` | CHAR            | 2       | Single UTF-16 code unit            |
+| 23   | `0x17` | BINARY          | var     | Length-prefixed opaque bytes       |
+| 24   | `0x18` | IPv4            | 4       | 32-bit IPv4 address                |
 
 Code `0x08` is unassigned. It was previously STRING, which has been removed;
 senders should use VARCHAR (`0x0F`) for text columns.
@@ -468,7 +470,9 @@ Byte layout for values [true, false, true, true, false, false, false, true]:
   0b10001101 = 0x8D
 ```
 
-### VARCHAR Type (`0x0F`)
+### VARCHAR / BINARY Type (`0x0F`, `0x17`)
+
+STRING, VARCHAR, and BINARY all share the same wire format:
 
 ```
 ┌──────────────────────────────────────────┐
@@ -485,6 +489,11 @@ Byte layout for values [true, false, true, true, false, false, false, true]:
 - `value_count = row_count - null_count`
 - Offsets are uint32
 - String `i` spans bytes `[offset[i], offset[i+1])`
+- For STRING and VARCHAR, the bytes are valid UTF-8. For BINARY, the bytes are
+  opaque — clients must not attempt UTF-8 interpretation.
+- The uint32 offset bounds individual values to {@code 2^31 - 1} bytes; larger
+  payloads must be split into multiple BINARY columns or returned via a
+  side-channel.
 
 ### Symbol Type (`0x09`)
 

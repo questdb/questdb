@@ -64,7 +64,7 @@ public class QwpStringDecoderTest {
             Unsafe.putByte(address, (byte) 0); // no null bitmap
             Unsafe.putInt(address + 1, 0); // single offset entry = 0
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            int consumed = cursor.of(address, allocSize, 0, TYPE_STRING);
+            int consumed = cursor.of(address, allocSize, 0, TYPE_VARCHAR);
             Assert.assertEquals(allocSize, consumed);
         } finally {
             Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
@@ -126,7 +126,7 @@ public class QwpStringDecoderTest {
         try {
             Unsafe.putByte(address, (byte) 1); // null bitmap present
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, size, rowCount, TYPE_STRING);
+            cursor.of(address, size, rowCount, TYPE_VARCHAR);
             Assert.fail("expected QwpParseException for truncated null bitmap");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -144,7 +144,7 @@ public class QwpStringDecoderTest {
         try {
             Unsafe.putByte(address, (byte) 0); // no null bitmap
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, size, rowCount, TYPE_STRING);
+            cursor.of(address, size, rowCount, TYPE_VARCHAR);
             Assert.fail("expected QwpParseException for truncated offset array");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -168,7 +168,7 @@ public class QwpStringDecoderTest {
             Unsafe.putInt(address + 1 + 12, 10);
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, size, rowCount, TYPE_STRING);
+            cursor.of(address, size, rowCount, TYPE_VARCHAR);
 
             // Row 0: offset 0..10 is valid (stringDataLength=10)
             cursor.advanceRow();
@@ -205,7 +205,7 @@ public class QwpStringDecoderTest {
             Unsafe.putInt(address + 1 + 8, 5);
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, logicalSize, rowCount, TYPE_STRING);
+            cursor.of(address, logicalSize, rowCount, TYPE_VARCHAR);
             try {
                 cursor.advanceRow();
                 Assert.fail("expected QwpParseException for out-of-bounds intermediate string offset");
@@ -233,7 +233,7 @@ public class QwpStringDecoderTest {
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
             try {
-                cursor.of(address, size, rowCount, TYPE_STRING);
+                cursor.of(address, size, rowCount, TYPE_VARCHAR);
                 Assert.fail("expected QwpParseException for invalid first string offset");
             } catch (QwpParseException e) {
                 Assert.assertEquals(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY, e.getErrorCode());
@@ -257,7 +257,7 @@ public class QwpStringDecoderTest {
             Unsafe.putInt(address + 1 + 4, 100); // Claims 100 bytes, but only 5 available
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, size, rowCount, TYPE_STRING);
+            cursor.of(address, size, rowCount, TYPE_VARCHAR);
             Assert.fail("expected QwpParseException for out-of-bounds string data");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -279,7 +279,7 @@ public class QwpStringDecoderTest {
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
             try {
-                cursor.of(address, size, rowCount, TYPE_STRING);
+                cursor.of(address, size, rowCount, TYPE_VARCHAR);
                 Assert.fail("expected QwpParseException for overflowed string data tail");
             } catch (QwpParseException e) {
                 Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
@@ -316,6 +316,10 @@ public class QwpStringDecoderTest {
     }
 
     private void assertRoundTrip(String[] values, boolean[] nulls) throws Exception {
+        assertRoundTrip(values, nulls, TYPE_VARCHAR);
+    }
+
+    private void assertRoundTrip(String[] values, boolean[] nulls, byte typeCode) throws Exception {
         assertMemoryLeak(() -> {
             boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
