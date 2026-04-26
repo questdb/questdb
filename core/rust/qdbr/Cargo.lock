@@ -1389,6 +1389,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "zstd",
 ]
 
 [[package]]

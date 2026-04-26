@@ -162,6 +162,88 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAggregateOverWindowInExpressionFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x DOUBLE, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 'A', 1_000_000), (2, 'A', 2_000_000), (3, 'B', 3_000_000)");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT max(avg(x) OVER ()) - min(avg(x) OVER ()) FROM t GROUP BY category",
+                    7,
+                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
+            );
+
+            assertExceptionNoLeakCheck(
+                    "SELECT max(avg(x) OVER ()) + 1 FROM t GROUP BY category",
+                    7,
+                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
+            );
+
+            assertExceptionNoLeakCheck(
+                    "SELECT max(avg(x) OVER ()) + sum(x) FROM t GROUP BY category",
+                    7,
+                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
+            );
+
+            // Implicit GROUP BY: sibling aggregates trigger group-by-mode and the guard fires.
+            assertExceptionNoLeakCheck(
+                    "SELECT max(avg(x) OVER ()) - min(avg(x) OVER ()) FROM t",
+                    7,
+                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
+            );
+
+            assertExceptionNoLeakCheck(
+                    "SELECT category, CASE WHEN category='A' THEN max(avg(x) OVER ()) ELSE 0 END FROM t GROUP BY category",
+                    45,
+                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
+            );
+
+            // SAMPLE BY: implicit grouping via the SAMPLE BY clause; the guard fires on aggregate-over-window in expression.
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, max(avg(x) OVER ()) + 1 FROM t SAMPLE BY 1h",
+                    11,
+                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
+            );
+
+            // Bare aggregate-of-window at the column root must still compile.
+            assertQueryNoLeakCheck(
+                    """
+                            category\tmax
+                            A\t2.0
+                            B\t2.0
+                            """,
+                    "SELECT category, max(avg(x) OVER ()) FROM t GROUP BY category ORDER BY category",
+                    null,
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            max\tmin
+                            2.0\t2.0
+                            2.0\t2.0
+                            """,
+                    "SELECT max(avg(x) OVER ()), min(avg(x) OVER ()) FROM t GROUP BY category ORDER BY category",
+                    null,
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum
+                            6.0
+                            """,
+                    "SELECT max(x) + sum(x) - max(x) AS sum FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testAliasedColumnVisibleByBothNamesInCaseThen() throws Exception {
         // Verify that both the alias (p) and the original column name (price)
         // can be used in CASE branches alongside a window function.
@@ -9596,6 +9678,129 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testNestedWindowFunctionInGroupByContextFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x DOUBLE, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 'A', 1_000_000), (2, 'A', 2_000_000), (3, 'B', 3_000_000)");
+
+            // Window function nested inside arithmetic expression combined with GROUP BY
+            assertExceptionNoLeakCheck(
+                    "SELECT category, avg(x), (avg(x) - avg(x) OVER ()) AS diff FROM t GROUP BY category",
+                    35,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Deeper nesting
+            assertExceptionNoLeakCheck(
+                    "SELECT category, 1 + (2 + avg(x) OVER ()) FROM t GROUP BY category",
+                    26,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // CASE expression (paramCount >= 3 branch)
+            assertExceptionNoLeakCheck(
+                    "SELECT category, CASE WHEN avg(x) > 0 THEN avg(x) OVER () END FROM t GROUP BY category",
+                    43,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Single-argument function wrapping a window function (paramCount == 1 branch)
+            assertExceptionNoLeakCheck(
+                    "SELECT category, abs(avg(x) OVER ()) FROM t GROUP BY category",
+                    21,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Implicit GROUP BY: aggregate + nested window function without GROUP BY clause
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) + avg(x) OVER () FROM t",
+                    16,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Pure window function name (row_number has no aggregate form) used without OVER
+            // alongside an aggregate. Previously fell through to "empty window context" at
+            // runtime; now rejected cleanly at compile time.
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) + row_number() FROM t",
+                    16,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // SAMPLE BY: implicit grouping via the SAMPLE BY clause; the guard fires on bare window in expression.
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, sum(x) - avg(x) OVER () FROM t SAMPLE BY 1h",
+                    20,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // ORDER BY: moveOrderByFunctionsIntoOuterSelect lifts the expression into the
+            // bottom-up column list, so the SELECT-list guard catches it with a precise position.
+            assertExceptionNoLeakCheck(
+                    "SELECT category, avg(x) FROM t GROUP BY category ORDER BY avg(x) - avg(x) OVER ()",
+                    67,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Mixed: an aggregate-wrapped window next to a bare window in the same expression.
+            assertExceptionNoLeakCheck(
+                    "SELECT category, max(avg(x) OVER ()) - avg(x) OVER () FROM t GROUP BY category",
+                    39,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // GROUP BY ordinal resolving to a column with a window: validateGroupByExpression
+            // catches this earlier than the SELECT-list guard.
+            assertExceptionNoLeakCheck(
+                    "SELECT x - avg(x) OVER () FROM t GROUP BY 1",
+                    42,
+                    "aggregate functions are not allowed in GROUP BY"
+            );
+
+            // CTE source: the SELECT-list guard fires inside the outer model that consumes the CTE.
+            assertExceptionNoLeakCheck(
+                    "WITH cte AS (SELECT category, x FROM t) SELECT category, sum(x) + avg(x) OVER () FROM cte GROUP BY category",
+                    66,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // JOIN source: the guard fires on the joined model's SELECT list as well.
+            assertExceptionNoLeakCheck(
+                    "SELECT t.category, sum(t.x) + avg(s.x) OVER () FROM t JOIN t s ON t.category = s.category GROUP BY t.category",
+                    30,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+
+            // Sub-query workaround: the inner query exposes the window column, the outer aggregates it.
+            assertQueryNoLeakCheck(
+                    """
+                            category\tmax
+                            A\t2.0
+                            B\t2.0
+                            """,
+                    "SELECT category, max(w) FROM (SELECT category, avg(x) OVER () AS w FROM t) GROUP BY category ORDER BY category",
+                    null,
+                    true,
+                    true
+            );
+
+            // Nested window function WITHOUT GROUP BY should still work
+            assertQueryNoLeakCheck(
+                    """
+                            diff
+                            -1.0
+                            0.0
+                            1.0
+                            """,
+                    "SELECT (x - avg(x) OVER ()) AS diff FROM t",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test

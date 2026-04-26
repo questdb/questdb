@@ -420,7 +420,7 @@ public class QwpCursorBoundsCheckTest {
                 Unsafe.putInt(address + 5, 5);
 
                 QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-                int consumed = cursor.of(address, legitimateSize, 1, TYPE_STRING);
+                int consumed = cursor.of(address, legitimateSize, 1, TYPE_VARCHAR);
                 Assert.assertEquals(14, consumed);
 
                 // Attacker sets offset[1] = 200 — claims 200 bytes of string data
@@ -428,7 +428,7 @@ public class QwpCursorBoundsCheckTest {
 
                 cursor = new QwpStringColumnCursor();
                 try {
-                    cursor.of(address, legitimateSize, 1, TYPE_STRING);
+                    cursor.of(address, legitimateSize, 1, TYPE_VARCHAR);
                     Assert.fail("expected QwpParseException for out-of-bounds string offset");
                 } catch (QwpParseException e) {
                     Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -449,7 +449,7 @@ public class QwpCursorBoundsCheckTest {
 
                 QwpStringColumnCursor cursor = new QwpStringColumnCursor();
                 // rowCount=100 needs (101)*4 = 404 bytes for offset array alone
-                cursor.of(address, bufferSize, 100, TYPE_STRING);
+                cursor.of(address, bufferSize, 100, TYPE_VARCHAR);
                 Assert.fail("expected QwpParseException for inflated rowCount");
             } catch (QwpParseException e) {
                 Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -498,7 +498,6 @@ public class QwpCursorBoundsCheckTest {
                         ^ cursor.getLong256_2() ^ cursor.getLong256_3();
                 break;
             }
-            case TYPE_STRING:
             case TYPE_VARCHAR:
                 acc = table.getStringColumn(col).getUtf8Value().size();
                 break;
@@ -640,7 +639,7 @@ public class QwpCursorBoundsCheckTest {
         QwpTableBuffer.ColumnBuffer dateCol = buffer.getOrCreateColumn("b_date", TYPE_DATE, true);
         QwpTableBuffer.ColumnBuffer doubleCol = buffer.getOrCreateColumn("b_double", TYPE_DOUBLE, false);
         QwpTableBuffer.ColumnBuffer symCol = buffer.getOrCreateColumn("b_sym", TYPE_SYMBOL, true);
-        QwpTableBuffer.ColumnBuffer strCol = buffer.getOrCreateColumn("b_str", TYPE_STRING, true);
+        QwpTableBuffer.ColumnBuffer strCol = buffer.getOrCreateColumn("b_str", TYPE_VARCHAR, true);
         QwpTableBuffer.ColumnBuffer varcharCol = buffer.getOrCreateColumn("b_varchar", TYPE_VARCHAR, false);
         QwpTableBuffer.ColumnBuffer uuidCol = buffer.getOrCreateColumn("b_uuid", TYPE_UUID, true);
         QwpTableBuffer.ColumnBuffer long256Col = buffer.getOrCreateColumn("b_l256", TYPE_LONG256, true);
