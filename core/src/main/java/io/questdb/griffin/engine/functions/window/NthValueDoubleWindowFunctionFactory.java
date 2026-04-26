@@ -495,8 +495,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
-            // pass1 creates an entry for every partition key encountered, and pass2 sees the
-            // same record stream, so the lookup always hits.
+            assert value != null;
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value.getDouble(0));
         }
 
