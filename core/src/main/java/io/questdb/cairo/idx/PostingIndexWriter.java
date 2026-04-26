@@ -481,6 +481,10 @@ public class PostingIndexWriter implements IndexWriter {
                 int localKey = key % PostingIndexUtils.DENSE_STRIDE;
                 int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
                 long strideOff = Unsafe.getLong(genAddr + (long) stride * Long.BYTES);
+                long nextStrideOff = Unsafe.getLong(genAddr + (long) (stride + 1) * Long.BYTES);
+                // Empty stride: writer records strideOff[s] == strideOff[s+1].
+                // Reading on would interpret the next stride's bytes here.
+                if (nextStrideOff == strideOff) continue;
                 long strideAddr = genAddr + siSize + strideOff;
                 int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
                 byte mode = Unsafe.getByte(strideAddr);
@@ -1453,6 +1457,14 @@ public class PostingIndexWriter implements IndexWriter {
     ) {
         int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
         long strideOff = Unsafe.getLong(genBase + (long) s * Long.BYTES);
+        long nextStrideOff = Unsafe.getLong(genBase + (long) (s + 1) * Long.BYTES);
+        // Empty stride in this gen: writer records strideOff[s] == strideOff[s+1]
+        // when stride s contributed no bytes. Reading on would interpret the next
+        // stride's bytes as this stride, with the wrong genKs, and overflow the
+        // prefix array into packed-data territory.
+        if (nextStrideOff == strideOff) {
+            return;
+        }
         long strideAddr = genBase + siSize + strideOff;
         byte mode = Unsafe.getByte(strideAddr);
 
@@ -1771,6 +1783,11 @@ public class PostingIndexWriter implements IndexWriter {
         int sc = PostingIndexUtils.strideCount(gen0KeyCount);
         for (int s = 0; s < sc; s++) {
             long strideOff = Unsafe.getLong(gen0Addr + (long) s * Long.BYTES);
+            long nextStrideOff = Unsafe.getLong(gen0Addr + (long) (s + 1) * Long.BYTES);
+            // Empty stride: writer records strideOff[s] == strideOff[s+1] when
+            // stride s contributed no bytes. Reading on would interpret the next
+            // stride's bytes here.
+            if (nextStrideOff == strideOff) continue;
             long strideAddr = gen0Addr + gen0SiSize + strideOff;
             int ks = PostingIndexUtils.keysInStride(gen0KeyCount, s);
             byte mode = Unsafe.getByte(strideAddr);
@@ -2313,44 +2330,49 @@ public class PostingIndexWriter implements IndexWriter {
             int stride = key / PostingIndexUtils.DENSE_STRIDE;
             int localKey = key % PostingIndexUtils.DENSE_STRIDE;
             long strideOff = Unsafe.getLong(gen0Addr + (long) stride * Long.BYTES);
-            long strideAddr = gen0Addr + gen0SiSize + strideOff;
-            int ks = PostingIndexUtils.keysInStride(gen0KeyCount, stride);
-            byte mode = Unsafe.getByte(strideAddr);
+            long nextStrideOff = Unsafe.getLong(gen0Addr + (long) (stride + 1) * Long.BYTES);
+            // Empty stride in this gen: writer records strideOff[s] == strideOff[s+1].
+            // Reading on would interpret the next stride's bytes here.
+            if (nextStrideOff != strideOff) {
+                long strideAddr = gen0Addr + gen0SiSize + strideOff;
+                int ks = PostingIndexUtils.keysInStride(gen0KeyCount, stride);
+                byte mode = Unsafe.getByte(strideAddr);
 
-            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
-                int bitWidth = Unsafe.getByte(strideAddr + 1) & 0xFF;
-                long baseValue = Unsafe.getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
-                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-                int startIdx = Unsafe.getInt(prefixAddr + (long) localKey * Integer.BYTES);
-                int count = Unsafe.getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startIdx;
-                if (count > 0) {
-                    int flatHdrSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-                    long flatDataAddr = strideAddr + flatHdrSize;
-                    if (count > unpackBatchCapacity) {
-                        int newCap = Math.max(count, unpackBatchCapacity * 2);
-                        if (unpackBatchAddr != 0) {
-                            Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                    int bitWidth = Unsafe.getByte(strideAddr + 1) & 0xFF;
+                    long baseValue = Unsafe.getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                    long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                    int startIdx = Unsafe.getInt(prefixAddr + (long) localKey * Integer.BYTES);
+                    int count = Unsafe.getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startIdx;
+                    if (count > 0) {
+                        int flatHdrSize = PostingIndexUtils.strideFlatHeaderSize(ks);
+                        long flatDataAddr = strideAddr + flatHdrSize;
+                        if (count > unpackBatchCapacity) {
+                            int newCap = Math.max(count, unpackBatchCapacity * 2);
+                            if (unpackBatchAddr != 0) {
+                                Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                            }
+                            unpackBatchCapacity = newCap;
+                            unpackBatchAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                         }
-                        unpackBatchCapacity = newCap;
-                        unpackBatchAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                        BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, unpackBatchAddr);
+                        for (int i = 0; i < count; i++) {
+                            Unsafe.putLong(destAddr + (long) totalCount * Long.BYTES,
+                                    Unsafe.getLong(unpackBatchAddr + (long) i * Long.BYTES));
+                            totalCount++;
+                        }
                     }
-                    BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, unpackBatchAddr);
-                    for (int i = 0; i < count; i++) {
-                        Unsafe.putLong(destAddr + (long) totalCount * Long.BYTES,
-                                Unsafe.getLong(unpackBatchAddr + (long) i * Long.BYTES));
-                        totalCount++;
+                } else {
+                    long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                    int count = Unsafe.getInt(countsAddr + (long) localKey * Integer.BYTES);
+                    if (count > 0) {
+                        long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
+                        long dataOffset = Unsafe.getLong(offsetsBase + (long) localKey * Long.BYTES);
+                        int deltaHdrSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+                        long encodedAddr = strideAddr + deltaHdrSize + dataOffset;
+                        PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx);
+                        totalCount += count;
                     }
-                }
-            } else {
-                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
-                int count = Unsafe.getInt(countsAddr + (long) localKey * Integer.BYTES);
-                if (count > 0) {
-                    long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
-                    long dataOffset = Unsafe.getLong(offsetsBase + (long) localKey * Long.BYTES);
-                    int deltaHdrSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-                    long encodedAddr = strideAddr + deltaHdrSize + dataOffset;
-                    PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx);
-                    totalCount += count;
                 }
             }
         }
@@ -2643,6 +2665,10 @@ public class PostingIndexWriter implements IndexWriter {
                     int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
                     for (int s = 0; s < sc; s++) {
                         long strideOff = Unsafe.getLong(keyIdsBase + (long) s * Long.BYTES);
+                        long nextStrideOff = Unsafe.getLong(keyIdsBase + (long) (s + 1) * Long.BYTES);
+                        // Empty stride: writer records strideOff[s] == strideOff[s+1].
+                        // Reading on would interpret the next stride's bytes here.
+                        if (nextStrideOff == strideOff) continue;
                         long strideAddr = keyIdsBase + siSize + strideOff;
                         int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
                         byte mode = Unsafe.getByte(strideAddr);
@@ -2773,6 +2799,10 @@ public class PostingIndexWriter implements IndexWriter {
                         int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
                         for (int s = 0; s < sc; s++) {
                             long strideOff = Unsafe.getLong(keyIdsBase + (long) s * Long.BYTES);
+                            long nextStrideOff = Unsafe.getLong(keyIdsBase + (long) (s + 1) * Long.BYTES);
+                            // Empty stride: writer records strideOff[s] == strideOff[s+1].
+                            // Reading on would interpret the next stride's bytes here.
+                            if (nextStrideOff == strideOff) continue;
                             long strideAddr = keyIdsBase + siSize + strideOff;
                             int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
                             byte mode = Unsafe.getByte(strideAddr);

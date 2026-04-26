@@ -289,6 +289,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
         for (int s = 0; s < sc; s++) {
             long strideOff = Unsafe.getLong(genAddr + (long) s * Long.BYTES);
+            long nextStrideOff = Unsafe.getLong(genAddr + (long) (s + 1) * Long.BYTES);
+            // Empty stride: writer records strideOff[s] == strideOff[s+1] when
+            // stride s contributed no bytes. Reading on would interpret the next
+            // stride's bytes here.
+            if (nextStrideOff == strideOff) continue;
             long strideAddr = genAddr + siSize + strideOff;
             int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
             int keyBase = s * PostingIndexUtils.DENSE_STRIDE;
@@ -881,6 +886,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
             long genAddr = valueMem.addressOf(genLookup.getGenFileOffset(gen));
             long strideOff = Unsafe.getLong(genAddr + (long) stride * Long.BYTES);
+            long nextStrideOff = Unsafe.getLong(genAddr + (long) (stride + 1) * Long.BYTES);
+            // Empty stride in this gen: writer records strideOff[s] == strideOff[s+1].
+            // Reading on would interpret the next stride's bytes here.
+            if (nextStrideOff == strideOff) {
+                return 0;
+            }
             long strideAddr = genAddr + PostingIndexUtils.strideIndexSize(genKeyCount) + strideOff;
             byte mode = Unsafe.getByte(strideAddr);
             if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {

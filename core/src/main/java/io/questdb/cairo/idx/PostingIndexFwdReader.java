@@ -505,6 +505,14 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             cacheSidecarKeyAddrs(stride, localKey);
             int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
             long strideOff = Unsafe.getUnsafe().getLong(genAddr + (long) stride * Long.BYTES);
+            long nextStrideOff = Unsafe.getUnsafe().getLong(genAddr + (long) (stride + 1) * Long.BYTES);
+            // Empty stride: writer records strideOff[s] == strideOff[s+1] when
+            // stride s contributed no bytes. Reading on would interpret the next
+            // stride's bytes here.
+            if (nextStrideOff == strideOff) {
+                clearBlockState();
+                return;
+            }
             long strideFileOffset = genFileOffset + siSize + strideOff;
             long strideAddr = genAddr + siSize + strideOff;
             int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
