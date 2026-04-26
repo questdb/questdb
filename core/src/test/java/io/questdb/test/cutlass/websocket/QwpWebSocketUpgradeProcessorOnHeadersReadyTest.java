@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.cairo.wal.DefaultDurableAckRegistry;
+import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
@@ -52,6 +54,7 @@ import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 
 public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCairoTest {
+    private static final int HANDSHAKE_BUFFER_SIZE = 1024;
     private static final int TINY_BUFFER_SIZE = 64;
 
     @Test
@@ -162,6 +165,76 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                 Unsafe.free(bufferAddr, TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    @Test
+    public void testOnHeadersReadyDoesNotEnableDurableAckWhenHeaderAbsent() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, new FakeEnabledDurableAckRegistry(), false));
+    }
+
+    @Test
+    public void testOnHeadersReadyEnablesDurableAckWhenHeaderTrueAndRegistryEnabled() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", new FakeEnabledDurableAckRegistry(), true));
+    }
+
+    @Test
+    public void testOnHeadersReadyHeaderValueIsCaseInsensitive() throws Exception {
+        assertMemoryLeak(() -> {
+            assertDurableAckStateAfterHandshake("TRUE", new FakeEnabledDurableAckRegistry(), true);
+            assertDurableAckStateAfterHandshake("TrUe", new FakeEnabledDurableAckRegistry(), true);
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadyIgnoresDurableAckWhenRegistryDisabled() throws Exception {
+        // Default OSS behavior: DefaultDurableAckRegistry.isEnabled() returns false,
+        // so even when the client requests durable ack, the state stays disabled.
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", DefaultDurableAckRegistry.INSTANCE, false));
+    }
+
+    @Test
+    public void testOnHeadersReadyIgnoresNonTrueHeaderValue() throws Exception {
+        assertMemoryLeak(() -> {
+            assertDurableAckStateAfterHandshake("false", new FakeEnabledDurableAckRegistry(), false);
+            assertDurableAckStateAfterHandshake("", new FakeEnabledDurableAckRegistry(), false);
+            assertDurableAckStateAfterHandshake("yes", new FakeEnabledDurableAckRegistry(), false);
+        });
+    }
+
+    private static void assertDurableAckStateAfterHandshake(
+            String headerValue,
+            DurableAckRegistry registry,
+            boolean expectedEnabled
+    ) throws Exception {
+        DurableAckRegistry previous = engine.getDurableAckRegistry();
+        engine.setDurableAckRegistry(registry);
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpProcessorState> lv = getLV();
+
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+            if (headerValue != null) {
+                header.setHeader("X-QWP-Request-Durable-Ack", headerValue);
+            }
+
+            processor.onHeadersReady(context);
+
+            Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
+            QwpProcessorState state = lv.get(context);
+            Assert.assertNotNull("state must be populated after successful handshake", state);
+            Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            engine.setDurableAckRegistry(previous);
+        }
     }
 
     private static void assertBufferTooSmallFailure(
@@ -381,6 +454,18 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
 
         boolean isSwitchProtocolCalled() {
             return switchProtocolCalled;
+        }
+    }
+
+    private static final class FakeEnabledDurableAckRegistry implements DurableAckRegistry {
+        @Override
+        public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+            return -1L;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
         }
     }
 }
