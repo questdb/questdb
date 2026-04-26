@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,9 +26,13 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -59,6 +63,17 @@ public class IndexFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateWriterBitmap() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (IndexWriter writer = IndexFactory.createWriter(IndexType.BITMAP, configuration)) {
+                Assert.assertNotNull(writer);
+                Assert.assertTrue("BITMAP must dispatch to BitmapIndexWriter",
+                        writer instanceof BitmapIndexWriter);
+            }
+        });
+    }
+
+    @Test
     public void testCreateWriterNoneThrows() {
         try {
             IndexFactory.createWriter(IndexType.NONE, configuration);
@@ -69,12 +84,36 @@ public class IndexFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateWriterPostingDelta() {
-        try (var writer = IndexFactory.createWriter(IndexType.POSTING_DELTA, configuration)) {
-            Assert.assertNotNull(writer);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+    public void testCreateWriterPosting() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (IndexWriter writer = IndexFactory.createWriter(IndexType.POSTING, configuration)) {
+                Assert.assertNotNull(writer);
+                Assert.assertTrue("POSTING must dispatch to PostingIndexWriter",
+                        writer instanceof PostingIndexWriter);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateWriterPostingDelta() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (IndexWriter writer = IndexFactory.createWriter(IndexType.POSTING_DELTA, configuration)) {
+                Assert.assertNotNull(writer);
+                Assert.assertTrue("POSTING_DELTA must dispatch to PostingIndexWriter",
+                        writer instanceof PostingIndexWriter);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateWriterPostingEf() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (IndexWriter writer = IndexFactory.createWriter(IndexType.POSTING_EF, configuration)) {
+                Assert.assertNotNull(writer);
+                Assert.assertTrue("POSTING_EF must dispatch to PostingIndexWriter",
+                        writer instanceof PostingIndexWriter);
+            }
+        });
     }
 
     @Test
@@ -116,6 +155,18 @@ public class IndexFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyFileNameNoneThrows() {
+        try (Path path = new Path().put("/tmp/test/")) {
+            try {
+                IndexFactory.keyFileName(IndexType.NONE, path, "col", 0);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("unsupported index type: NONE"));
+            }
+        }
+    }
+
+    @Test
     public void testKeyFileNamePosting() {
         try (Path path = new Path().put("/tmp/test/")) {
             IndexFactory.keyFileName(IndexType.POSTING, path, "col", 0);
@@ -132,6 +183,14 @@ public class IndexFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyFileNamePostingEf() {
+        try (Path path = new Path().put("/tmp/test/")) {
+            IndexFactory.keyFileName(IndexType.POSTING_EF, path, "col", 0);
+            Assert.assertTrue(path.toString().contains(".pk"));
+        }
+    }
+
+    @Test
     public void testKeyFileNameUnsupportedThrows() {
         try (Path path = new Path().put("/tmp/test/")) {
             try {
@@ -140,6 +199,52 @@ public class IndexFactoryTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 Assert.assertTrue(e.getMessage().contains("unsupported index type"));
             }
+        }
+    }
+
+    @Test
+    public void testValueFileNameBitmap() {
+        try (Path path = new Path().put("/tmp/test/")) {
+            IndexFactory.valueFileName(IndexType.BITMAP, path, "col", 0, 0);
+            // BITMAP value files use the .v extension.
+            Assert.assertTrue(path.toString().contains(".v"));
+        }
+    }
+
+    @Test
+    public void testValueFileNameNoneThrows() {
+        try (Path path = new Path().put("/tmp/test/")) {
+            try {
+                IndexFactory.valueFileName(IndexType.NONE, path, "col", 0, 0);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("unsupported index type: NONE"));
+            }
+        }
+    }
+
+    @Test
+    public void testValueFileNamePosting() {
+        try (Path path = new Path().put("/tmp/test/")) {
+            IndexFactory.valueFileName(IndexType.POSTING, path, "col", 0, 0);
+            // POSTING value files use the .pv extension.
+            Assert.assertTrue(path.toString().contains(".pv"));
+        }
+    }
+
+    @Test
+    public void testValueFileNamePostingDelta() {
+        try (Path path = new Path().put("/tmp/test/")) {
+            IndexFactory.valueFileName(IndexType.POSTING_DELTA, path, "col", 0, 0);
+            Assert.assertTrue(path.toString().contains(".pv"));
+        }
+    }
+
+    @Test
+    public void testValueFileNamePostingEf() {
+        try (Path path = new Path().put("/tmp/test/")) {
+            IndexFactory.valueFileName(IndexType.POSTING_EF, path, "col", 0, 0);
+            Assert.assertTrue(path.toString().contains(".pv"));
         }
     }
 
