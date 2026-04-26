@@ -33,11 +33,38 @@ package io.questdb.cutlass.qwp.protocol;
  */
 public final class QwpConstants {
 
+    public static final byte COMPRESSION_NONE = 0;
+    public static final byte COMPRESSION_ZSTD = 1;
+    // Server-side clamp for the level requested by the client via
+    // X-QWP-Accept-Encoding: zstd;level=N. zstd levels 10 and above drop to
+    // <20 MB/s compress speed, which lets a slow/malicious client pin a
+    // worker thread for seconds per batch.
+    public static final int COMPRESSION_ZSTD_MAX_LEVEL = 9;
+    public static final int COMPRESSION_ZSTD_MIN_LEVEL = 1;
     /**
      * Default maximum batch size in bytes (16 MB).
      */
     public static final int DEFAULT_MAX_BATCH_SIZE = 16 * 1024 * 1024;
 
+    /**
+     * Default maximum bytes the egress connection-scoped SYMBOL dict may hold
+     * before the server emits a {@code CACHE_RESET} and starts over.
+     */
+    public static final int DEFAULT_MAX_EGRESS_DICT_HEAP_BYTES = 8 * 1024 * 1024;
+    /**
+     * Default maximum entry count the egress connection-scoped SYMBOL dict may
+     * hold before the server emits a {@code CACHE_RESET} and starts over.
+     */
+    public static final int DEFAULT_MAX_EGRESS_DICT_ENTRIES = 100_000;
+    /**
+     * Default soft cap on distinct schemas registered by an egress connection.
+     * On exceeding this threshold the server emits a {@code CACHE_RESET} and
+     * resets the schema-fingerprint cache; the connection remains usable and
+     * continues with fresh schema ids. Tighter than the shared
+     * {@link #DEFAULT_MAX_SCHEMAS_PER_CONNECTION} because egress-side state is
+     * fully server-owned and reusable.
+     */
+    public static final int DEFAULT_MAX_EGRESS_SCHEMAS_PER_CONNECTION = 4_096;
     /**
      * Default maximum rows per table in a batch.
      */
@@ -59,6 +86,14 @@ public final class QwpConstants {
      * Flag bit: Gorilla timestamp encoding enabled.
      */
     public static final byte FLAG_GORILLA = 0x04;
+    /**
+     * Flag bit: the region starting at {@code delta_symbol_dict} (or the first
+     * table block if no delta dict is present) is zstd-compressed. The prelude
+     * remains uncompressed so the I/O thread can dispatch on msg_kind / batch_seq
+     * without paying the decompress cost. Set only on {@code RESULT_BATCH} frames
+     * and only after the handshake negotiated {@code zstd}.
+     */
+    public static final byte FLAG_ZSTD = 0x10;
     /**
      * Offset of flags byte in header.
      */
@@ -108,6 +143,11 @@ public final class QwpConstants {
      */
     public static final byte SCHEMA_MODE_FULL = 0x00;
     /**
+     * Status: Egress-only. Query aborted because the client sent a {@code CANCEL}
+     * frame or the server invoked explicit cancellation.
+     */
+    public static final byte STATUS_CANCELLED = 0x0A;
+    /**
      * Status: Per-table durable-upload acknowledgment.
      * <p>
      * Sent by the server (only when the client opted in via the
@@ -123,6 +163,11 @@ public final class QwpConstants {
      * Status: Server error.
      */
     public static final byte STATUS_INTERNAL_ERROR = 0x06;
+    /**
+     * Status: Egress-only. Query aborted because a server-side limit was hit
+     * (query timeout, memory cap, circuit breaker, OOM).
+     */
+    public static final byte STATUS_LIMIT_EXCEEDED = 0x0B;
     /**
      * Status: Batch accepted successfully.
      */
@@ -144,6 +189,11 @@ public final class QwpConstants {
      */
     public static final byte STATUS_WRITE_ERROR = 0x09;
     /**
+     * Column type: BINARY (length-prefixed opaque bytes).
+     * Wire format: identical to VARCHAR — (N+1) x uint32 offsets + concatenated bytes.
+     */
+    public static final byte TYPE_BINARY = 0x17;
+    /**
      * Column type: BOOLEAN (1 bit per value, packed).
      */
     public static final byte TYPE_BOOLEAN = 0x01;
@@ -159,7 +209,6 @@ public final class QwpConstants {
      * Column type: DATE (int64 milliseconds since epoch).
      */
     public static final byte TYPE_DATE = 0x0B;
-
     /**
      * Column type: DECIMAL128 (16 bytes, 38 digits precision).
      * Wire format: [scale (1B in schema)] + [little-endian unscaled value (16B)]
@@ -170,7 +219,6 @@ public final class QwpConstants {
      * Wire format: [scale (1B in schema)] + [little-endian unscaled value (32B)]
      */
     public static final byte TYPE_DECIMAL256 = 0x15;
-
     /**
      * Column type: DECIMAL64 (8 bytes, 18 digits precision).
      * Wire format: [scale (1B in schema)] + [little-endian unscaled value (8B)]
@@ -198,6 +246,14 @@ public final class QwpConstants {
      */
     public static final byte TYPE_INT = 0x04;
     /**
+     * Column type: IPv4 (32-bit address). Wire format: 4 bytes LE, identical to INT.
+     * NULL is signalled via the standard null bitmap; the int payload for non-null rows
+     * is the address bits (network byte order on the wire? No — little-endian like INT).
+     * Note: QuestDB stores IPv4 NULL as the bit pattern 0 (i.e. 0.0.0.0), so the address
+     * 0.0.0.0 cannot be represented as non-null in QuestDB regardless of the wire type.
+     */
+    public static final byte TYPE_IPV4 = 0x18;
+    /**
      * Column type: LONG (int64, little-endian).
      */
     public static final byte TYPE_LONG = 0x05;
@@ -215,10 +271,6 @@ public final class QwpConstants {
      * Column type: SHORT (int16, little-endian).
      */
     public static final byte TYPE_SHORT = 0x03;
-    /**
-     * Column type: STRING (length-prefixed UTF-8).
-     */
-    public static final byte TYPE_STRING = 0x08;
     /**
      * Column type: SYMBOL (dictionary-encoded string).
      */
@@ -247,9 +299,28 @@ public final class QwpConstants {
      */
     public static final byte VERSION_1 = 1;
     /**
-     * Maximum protocol version supported by this build.
+     * Protocol v2 adds an unsolicited {@code SERVER_INFO} control frame delivered
+     * as the first WebSocket frame after the 101 upgrade. Carries the server's
+     * replication role, cluster/node identity, and a capabilities bitfield so
+     * clients can route reads to primary vs replica and react to role changes
+     * across reconnects.
      */
-    public static final byte MAX_SUPPORTED_VERSION = VERSION_1;
+    public static final byte VERSION_2 = 2;
+    /**
+     * Maximum protocol version accepted by the QWP ingest path (WebSocket
+     * binary ingest + UDP). Pinned to v1 because the v2 bump only adds the
+     * egress {@code SERVER_INFO} frame, which has no ingest semantics; bumping
+     * ingest to v2 would be a no-op on the wire and would silently accept
+     * version bytes that a v1-only server would reject.
+     */
+    public static final byte MAX_SUPPORTED_INGEST_VERSION = VERSION_1;
+    /**
+     * Maximum protocol version supported by this build. Egress advertises this
+     * value in its {@code X-QWP-Version} handshake header; the shared message-
+     * header validator accepts any version in {@code [VERSION_1, MAX_SUPPORTED_VERSION]}.
+     * Ingest pins to {@link #MAX_SUPPORTED_INGEST_VERSION} instead.
+     */
+    public static final byte MAX_SUPPORTED_VERSION = VERSION_2;
 
     private QwpConstants() {
         // utility class
@@ -289,11 +360,12 @@ public final class QwpConstants {
             case TYPE_BYTE -> "BYTE";
             case TYPE_SHORT -> "SHORT";
             case TYPE_CHAR -> "CHAR";
+            case TYPE_BINARY -> "BINARY";
+            case TYPE_IPV4 -> "IPv4";
             case TYPE_INT -> "INT";
             case TYPE_LONG -> "LONG";
             case TYPE_FLOAT -> "FLOAT";
             case TYPE_DOUBLE -> "DOUBLE";
-            case TYPE_STRING -> "STRING";
             case TYPE_VARCHAR -> "VARCHAR";
             case TYPE_SYMBOL -> "SYMBOL";
             case TYPE_TIMESTAMP -> "TIMESTAMP";

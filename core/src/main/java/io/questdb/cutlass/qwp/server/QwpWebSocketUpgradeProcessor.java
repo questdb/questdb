@@ -713,7 +713,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             }
         }
 
-        int negotiated = Math.min(clientMaxVersion, QwpConstants.MAX_SUPPORTED_VERSION);
+        int negotiated = Math.min(clientMaxVersion, QwpConstants.MAX_SUPPORTED_INGEST_VERSION);
 
         Utf8Sequence clientId = requestHeader.getHeader(QwpWebSocketHttpProcessor.HEADER_X_QWP_CLIENT_ID);
         if (clientId != null) {

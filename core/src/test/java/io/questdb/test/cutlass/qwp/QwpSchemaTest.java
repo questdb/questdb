@@ -42,8 +42,8 @@ public class QwpSchemaTest {
 
     @Test
     public void testColumnDefEquality() {
-        QwpColumnDef col1 = new QwpColumnDef("name", QwpConstants.TYPE_STRING);
-        QwpColumnDef col2 = new QwpColumnDef("name", QwpConstants.TYPE_STRING);
+        QwpColumnDef col1 = new QwpColumnDef("name", QwpConstants.TYPE_VARCHAR);
+        QwpColumnDef col2 = new QwpColumnDef("name", QwpConstants.TYPE_VARCHAR);
         QwpColumnDef col3 = new QwpColumnDef("name", QwpConstants.TYPE_INT);
 
         Assert.assertEquals(col1, col2);
@@ -53,7 +53,7 @@ public class QwpSchemaTest {
     @Test
     public void testColumnDefFixedWidth() {
         QwpColumnDef intCol = new QwpColumnDef("col", QwpConstants.TYPE_INT);
-        QwpColumnDef stringCol = new QwpColumnDef("col", QwpConstants.TYPE_STRING);
+        QwpColumnDef stringCol = new QwpColumnDef("col", QwpConstants.TYPE_VARCHAR);
 
         Assert.assertTrue(intCol.isFixedWidth());
         Assert.assertEquals(4, intCol.getFixedWidth());
@@ -113,7 +113,7 @@ public class QwpSchemaTest {
     public void testColumnNameMaxLength() throws QwpParseException {
         // Create column name at max length
         String longName = "x".repeat(QwpConstants.MAX_COLUMN_NAME_LENGTH);
-        QwpColumnDef[] columns = {new QwpColumnDef(longName, QwpConstants.TYPE_STRING)};
+        QwpColumnDef[] columns = {new QwpColumnDef(longName, QwpConstants.TYPE_VARCHAR)};
 
         QwpSchema original = QwpSchema.create(columns);
         byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
@@ -151,7 +151,7 @@ public class QwpSchemaTest {
     public void testColumnNameUtf8() throws QwpParseException {
         QwpColumnDef[] columns = {
                 new QwpColumnDef("température", QwpConstants.TYPE_DOUBLE),
-                new QwpColumnDef("数据", QwpConstants.TYPE_STRING)
+                new QwpColumnDef("数据", QwpConstants.TYPE_VARCHAR)
         };
 
         QwpSchema original = QwpSchema.create(columns);
@@ -168,7 +168,7 @@ public class QwpSchemaTest {
     public void testEncodeDecodeRoundTrip() throws QwpParseException {
         QwpColumnDef[] columns = {
                 new QwpColumnDef("id", QwpConstants.TYPE_LONG),
-                new QwpColumnDef("name", QwpConstants.TYPE_STRING),
+                new QwpColumnDef("name", QwpConstants.TYPE_VARCHAR),
                 new QwpColumnDef("price", QwpConstants.TYPE_DOUBLE),
                 new QwpColumnDef("ts", QwpConstants.TYPE_TIMESTAMP)
         };
@@ -262,7 +262,7 @@ public class QwpSchemaTest {
                 QwpConstants.TYPE_LONG,
                 QwpConstants.TYPE_FLOAT,
                 QwpConstants.TYPE_DOUBLE,
-                QwpConstants.TYPE_STRING,
+                QwpConstants.TYPE_VARCHAR,
                 QwpConstants.TYPE_SYMBOL,
                 QwpConstants.TYPE_TIMESTAMP,
                 QwpConstants.TYPE_DATE,

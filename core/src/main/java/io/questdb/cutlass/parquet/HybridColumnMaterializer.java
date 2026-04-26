@@ -135,8 +135,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final Decimal128 decimal128A = new Decimal128();
     private final Decimal256 decimal256A = new Decimal256();
     private final HybridSymbolTableSource hybridSymbolTableSource = new HybridSymbolTableSource();
+    private final ReusablePageFrameMemory pageFrameMemory = new ReusablePageFrameMemory();
     private final PageFrameMemoryRecord pageFrameRecord = new PageFrameMemoryRecord();
-    private final ReusablePageFrameMemory pfMemory = new ReusablePageFrameMemory();
     // Buffers that Rust still references (pending_partitions). Freed after row group flush.
     private final ObjList<MemoryCARWImpl> pinnedAuxBuffers = new ObjList<>();
     private final ObjList<MemoryCARWImpl> pinnedDataBuffers = new ObjList<>();
@@ -245,9 +245,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
     /**
      * Resets state for reuse: frees data/aux buffers and nulls references,
-     * but retains {@code pfMemory}'s native allocations (DirectLongLists).
+     * but retains {@code pageFrameMemory}'s native allocations (DirectLongLists).
      * Use {@link #close()} to fully release all native memory including
-     * {@code pfMemory}.
+     * {@code pageFrameMemory}.
      */
     @Override
     public void clear() {
@@ -264,7 +264,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             Misc.free(auxBuffers.getQuick(i));
         }
         auxBuffers.clear();
-        pfMemory.clear();
+        pageFrameMemory.clear();
         baseColumnMap.clear();
         computedBufferIdx.clear();
         computedColumnIndices.clear();
@@ -282,7 +282,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     @Override
     public void close() {
         clear();
-        Misc.free(pfMemory);
+        Misc.free(pageFrameMemory);
         pageFrameRecord.close();
     }
 
@@ -556,8 +556,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     }
 
     private void populatePageFrameRecord(PageFrame frame) {
-        pfMemory.of(frame);
-        pageFrameRecord.init(pfMemory);
+        pageFrameMemory.of(frame);
+        pageFrameRecord.init(pageFrameMemory);
         pageFrameRecord.setRowIndex(0);
     }
 

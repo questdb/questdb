@@ -827,6 +827,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public io.questdb.cutlass.qwp.codec.@NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+        return getDelegate().getQwpServerInfoProvider();
+    }
+
+    @Override
     public int getReaderPoolMaxSegments() {
         return getDelegate().getReaderPoolMaxSegments();
     }
