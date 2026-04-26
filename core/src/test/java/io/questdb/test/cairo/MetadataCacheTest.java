@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCache;
@@ -34,6 +35,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.CharSequenceObjSortedHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -709,6 +711,45 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringIndexSurvivesStartupHydration() throws Exception {
+        // Regression: onStartupAsyncHydrator() reads _meta directly via
+        // MetadataCache.hydrateTableStartup(). That path reads indexType and
+        // block capacity, but never reads the trailing covering-column
+        // section, so any INCLUDE list previously cached gets wiped when the
+        // hydrator replaces the CairoTable entry. SHOW CREATE TABLE,
+        // SHOW COLUMNS, and information_schema.columns all read from
+        // MetadataCache, so users see the INCLUDE list silently disappear
+        // after a server restart even though _meta on disk still has it.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_inc (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Reach the cache via the good path: TableWriter.addIndex() calls
+            // MetadataCacheWriter.hydrateTable(TableMetadata) which preserves
+            // covering indices. The startup hydrator path is the buggy one.
+            execute("ALTER TABLE t_inc ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+
+            TableToken token = engine.getTableTokenIfExists("t_inc");
+            Assert.assertNotNull(token);
+
+            // Sanity: ALTER populated the cache with the covering list.
+            assertCoveringIncludesPriceAndQty(token, "before startup hydration");
+
+            // Simulate a fresh-process restart: reload metadata from _meta.
+            engine.getMetadataCache().onStartupAsyncHydrator();
+
+            // The covering list must survive a meta-file re-read, otherwise
+            // SHOW CREATE TABLE / SHOW COLUMNS will silently drop INCLUDE.
+            assertCoveringIncludesPriceAndQty(token, "after startup hydration");
+        });
+    }
+
+    @Test
     public void testCreateBeforeCacheHydrated() throws Exception {
         assertMemoryLeak(() -> {
             try (MetadataCache cache = new MetadataCache(engine)) {
@@ -971,6 +1012,26 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     \t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, indexType=NONE, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
         });
+    }
+
+    private static void assertCoveringIncludesPriceAndQty(TableToken token, String stage) {
+        try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+            CairoTable table = ro.getTable(token);
+            Assert.assertNotNull("table missing from MetadataCache " + stage, table);
+            CairoColumn sym = table.getColumnQuiet("sym");
+            Assert.assertNotNull("sym column missing " + stage, sym);
+            IntList covering = sym.getCoveringColumnIndices();
+            Assert.assertNotNull("covering INCLUDE list dropped from MetadataCache " + stage, covering);
+
+            CairoColumn price = table.getColumnQuiet("price");
+            CairoColumn qty = table.getColumnQuiet("qty");
+            Assert.assertNotNull(price);
+            Assert.assertNotNull(qty);
+            Assert.assertTrue("INCLUDE list missing price writer index " + stage,
+                    covering.contains(price.getWriterIndex()));
+            Assert.assertTrue("INCLUDE list missing qty writer index " + stage,
+                    covering.contains(qty.getWriterIndex()));
+        }
     }
 
     private static void assertCairoMetadata(String expected) {

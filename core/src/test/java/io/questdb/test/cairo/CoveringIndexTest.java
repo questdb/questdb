@@ -9203,14 +9203,66 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
 
-            // Verify indexType and indexInclude columns are present for POSTING index
+            // Verify indexType and indexInclude columns are present for POSTING index.
+            // The timestamp is auto-appended to INCLUDE for POSTING indexes (see
+            // CreateTableOperationImpl.maybeAppendTimestamp), so it shows up here.
             assertSql("""
                     column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                     ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                    sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\t
+                    sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\tprice,qty,ts
                     price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                     qty\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                     """, "SHOW COLUMNS FROM t_show_cols");
+        });
+    }
+
+    @Test
+    public void testShowCreateTableIncludeAfterDropColumn() throws Exception {
+        // Regression: the persisted covering list stores writer indices
+        // (stable across DROP COLUMN), but the SHOW CREATE TABLE / SHOW
+        // COLUMNS renderers in CairoTable-backed metadata pass those indices
+        // to CairoTable.getColumnQuiet(int), which is dense-position keyed.
+        // After dropping an unrelated column the dense positions of all
+        // later columns shift down by one while writer indices stay put,
+        // so the renderer either looks up the wrong column or runs off the
+        // end of the list and silently omits a covered column.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_show (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        unrelated DOUBLE,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("ALTER TABLE t_drop_show ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            // Drop a column that is NOT in the INCLUDE list. This shifts
+            // dense positions of price/qty down by one but leaves their
+            // writer indices unchanged, so a writer-keyed renderer should
+            // still print every covered column (price, qty, and the ts
+            // that the ALTER path auto-appends for POSTING indexes).
+            execute("ALTER TABLE t_drop_show DROP COLUMN unrelated");
+
+            assertSql("""
+                            ddl
+                            CREATE TABLE 't_drop_show' (\s
+                            \tts TIMESTAMP,
+                            \tsym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty, ts),
+                            \tprice DOUBLE,
+                            \tqty INT
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE t_drop_show");
+
+            assertSql("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\tprice,qty,ts
+                            price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            qty\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """,
+                    "SHOW COLUMNS FROM t_drop_show");
         });
     }
 
@@ -9225,15 +9277,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         qty INT
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
-            // TODO: SHOW CREATE TABLE should include the INCLUDE clause so the table
-            //  can be recreated with covering column info preserved. Currently, the
-            //  MetadataCache startup hydration (from _meta file) doesn't read the
-            //  variable-length covering column data section.
             assertSql("""
                     ddl
                     CREATE TABLE 't_show' (\s
                     \tts TIMESTAMP,
-                    \tsym SYMBOL INDEX TYPE POSTING,
+                    \tsym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty, ts),
                     \tprice DOUBLE,
                     \tqty INT
                     ) timestamp(ts) PARTITION BY DAY BYPASS WAL;

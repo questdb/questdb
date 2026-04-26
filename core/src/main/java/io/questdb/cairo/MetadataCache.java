@@ -37,6 +37,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
@@ -274,6 +275,8 @@ public class MetadataCache implements QuietCloseable {
                 table.upsertColumn(column);
             }
 
+            readCoveringColumnIndicesIntoTable(metaMem, columnCount, table);
+
             if (PartitionBy.isPartitioned(partitionBy)) {
                 try {
                     if (txReader == null) {
@@ -380,6 +383,106 @@ public class MetadataCache implements QuietCloseable {
                     .$(", errno=").$(ex.getErrno())
                     .$(", message=").$safe(ex.getMessage())
                     .I$();
+        }
+    }
+
+    private void readCoveringColumnIndicesIntoTable(MemoryCMR mem, int columnCount, CairoTable table) {
+        // The covering INCLUDE list is appended to _meta after the
+        // column-name region. Walk past the names, then for every column
+        // whose META_FLAG_BIT_COVERING flag is set, decode the trailing
+        // (count, writerIdx, writerIdx, ...) record and attach the *dense*
+        // translation to the matching CairoColumn. The on-disk format
+        // stores writer indices because they are stable across DROP COLUMN;
+        // the metadata cache is dense-keyed throughout (CairoTable.columns
+        // is a dense list, CairoColumn.position is dense), so we translate
+        // here once at hydration to keep CairoColumn.coveringColumnIndices
+        // in the same index space as everything else the renderers see.
+        final long memSize = mem.size();
+        long offset = TableUtils.getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            if (offset + Integer.BYTES > memSize) {
+                return;
+            }
+            int strLen = mem.getInt(offset);
+            offset += Vm.getStorageLength(strLen);
+        }
+        if (offset >= memSize) {
+            return;
+        }
+        for (int writerIndex = 0; writerIndex < columnCount; writerIndex++) {
+            if (!TableUtils.isColumnCovering(mem, writerIndex)) {
+                continue;
+            }
+            if (offset + Integer.BYTES > memSize) {
+                return;
+            }
+            int includeCount = mem.getInt(offset);
+            offset += Integer.BYTES;
+            if (includeCount <= 0) {
+                continue;
+            }
+            if (offset + (long) includeCount * Integer.BYTES > memSize) {
+                return;
+            }
+            IntList denseIndices = new IntList(includeCount);
+            for (int j = 0; j < includeCount; j++) {
+                int covWriterIdx = mem.getInt(offset);
+                offset += Integer.BYTES;
+                denseIndices.add(toDenseIndex(table, covWriterIdx));
+            }
+            CairoColumn target = findColumnByWriterIndex(table, writerIndex);
+            if (target != null) {
+                target.setCoveringColumnIndices(denseIndices);
+            }
+        }
+    }
+
+    private static CairoColumn findColumnByWriterIndex(CairoTable table, int writerIndex) {
+        if (writerIndex < 0) {
+            return null;
+        }
+        for (int k = 0, n = table.getColumnCount(); k < n; k++) {
+            CairoColumn c = table.getColumnQuiet(k);
+            if (c != null && c.getWriterIndex() == writerIndex) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    private static int toDenseIndex(CairoTable table, int writerIndex) {
+        if (writerIndex < 0) {
+            return -1;
+        }
+        for (int k = 0, n = table.getColumnCount(); k < n; k++) {
+            CairoColumn c = table.getColumnQuiet(k);
+            if (c != null && c.getWriterIndex() == writerIndex) {
+                return k;
+            }
+        }
+        return -1;
+    }
+
+    private static void translateCoveringIndicesToDense(CairoTable table) {
+        // CairoColumn.coveringColumnIndices is currently sharing the writer-
+        // index list owned by TableColumnMetadata. Replace each non-empty
+        // list with a freshly-allocated dense translation so the cache
+        // stays internally dense-keyed and renderers can use the regular
+        // CairoTable.getColumnQuiet(int) accessor.
+        for (int i = 0, n = table.getColumnCount(); i < n; i++) {
+            CairoColumn c = table.getColumnQuiet(i);
+            if (c == null) {
+                continue;
+            }
+            IntList writerCovering = c.getCoveringColumnIndices();
+            if (writerCovering == null || writerCovering.size() == 0) {
+                continue;
+            }
+            IntList denseCovering = new IntList(writerCovering.size());
+            for (int j = 0, m = writerCovering.size(); j < m; j++) {
+                denseCovering.add(toDenseIndex(table, writerCovering.getQuick(j)));
+            }
+            c.setCoveringColumnIndices(denseCovering);
         }
     }
 
@@ -598,6 +701,8 @@ public class MetadataCache implements QuietCloseable {
                 column.setPosition(replacingIndex > -1 ? replacingIndex : i);
                 column.setIndexType(columnMetadata.getIndexType());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
+                // Translate from writer to dense after the column list is
+                // finalized (post-sort) below.
                 column.setCoveringColumnIndices(columnMetadata.getCoveringColumnIndices());
                 column.setSymbolTableStaticFlag(columnMetadata.isSymbolTableStatic());
                 column.setDedupKeyFlag(columnMetadata.isDedupKeyFlag());
@@ -638,6 +743,8 @@ public class MetadataCache implements QuietCloseable {
                 // Update column name index map
                 table.columnNameIndexMap.put(table.columns.getQuick(i).getName(), i);
             }
+
+            translateCoveringIndicesToDense(table);
 
             tableMap.put(table.getTableName(), table);
             LOG.info().$("hydrated [table=").$(table.getTableToken()).I$();
