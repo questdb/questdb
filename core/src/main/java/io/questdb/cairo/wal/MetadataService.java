@@ -107,9 +107,17 @@ public interface MetadataService {
 
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType);
 
-    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
-        addIndex(columnName, indexValueBlockSize, indexType);
-    }
+    /**
+     * Add an index with optional INCLUDE (covering) column list. POSTING
+     * indexes use this list to build sidecar files; BITMAP ignores it.
+     * <p>
+     * No default — every implementation must explicitly choose to honor or
+     * ignore the covering list. A delegating default would silently drop
+     * the parameter for any implementation that only overrides the 3-arg
+     * variant, which has historically led to subtle metadata-staleness
+     * bugs (see PR #6861 review M1).
+     */
+    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames);
 
     AttachDetachStatus attachPartition(long partitionTimestamp);
 

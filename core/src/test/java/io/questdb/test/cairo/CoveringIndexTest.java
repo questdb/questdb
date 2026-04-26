@@ -192,6 +192,65 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableAddIndexIncludesGeoIpv4ColumnsWithColumnTop() throws Exception {
+        // Regression: CoveringPageFrameCursor.writeColumnRow uses Long.MIN_VALUE,
+        // Integer.MIN_VALUE, and zeros as the "null" sentinel for rows below
+        // columnTop, but the canonical NULLs are GeoHashes.NULL = -1L (GEOLONG),
+        // GeoHashes.INT_NULL = -1 (GEOINT), GeoHashes.SHORT_NULL = -1 (GEOSHORT),
+        // GeoHashes.BYTE_NULL = -1 (GEOBYTE), and Numbers.IPv4_NULL = 0 (IPv4).
+        // When a GEO/IPv4 column is added via ALTER TABLE ADD COLUMN, rows
+        // pre-dating the column must read back as NULL (text rendering: empty
+        // for GEO, "" for IPv4).
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ct_geo (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2 rows before any of the GEO/IPv4 columns exist — those rows
+            // must surface as NULL once the columns are added.
+            execute("""
+                    INSERT INTO t_ct_geo VALUES
+                    ('2024-01-01T00:00:00', 'A', 10),
+                    ('2024-01-01T01:00:00', 'A', 20)
+                    """);
+
+            // Bit widths map to: 5b=GEOBYTE, 10b=GEOSHORT, 20b=GEOINT, 40b=GEOLONG.
+            execute("ALTER TABLE t_ct_geo ADD COLUMN gb GEOHASH(5b)");
+            execute("ALTER TABLE t_ct_geo ADD COLUMN gs GEOHASH(10b)");
+            execute("ALTER TABLE t_ct_geo ADD COLUMN gi GEOHASH(20b)");
+            execute("ALTER TABLE t_ct_geo ADD COLUMN gl GEOHASH(40b)");
+            execute("ALTER TABLE t_ct_geo ADD COLUMN ip IPv4");
+
+            // 2 rows after ADD COLUMN with real values. Geohash base-32 omits a/i/l/o.
+            execute("""
+                    INSERT INTO t_ct_geo VALUES
+                    ('2024-01-01T02:00:00', 'A', 30, #y, #yz, #yzbc, #yzbc1234, '10.0.0.1'),
+                    ('2024-01-01T03:00:00', 'A', 40, #b, #bc, #bcde, #bcde1234, '10.0.0.2')
+                    """);
+
+            execute("ALTER TABLE t_ct_geo ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (gb, gs, gi, gl, ip)");
+            engine.releaseAllWriters();
+
+            // Rows 0-1 (below columnTop for every added column) MUST be NULL.
+            // The buggy writeColumnRow fallback writes Long.MIN_VALUE for
+            // GEOLONG/gl, Integer.MIN_VALUE for GEOINT/gi and IPv4/ip,
+            // (short) 0 for GEOSHORT/gs, and (byte) 0 for GEOBYTE/gb.
+            // None of those round-trip as NULL — text rendering shows them
+            // as garbage geohash strings or 0.0.0.0 for IPv4.
+            assertSql("""
+                    sym\tqty\tgb\tgs\tgi\tgl\tip
+                    A\t10\t\t\t\t\t
+                    A\t20\t\t\t\t\t
+                    A\t30\ty\tyz\tyzbc\tyzbc1234\t10.0.0.1
+                    A\t40\tb\tbc\tbcde\tbcde1234\t10.0.0.2
+                    """, "SELECT sym, qty, gb, gs, gi, gl, ip FROM t_ct_geo WHERE sym = 'A' ORDER BY ts");
+        });
+    }
+
+    @Test
     public void testAlterTableAddIndexO3DuplicateInsert() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1476,6 +1535,55 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     B
                     C
                     """, "SELECT DISTINCT sym FROM t_dist");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexDistinctRespectsIntervalRowBounds() throws Exception {
+        // Regression: PostingIndexDistinctRecordCursorFactory must honor the
+        // row bounds carried by IntervalFwdPartitionFrameCursor when an
+        // interval predicate restricts the query to a sub-range of the
+        // partition. Without that, collectDistinctKeys scans every gen in
+        // the partition and returns keys whose only matching rows fall
+        // outside the requested interval.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dist_iv (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_dist_iv VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T12:00:00', 'B'),
+                    ('2024-01-01T23:00:00', 'C')
+                    """);
+            engine.releaseAllWriters();
+
+            // Sanity check: the unbounded query returns every key.
+            assertSql("""
+                    sym
+                    A
+                    B
+                    C
+                    """, "SELECT DISTINCT sym FROM t_dist_iv");
+
+            // The interval [00:00, 01:00) carves out only row 0 (sym='A'),
+            // so only 'A' is reachable. The bug returns A, B, C because the
+            // posting fast path ignores rowLo/rowHi from the interval frame.
+            assertSql("""
+                    sym
+                    A
+                    """, "SELECT DISTINCT sym FROM t_dist_iv WHERE ts IN '2024-01-01T00:00:00;1h'");
+
+            // Sanity: the bitmap fallback path (with /*+ no_index */)
+            // produces the correct result, confirming the bug is specific
+            // to the posting-index DISTINCT factory.
+            assertSql("""
+                    sym
+                    A
+                    """, "SELECT /*+ no_index */ DISTINCT sym FROM t_dist_iv WHERE ts IN '2024-01-01T00:00:00;1h'");
         });
     }
 
@@ -8045,6 +8153,102 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSealFsyncsCoveringSidecarFiles() throws Exception {
+        // Regression: PostingIndexWriter.sealIncremental syncs the sealed
+        // value file (.pv.<sealTxn>) before publishing the new metadata
+        // page in .pk, but it never syncs the covering sidecar files
+        // (.pc<N>... and .pci). On power loss the kernel is free to
+        // reorder writes, so an installer can see the new sealTxn in .pk
+        // while the sidecar tail pages are still dirty in page cache —
+        // readers then map a torn sidecar and decode garbage.
+        //
+        // This test tracks every msync call by mapping mmap address back
+        // to the file descriptor that was passed to mmap, and asserts
+        // that at least one .pc<N> file and the .pci file were msync'd
+        // by the time the seal completed.
+        final java.util.concurrent.ConcurrentHashMap<Long, String> fdToPath = new java.util.concurrent.ConcurrentHashMap<>();
+        final java.util.concurrent.ConcurrentHashMap<Long, Long> addrToFd = new java.util.concurrent.ConcurrentHashMap<>();
+        final java.util.Set<String> syncedFiles = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                if (addr > 0) {
+                    addrToFd.put(addr, fd);
+                }
+                return addr;
+            }
+
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                Long fd = addrToFd.get(addr);
+                if (fd != null) {
+                    String path = fdToPath.get(fd);
+                    if (path != null) {
+                        syncedFiles.add(path);
+                    }
+                }
+                super.msync(addr, len, async);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > 0 && name != null) {
+                    fdToPath.put(fd, Utf8s.stringFromUtf8Bytes(name));
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            // Force every memory-mapped sync to actually flush so msync
+            // gets called by MemoryCMARWImpl.sync() instead of being a no-op.
+            setProperty(io.questdb.PropertyKey.CAIRO_COMMIT_MODE, "sync");
+            execute("""
+                    CREATE TABLE t_sync (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Insert in-order rows into 2 partitions.
+            execute("""
+                    INSERT INTO t_sync VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 3.0)
+                    """);
+            // Now do an O3 insert that lands in partition 1. This forces
+            // sealPostingIndexesForO3Partitions() and produces sealed .pv
+            // and covering sidecar files for partition 1.
+            execute("""
+                    INSERT INTO t_sync VALUES
+                    ('2024-01-01T00:30:00', 'C', 9.0)
+                    """);
+            // Clear the recorded set just before the seal runs by closing
+            // the writer (which triggers the final seal of the last
+            // partition) — but keep the tracking maps live so addresses
+            // recorded earlier still resolve.
+            engine.releaseAllWriters();
+
+            boolean sidecarSynced = false;
+            boolean coverInfoSynced = false;
+            for (String f : syncedFiles) {
+                if (f.contains("sym.pci")) {
+                    coverInfoSynced = true;
+                }
+                if (f.matches(".*sym\\.pc\\d+\\..*")) {
+                    sidecarSynced = true;
+                }
+            }
+            assertTrue("seal must msync the .pci covering info sidecar; synced files: " + syncedFiles,
+                    coverInfoSynced);
+            assertTrue("seal must msync the .pc<N> covering data sidecar(s); synced files: " + syncedFiles,
+                    sidecarSynced);
+        });
+    }
+
+    @Test
     public void testO3MultiPartitionSidecarRebuild() throws Exception {
         // Gap 15/16: O3 affecting multiple partitions. Verifies sidecar rebuild
         // handles multiple O3-affected partitions correctly.
@@ -9836,6 +10040,39 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     null\tnull\tnull\tnull\t0\t0\tfalse\t\t\t
                     42\t100\t3.14\t2.7\t10\t5\ttrue\t2024-01-01T00:00:00.000Z\t2024-01-01T01:00:00.000000Z\tz
                     """, "SELECT i, l, d, f, s, b, bl, dt, ts2, ch FROM t_wide_nulls WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testWideIncludeNullsUuidIpv4Long256() throws Exception {
+        // NULL handling for the fixed-size types not covered by
+        // testWideIncludeNullsAllColumns: UUID (16 bytes, dual Long.MIN_VALUE
+        // sentinel), IPv4 (4 bytes, sentinel = 0), LONG256 (32 bytes, all-zero
+        // sentinel). Verifies the covering path renders these as NULL/empty
+        // and not as the raw sentinel bit pattern.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_wide_nulls_2 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (id, addr, l256),
+                        id UUID,
+                        addr IPv4,
+                        l256 LONG256
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_wide_nulls_2 VALUES
+                    ('2024-01-01T00:00:00', 'A', NULL, NULL, NULL),
+                    ('2024-01-01T01:00:00', 'A', '11111111-1111-1111-1111-111111111111', '10.0.0.1',
+                        cast('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef' as LONG256))
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    id\taddr\tl256
+                    \t\t
+                    11111111-1111-1111-1111-111111111111\t10.0.0.1\t0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+                    """, "SELECT id, addr, l256 FROM t_wide_nulls_2 WHERE sym = 'A'");
         });
     }
 

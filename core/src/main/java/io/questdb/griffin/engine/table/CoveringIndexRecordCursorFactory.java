@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -1319,17 +1320,27 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             addr + (long) count * Double.BYTES, isNull ? Double.NaN : mem.getDouble(r * Double.BYTES));
                     case ColumnType.FLOAT -> Unsafe.putFloat(
                             addr + (long) count * Float.BYTES, isNull ? Float.NaN : mem.getFloat(r * Float.BYTES));
-                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG,
-                         ColumnType.DECIMAL64 -> Unsafe.putLong(addr + (long) count * Long.BYTES,
-                            isNull ? Long.MIN_VALUE : mem.getLong(r * Long.BYTES));
-                    case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL,
-                         ColumnType.DECIMAL32 -> Unsafe.putInt(addr + (long) count * Integer.BYTES,
-                            isNull ? Integer.MIN_VALUE : mem.getInt(r * Integer.BYTES));
-                    case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
+                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.DECIMAL64 ->
+                            Unsafe.putLong(addr + (long) count * Long.BYTES,
+                                    isNull ? Long.MIN_VALUE : mem.getLong(r * Long.BYTES));
+                    case ColumnType.GEOLONG -> Unsafe.putLong(addr + (long) count * Long.BYTES,
+                            isNull ? GeoHashes.NULL : mem.getLong(r * Long.BYTES));
+                    case ColumnType.INT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
+                            Unsafe.putInt(addr + (long) count * Integer.BYTES,
+                                    isNull ? Integer.MIN_VALUE : mem.getInt(r * Integer.BYTES));
+                    case ColumnType.GEOINT -> Unsafe.putInt(addr + (long) count * Integer.BYTES,
+                            isNull ? GeoHashes.INT_NULL : mem.getInt(r * Integer.BYTES));
+                    case ColumnType.IPv4 -> Unsafe.putInt(addr + (long) count * Integer.BYTES,
+                            isNull ? Numbers.IPv4_NULL : mem.getInt(r * Integer.BYTES));
+                    case ColumnType.SHORT, ColumnType.CHAR, ColumnType.DECIMAL16 ->
                             Unsafe.putShort(addr + (long) count * Short.BYTES,
                                     isNull ? (short) 0 : mem.getShort(r * Short.BYTES));
-                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
+                    case ColumnType.GEOSHORT -> Unsafe.putShort(addr + (long) count * Short.BYTES,
+                            isNull ? GeoHashes.SHORT_NULL : mem.getShort(r * Short.BYTES));
+                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.DECIMAL8 ->
                             Unsafe.putByte(addr + count, isNull ? (byte) 0 : mem.getByte(r));
+                    case ColumnType.GEOBYTE -> Unsafe.putByte(addr + count,
+                            isNull ? GeoHashes.BYTE_NULL : mem.getByte(r));
                     case ColumnType.UUID, ColumnType.DECIMAL128 -> {
                         long off128 = (long) count * 16;
                         if (isNull) {

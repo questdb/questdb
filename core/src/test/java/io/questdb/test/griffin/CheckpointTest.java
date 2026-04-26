@@ -1024,6 +1024,96 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsPostingIndex() throws Exception {
+        // Regression: TableSnapshotRestore must produce sealed posting index
+        // generations and covering sidecars after rebuild, parallel to how it
+        // produces bitmap .k/.v files. Without the fix, rebuild calls
+        // indexer.index(...) but never seal()/configureCovering(), so .pv
+        // stays at sealTxn=0 and no .pci/.pc<N> files exist. After restore
+        // the table is queryable through the bitmap-style fallback path but
+        // the covering fast path is silently disabled.
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            // Force the rebuild path during recovery so the fix in
+            // TableSnapshotRestore is exercised.
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+
+            execute("""
+                    CREATE TABLE t_pi (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Two partitions, each with several rows of 'A' so the seal
+            // produces measurable sidecar data.
+            execute("""
+                    INSERT INTO t_pi VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0),
+                    ('2024-01-02T00:00:00', 'A', 4.0),
+                    ('2024-01-02T01:00:00', 'B', 5.0),
+                    ('2024-01-02T02:00:00', 'A', 6.0)
+                    """);
+            engine.releaseAllWriters();
+
+            String expected = """
+                    price
+                    1.0
+                    3.0
+                    4.0
+                    6.0
+                    """;
+            assertSql(expected, "SELECT price FROM t_pi WHERE sym = 'A'");
+
+            execute("checkpoint create");
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // After restore the data must still be queryable.
+            assertSql(expected, "SELECT price FROM t_pi WHERE sym = 'A'");
+
+            // File-level invariant: every partition must have a sealed
+            // value file (sym.pv.<sealTxn> with sealTxn > 0) and a covering
+            // info sidecar (sym.pci...). Rebuild without seal leaves only
+            // the unsealed sym.pv.0.
+            TableToken tableToken = engine.verifyTableName("t_pi");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            for (String partitionPrefix : new String[]{"2024-01-01", "2024-01-02"}) {
+                File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith(partitionPrefix));
+                Assert.assertNotNull("partition dir missing: " + partitionPrefix, partDirs);
+                Assert.assertTrue("partition dir missing: " + partitionPrefix, partDirs.length > 0);
+                File partDir = partDirs[0];
+
+                File[] sealedPv = partDir.listFiles((d, n) -> {
+                    if (!n.startsWith("sym.pv")) return false;
+                    int lastDot = n.lastIndexOf('.');
+                    if (lastDot < 0) return false;
+                    String sealTxn = n.substring(lastDot + 1);
+                    try {
+                        return Long.parseLong(sealTxn) > 0;
+                    } catch (NumberFormatException e) {
+                        return false;
+                    }
+                });
+                Assert.assertNotNull(partitionPrefix + ": sealed .pv file missing", sealedPv);
+                Assert.assertTrue(partitionPrefix + ": sealed .pv file missing (only unsealed sym.pv.0 exists)",
+                        sealedPv.length > 0);
+
+                File[] pci = partDir.listFiles((d, n) -> n.startsWith("sym.pci"));
+                Assert.assertNotNull(partitionPrefix + ": sym.pci sidecar missing", pci);
+                Assert.assertTrue(partitionPrefix + ": sym.pci sidecar missing", pci.length > 0);
+            }
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsBitmapIndexesOnParquetAfterDropColumn() throws Exception {
         // Exercises two bugs in the parquet bitmap index rebuild during
         // checkpoint/backup recovery: (a) getIndexedParquetColumnIndex

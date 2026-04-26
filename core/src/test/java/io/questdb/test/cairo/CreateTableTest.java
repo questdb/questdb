@@ -502,6 +502,47 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableInlinePostingIndexWithIncludeEmptyList() throws Exception {
+        // Regression: SqlParser must reject `INCLUDE ()` with a clear error.
+        // The ALTER TABLE path at SqlCompilerImpl:2381-2383 explicitly throws
+        // "at least one column name expected in INCLUDE"; the CREATE TABLE
+        // path in SqlParser silently consumes ')' as a column name and
+        // produces a confusing downstream error.
+        assertMemoryLeak(() -> assertException(
+                "CREATE TABLE tab (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (), v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                69,
+                "at least one column name expected in INCLUDE"
+        ));
+    }
+
+    @Test
+    public void testCreateTableInlinePostingIndexWithIncludeQuotedIdentifier() throws Exception {
+        // Regression: SqlParser must unquote column names in `INCLUDE (...)`,
+        // mirroring SqlCompilerImpl:2389 which calls unquote(tok). The bug
+        // stores the raw token "v" (with quotes), then
+        // CreateTableOperationImpl.resolveCoveringColumnIndices fails its
+        // name lookup against the unquoted column map and reports a
+        // misleading "INCLUDE column doesn't exist" error.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (
+                        ts TIMESTAMP,
+                        s SYMBOL INDEX TYPE POSTING INCLUDE ("v"),
+                        v DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(colIndex));
+                IntList covering = r.getMetadata().getColumnMetadata(colIndex).getCoveringColumnIndices();
+                assertNotNull("INCLUDE list missing after CREATE TABLE with quoted identifier", covering);
+                assertTrue("quoted INCLUDE column 'v' did not resolve",
+                        covering.contains(r.getMetadata().getColumnIndex("v")));
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableLikeTableAllColumnTypes() throws Exception {
         String[][] columnTypes = new String[][]{
                 {"a", "INT"},

@@ -85,8 +85,28 @@ public class FuzzChangeSymbolCapacityOperation implements FuzzTransactionOperati
                 wApi.getTableToken(),
                 wApi.getMetadata().getTableId()
         );
+        // Spread index choice across BITMAP, NONE, and POSTING variants so
+        // SYMBOL CAPACITY changes exercise both index families. POSTING
+        // rejects a CAPACITY clause, so pass 0 in that case.
+        byte indexType;
+        double pick = tempRnd.nextDouble();
+        if (pick < 0.4) {
+            indexType = IndexType.BITMAP;
+        } else if (pick < 0.55) {
+            indexType = IndexType.POSTING;
+        } else if (pick < 0.65) {
+            indexType = IndexType.POSTING_DELTA;
+        } else if (pick < 0.75) {
+            indexType = IndexType.POSTING_EF;
+        } else {
+            indexType = IndexType.NONE;
+        }
+        // Even for POSTING (where CAPACITY is parser-rejected) the metadata
+        // field must be >= 2 to pass _meta validation. Use a positive value
+        // for both index families.
+        int indexValueBlockCapacity = Math.max(2, Math.abs(tempRnd.nextInt()));
         builder.addColumnToList(columName, 0, ColumnType.SYMBOL, symbolCapacity, tempRnd.nextBoolean(),
-                tempRnd.nextBoolean() ? IndexType.BITMAP : IndexType.NONE, tempRnd.nextInt(), false);
+                indexType, indexValueBlockCapacity, false);
         AlterOperation alterOp = builder.build();
         try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
             alterOp.withSqlStatement(

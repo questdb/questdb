@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.idx.SplitBlockBloomFilter;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -33,21 +34,23 @@ import java.util.HashSet;
 public class SplitBlockBloomFilterTest {
 
     @Test
-    public void testAllocateClearsMemory() {
-        int size = 1024;
-        long addr = SplitBlockBloomFilter.allocate(size);
-        try {
-            int positives = 0;
-            for (int i = 0; i < 10_000; i++) {
-                long hash = SplitBlockBloomFilter.hashKey(i);
-                if (SplitBlockBloomFilter.mightContain(addr, size, hash)) {
-                    positives++;
+    public void testAllocateClearsMemory() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int size = 1024;
+            long addr = SplitBlockBloomFilter.allocate(size);
+            try {
+                int positives = 0;
+                for (int i = 0; i < 10_000; i++) {
+                    long hash = SplitBlockBloomFilter.hashKey(i);
+                    if (SplitBlockBloomFilter.mightContain(addr, size, hash)) {
+                        positives++;
+                    }
                 }
+                Assert.assertEquals("empty filter must report false for all probes", 0, positives);
+            } finally {
+                SplitBlockBloomFilter.free(addr, size);
             }
-            Assert.assertEquals("empty filter must report false for all probes", 0, positives);
-        } finally {
-            SplitBlockBloomFilter.free(addr, size);
-        }
+        });
     }
 
     @Test
@@ -75,30 +78,32 @@ public class SplitBlockBloomFilterTest {
     }
 
     @Test
-    public void testFprWithinBound() {
-        int ndv = 10_000;
-        double targetFpp = 0.01;
-        int size = SplitBlockBloomFilter.computeSize(ndv, targetFpp);
-        long addr = SplitBlockBloomFilter.allocate(size);
-        try {
-            for (int i = 0; i < ndv; i++) {
-                SplitBlockBloomFilter.insert(addr, size, SplitBlockBloomFilter.hashKey(i));
-            }
-            int falsePositives = 0;
-            int probes = 100_000;
-            for (int i = ndv; i < ndv + probes; i++) {
-                if (SplitBlockBloomFilter.mightContain(addr, size, SplitBlockBloomFilter.hashKey(i))) {
-                    falsePositives++;
+    public void testFprWithinBound() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int ndv = 10_000;
+            double targetFpp = 0.01;
+            int size = SplitBlockBloomFilter.computeSize(ndv, targetFpp);
+            long addr = SplitBlockBloomFilter.allocate(size);
+            try {
+                for (int i = 0; i < ndv; i++) {
+                    SplitBlockBloomFilter.insert(addr, size, SplitBlockBloomFilter.hashKey(i));
                 }
+                int falsePositives = 0;
+                int probes = 100_000;
+                for (int i = ndv; i < ndv + probes; i++) {
+                    if (SplitBlockBloomFilter.mightContain(addr, size, SplitBlockBloomFilter.hashKey(i))) {
+                        falsePositives++;
+                    }
+                }
+                double measuredFpr = (double) falsePositives / probes;
+                Assert.assertTrue(
+                        "measured FPR=" + measuredFpr + " exceeds 3x target=" + targetFpp,
+                        measuredFpr < targetFpp * 3.0
+                );
+            } finally {
+                SplitBlockBloomFilter.free(addr, size);
             }
-            double measuredFpr = (double) falsePositives / probes;
-            Assert.assertTrue(
-                    "measured FPR=" + measuredFpr + " exceeds 3x target=" + targetFpp,
-                    measuredFpr < targetFpp * 3.0
-            );
-        } finally {
-            SplitBlockBloomFilter.free(addr, size);
-        }
+        });
     }
 
     @Test
@@ -114,23 +119,25 @@ public class SplitBlockBloomFilterTest {
     }
 
     @Test
-    public void testInsertNoFalseNegatives() {
-        int ndv = 5_000;
-        int size = SplitBlockBloomFilter.computeSize(ndv, 0.01);
-        long addr = SplitBlockBloomFilter.allocate(size);
-        try {
-            for (int i = 0; i < ndv; i++) {
-                SplitBlockBloomFilter.insert(addr, size, SplitBlockBloomFilter.hashKey(i));
+    public void testInsertNoFalseNegatives() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int ndv = 5_000;
+            int size = SplitBlockBloomFilter.computeSize(ndv, 0.01);
+            long addr = SplitBlockBloomFilter.allocate(size);
+            try {
+                for (int i = 0; i < ndv; i++) {
+                    SplitBlockBloomFilter.insert(addr, size, SplitBlockBloomFilter.hashKey(i));
+                }
+                // Every inserted key must be reported as present (no false negatives).
+                for (int i = 0; i < ndv; i++) {
+                    Assert.assertTrue(
+                            "false negative for key=" + i,
+                            SplitBlockBloomFilter.mightContain(addr, size, SplitBlockBloomFilter.hashKey(i))
+                    );
+                }
+            } finally {
+                SplitBlockBloomFilter.free(addr, size);
             }
-            // Every inserted key must be reported as present (no false negatives).
-            for (int i = 0; i < ndv; i++) {
-                Assert.assertTrue(
-                        "false negative for key=" + i,
-                        SplitBlockBloomFilter.mightContain(addr, size, SplitBlockBloomFilter.hashKey(i))
-                );
-            }
-        } finally {
-            SplitBlockBloomFilter.free(addr, size);
-        }
+        });
     }
 }

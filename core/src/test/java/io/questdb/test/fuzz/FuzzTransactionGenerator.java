@@ -564,7 +564,27 @@ public class FuzzTransactionGenerator {
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         int newType = generateNewColumnType(rnd);
-        byte indexType = newType == ColumnType.SYMBOL && rnd.nextDouble() < 0.9 ? IndexType.BITMAP : IndexType.NONE;
+        byte indexType;
+        if (newType == ColumnType.SYMBOL && rnd.nextDouble() < 0.9) {
+            // 50/50 split between BITMAP and POSTING variants so the fuzz
+            // exercises both index families. POSTING further fans out across
+            // the three encoding modes (adaptive, delta, EF) to cover all
+            // bitpack code paths.
+            double pick = rnd.nextDouble();
+            if (pick < 0.5) {
+                indexType = IndexType.BITMAP;
+            } else if (pick < 0.7) {
+                indexType = IndexType.POSTING;
+            } else if (pick < 0.85) {
+                indexType = IndexType.POSTING_DELTA;
+            } else {
+                indexType = IndexType.POSTING_EF;
+            }
+        } else {
+            indexType = IndexType.NONE;
+        }
+        // CAPACITY is parser-rejected for POSTING but the metadata field
+        // still must be >= 2 to pass _meta validation, so always pass 256.
         int indexValueBlockCapacity = 256;
         boolean symbolTableStatic = rnd.nextBoolean();
 
@@ -576,7 +596,7 @@ public class FuzzTransactionGenerator {
                 break;
             }
         }
-        transaction.operationList.add(new FuzzAddColumnOperation(newColName, newType, IndexType.isIndexed(indexType), indexValueBlockCapacity, symbolTableStatic));
+        transaction.operationList.add(new FuzzAddColumnOperation(newColName, newType, indexType, indexValueBlockCapacity, symbolTableStatic));
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);

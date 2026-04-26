@@ -26,7 +26,6 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.sql.RecordMetadata;
 
@@ -119,7 +118,11 @@ public class TableStructMetadataAdapter implements TableStructure {
 
     @Override
     public byte getIndexType(int columnIndex) {
-        return ColumnType.isSymbol(metadata.getColumnType(columnIndex)) ? IndexType.BITMAP : IndexType.NONE;
+        // Delegate to the actual table metadata so non-BITMAP index types
+        // (POSTING and its variants) survive round-trips through this adapter.
+        // Defaulting to BITMAP for any indexed symbol column would erase the
+        // POSTING type from the structure passed to ILP/copy paths.
+        return metadata.getColumnIndexType(columnIndex);
     }
 
     @Override

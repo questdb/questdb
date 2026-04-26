@@ -33,23 +33,27 @@ import io.questdb.std.Rnd;
 
 public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
-    private final boolean indexFlag;
+    private final byte indexType;
     private final int indexValueBlockCapacity;
     private final String newColName;
     private final int newType;
     private final boolean symbolTableStatic;
 
     public FuzzAddColumnOperation(String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
+        this(newColName, newType, indexFlag ? IndexType.BITMAP : IndexType.NONE, indexValueBlockCapacity, symbolTableStatic);
+    }
+
+    public FuzzAddColumnOperation(String newColName, int newType, byte indexType, int indexValueBlockCapacity, boolean symbolTableStatic) {
         this.newColName = newColName;
         this.newType = newType;
-        this.indexFlag = indexFlag;
+        this.indexType = indexType;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
     }
 
     @Override
     public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex, LongList excludedTsIntervals) {
-        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag ? IndexType.BITMAP : IndexType.NONE, indexValueBlockCapacity, false, AllowAllSecurityContext.INSTANCE);
+        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexType, indexValueBlockCapacity, false, AllowAllSecurityContext.INSTANCE);
         return true;
     }
 }

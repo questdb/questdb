@@ -130,7 +130,26 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                 int newColType = changeColumnTypeTo(rnd, columnType, estimatedTotalRowCount);
 
                 int capacity = 1 << (5 + rnd.nextInt(3));
-                byte indexType = ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE) ? IndexType.BITMAP : IndexType.NONE;
+                byte indexType;
+                if (ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE)) {
+                    // Spread index choice across BITMAP and the three POSTING
+                    // encoding variants so column-type changes exercise both
+                    // index families.
+                    double pick = rnd.nextDouble();
+                    if (pick < 0.5) {
+                        indexType = IndexType.BITMAP;
+                    } else if (pick < 0.7) {
+                        indexType = IndexType.POSTING;
+                    } else if (pick < 0.85) {
+                        indexType = IndexType.POSTING_DELTA;
+                    } else {
+                        indexType = IndexType.POSTING_EF;
+                    }
+                } else {
+                    indexType = IndexType.NONE;
+                }
+                // CAPACITY is parser-rejected for POSTING but the metadata
+                // field still requires a value >= 2; reuse the BITMAP default.
                 int indexValueBlockCapacity = (columnType == ColumnType.BOOLEAN) ? 4 : 128;
                 boolean cacheSymbolMap = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
                 FuzzChangeColumnTypeOperation operation = new FuzzChangeColumnTypeOperation(rnd, columnName, newColType, capacity, indexType, indexValueBlockCapacity, cacheSymbolMap);

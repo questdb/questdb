@@ -3010,6 +3010,18 @@ public class PostingIndexWriter implements IndexWriter {
 
                 if (partitionPath.size() > 0) {
                     sealValueMem.sync(false);
+                    // Sync covering sidecars before publishing the new
+                    // sealTxn in .pk so readers do not see a torn sidecar
+                    // tail after a power loss.
+                    for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+                        MemoryMARW mem = sidecarMems.getQuick(c);
+                        if (mem != null && mem.isOpen()) {
+                            mem.sync(false);
+                        }
+                    }
+                    if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+                        sidecarInfoMem.sync(false);
+                    }
                     switchToSealedValueFile(newTxn);
                 }
 
@@ -3250,6 +3262,18 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (coverCount > 0 && sidecarMems.size() > 0) {
             writeSidecarsPerColumn(totalCountsAddr, strideValsAddr);
+            // Sync covering sidecars before publishing the new sealTxn in
+            // .pk so readers do not see a torn sidecar tail after a power
+            // loss.
+            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+                MemoryMARW mem = sidecarMems.getQuick(c);
+                if (mem != null && mem.isOpen()) {
+                    mem.sync(false);
+                }
+            }
+            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+                sidecarInfoMem.sync(false);
+            }
         }
 
         Unsafe.storeFence();
@@ -3603,6 +3627,20 @@ public class PostingIndexWriter implements IndexWriter {
             // sealTxn must be set BEFORE writeMetadataPage so the
             // SEAL_TXN field in the metadata page reflects the new sealed files.
             sealValueMem.sync(false);
+            // Sync covering sidecars before publishing the new sealTxn in
+            // .pk. Without this, power loss can leave .pk pointing at
+            // sealTxn=N+1 while .pc<N>/.pci tail pages are still dirty in
+            // page cache; readers built around the new sealTxn would map a
+            // torn sidecar and decode garbage.
+            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+                MemoryMARW mem = sidecarMems.getQuick(c);
+                if (mem != null && mem.isOpen()) {
+                    mem.sync(false);
+                }
+            }
+            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+                sidecarInfoMem.sync(false);
+            }
             switchToSealedValueFile(newSealTxn);
             Unsafe.storeFence();
             // genCount must publish after writeMetadataPage so a mid-seal failure

@@ -7594,6 +7594,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
                         indexer.configureFollowerAndWriter(path, name, columnNameTxn, getPrimaryColumn(i), columnTop, lastOpenPartitionTs, lastOpenPartitionTxnName);
                         configureCoveringIfNeeded(indexer, i, lastOpenPartitionTs);
+                        // Recover from a crash that left .pk's sealTxn advanced
+                        // past what _txn committed. finishO3Commit runs
+                        // sealPostingIndexesForO3Partitions before
+                        // txWriter.commit, so a crash in that window leaves
+                        // sealed gens with rowids beyond the committed
+                        // transientRowCount. mergeTentativeIntoActiveIfAny
+                        // promotes any tentative slot left by an aborted
+                        // fd-based O3, and rollbackConditionally evicts
+                        // orphan rowids when getMaxValue() >= rowCount. Both
+                        // are cheap no-ops on a clean reopen.
+                        if (IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                            indexer.mergeTentativeIntoActiveIfAny();
+                            indexer.getWriter().rollbackConditionally(rowCount);
+                        }
                     }
                 }
             }

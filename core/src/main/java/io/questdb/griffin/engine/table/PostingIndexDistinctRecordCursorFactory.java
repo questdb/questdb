@@ -224,20 +224,31 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                     return;
                 }
                 cb.statefulThrowExceptionIfTripped();
+                int partitionIndex = frame.getPartitionIndex();
                 IndexReader indexReader = tableReader.getIndexReader(
-                        frame.getPartitionIndex(),
+                        partitionIndex,
                         readerColumnIndex,
                         IndexReader.DIR_FORWARD
                 );
-                int newlyFound = indexReader.collectDistinctKeys(foundKeys);
+                long rowLo = frame.getRowLo();
+                long rowHi = frame.getRowHi();
+                // The metadata-only fast path scans every gen in the partition,
+                // so it is correct only when the frame spans the whole
+                // partition. Interval predicates produce sub-frames; in that
+                // case fall through to the per-key cursor scan, which honors
+                // rowLo/rowHi.
+                boolean fullPartition = rowLo == 0 && rowHi == tableReader.getPartitionRowCount(partitionIndex);
+                int newlyFound = fullPartition ? indexReader.collectDistinctKeys(foundKeys) : -1;
                 if (newlyFound >= 0) {
                     foundCount += newlyFound;
                 } else {
-                    // Bitmap index fallback: per-key cursor check
+                    // Per-key cursor probe: works for any index type and any
+                    // row range. Used by the bitmap path and the posting-index
+                    // path under interval predicates.
                     for (int key = 0; key < symbolCount; key++) {
                         int indexKey = TableUtils.toIndexKey(key);
                         if (!foundKeys.get(indexKey)) {
-                            try (RowCursor c = indexReader.getCursor(indexKey, frame.getRowLo(), frame.getRowHi() - 1)) {
+                            try (RowCursor c = indexReader.getCursor(indexKey, rowLo, rowHi - 1)) {
                                 if (c.hasNext() && !foundKeys.getAndSet(indexKey)) {
                                     foundCount++;
                                 }
@@ -245,7 +256,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                         }
                     }
                     if (!foundKeys.get(0)) {
-                        try (RowCursor c = indexReader.getCursor(0, frame.getRowLo(), frame.getRowHi() - 1)) {
+                        try (RowCursor c = indexReader.getCursor(0, rowLo, rowHi - 1)) {
                             if (c.hasNext() && !foundKeys.getAndSet(0)) {
                                 foundCount++;
                             }

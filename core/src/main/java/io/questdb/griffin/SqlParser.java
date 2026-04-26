@@ -2114,14 +2114,17 @@ public class SqlParser {
                         .put("INCLUDE is only supported for POSTING index type");
             }
             expectTok(lexer, '(');
-            do {
-                tok = tok(lexer, "column name");
-                model.addCoveringColumnName(Chars.toString(tok), lexer.lastTokenPosition());
-                tok = tok(lexer, "',' or ')'");
-            } while (Chars.equals(tok, ','));
-            if (!Chars.equals(tok, ')')) {
-                throw errUnexpected(lexer, tok);
+            tok = tok(lexer, "column name");
+            if (Chars.equals(tok, ')')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "at least one column name expected in INCLUDE");
             }
+            do {
+                model.addCoveringColumnName(GenericLexer.immutableOf(unquote(tok)), lexer.lastTokenPosition());
+                tok = tok(lexer, "',' or ')'");
+                if (Chars.equals(tok, ',')) {
+                    tok = tok(lexer, "column name");
+                }
+            } while (!Chars.equals(tok, ')'));
             model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
             tok = optTok(lexer);
             if (tok == null || isFieldTerm(tok) || isParquetKeyword(tok)) {
