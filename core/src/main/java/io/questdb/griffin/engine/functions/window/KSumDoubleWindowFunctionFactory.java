@@ -326,7 +326,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -390,7 +390,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             double val = value != null ? value.getDouble(0) : Double.NaN;
 
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), val);
         }
 
         @Override
@@ -815,7 +815,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
         }
 
         @Override
@@ -1177,7 +1177,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 
         @Override
@@ -1303,7 +1303,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
         }
 
         @Override
@@ -1362,7 +1362,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 
         @Override
@@ -1427,7 +1427,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 
         @Override

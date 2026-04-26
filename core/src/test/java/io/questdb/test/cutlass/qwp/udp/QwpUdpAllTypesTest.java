@@ -731,6 +731,12 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                     "msg\nhello world\n",
                     "SELECT msg FROM t_str"
             );
+            // stringColumn() must send the VARCHAR wire type (0x0F), so the
+            // auto-created column type must be VARCHAR, not STRING.
+            assertSql(
+                    "column\ttype\nmsg\tVARCHAR\n",
+                    "SELECT \"column\", type FROM table_columns('t_str') WHERE \"column\" = 'msg'"
+            );
         });
     }
 
@@ -914,7 +920,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             long sockaddr = 0;
             try {
                 mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.getUnsafe().copyMemory(encoder.getBuffer().getBufferPtr(), mem, len);
+                Unsafe.copyMemory(encoder.getBuffer().getBufferPtr(), mem, len);
                 sockaddr = Net.sockaddr(LOCALHOST, PORT);
                 int sent = Net.sendTo(fd, mem, len, sockaddr);
                 Assert.assertEquals(len, sent);

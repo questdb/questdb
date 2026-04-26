@@ -5,7 +5,9 @@ use arrow::array::{
     Int64Array, Int8Array, TimestampMicrosecondArray, TimestampMillisecondArray, UInt32Array,
 };
 use common::encode::{
-    generate_nulls, make_primitive_column, read_parquet_batches, write_parquet, ALL_NULL_PATTERNS,
+    assert_single_column_bloom_metadata, generate_nulls, make_primitive_column,
+    read_parquet_batches, write_parquet, write_parquet_with_bloom, ALL_BLOOM_FILTER_STATES,
+    ALL_NULL_PATTERNS,
 };
 use common::types::primitives::*;
 use qdb_core::col_type::{self, ColumnType};
@@ -23,6 +25,7 @@ fn encode_to_parquet<T: PrimitiveType>(
     data: &[T::T],
     row_count: usize,
     encoding: Encoding,
+    bloom_enabled: bool,
 ) -> Vec<u8> {
     let bytes = as_bytes(data);
     let column = make_primitive_column(
@@ -37,7 +40,11 @@ fn encode_to_parquet<T: PrimitiveType>(
         table: "test_table".to_string(),
         columns: vec![column],
     };
-    write_parquet(partition)
+    if bloom_enabled {
+        write_parquet_with_bloom(partition)
+    } else {
+        write_parquet(partition)
+    }
 }
 
 // =============================================================================
@@ -289,34 +296,52 @@ impl EncodeVerify for Uuid {
 // =============================================================================
 
 fn run_encode_test<T: EncodeVerify>(name: &str) {
+    let bloom_states: &[bool] = if matches!(T::TAG, qdb_core::col_type::ColumnTypeTag::Boolean) {
+        &[false]
+    } else {
+        &ALL_BLOOM_FILTER_STATES
+    };
     for &encoding in T::ENCODINGS {
-        if T::HAS_NULL_SENTINEL {
-            for &null_pattern in &ALL_NULL_PATTERNS {
-                let ctx = format!("{name} {encoding:?}/{null_pattern:?}");
-                let nulls = generate_nulls(COUNT, null_pattern);
-                let mut data = Vec::with_capacity(COUNT);
-                let mut expected = Vec::with_capacity(COUNT);
-                let mut val_idx = 0;
-                for null in nulls.iter().take(COUNT) {
-                    if *null {
-                        data.push(T::NULL);
-                        expected.push(None);
-                    } else {
-                        let v = T::generate_non_null_native(val_idx);
-                        val_idx += 1;
-                        data.push(v);
-                        expected.push(Some(v));
+        for &bloom_enabled in bloom_states {
+            if T::HAS_NULL_SENTINEL {
+                for &null_pattern in &ALL_NULL_PATTERNS {
+                    let ctx = format!("{name} {encoding:?}/{null_pattern:?}/bloom={bloom_enabled}");
+                    let nulls = generate_nulls(COUNT, null_pattern);
+                    let mut data = Vec::with_capacity(COUNT);
+                    let mut expected = Vec::with_capacity(COUNT);
+                    let mut val_idx = 0;
+                    for null in nulls.iter().take(COUNT) {
+                        if *null {
+                            data.push(T::NULL);
+                            expected.push(None);
+                        } else {
+                            let v = T::generate_non_null_native(val_idx);
+                            val_idx += 1;
+                            data.push(v);
+                            expected.push(Some(v));
+                        }
                     }
+                    let parquet_bytes =
+                        encode_to_parquet::<T>(&data, COUNT, encoding, bloom_enabled);
+                    if bloom_enabled {
+                        assert_single_column_bloom_metadata(&parquet_bytes, true);
+                    } else {
+                        assert_single_column_bloom_metadata(&parquet_bytes, false);
+                    }
+                    T::verify(&parquet_bytes, &expected, &ctx);
                 }
-                let parquet_bytes = encode_to_parquet::<T>(&data, COUNT, encoding);
+            } else {
+                let ctx = format!("{name} {encoding:?}/bloom={bloom_enabled}");
+                let data: Vec<T::T> = (0..COUNT).map(|i| T::generate_non_null_native(i)).collect();
+                let expected: Vec<Option<T::T>> = data.iter().map(|&v| Some(v)).collect();
+                let parquet_bytes = encode_to_parquet::<T>(&data, COUNT, encoding, bloom_enabled);
+                if bloom_enabled {
+                    assert_single_column_bloom_metadata(&parquet_bytes, true);
+                } else {
+                    assert_single_column_bloom_metadata(&parquet_bytes, false);
+                }
                 T::verify(&parquet_bytes, &expected, &ctx);
             }
-        } else {
-            let ctx = format!("{name} {encoding:?}");
-            let data: Vec<T::T> = (0..COUNT).map(|i| T::generate_non_null_native(i)).collect();
-            let expected: Vec<Option<T::T>> = data.iter().map(|&v| Some(v)).collect();
-            let parquet_bytes = encode_to_parquet::<T>(&data, COUNT, encoding);
-            T::verify(&parquet_bytes, &expected, &ctx);
         }
     }
 }

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
@@ -41,12 +42,15 @@ import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CharSequenceLongHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 /**
  * State management for QWP v1 processing.
@@ -55,27 +59,35 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_READY = 0;
     static final int SEND_STATE_RESUME_ACK = 1;
     static final int SEND_STATE_RESUME_ACK_THEN_ERROR = 3;
+    static final int SEND_STATE_RESUME_DURABLE_ACK = 4;
+    static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR = 5;
     static final int SEND_STATE_RESUME_ERROR = 2;
     private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
+    private final QwpTudCache.CommittedTxnConsumer committedTxnConsumer = this::recordCommittedTable;
     private final LineHttpProcessorConfiguration configuration;
-    // Per-connection accumulated symbol dictionary for delta encoding
+    // Delta symbol dictionary for this connection
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
     private final StringSink deferredErrorMessage = new StringSink();
+    private final CharSequenceLongHashMap durableProgressSnapshot = new CharSequenceLongHashMap();
     private final StringSink error = new StringSink();
+    private final CharSequenceLongHashMap lastDurableSeqTxns = new CharSequenceLongHashMap();
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
+    private final CharSequenceLongHashMap pendingAckSeqTxns = new CharSequenceLongHashMap();
+    private final CharSequenceObjHashMap<String> pendingDurableDirNames = new CharSequenceObjHashMap<>();
+    private final CharSequenceLongHashMap pendingDurableSeqTxns = new CharSequenceLongHashMap();
     private final StringSink rejectMsg = new StringSink();
-    // Per-connection symbol ID cache: clientSymbolId → tableSymbolId
+    private final CharSequenceLongHashMap resumeAckSeqTxns = new CharSequenceLongHashMap();
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
-    // Buffer to accumulate incoming data
+    private final CharSequenceObjHashMap<String> tableDirNames = new CharSequenceObjHashMap<>();
     private long bufferAddress;
     private int bufferPosition;
     private int bufferSize;
     private Status currentStatus = Status.OK;
     private long deferredErrorSequence = -1;
     private byte deferredErrorStatus;
+    private boolean durableAckEnabled;
     private long fd = -1;
-    // WebSocket connection state — persists across ILP messages, reset by onDisconnected()
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
     private long messageSequence;
@@ -83,8 +95,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private int recvBufferLen;
     private long resumeAckSequence = -1;
     private SecurityContext securityContext;
-    // The response sink owns the serialized bytes; sendState tracks what
-    // resumeResponseSend() will flush next and what must follow it.
     private int sendState = SEND_STATE_READY;
     private QwpStreamingDecoder streamingDecoder;
     private QwpTudCache tudCache;
@@ -144,7 +154,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             return;
         }
         ensureCapacity((int) required);
-        Unsafe.getUnsafe().copyMemory(lo, bufferAddress + bufferPosition, len);
+        Unsafe.copyMemory(lo, bufferAddress + bufferPosition, len);
         bufferPosition += len;
     }
 
@@ -167,14 +177,61 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
+    /**
+     * Collects per-table durable progress from the registry. Returns the
+     * snapshot map (owned by this instance) containing only tables whose
+     * durable seqTxn has advanced since the last durable ack was sent.
+     * The caller must consume the map before the next call.
+     * <p>
+     * Only iterates tables with outstanding durable work, not every table
+     * the connection has ever written to.
+     */
+    public CharSequenceLongHashMap collectDurableProgress(DurableAckRegistry registry) {
+        durableProgressSnapshot.clear();
+        if (!durableAckEnabled) {
+            return durableProgressSnapshot;
+        }
+        ObjList<CharSequence> tableNames = pendingDurableDirNames.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            CharSequence tableName = tableNames.getQuick(i);
+            String dirName = pendingDurableDirNames.get(tableName);
+            long uploadedSeqTxn = registry.getDurablyUploadedSeqTxn(dirName);
+            if (uploadedSeqTxn >= 0) {
+                long lastSent = lastDurableSeqTxns.get(tableName);
+                if (uploadedSeqTxn > lastSent) {
+                    durableProgressSnapshot.put(tableName, uploadedSeqTxn);
+                }
+            }
+        }
+        return durableProgressSnapshot;
+    }
+
     public void commit() {
         try {
-            tudCache.commitAll();
+            tudCache.commitAll(committedTxnConsumer);
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
             rejectCommitError(th);
         }
+    }
+
+    public int computeAckPayloadSize() {
+        int size = 9 + 2;
+        ObjList<CharSequence> keys = pendingAckSeqTxns.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            size += 2 + Utf8s.utf8Bytes(keys.getQuick(i)) + 8;
+        }
+        return size;
+    }
+
+    public int computeDurableAckPayloadSize() {
+        int size = 1 + 2;
+        ObjList<CharSequence> keys = durableProgressSnapshot.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            size += 2 + Utf8s.utf8Bytes(keys.getQuick(i)) + 8;
+        }
+        return size;
     }
 
     public CharSequence getDeferredErrorMessage() {
@@ -201,6 +258,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         return lastAckedSequence;
     }
 
+    public CharSequenceLongHashMap getPendingAckSeqTxns() {
+        return pendingAckSeqTxns;
+    }
+
     public int getRecvBufferLen() {
         return recvBufferLen;
     }
@@ -219,6 +280,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
      */
     public boolean hasPendingAck() {
         return sendState == SEND_STATE_READY && highestProcessedSequence > lastAckedSequence;
+    }
+
+    public boolean isDurableAckEnabled() {
+        return durableAckEnabled;
     }
 
     public boolean isOk() {
@@ -248,11 +313,16 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     /**
      * Records that an ACK send was blocked by a full OS buffer.
-     * Transitions from READY to RESUME_ACK state.
+     * Transitions from READY to RESUME_ACK state. Snapshots the
+     * pending per-table seqTxns (already written to the OS buffer)
+     * and clears the map so new commits accumulate fresh.
      */
     public void onAckBlocked(long sequence) {
         sendState = SEND_STATE_RESUME_ACK;
         resumeAckSequence = sequence;
+        resumeAckSeqTxns.clear();
+        resumeAckSeqTxns.putAll(pendingAckSeqTxns);
+        pendingAckSeqTxns.clear();
     }
 
     /**
@@ -260,6 +330,60 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
      */
     public void onAckSent(long sequence) {
         lastAckedSequence = sequence;
+        pendingAckSeqTxns.clear();
+    }
+
+    /**
+     * Records that a durable-ack send was blocked by a full OS buffer.
+     * Transitions from READY to RESUME_DURABLE_ACK. The durableProgressSnapshot
+     * is retained so onDurableAckSent() can update lastDurableSeqTxns on resume.
+     */
+    public void onDurableAckBlocked() {
+        sendState = SEND_STATE_RESUME_DURABLE_ACK;
+    }
+
+    /**
+     * Records a successful durable-ack send. Updates lastDurableSeqTxns
+     * from the current durableProgressSnapshot so that the next
+     * collectDurableProgress() only reports further advances. Removes
+     * tables from the pending set when the durable watermark has caught
+     * up to or exceeded the committed seqTxn.
+     */
+    public void onDurableAckSent() {
+        ObjList<CharSequence> keys = durableProgressSnapshot.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            CharSequence tableName = keys.getQuick(i);
+            long durableSeqTxn = durableProgressSnapshot.get(tableName);
+            if (durableSeqTxn >= pendingDurableSeqTxns.get(tableName)) {
+                // Watermark caught up — prune all per-table tracking so
+                // these maps don't grow one entry per unique table name
+                // for the connection's lifetime. A later commit to the
+                // same table re-populates via recordCommittedTable; the
+                // drop-recreate check there treats an absent entry the
+                // same as a first-sight and still works correctly.
+                int dirIdx = pendingDurableDirNames.keyIndex(tableName);
+                if (dirIdx < 0) {
+                    pendingDurableDirNames.removeAt(dirIdx);
+                }
+                int seqIdx = pendingDurableSeqTxns.keyIndex(tableName);
+                if (seqIdx < 0) {
+                    pendingDurableSeqTxns.removeAt(seqIdx);
+                }
+                int tdnIdx = tableDirNames.keyIndex(tableName);
+                if (tdnIdx < 0) {
+                    tableDirNames.removeAt(tdnIdx);
+                }
+                int ldsIdx = lastDurableSeqTxns.keyIndex(tableName);
+                if (ldsIdx < 0) {
+                    lastDurableSeqTxns.removeAt(ldsIdx);
+                }
+            } else {
+                // Pending still ahead of durable watermark — remember
+                // what we reported so the next collectDurableProgress
+                // only reports further advances.
+                lastDurableSeqTxns.put(tableName, durableSeqTxn);
+            }
+        }
     }
 
     @Override
@@ -278,6 +402,17 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         sendState = SEND_STATE_READY;
         clearDeferredError();
         wsHandshakeSent = false;
+
+        // Drop any durable-ack state; the connection is going away, so even if
+        // uploads complete later, there is nobody left to notify.
+        durableAckEnabled = false;
+        pendingAckSeqTxns.clear();
+        pendingDurableDirNames.clear();
+        pendingDurableSeqTxns.clear();
+        resumeAckSeqTxns.clear();
+        lastDurableSeqTxns.clear();
+        durableProgressSnapshot.clear();
+        tableDirNames.clear();
 
         // Log cache stats before clearing (only if there were any lookups)
         long hits = symbolCache.getCacheHits();
@@ -303,6 +438,11 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
         if (sendState == SEND_STATE_RESUME_ACK || sendState == SEND_STATE_RESUME_ACK_THEN_ERROR) {
             sendState = SEND_STATE_RESUME_ACK_THEN_ERROR;
+        } else if (sendState == SEND_STATE_RESUME_DURABLE_ACK || sendState == SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR) {
+            // A durable-ack send was partially written before the error arose.
+            // Preserve the in-flight frame; the resume handler will finish it and
+            // then send the deferred error.
+            sendState = SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR;
         } else {
             sendState = SEND_STATE_RESUME_ERROR;
         }
@@ -319,6 +459,15 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     public void onResumeAckComplete() {
         lastAckedSequence = resumeAckSequence;
         resumeAckSequence = -1;
+        resumeAckSeqTxns.clear();
+        sendState = SEND_STATE_READY;
+    }
+
+    /**
+     * Completes a resumed durable-ack send that was previously blocked.
+     */
+    public void onResumeDurableAckComplete() {
+        onDurableAckSent();
         sendState = SEND_STATE_READY;
     }
 
@@ -335,7 +484,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         try {
             // Verify the message version matches what was negotiated during the upgrade
             if (bufferPosition >= QwpConstants.HEADER_SIZE) {
-                byte messageVersion = Unsafe.getUnsafe().getByte(bufferAddress + QwpConstants.HEADER_OFFSET_VERSION);
+                byte messageVersion = Unsafe.getByte(bufferAddress + QwpConstants.HEADER_OFFSET_VERSION);
                 if (messageVersion != negotiatedVersion) {
                     rejectMsg.clear();
                     rejectMsg.put("message version ").put(messageVersion)
@@ -407,6 +556,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         LOG.error().$('[').$(fd).$("] rejected [status=").$(status).$(", error=").$safe(errorText).$(']').$();
     }
 
+    public void setDurableAckEnabled(boolean durableAckEnabled) {
+        this.durableAckEnabled = durableAckEnabled;
+    }
+
     public void setHighestProcessedSequence(long highestProcessedSequence) {
         this.highestProcessedSequence = highestProcessedSequence;
     }
@@ -432,6 +585,31 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
                 && highestProcessedSequence - lastAckedSequence >= batchSize;
     }
 
+    /**
+     * Writes per-table seqTxn entries from the given map to native memory.
+     * Format: tableCount(2) + [nameLen(2) + nameUtf8(N) + seqTxn(8)] * count
+     *
+     * @return number of bytes written
+     */
+    public static int writeTableSeqTxnEntries(long addr, CharSequenceLongHashMap entries) {
+        int offset = 0;
+        ObjList<CharSequence> keys = entries.keys();
+        int count = keys.size();
+        Unsafe.getUnsafe().putShort(addr + offset, (short) count);
+        offset += 2;
+        for (int i = 0; i < count; i++) {
+            CharSequence tableName = keys.getQuick(i);
+            int utf8Len = Utf8s.utf8Bytes(tableName);
+            Unsafe.getUnsafe().putShort(addr + offset, (short) utf8Len);
+            offset += 2;
+            Utf8s.strCpyUtf8(tableName, addr + offset, utf8Len);
+            offset += utf8Len;
+            Unsafe.getUnsafe().putLong(addr + offset, entries.get(tableName));
+            offset += 8;
+        }
+        return offset;
+    }
+
     private static Status cairoExceptionStatus(CairoException e) {
         if (e.isAuthorizationError()) {
             return Status.SECURITY_ERROR;
@@ -451,6 +629,25 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             int newSize = Math.max(required, cappedDoubling);
             bufferAddress = Unsafe.realloc(bufferAddress, bufferSize, newSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferSize = newSize;
+        }
+    }
+
+    private void recordCommittedTable(String tableName, String tableDirName, long seqTxn) {
+        if (seqTxn < 0) {
+            return;
+        }
+        pendingAckSeqTxns.put(tableName, seqTxn);
+        if (durableAckEnabled) {
+            String oldDirName = tableDirNames.get(tableName);
+            if (oldDirName != null && !oldDirName.equals(tableDirName)) {
+                // Table was dropped and re-created with a new dir name.
+                // Reset the durable watermark so the new incarnation's
+                // uploads are properly reported.
+                lastDurableSeqTxns.put(tableName, -1L);
+            }
+            tableDirNames.put(tableName, tableDirName);
+            pendingDurableDirNames.put(tableName, tableDirName);
+            pendingDurableSeqTxns.put(tableName, seqTxn);
         }
     }
 

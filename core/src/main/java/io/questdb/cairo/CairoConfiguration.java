@@ -278,6 +278,8 @@ public interface CairoConfiguration {
 
     long getGroupByAllocatorMaxChunkSize();
 
+    int getGroupByBatchSize();
+
     int getGroupByMapCapacity();
 
     int getGroupByMergeShardQueueCapacity();
@@ -495,6 +497,17 @@ public interface CairoConfiguration {
     int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();
+
+    /**
+     * Source of the role / cluster / node identity emitted in the QWP egress
+     * {@code SERVER_INFO} frame. Default is the standalone OSS provider; the
+     * Enterprise configuration overrides this with a provider backed by the
+     * live replication role so clients can route reads to primary vs replica.
+     */
+    @NotNull
+    default io.questdb.cutlass.qwp.codec.QwpServerInfoProvider getQwpServerInfoProvider() {
+        return io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider.INSTANCE;
+    }
 
     @NotNull
     default Rnd getRandom() {

@@ -259,7 +259,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.5;
+        return 0.7;
     }
 
     @Override
@@ -380,6 +380,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getGroupByAllocatorMaxChunkSize() {
         return Numbers.SIZE_1GB;
+    }
+
+    @Override
+    public int getGroupByBatchSize() {
+        return 2048;
     }
 
     @Override

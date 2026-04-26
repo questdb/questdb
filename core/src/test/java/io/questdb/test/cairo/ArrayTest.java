@@ -49,12 +49,12 @@ public class ArrayTest extends AbstractCairoTest {
 
     public static long arrayViewToBinaryFormat(DirectArray array, long addr) {
         long offset = 0;
-        Unsafe.getUnsafe().putByte(addr + offset, (byte) array.getElemType());
+        Unsafe.putByte(addr + offset, (byte) array.getElemType());
         offset++;
-        Unsafe.getUnsafe().putByte(addr + offset, (byte) array.getDimCount());
+        Unsafe.putByte(addr + offset, (byte) array.getDimCount());
         offset++;
         for (int i = 0, dims = array.getDimCount(); i < dims; i++) {
-            Unsafe.getUnsafe().putInt(addr + offset, array.getDimLen(i));
+            Unsafe.putInt(addr + offset, array.getDimLen(i));
             offset += 4;
         }
         int flatSize = array.borrowedFlatView().size();
