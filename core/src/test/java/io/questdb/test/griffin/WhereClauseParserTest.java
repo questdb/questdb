@@ -3580,6 +3580,24 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsOrWithNonTimestampCastRollback() throws Exception {
+        // The OR's lhs (timestamp = 'value') is extractable, but the rhs has a
+        // function that returns DATE, not TIMESTAMP. The structural check in
+        // isOrOfTimestampIn() lets the recursion start; the type check fires
+        // only after lhs has already accumulated an interval and a TRUE
+        // intrinsicValue mark. tryExtractOrTimestampIntrinsics must roll the
+        // partial state back so the OR survives intact as the model filter.
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01' or (-339289)::DATE = timestamp");
+        Assert.assertFalse(m.hasIntervalFilters());
+        Assert.assertNotNull("filter must survive partial OR rollback", m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.intrinsicValue);
+        Assert.assertNotNull("OR.lhs must survive rollback", m.filter.lhs);
+        Assert.assertNotNull("OR.rhs must survive rollback", m.filter.rhs);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.lhs.intrinsicValue);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.rhs.intrinsicValue);
+    }
+
+    @Test
     public void testTimestampEqualsToBindVariable() throws SqlException {
         long day = 24L * 3600 * 1000 * 1000;
         bindVariableService.clear();
