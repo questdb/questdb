@@ -4686,6 +4686,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKSumPartitionedRangeCachedWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sym symbol, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1_000_000::timestamp, 'A', 10.0), " +
+                    "(2_000_000::timestamp, 'B', 100.0), " +
+                    "(2_000_000::timestamp, 'A', 30.0), " +
+                    "(3_000_000::timestamp, 'B', 200.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tsym\tval\tksum_val\tavg_all
+                            1970-01-01T00:00:01.000000Z\tA\t10.0\t10.0\t85.0
+                            1970-01-01T00:00:02.000000Z\tB\t100.0\t100.0\t85.0
+                            1970-01-01T00:00:02.000000Z\tA\t30.0\t40.0\t85.0
+                            1970-01-01T00:00:03.000000Z\tB\t200.0\t300.0\t85.0
+                            """),
+                    "select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testKSumPartitionedRangeFirstRowNull() throws Exception {
         // Test ksum() with partition by range frame where first row in partition is NULL
         // This tests lines 503-507 in KSumOverPartitionRangeFrameFunction
@@ -4809,33 +4836,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
                     "explain select ts, i, val, ksum(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab"
-            );
-        });
-    }
-
-    @Test
-    public void testKSumPartitionedRangeCachedWindow() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sym symbol, val double) timestamp(ts)", timestampType.getTypeName());
-            execute("insert into tab values " +
-                    "(1_000_000::timestamp, 'A', 10.0), " +
-                    "(2_000_000::timestamp, 'B', 100.0), " +
-                    "(2_000_000::timestamp, 'A', 30.0), " +
-                    "(3_000_000::timestamp, 'B', 200.0)");
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\tsym\tval\tksum_val\tavg_all
-                            1970-01-01T00:00:01.000000Z\tA\t10.0\t10.0\t85.0
-                            1970-01-01T00:00:02.000000Z\tB\t100.0\t100.0\t85.0
-                            1970-01-01T00:00:02.000000Z\tA\t30.0\t40.0\t85.0
-                            1970-01-01T00:00:03.000000Z\tB\t200.0\t300.0\t85.0
-                            """),
-                    "select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
             );
         });
     }
@@ -5031,6 +5031,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKSumRangeCachedWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sym symbol, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1_000_000::timestamp, 'A', 10.0), " +
+                    "(2_000_000::timestamp, 'B', 20.0), " +
+                    "(3_000_000::timestamp, 'A', 30.0), " +
+                    "(4_000_000::timestamp, 'B', 40.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tsym\tval\tksum_val\tavg_all
+                            1970-01-01T00:00:01.000000Z\tA\t10.0\t10.0\t25.0
+                            1970-01-01T00:00:02.000000Z\tB\t20.0\t30.0\t25.0
+                            1970-01-01T00:00:03.000000Z\tA\t30.0\t50.0\t25.0
+                            1970-01-01T00:00:04.000000Z\tB\t40.0\t70.0\t25.0
+                            """),
+                    "select ts, sym, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testKSumRangeFrame() throws Exception {
         // Test ksum() over (order by ts range between N preceding and current row) - KSumOverRangeFrameFunction
         assertMemoryLeak(() -> {
@@ -5114,33 +5141,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
                     "explain select ts, val, ksum(val) over (order by ts range between unbounded preceding and 2 second preceding) from tab"
-            );
-        });
-    }
-
-    @Test
-    public void testKSumRangeCachedWindow() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sym symbol, val double) timestamp(ts)", timestampType.getTypeName());
-            execute("insert into tab values " +
-                    "(1_000_000::timestamp, 'A', 10.0), " +
-                    "(2_000_000::timestamp, 'B', 20.0), " +
-                    "(3_000_000::timestamp, 'A', 30.0), " +
-                    "(4_000_000::timestamp, 'B', 40.0)");
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\tsym\tval\tksum_val\tavg_all
-                            1970-01-01T00:00:01.000000Z\tA\t10.0\t10.0\t25.0
-                            1970-01-01T00:00:02.000000Z\tB\t20.0\t30.0\t25.0
-                            1970-01-01T00:00:03.000000Z\tA\t30.0\t50.0\t25.0
-                            1970-01-01T00:00:04.000000Z\tB\t40.0\t70.0\t25.0
-                            """),
-                    "select ts, sym, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
             );
         });
     }
@@ -13682,23 +13682,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         func.contains("first_value") || func.contains("last_value") ?
                                 "Window\n" +
                                         "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME(1)", replace) +
-                                        "    FilterOnValues\n" +
-                                        "        Table-order scan\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='B'\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='A'\n" +
-                                        "        Frame forward scan on: tab\n"
+                                "    FilterOnValues\n" +
+                                "        Table-order scan\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='B'\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='A'\n" +
+                                "        Frame forward scan on: tab\n"
                                 :
                                 "CachedWindow\n" +
                                         "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
-                                        "    FilterOnValues symbolOrder: desc\n" +
-                                        "        Cursor-order scan\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='B'\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='A'\n" +
-                                        "        Frame forward scan on: tab\n"
+                                "    FilterOnValues symbolOrder: desc\n" +
+                                "        Cursor-order scan\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='B'\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='A'\n" +
+                                "        Frame forward scan on: tab\n"
 
                 );
 

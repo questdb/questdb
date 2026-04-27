@@ -127,6 +127,37 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmaCachedWindowAllPass1Variants() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sort_key long, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "('1970-01-01T00:00:01.000000Z'::timestamp, 1, 0, 10.0), " +
+                    "('1970-01-01T00:00:02.000000Z'::timestamp, 2, 1, 100.0), " +
+                    "('1970-01-01T00:00:03.000000Z'::timestamp, 3, 0, 20.0), " +
+                    "('1970-01-01T00:00:04.000000Z'::timestamp, 4, 1, 200.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tsort_key\ti\tval\tema_period\tema_period_part\tema_second\tema_second_part
+                            1970-01-01T00:00:01.000000Z\t1\t0\t10.0\t10.0\t10.0\t10.0\t10.0
+                            1970-01-01T00:00:02.000000Z\t2\t1\t100.0\t55.0\t100.0\t66.89085029457019\t100.0
+                            1970-01-01T00:00:03.000000Z\t3\t0\t20.0\t37.5\t15.0\t37.25017980242024\t18.646647167633873
+                            1970-01-01T00:00:04.000000Z\t4\t1\t200.0\t118.75\t150.0\t140.12768709496163\t186.46647167633873
+                            """),
+                    "select ts, sort_key, i, val, " +
+                            "avg(val, 'period', 3) over (order by sort_key) ema_period, " +
+                            "avg(val, 'period', 3) over (partition by i order by sort_key) ema_period_part, " +
+                            "avg(val, 'second', 1) over (order by sort_key) ema_second, " +
+                            "avg(val, 'second', 1) over (partition by i order by sort_key) ema_second_part " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testEmaEmptyTable() throws Exception {
         // Test avg() with empty table
         assertMemoryLeak(() -> {
@@ -245,16 +276,6 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmaExceptionZeroParameterValue() throws Exception {
-        assertException(
-                "select ts, val, avg(val, 'alpha', 0) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                34,
-                "parameter value must be a positive number"
-        );
-    }
-
-    @Test
     public void testEmaExceptionTauTooSmall() throws Exception {
         // When value < 1, casting to long produces 0, which would make tau = 0
         assertException(
@@ -262,6 +283,16 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                 "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
                 25,
                 "time constant must be at least 1 unit in native timestamp precision"
+        );
+    }
+
+    @Test
+    public void testEmaExceptionZeroParameterValue() throws Exception {
+        assertException(
+                "select ts, val, avg(val, 'alpha', 0) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                34,
+                "parameter value must be a positive number"
         );
     }
 
@@ -463,37 +494,6 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, val, avg(val, 'alpha', 0.5) over (partition by i order by ts) from tab",
                     "ts",
                     false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testEmaCachedWindowAllPass1Variants() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sort_key long, i long, val double) timestamp(ts)", timestampType.getTypeName());
-            execute("insert into tab values " +
-                    "('1970-01-01T00:00:01.000000Z'::timestamp, 1, 0, 10.0), " +
-                    "('1970-01-01T00:00:02.000000Z'::timestamp, 2, 1, 100.0), " +
-                    "('1970-01-01T00:00:03.000000Z'::timestamp, 3, 0, 20.0), " +
-                    "('1970-01-01T00:00:04.000000Z'::timestamp, 4, 1, 200.0)");
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\tsort_key\ti\tval\tema_period\tema_period_part\tema_second\tema_second_part
-                            1970-01-01T00:00:01.000000Z\t1\t0\t10.0\t10.0\t10.0\t10.0\t10.0
-                            1970-01-01T00:00:02.000000Z\t2\t1\t100.0\t55.0\t100.0\t66.89085029457019\t100.0
-                            1970-01-01T00:00:03.000000Z\t3\t0\t20.0\t37.5\t15.0\t37.25017980242024\t18.646647167633873
-                            1970-01-01T00:00:04.000000Z\t4\t1\t200.0\t118.75\t150.0\t140.12768709496163\t186.46647167633873
-                            """),
-                    "select ts, sort_key, i, val, " +
-                            "avg(val, 'period', 3) over (order by sort_key) ema_period, " +
-                            "avg(val, 'period', 3) over (partition by i order by sort_key) ema_period_part, " +
-                            "avg(val, 'second', 1) over (order by sort_key) ema_second, " +
-                            "avg(val, 'second', 1) over (partition by i order by sort_key) ema_second_part " +
-                            "from tab",
-                    "ts",
-                    true,
                     true
             );
         });
