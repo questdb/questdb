@@ -6643,7 +6643,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
 
-                        RecordCursorFactory sortBase = recordCursorFactory;
                         if (recordCursorFactory instanceof VirtualRecordCursorFactory virtualFactory) {
                             IntList materializedColIndices = null;
                             IntList materializedColTypes = null;
@@ -6668,7 +6667,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                             }
                             if (materializedColIndices != null) {
-                                sortBase = new SortKeyMaterializingRecordCursorFactory(
+                                // Reassign recordCursorFactory so the outer catch
+                                // closes the wrapper too; otherwise a throw from
+                                // the comparator compilation below leaks the
+                                // materializing cursor's native buffers
+                                // (NATIVE_TREE_CHAIN).
+                                recordCursorFactory = new SortKeyMaterializingRecordCursorFactory(
                                         configuration,
                                         orderedMetadata,
                                         recordCursorFactory,
@@ -6681,7 +6685,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         return new SortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
-                                sortBase,
+                                recordCursorFactory,
                                 recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                                 listColumnFilterA.copy()
                         );
@@ -6715,7 +6719,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // ImplicitCastException, NumericException etc. are RuntimeException
             // and would bypass a narrower catch, leaking the partially-built factory
             // tree (which can hold native memory via PageFrameSequence).
-            recordCursorFactory.close();
+            Misc.free(recordCursorFactory);
             throw e;
         }
     }

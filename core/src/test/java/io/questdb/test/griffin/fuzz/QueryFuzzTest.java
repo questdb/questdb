@@ -62,6 +62,9 @@ import java.util.List;
  *         JIT-on/off mode (default true). When enabled, every query is run
  *         twice and the materializations are compared; any divergence is
  *         reported as a failure.</li>
+ *     <li>{@code -Dquestdb.fuzz.s0=L -Dquestdb.fuzz.s1=L} - replay a
+ *         specific seed pair, as printed in the run's "random seeds: ..."
+ *         line. Use to reproduce a failure deterministically.</li>
  * </ul>
  */
 public class QueryFuzzTest extends AbstractCairoTest {
@@ -69,7 +72,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
     @Test
     public void testQueryFuzz() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = TestUtils.generateRandom(LOG);
+            Long s0 = Long.getLong("questdb.fuzz.s0");
+            Long s1 = Long.getLong("questdb.fuzz.s1");
+            Rnd rnd = (s0 != null && s1 != null)
+                    ? TestUtils.generateRandom(LOG, s0, s1)
+                    : TestUtils.generateRandom(LOG);
             FuzzConfig config = new FuzzConfig(rnd);
 
             LOG.info().$("fuzz config: tables=").$(config.getNumTables())
@@ -80,7 +87,14 @@ public class QueryFuzzTest extends AbstractCairoTest {
             FuzzTableFactory factory = new FuzzTableFactory(config);
             ObjList<FuzzTable> tables = new ObjList<>();
             for (int i = 0; i < config.getNumTables(); i++) {
-                tables.add(factory.create(rnd, "fuzz_t" + i, QueryFuzzTest::execute));
+                FuzzTable t = factory.create(rnd, "fuzz_t" + i, QueryFuzzTest::execute);
+                tables.add(t);
+                StringBuilder sb = new StringBuilder("fuzz schema ").append(t.getName()).append(":");
+                for (int j = 0, n = t.getColumnCount(); j < n; j++) {
+                    sb.append(' ').append(t.getColumn(j).getName())
+                            .append('=').append(t.getColumn(j).getType().getDdl());
+                }
+                LOG.info().$safe(sb.toString()).$();
             }
             drainWalQueue();
 
@@ -118,13 +132,6 @@ public class QueryFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private static BufferedWriter openDump(String path) throws IOException {
-        if (path == null || path.isEmpty()) {
-            return null;
-        }
-        return new BufferedWriter(new FileWriter(Paths.get(path).toFile(), true));
-    }
-
     private static AssertionError buildFailure(List<QueryRunner.Result> failures) {
         StringBuilder sb = new StringBuilder("query fuzz found ").append(failures.size())
                 .append(" unexpected failure(s):\n");
@@ -137,5 +144,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
         // Chain the first cause so the stack trace still points at real source.
         return new AssertionError(sb.toString(), failures.get(0).getFailure());
+    }
+
+    private static BufferedWriter openDump(String path) throws IOException {
+        if (path == null || path.isEmpty()) {
+            return null;
+        }
+        return new BufferedWriter(new FileWriter(Paths.get(path).toFile(), true));
     }
 }
