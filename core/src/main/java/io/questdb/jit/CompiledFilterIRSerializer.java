@@ -1164,14 +1164,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         long sign = negated ? -1 : 1;
         try {
             switch (typeCode) {
-                case I1_TYPE:
-                    final byte b = (byte) Numbers.parseInt(token);
-                    putOperand(offset, IMM, I1_TYPE, sign * b);
+                case I1_TYPE: {
+                    // Range-check before narrowing; an out-of-range int literal would
+                    // silently fold to the column's low byte and admit rows that the
+                    // scalar Java filter (which widens column to int) correctly rejects.
+                    // Throwing SqlException here makes SqlCodeGenerator fall back to
+                    // the Java filter, which evaluates the comparison at int width.
+                    final long bImm = sign * Numbers.parseInt(token);
+                    if (bImm < Byte.MIN_VALUE || bImm > Byte.MAX_VALUE) {
+                        throw SqlException.position(position)
+                                .put("byte literal out of range: ").put(token);
+                    }
+                    putOperand(offset, IMM, I1_TYPE, bImm);
                     break;
-                case I2_TYPE:
-                    final short s = (short) Numbers.parseInt(token);
-                    putOperand(offset, IMM, I2_TYPE, sign * s);
+                }
+                case I2_TYPE: {
+                    final long sImm = sign * Numbers.parseInt(token);
+                    if (sImm < Short.MIN_VALUE || sImm > Short.MAX_VALUE) {
+                        throw SqlException.position(position)
+                                .put("short literal out of range: ").put(token);
+                    }
+                    putOperand(offset, IMM, I2_TYPE, sImm);
                     break;
+                }
                 case I4_TYPE:
                 case F4_TYPE:
                     try {

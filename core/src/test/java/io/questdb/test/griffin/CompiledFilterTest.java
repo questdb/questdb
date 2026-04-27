@@ -325,6 +325,55 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowIntColumnVsOutOfRangeLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_byte() b," +
+                    " rnd_short() s," +
+                    " timestamp_sequence(0, 1_000_000) ts" +
+                    " FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // SHORT range is [-32768, 32767]; literals outside this range must yield no rows.
+            // Before the fix, JIT silently truncated the literal to the column's width
+            // (e.g. (short) 346548 = 18868), letting matching values through and diverging
+            // from the Java filter. The fix throws SqlException at IR serialization time so
+            // SqlCodeGenerator falls back to the Java filter, which evaluates the comparison
+            // at int width.
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE s > 346548");
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE s <= -897671");
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE s = 100000");
+            // != against an out-of-range literal is true for every row.
+            assertSql("count\n1000\n", "SELECT count(*) FROM x WHERE s != 100000");
+            // BYTE range is [-128, 127].
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE b > 200");
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE b <= -300");
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE b = 1000");
+
+            // Sanity-check the fallback path.
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE s > 346548")) {
+                Assert.assertFalse("JIT must not compile out-of-range short comparison",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE b <= -300")) {
+                Assert.assertFalse("JIT must not compile out-of-range byte comparison",
+                        factory.usesCompiledFilter());
+            }
+
+            // In-range literals must continue to JIT.
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE s > 100")) {
+                Assert.assertTrue("in-range short comparison must JIT",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE b > 100")) {
+                Assert.assertTrue("in-range byte comparison must JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameMaxSize() throws Exception {
         int pageFrameMaxRows = 128;
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, pageFrameMaxRows);
