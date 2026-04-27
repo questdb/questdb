@@ -545,6 +545,35 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmaPeriodCachedWindowPartitionedReorderedReplay() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sort_key long, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1::timestamp, 2, 0, 10.0)");
+            execute("insert into tab values (2::timestamp, 2, 1, 100.0)");
+            execute("insert into tab values (3::timestamp, 1, 0, 20.0)");
+            execute("insert into tab values (4::timestamp, 3, 1, 300.0)");
+            execute("insert into tab values (5::timestamp, 3, 0, 30.0)");
+            execute("insert into tab values (6::timestamp, 1, 1, 200.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tsort_key\ti\tval\tavg
+                            1970-01-01T00:00:00.000001Z\t2\t0\t10.0\t15.0
+                            1970-01-01T00:00:00.000002Z\t2\t1\t100.0\t150.0
+                            1970-01-01T00:00:00.000003Z\t1\t0\t20.0\t20.0
+                            1970-01-01T00:00:00.000004Z\t3\t1\t300.0\t225.0
+                            1970-01-01T00:00:00.000005Z\t3\t0\t30.0\t22.5
+                            1970-01-01T00:00:00.000006Z\t1\t1\t200.0\t200.0
+                            """),
+                    "select ts, sort_key, i, val, avg(val, 'period', 3) over (partition by i order by sort_key) from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testEmaResetBetweenQueries() throws Exception {
         // Test that EMA state resets properly between queries
         assertMemoryLeak(() -> {

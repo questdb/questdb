@@ -556,6 +556,35 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVwemaPeriodCachedWindowPartitionedReorderedReplay() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, sort_key long, sym symbol, price double, volume double) timestamp(ts)");
+            execute("insert into tab values ('2024-01-01T00:00:00.000000Z'::timestamp, 2, 'A', 10.0, 3.0)");
+            execute("insert into tab values ('2024-01-01T00:00:01.000000Z'::timestamp, 2, 'B', 100.0, 1.0)");
+            execute("insert into tab values ('2024-01-01T00:00:02.000000Z'::timestamp, 1, 'A', 20.0, 1.0)");
+            execute("insert into tab values ('2024-01-01T00:00:03.000000Z'::timestamp, 3, 'B', 300.0, 4.0)");
+            execute("insert into tab values ('2024-01-01T00:00:04.000000Z'::timestamp, 3, 'A', 30.0, 1.0)");
+            execute("insert into tab values ('2024-01-01T00:00:05.000000Z'::timestamp, 1, 'B', 200.0, 2.0)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsort_key\tsym\tprice\tvolume\tvwema
+                            2024-01-01T00:00:00.000000Z\t2\tA\t10.0\t3.0\t12.5
+                            2024-01-01T00:00:01.000000Z\t2\tB\t100.0\t1.0\t166.66666666666666
+                            2024-01-01T00:00:02.000000Z\t1\tA\t20.0\t1.0\t20.0
+                            2024-01-01T00:00:03.000000Z\t3\tB\t300.0\t4.0\t263.6363636363636
+                            2024-01-01T00:00:04.000000Z\t3\tA\t30.0\t1.0\t18.333333333333332
+                            2024-01-01T00:00:05.000000Z\t1\tB\t200.0\t2.0\t200.0
+                            """,
+                    "select ts, sort_key, sym, price, volume, avg(price, 'period', 3, volume) over (partition by sym order by sort_key) as vwema from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testVwemaTimeWeightedModeHours() throws Exception {
         // Test 'hour' time unit parsing
         assertQuery(
