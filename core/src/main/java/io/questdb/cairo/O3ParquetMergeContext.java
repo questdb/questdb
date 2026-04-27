@@ -108,7 +108,12 @@ public class O3ParquetMergeContext implements Closeable {
         nullBufs = null;
         parquetColIdToIdx = null;
         parquetColumns = Misc.free(parquetColumns);
-        parquetMetaReader = Misc.free(parquetMetaReader);
+        if (parquetMetaReader != null) {
+            // Reader does not own its mmap; clear() releases the lazily
+            // allocated native handle and zeros all fields.
+            parquetMetaReader.clear();
+            parquetMetaReader = null;
+        }
         partitionDecoder = Misc.free(partitionDecoder);
         partitionDescriptor = Misc.free(partitionDescriptor);
         partitionUpdater = Misc.free(partitionUpdater);
@@ -205,22 +210,16 @@ public class O3ParquetMergeContext implements Closeable {
     }
 
     /**
-     * Releases expensive native resources held by the context while keeping it
-     * pooled for reuse. Call after each processParquetPartition() invocation:
-     * <ul>
-     *   <li>closes the Rust-owned partition updater (file descriptors)</li>
-     *   <li>clears the {@link ParquetMetaFileReader}'s native handle so it no
-     *       longer references the mmap</li>
-     * </ul>
-     * Must run before the caller munmaps {@code parquetMetaAddr}; see the
-     * lifecycle contract on {@link ParquetMetaFileReader}.
+     * Releases the Rust-owned partition updater (file descriptors) held by
+     * the context while keeping it pooled for reuse. Call after each
+     * processParquetPartition() invocation.
+     * <p>
+     * Does not touch {@link ParquetMetaFileReader}: the caller owns the
+     * {@code _pm} mapping and is responsible for the {@code clear() + munmap}
+     * pair on the reader. See the lifecycle contract on
+     * {@link ParquetMetaFileReader}.
      */
     public void releaseResources() {
         partitionUpdater.close();
-        // Release the native handle (which borrows from the _pm mmap) so the
-        // caller can munmap safely. Do NOT clear() — that would wipe addr /
-        // fileSize, making the subsequent unmapAndClear(ff) a no-op and
-        // leaking the mapping.
-        parquetMetaReader.close();
     }
 }

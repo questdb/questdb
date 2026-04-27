@@ -1,4 +1,5 @@
 use crate::allocator::QdbAllocator;
+use crate::ffi_panic_guard::{ffi_guard, ffi_guard_void};
 use crate::parquet_read::{ColumnChunkBuffers, RowGroupBuffers};
 use jni::objects::JClass;
 use jni::JNIEnv;
@@ -12,11 +13,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _class: JClass,
     allocator: *const QdbAllocator,
 ) -> *mut RowGroupBuffers {
-    if allocator.is_null() {
-        return CairoException::new("allocator pointer is null").throw(&mut env);
-    }
-    let allocator = unsafe { &*allocator }.clone();
-    Box::into_raw(Box::new(RowGroupBuffers::new(allocator)))
+    ffi_guard("RowGroupBuffers.create", std::ptr::null_mut(), || {
+        if allocator.is_null() {
+            return CairoException::new("allocator pointer is null").throw(&mut env);
+        }
+        let allocator = unsafe { &*allocator }.clone();
+        Box::into_raw(Box::new(RowGroupBuffers::new(allocator)))
+    })
 }
 
 #[no_mangle]
@@ -26,13 +29,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _class: JClass,
     buffers: *mut RowGroupBuffers,
 ) {
-    if buffers.is_null() {
-        return;
-    }
+    ffi_guard_void("RowGroupBuffers.destroy", || {
+        if buffers.is_null() {
+            return;
+        }
 
-    unsafe {
-        drop(Box::from_raw(buffers));
-    }
+        unsafe {
+            drop(Box::from_raw(buffers));
+        }
+    })
 }
 
 #[no_mangle]
@@ -40,7 +45,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    size_of::<ColumnChunkBuffers>()
+    ffi_guard("RowGroupBuffers.columnChunkBuffersSize", 0, || {
+        size_of::<ColumnChunkBuffers>()
+    })
 }
 
 #[no_mangle]
@@ -48,7 +55,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(RowGroupBuffers, column_bufs_ptr)
+    ffi_guard("RowGroupBuffers.columnBuffersPtrOffset", 0, || {
+        offset_of!(RowGroupBuffers, column_bufs_ptr)
+    })
 }
 
 #[no_mangle]
@@ -56,7 +65,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ColumnChunkBuffers, data_ptr)
+    ffi_guard("RowGroupBuffers.chunkDataPtrOffset", 0, || {
+        offset_of!(ColumnChunkBuffers, data_ptr)
+    })
 }
 
 #[no_mangle]
@@ -64,7 +75,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ColumnChunkBuffers, data_size)
+    ffi_guard("RowGroupBuffers.chunkDataSizeOffset", 0, || {
+        offset_of!(ColumnChunkBuffers, data_size)
+    })
 }
 
 #[no_mangle]
@@ -72,7 +85,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ColumnChunkBuffers, aux_ptr)
+    ffi_guard("RowGroupBuffers.chunkAuxPtrOffset", 0, || {
+        offset_of!(ColumnChunkBuffers, aux_ptr)
+    })
 }
 
 #[no_mangle]
@@ -80,5 +95,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ColumnChunkBuffers, aux_size)
+    ffi_guard("RowGroupBuffers.chunkAuxSizeOffset", 0, || {
+        offset_of!(ColumnChunkBuffers, aux_size)
+    })
 }

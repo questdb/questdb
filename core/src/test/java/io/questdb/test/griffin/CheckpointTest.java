@@ -1163,9 +1163,9 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.clear();
 
-            File pmFile = new File(partDir, "_pm");
-            Assert.assertTrue("failed to delete _pm", pmFile.delete());
-            Assert.assertFalse("_pm still exists after delete", pmFile.exists());
+            File parquetMetaFile = new File(partDir, "_pm");
+            Assert.assertTrue("failed to delete _pm", parquetMetaFile.delete());
+            Assert.assertFalse("_pm still exists after delete", parquetMetaFile.exists());
             Assert.assertTrue("data.parquet missing", new File(partDir, "data.parquet").exists());
 
             try (
@@ -1175,8 +1175,8 @@ public class CheckpointTest extends AbstractCairoTest {
                 restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
             }
 
-            Assert.assertTrue("_pm not regenerated", pmFile.exists());
-            Assert.assertTrue("_pm is empty", pmFile.length() > 0);
+            Assert.assertTrue("_pm not regenerated", parquetMetaFile.exists());
+            Assert.assertTrue("_pm is empty", parquetMetaFile.length() > 0);
             assertSql(expectedCount, "SELECT count() FROM t WHERE sym = 'A'");
         });
     }
@@ -1284,8 +1284,8 @@ public class CheckpointTest extends AbstractCairoTest {
             }
             Assert.assertEquals(committedSize + 4096, dataParquet.length());
 
-            File pmFile = new File(partDir, "_pm");
-            Assert.assertTrue("failed to delete _pm", pmFile.delete());
+            File parquetMetaFile = new File(partDir, "_pm");
+            Assert.assertTrue("failed to delete _pm", parquetMetaFile.delete());
 
             try (
                     Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
@@ -1294,7 +1294,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
             }
 
-            Assert.assertTrue("_pm not regenerated", pmFile.exists());
+            Assert.assertTrue("_pm not regenerated", parquetMetaFile.exists());
             // The row count survives round-trip, which it only does if _pm
             // was built over the committed prefix. If the fix regressed and
             // _pm included the garbage tail, decode would fail or return
@@ -1338,8 +1338,8 @@ public class CheckpointTest extends AbstractCairoTest {
                 raf.setLength(Math.max(0, dataParquet.length() - 32));
             }
 
-            File pmFile = new File(partDir, "_pm");
-            Assert.assertTrue("failed to delete _pm", pmFile.delete());
+            File parquetMetaFile = new File(partDir, "_pm");
+            Assert.assertTrue("failed to delete _pm", parquetMetaFile.delete());
 
             try (
                     Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();

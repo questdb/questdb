@@ -110,7 +110,13 @@ pub fn decode_row_group(
             .codec()
             .map_err(|e| fmt_err!(InvalidType, "invalid codec: {}", e))?;
         let compression: parquet2::compression::Compression = compression.into();
-        let num_values = chunk.num_values as i64;
+        let num_values = i64::try_from(chunk.num_values).map_err(|_| {
+            fmt_err!(
+                InvalidType,
+                "num_values {} out of i64 range",
+                chunk.num_values
+            )
+        })?;
 
         let descriptor = reconstruct_descriptor(
             col_desc.physical_type,
@@ -230,7 +236,13 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             .codec()
             .map_err(|e| fmt_err!(InvalidType, "invalid codec: {}", e))?
             .into();
-        let num_values = chunk.num_values as i64;
+        let num_values = i64::try_from(chunk.num_values).map_err(|_| {
+            fmt_err!(
+                InvalidType,
+                "num_values {} out of i64 range",
+                chunk.num_values
+            )
+        })?;
 
         let descriptor = reconstruct_descriptor(
             col_desc.physical_type,
@@ -299,11 +311,21 @@ pub fn find_row_group_by_timestamp(
         if num_rows == 0 {
             continue;
         }
-        if row_hi + 1 < row_count {
+        // row_hi + 1 may overflow on a crafted call; saturating_add keeps
+        // the comparison meaningful (row_count is bounded by file rows).
+        if row_hi.saturating_add(1) < row_count {
             break;
         }
 
-        if row_lo < row_count + num_rows {
+        let row_count_end = row_count.checked_add(num_rows).ok_or_else(|| {
+            fmt_err!(
+                InvalidType,
+                "row count overflow: {} + {}",
+                row_count,
+                num_rows
+            )
+        })?;
+        if row_lo < row_count_end {
             let chunk = rg_block.column_chunk(ts_col)?;
             let stat_flags = StatFlags(chunk.stat_flags);
 
@@ -314,7 +336,13 @@ pub fn find_row_group_by_timestamp(
             };
 
             if timestamp < min_value {
-                return Ok((2 * rg_idx + 1) as u64);
+                let marker = (rg_idx as u64)
+                    .checked_mul(2)
+                    .and_then(|v| v.checked_add(1))
+                    .ok_or_else(|| {
+                        fmt_err!(InvalidType, "row group marker overflow at rg {}", rg_idx)
+                    })?;
+                return Ok(marker);
             }
 
             let max_value = if stat_flags.has_max_stat() && stat_flags.is_max_inlined() {
@@ -328,13 +356,29 @@ pub fn find_row_group_by_timestamp(
             };
 
             if timestamp < max_value {
-                return Ok(2 * (rg_idx + 1) as u64);
+                let marker = (rg_idx as u64)
+                    .checked_add(1)
+                    .and_then(|v| v.checked_mul(2))
+                    .ok_or_else(|| {
+                        fmt_err!(InvalidType, "row group marker overflow at rg {}", rg_idx)
+                    })?;
+                return Ok(marker);
             }
         }
-        row_count += num_rows;
+        row_count = row_count_end;
     }
 
-    Ok((2 * row_group_count + 1) as u64)
+    let end_marker = (row_group_count as u64)
+        .checked_mul(2)
+        .and_then(|v| v.checked_add(1))
+        .ok_or_else(|| {
+            fmt_err!(
+                InvalidType,
+                "row group end marker overflow for count {}",
+                row_group_count
+            )
+        })?;
+    Ok(end_marker)
 }
 
 #[cfg(test)]
@@ -351,7 +395,7 @@ mod tests {
 
     /// Build a `_pm` file with one Timestamp column and the given row groups.
     /// Each row group entry is `(num_rows, min_ts, max_ts)`.
-    fn build_ts_pm(row_groups: &[(u64, i64, i64)]) -> ParquetResult<(Vec<u8>, u64)> {
+    fn build_ts_parquet_meta(row_groups: &[(u64, i64, i64)]) -> ParquetResult<(Vec<u8>, u64)> {
         let mut writer = ParquetMetaWriter::new();
         writer
             .designated_timestamp(0)
@@ -396,8 +440,8 @@ mod tests {
 
     #[test]
     fn find_ts_before_all_data() -> ParquetResult<()> {
-        let (pm, fo) = build_ts_pm(&[(100, 1000, 2000)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_ts_parquet_meta(&[(100, 1000, 2000)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         // timestamp < min of first row group → 2*0+1 = 1
         let result = find_row_group_by_timestamp(&reader, 500, 0, 100, 0, |_, _, _, _| {
@@ -409,8 +453,8 @@ mod tests {
 
     #[test]
     fn find_ts_within_row_group() -> ParquetResult<()> {
-        let (pm, fo) = build_ts_pm(&[(100, 1000, 2000)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_ts_parquet_meta(&[(100, 1000, 2000)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         // 1000 <= 1500 < 2000 → inside rg 0 → 2*(0+1) = 2
         let result = find_row_group_by_timestamp(&reader, 1500, 0, 100, 0, |_, _, _, _| {
@@ -422,8 +466,8 @@ mod tests {
 
     #[test]
     fn find_ts_after_all_data() -> ParquetResult<()> {
-        let (pm, fo) = build_ts_pm(&[(100, 1000, 2000)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_ts_parquet_meta(&[(100, 1000, 2000)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         // timestamp >= max → end marker: 2*1+1 = 3
         let result = find_row_group_by_timestamp(&reader, 3000, 0, 100, 0, |_, _, _, _| {
@@ -435,8 +479,8 @@ mod tests {
 
     #[test]
     fn find_ts_multiple_row_groups() -> ParquetResult<()> {
-        let (pm, fo) = build_ts_pm(&[(100, 1000, 2000), (100, 2000, 3000), (100, 3000, 4000)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_ts_parquet_meta(&[(100, 1000, 2000), (100, 2000, 3000), (100, 3000, 4000)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         // Before first → 1
         assert_eq!(
@@ -467,11 +511,11 @@ mod tests {
 
     #[test]
     fn find_ts_empty_row_group_skipped() -> ParquetResult<()> {
-        let (pm, fo) = build_ts_pm(&[
+        let (parquet_meta, fo) = build_ts_parquet_meta(&[
             (0, 0, 0), // empty, skipped
             (100, 1000, 2000),
         ])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         // Should skip rg 0 (empty) and find timestamp in rg 1.
         let result =
@@ -507,8 +551,8 @@ mod tests {
         rg.set_column_chunk(0, chunk)?;
         writer.add_row_group(rg);
 
-        let (pm, fo) = writer.finish()?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = writer.finish()?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         // The closure returns min=1000 (row_lo=0, row_hi=1) and max=2000
         // (row_lo=99, row_hi=100).
@@ -533,8 +577,8 @@ mod tests {
 
     #[test]
     fn find_ts_col_out_of_range() {
-        let (pm, fo) = build_ts_pm(&[(100, 1000, 2000)]).unwrap();
-        let reader = ParquetMetaReader::from_file_size(&pm, fo).unwrap();
+        let (parquet_meta, fo) = build_ts_parquet_meta(&[(100, 1000, 2000)]).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo).unwrap();
 
         let err =
             find_row_group_by_timestamp(&reader, 1500, 0, 100, 99, |_, _, _, _| unreachable!());
@@ -551,9 +595,9 @@ mod tests {
 
     #[test]
     fn decode_single_timestamp_column() -> ParquetResult<()> {
-        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_pm(10)?;
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) = build_matched_parquet_meta(10)?;
 
-        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -586,8 +630,8 @@ mod tests {
 
     #[test]
     fn decode_row_group_index_out_of_range() -> ParquetResult<()> {
-        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_pm(10)?;
-        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) = build_matched_parquet_meta(10)?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -615,8 +659,8 @@ mod tests {
 
     #[test]
     fn decode_column_index_out_of_range() -> ParquetResult<()> {
-        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_pm(10)?;
-        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) = build_matched_parquet_meta(10)?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -645,8 +689,8 @@ mod tests {
 
     #[test]
     fn decode_partial_row_range() -> ParquetResult<()> {
-        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_pm(100)?;
-        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) = build_matched_parquet_meta(100)?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -681,8 +725,8 @@ mod tests {
 
     #[test]
     fn decode_filtered_subset() -> ParquetResult<()> {
-        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_pm(100)?;
-        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) = build_matched_parquet_meta(100)?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -720,8 +764,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Create matched parquet file + `_pm` bytes using `convert_from_parquet`.
-    /// Returns `(parquet_bytes, pm_bytes, parquet_meta_file_size)`.
-    fn build_matched_parquet_pm(row_count: usize) -> ParquetResult<(Vec<u8>, Vec<u8>, u64)> {
+    /// Returns `(parquet_bytes, parquet_meta_bytes, parquet_meta_file_size)`.
+    fn build_matched_parquet_meta(row_count: usize) -> ParquetResult<(Vec<u8>, Vec<u8>, u64)> {
         use crate::parquet::qdb_metadata::QdbMeta;
         use crate::parquet::tests::ColumnTypeTagExt;
         use crate::parquet_metadata::convert::convert_from_parquet;
@@ -776,9 +820,9 @@ mod tests {
             })
             .map(|j| QdbMeta::deserialize(j).unwrap());
 
-        let (pm_bytes, parquet_meta_file_size) =
+        let (parquet_meta_bytes, parquet_meta_file_size) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None)?;
 
-        Ok((parquet_buf, pm_bytes, parquet_meta_file_size))
+        Ok((parquet_buf, parquet_meta_bytes, parquet_meta_file_size))
     }
 }

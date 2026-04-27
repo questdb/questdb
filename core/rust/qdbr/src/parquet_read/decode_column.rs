@@ -209,7 +209,15 @@ pub fn decode_column_chunk_with_params(
                 let page_row_count_opt = sliced_page_row_count(&page, col_info.column_type);
 
                 if let Some(page_row_count) = page_row_count_opt {
-                    if row_lo < row_count + page_row_count && row_hi > row_count {
+                    let row_count_end = row_count.checked_add(page_row_count).ok_or_else(|| {
+                        fmt_err!(
+                            InvalidLayout,
+                            "row count overflow: {} + page rows {}",
+                            row_count,
+                            page_row_count
+                        )
+                    })?;
+                    if row_lo < row_count_end && row_hi > row_count {
                         let page = if is_varchar_slice {
                             decompress_varchar_slice_data(
                                 &page,
@@ -235,7 +243,7 @@ pub fn decode_column_chunk_with_params(
                             )
                         })?;
                     }
-                    row_count += page_row_count;
+                    row_count = row_count_end;
                 } else {
                     let page = if is_varchar_slice {
                         decompress_varchar_slice_data(
@@ -248,8 +256,16 @@ pub fn decode_column_chunk_with_params(
                         decompress_sliced_data(&page, decompress_buffer)?
                     };
                     let page_row_count = page_row_count(&page, col_info.column_type)?;
+                    let row_count_end = row_count.checked_add(page_row_count).ok_or_else(|| {
+                        fmt_err!(
+                            InvalidLayout,
+                            "row count overflow: {} + page rows {}",
+                            row_count,
+                            page_row_count
+                        )
+                    })?;
 
-                    if row_lo < row_count + page_row_count && row_hi > row_count {
+                    if row_lo < row_count_end && row_hi > row_count {
                         decode_page(
                             &page,
                             dict.as_ref(),
@@ -265,7 +281,7 @@ pub fn decode_column_chunk_with_params(
                             )
                         })?;
                     }
-                    row_count += page_row_count;
+                    row_count = row_count_end;
                 }
             }
         };
@@ -350,7 +366,14 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                 let page_row_count_opt = sliced_page_row_count(&page, col_info.column_type);
 
                 if let Some(page_row_count) = page_row_count_opt {
-                    let page_end = page_row_start + page_row_count;
+                    let page_end = page_row_start.checked_add(page_row_count).ok_or_else(|| {
+                        fmt_err!(
+                            InvalidLayout,
+                            "page_end overflow: {} + {}",
+                            page_row_start,
+                            page_row_count
+                        )
+                    })?;
                     if page_end <= row_lo {
                         page_row_start = page_end;
                         continue;
@@ -362,13 +385,13 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                     let page_filter_start = filter_idx;
                     if filter_count - filter_idx <= 64 {
                         while filter_idx < filter_count
-                            && (rows_filter[filter_idx] as usize + row_lo) < page_end
+                            && (rows_filter[filter_idx] as usize).saturating_add(row_lo) < page_end
                         {
                             filter_idx += 1;
                         }
                     } else {
                         filter_idx += rows_filter[filter_idx..]
-                            .partition_point(|&r| (r as usize + row_lo) < page_end);
+                            .partition_point(|&r| (r as usize).saturating_add(row_lo) < page_end);
                     }
 
                     if FILL_NULLS {
@@ -440,7 +463,14 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                         varchar_slice_buf_pool,
                     )?;
                     let page_row_count = page_row_count(&page, col_info.column_type)?;
-                    let page_end = page_row_start + page_row_count;
+                    let page_end = page_row_start.checked_add(page_row_count).ok_or_else(|| {
+                        fmt_err!(
+                            InvalidLayout,
+                            "page_end overflow: {} + {}",
+                            page_row_start,
+                            page_row_count
+                        )
+                    })?;
 
                     if page_end <= row_lo {
                         page_row_start = page_end;
@@ -450,13 +480,13 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                     let page_filter_start = filter_idx;
                     if filter_count - filter_idx <= 64 {
                         while filter_idx < filter_count
-                            && (rows_filter[filter_idx] as usize + row_lo) < page_end
+                            && (rows_filter[filter_idx] as usize).saturating_add(row_lo) < page_end
                         {
                             filter_idx += 1;
                         }
                     } else {
                         filter_idx += rows_filter[filter_idx..]
-                            .partition_point(|&r| (r as usize + row_lo) < page_end);
+                            .partition_point(|&r| (r as usize).saturating_add(row_lo) < page_end);
                     }
 
                     if FILL_NULLS {

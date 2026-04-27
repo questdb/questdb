@@ -232,7 +232,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
     @Test
     public void testUpdateWithParquetMetaFd() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "pm_test";
+            final String tableName = "parquet_meta_test";
             final long rows = 10;
             final FilesFacade ff = configuration.getFilesFacade();
             execute("CREATE TABLE " + tableName + " AS (SELECT" +

@@ -25,6 +25,7 @@
 //! JNI binding for generating a `_pm` metadata file from a parquet file.
 
 use crate::allocator::QdbAllocator;
+use crate::ffi_panic_guard::ffi_guard;
 use crate::parquet::error::parquet_meta_err;
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet::io::FromRawFdI32Ext;
@@ -57,26 +58,28 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetad
     parquet_file_size: i64,
     parquet_meta_fd: i32,
 ) -> i64 {
-    if parquet_file_size < 0 {
-        let err = parquet_meta_err!(
-            ParquetMetaErrorKind::InvalidValue,
-            "negative parquet file size: {}",
-            parquet_file_size
-        );
-        return err.into_cairo_exception().throw::<i64>(&mut env);
-    }
-    match generate_parquet_meta(
-        allocator,
-        parquet_fd,
-        parquet_file_size as u64,
-        parquet_meta_fd,
-    ) {
-        Ok(parquet_meta_file_size) => parquet_meta_file_size as i64,
-        Err(mut err) => {
-            err.add_context("error in ParquetMetadataWriter.generate");
-            err.into_cairo_exception().throw::<i64>(&mut env)
+    ffi_guard("ParquetMetadataWriter.generate", -1, || {
+        if parquet_file_size < 0 {
+            let err = parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "negative parquet file size: {}",
+                parquet_file_size
+            );
+            return err.into_cairo_exception().throw::<i64>(&mut env);
         }
-    }
+        match generate_parquet_meta(
+            allocator,
+            parquet_fd,
+            parquet_file_size as u64,
+            parquet_meta_fd,
+        ) {
+            Ok(parquet_meta_file_size) => parquet_meta_file_size as i64,
+            Err(mut err) => {
+                err.add_context("error in ParquetMetadataWriter.generate");
+                err.into_cairo_exception().throw::<i64>(&mut env)
+            }
+        }
+    })
 }
 
 #[allow(clippy::explicit_auto_deref)]
@@ -171,6 +174,14 @@ fn generate_parquet_meta(
         .write_all(&parquet_meta_bytes)
         .map_err(ParquetError::from)
         .context("could not write parquet meta file")?;
+    // Persist the new _pm before the JNI call returns. Java is expected to
+    // fsync as well, but doing it here provides defence in depth: every
+    // caller of this entry point gets a durable _pm regardless of the Java
+    // close ordering.
+    parquet_meta_file
+        .sync_data()
+        .map_err(ParquetError::from)
+        .context("could not fsync parquet meta file")?;
 
     Ok(parquet_meta_file_size)
 }

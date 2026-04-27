@@ -830,7 +830,7 @@ impl ParquetUpdater {
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
 
                 // Full create: rewrite or first-time generation.
-                let (pm_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
+                let (parquet_meta_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
                     &col_infos,
                     &schema_columns,
                     thrift_row_groups,
@@ -842,9 +842,9 @@ impl ParquetUpdater {
                     self.result_unused_bytes,
                     qdb_meta.squash_tracker,
                 )?;
-                self.result_parquet_meta_size = pm_bytes.len() as i64;
+                self.result_parquet_meta_size = parquet_meta_bytes.len() as i64;
                 parquet_meta_file
-                    .write_all(&pm_bytes)
+                    .write_all(&parquet_meta_bytes)
                     .map_err(ParquetError::from)
                     .context("could not write _pm file")?;
             } else {
@@ -888,10 +888,12 @@ impl ParquetUpdater {
 
                 // Patch parquet_meta_file_size in the header — last write for atomicity.
                 // Sequential write syscalls on the same fd are ordered by the
-                // kernel, so the appended row group blocks and new footer are
-                // visible before this header patch. The Java reader issues a
-                // loadFence after reading this field to ensure it observes the
-                // post-append bytes on the mmap side.
+                // kernel, and Linux pread / MAP_SHARED reads observe writes
+                // in this order, so once a reader sees the patched header
+                // size it is guaranteed to see the appended row group blocks
+                // and new footer too. No additional Java-side fence is
+                // required — the previous comment referencing loadFence was
+                // incorrect.
                 parquet_meta_file
                     .seek(SeekFrom::Start(
                         crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF as u64,
@@ -911,6 +913,21 @@ impl ParquetUpdater {
 
     pub fn result_unused_bytes(&self) -> u64 {
         self.result_unused_bytes
+    }
+
+    /// Flushes pending writes for the `_pm` file to durable storage. The
+    /// caller must invoke this before the matching `_txn` commit, otherwise a
+    /// power loss can leave the partition referenced by `_txn` while `_pm`
+    /// is still only in the page cache. Returns `Ok(())` when no `_pm` fd
+    /// was attached.
+    pub fn sync_parquet_meta(&mut self) -> ParquetResult<()> {
+        if let Some(ref mut parquet_meta_file) = self.parquet_meta_fd {
+            parquet_meta_file
+                .sync_data()
+                .map_err(ParquetError::from)
+                .context("could not fsync _pm file")?;
+        }
+        Ok(())
     }
 
     /// Updates the file-level schema when any column's not_null_hint flag disagrees

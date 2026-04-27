@@ -236,11 +236,11 @@ public class Mig940Test extends AbstractCairoTest {
 
                     long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                     try {
-                        ParquetMetaFileReader pmReader = new ParquetMetaFileReader();
-                        pmReader.of(parquetMetaAddr, parquetMetaSize);
-                        pmReader.resolveFooter(Long.MAX_VALUE);
-                        Assert.assertEquals(2, pmReader.getColumnCount());
-                        Assert.assertEquals(1, pmReader.getRowGroupCount());
+                        ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+                        parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
+                        parquetMetaReader.resolveFooter(Long.MAX_VALUE);
+                        Assert.assertEquals(2, parquetMetaReader.getColumnCount());
+                        Assert.assertEquals(1, parquetMetaReader.getRowGroupCount());
                     } finally {
                         ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                     }

@@ -162,6 +162,19 @@ public class PartitionUpdater implements QuietCloseable {
         );
     }
 
+    /**
+     * Flushes pending writes for the {@code _pm} sidecar to durable storage.
+     * The caller MUST invoke this after {@link #updateFileMetadata()} and
+     * before the matching {@code _txn} commit when {@code commitMode} is
+     * {@code SYNC} or {@code ASYNC}; otherwise a power loss can leave the
+     * partition referenced by {@code _txn} while {@code _pm} is still only
+     * in the page cache, making the partition unreadable.
+     */
+    public void syncParquetMeta() {
+        assert ptr != 0;
+        syncParquetMeta(ptr);
+    }
+
     // call to this method will update file metadata
     // MUST be called after all row groups have been updated
     // returns the final file size
@@ -244,6 +257,8 @@ public class PartitionUpdater implements QuietCloseable {
             long colDataLen,
             int timestampIndex
     ) throws CairoException;
+
+    private static native void syncParquetMeta(long impl) throws CairoException;
 
     private static native void insertRowGroup(
             long impl,

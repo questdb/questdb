@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Os;
+
 /**
  * JNI wrapper for the Rust _pm metadata file writer.
  * Builds a _pm file in memory using the real Rust writer implementation.
@@ -61,4 +63,8 @@ public class ParquetMetaFileWriter {
     public static native void setDesignatedTimestamp(long writerPtr, int index);
 
     public static native void setParquetFooter(long writerPtr, long offset, int length);
+
+    static {
+        Os.init();
+    }
 }

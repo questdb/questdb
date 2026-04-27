@@ -49,47 +49,6 @@ import org.junit.Test;
 public class ParquetMetaStalePmTest extends AbstractCairoTest {
 
     @Test
-    public void testO3MergeRegeneratesStalePm() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
-
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE x (a INT, ts TIMESTAMP)
-                    TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO x(a, ts) VALUES
-                    (1, '2020-01-01T00:00:00.000Z'),
-                    (2, '2020-01-01T01:00:00.000Z'),
-                    (3, '2020-01-01T02:00:00.000Z'),
-                    (4, '2020-01-01T03:00:00.000Z')
-                    """);
-            // Insert into next day to make first partition inactive.
-            execute("INSERT INTO x(a, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            corruptPm("x");
-
-            // O3 insert into the parquet partition — triggers O3PartitionJob
-            // which must regenerate the stale _pm before merging.
-            execute("""
-                    INSERT INTO x(a, ts) VALUES
-                    (50, '2020-01-01T00:30:00.000Z')
-                    """);
-            drainWalQueue();
-
-            // Merged data should be accessible.
-            assertSql("count\n5\n",
-                    "SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'");
-        });
-    }
-
-    @Test
     public void testReaderDoesNotCrashOnStalePm() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

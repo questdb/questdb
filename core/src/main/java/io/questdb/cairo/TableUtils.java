@@ -1924,6 +1924,24 @@ public final class TableUtils {
                         Files.toOsFd(parquetMetaFd),
                         squashTracker
                 );
+                // Persist _pm before the caller commits _txn. _txn field 3 will reference
+                // a parquet_meta_file_size that resolves only if the _pm bytes survive a
+                // crash. fsync the parent dir too because _pm is a brand-new file in a
+                // brand-new partition directory.
+                final int commitMode = configuration.getCommitMode();
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.fsync(parquetMetaFd);
+                    if (!Os.isWindows()) {
+                        setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                        // Drop the trailing /_pm component to fsync the partition dir itself.
+                        other.parent();
+                        final long dirFd = TableUtils.openRONoCache(ff, other.$(), LOG);
+                        if (dirFd != -1) {
+                            ff.fsyncAndClose(dirFd);
+                        }
+                    }
+                }
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
                 return ff.length(other.$());
             }
         } catch (CairoException e) {

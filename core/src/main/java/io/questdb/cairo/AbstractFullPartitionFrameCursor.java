@@ -112,7 +112,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
          */
         protected byte format;
         /**
-         * The pm-backed Parquet decoder for table partitions.
+         * The parquet-meta-backed Parquet decoder for table partitions.
          */
         protected ParquetMetaPartitionDecoder parquetMetaDecoder;
         /**

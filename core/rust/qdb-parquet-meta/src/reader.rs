@@ -184,7 +184,14 @@ impl<'a> ParquetMetaReader<'a> {
                     )
                 })?;
             let section_start = FOOTER_FIXED_SIZE + rg_count * ROW_GROUP_ENTRY_SIZE;
-            let section_end = section_start + section_size;
+            let section_end = section_start.checked_add(section_size).ok_or_else(|| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "bloom filter footer section_end overflow: {} + {}",
+                    section_start,
+                    section_size
+                )
+            })?;
             if section_end > footer.crc_offset() {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::Truncated,
@@ -357,8 +364,23 @@ impl<'a> ParquetMetaReader<'a> {
         parquet_meta_file_size: u64,
         target_parquet_size: u64,
     ) -> ParquetMetaResult<(u64, Footer<'a>)> {
+        // Cap MVCC chain walk to bound DoS impact on a crafted _pm. 1M
+        // snapshots is several orders of magnitude beyond any real workload
+        // (one snapshot per legitimate update), and at 64 B per footer
+        // entry this still costs only a few seconds of linear scan.
+        const MAX_CHAIN_STEPS: usize = 1_000_000;
+        let mut steps: usize = 0;
         let mut current_size = parquet_meta_file_size;
         loop {
+            if steps >= MAX_CHAIN_STEPS {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "MVCC chain walk exceeded {} steps looking for parquet size {}",
+                    MAX_CHAIN_STEPS,
+                    target_parquet_size
+                ));
+            }
+            steps += 1;
             if current_size < (FOOTER_TRAILER_SIZE as u64) {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::Truncated,

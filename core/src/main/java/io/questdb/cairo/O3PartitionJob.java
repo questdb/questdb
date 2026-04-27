@@ -32,7 +32,6 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -127,30 +126,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
 
-            // The _pm file _might_ need to be regenerated, we can check that by resolving the footer, if it exists
-            // for a specific parquet file then we're fine.
-            parquetMetaReader.openAndMapRO(ff, path.$());
-            boolean needsRegenerating = parquetMetaReader.getAddr() == 0;
-            try {
-                if (!needsRegenerating) {
-                    needsRegenerating = !parquetMetaReader.resolveFooter(parquetFileSize);
-                }
-            } catch (CairoException ignored) {
-                needsRegenerating = true;
-            }
-            if (needsRegenerating) {
-                parquetMetaReader.unmapAndClear(ff);
-                LOG.info()
-                        .$("regenerating stale _pm [path=").$(path)
-                        .$(", parquetFileSize=").$(parquetFileSize)
-                        .I$();
-                regenerateParquetMetadata(ff, path, partitionDirLen, parquetFileSize, cairoConfiguration);
-                path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-                parquetMetaReader.openAndMapRO(ff, path.$());
-                if (parquetMetaReader.getAddr() == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
-                    throw CairoException.critical(0)
-                            .put("regenerated _pm is missing or invalid [path=").put(path).put(']');
-                }
+            // Open _pm and require its tail to match the current parquet file size.
+            // We do not attempt to repair stale _pm — append-only writes paired with
+            // _txn commit ordering keep them in sync, so a mismatch indicates
+            // corruption, operator file tampering, or a writer bug. Surface as a
+            // hard error rather than silently rewriting on suspect state.
+            ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            if (parquetMetaReader.getAddr() == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
+                throw CairoException.critical(0)
+                        .put("_pm tail does not match current parquet file size [path=").put(path)
+                        .put(", parquetFileSize=").put(parquetFileSize).put(']');
             }
             parquetSize = parquetMetaReader.getParquetFileSize();
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
@@ -164,17 +149,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetSize,
                         MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER
                 );
+                final ParquetMetaFileReader parquetMeta = partitionDecoder.metadata();
+                final int parquetColumnCount = parquetMeta.getColumnCount();
+                final int rowGroupCount = parquetMeta.getRowGroupCount();
+                final long unusedBytes = parquetMeta.getUnusedBytes();
 
                 // Build column-ID mapping between table schema and parquet file.
                 // This allows O3 merge to work after ADD/DROP COLUMN: columns are
                 // matched by their writer index (stored as field_id in parquet),
                 // not by position.
-                final ParquetMetaFileReader parquetMeta = partitionDecoder.metadata();
-                final int parquetColumnCount = parquetMeta.getColumnCount();
                 final int columnCount = tableWriterMetadata.getColumnCount();
                 final IntIntHashMap parquetColIdToIdx = ctx.getParquetColIdToIdx();
                 for (int i = 0; i < parquetColumnCount; i++) {
-                    parquetColIdToIdx.put(parquetMeta.getColumnId(i), i);
+                    parquetColIdToIdx.put(partitionDecoder.metadata().getColumnId(i), i);
                 }
                 final IntList tableToParquetIdx = ctx.getTableToParquetIdx(columnCount);
                 boolean hasMissingColumns = false;
@@ -198,7 +185,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final boolean hasExtraColumns = mappedParquetColumns < parquetColumnCount;
                 final boolean hasSchemaChange = hasMissingColumns || hasExtraColumns;
 
-                final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
                 assert rowGroupCount > 0;
 
                 final int timestampIndex = tableWriterMetadata.getTimestampIndex();
@@ -224,7 +210,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // mode, untouched row groups would retain the old column layout while
                 // the footer schema uses the new target schema, producing a malformed
                 // Parquet file.
-                final long unusedBytes = partitionDecoder.metadata().getUnusedBytes();
                 isRewrite = hasSchemaChange
                         || rowGroupCount == 1
                         || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
@@ -385,8 +370,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         rgMin = partitionDecoder.rowGroupMinTimestamp(rg, timestampParquetIdx);
                         rgMax = partitionDecoder.rowGroupMaxTimestamp(rg, timestampParquetIdx);
                     }
-                    final long rgRowCount = meta.getRowGroupSize(rg);
-                    O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, rgMin, rgMax, rgRowCount);
+                    O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, rgMin, rgMax, meta.getRowGroupSize(rg));
                 }
                 parquetColumns.clear();
 
@@ -424,8 +408,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
                         switch (action.type) {
                             case MERGE -> {
-                                assert partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex) <= Integer.MAX_VALUE;
-                                final int rgSize = (int) partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
+                                final long rgRowCount = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
+                                assert rgRowCount <= Integer.MAX_VALUE;
+                                final int rgSize = (int) rgRowCount;
                                 LOG.info()
                                         .$("parquet merge row group [table=").$(tableWriter.getTableToken())
                                         .$(", partition=").$ts(partitionTimestamp)
@@ -443,6 +428,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         sortedTimestampsAddr,
                                         tableWriter,
                                         partitionDecoder,
+                                        rgSize,
                                         rowGroupBuffers,
                                         action.rowGroupIndex,
                                         timestampIndex,
@@ -467,8 +453,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 metadataPosition += numOutputRGs;
                             }
                             case COPY_ROW_GROUP_SLICE -> {
-                                assert partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex) <= Integer.MAX_VALUE;
-                                final int rgSize = (int) partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
+                                final long copyRgRowCount = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
+                                assert copyRgRowCount <= Integer.MAX_VALUE;
+                                final int rgSize = (int) copyRgRowCount;
                                 // The merge strategy always produces full-range COPY_ROW_GROUP_SLICE
                                 // actions (the entire row group). Partial slicing is not supported.
                                 assert action.rgLo == 0 && action.rgHi == rgSize - 1
@@ -539,6 +526,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 newParquetSize = partitionUpdater.updateFileMetadata();
                 newParquetMetaFileSize = partitionUpdater.getResultParquetMetaFileSize();
+                // Persist _pm before _txn references the new parquet_meta_file_size.
+                // _txn commit follows in TableWriter; without this fsync a power
+                // loss could leave _txn pointing at a footer the page cache loses.
+                if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
+                    partitionUpdater.syncParquetMeta();
+                }
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
                 LOG.info()
                         .$("parquet o3 partition [table=").$(tableWriter.getTableToken())
@@ -607,11 +600,33 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ff.close(fd);
 
                 if (parquetMetaReader.getAddr() != 0) {
+                    final long oldParquetMetaFileSize = parquetMetaReader.getFileSize();
                     path.of(pathToTable);
                     setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
                     fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-                    if (!ff.truncate(fd, parquetMetaReader.getFileSize())) {
+                    // Rust patches parquet_meta_file_size at offset 0 last, so when
+                    // updateFileMetadata throws after that patch the on-disk header
+                    // claims a size larger than the pre-merge file. Restore the old
+                    // size header BEFORE truncating; otherwise readParquetMetaFileSize
+                    // would return the stale larger value and mapRO past EOF would
+                    // SIGBUS the JVM on the next open.
+                    final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_O3);
+                    try {
+                        Unsafe.putLong(tempMem8b, oldParquetMetaFileSize);
+                        if (ff.write(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
+                            LOG.error().$("could not restore _pm header on rollback [path=").$(path)
+                                    .$(", errno=").$(ff.errno()).I$();
+                        }
+                    } finally {
+                        Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_O3);
+                    }
+                    if (!ff.truncate(fd, oldParquetMetaFileSize)) {
                         LOG.error().$("could not truncate _pm file [path=").$(path).I$();
+                    }
+                    // Make the restored header durable so that crash recovery does
+                    // not resurrect the bad post-patch header out of the page cache.
+                    if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
+                        ff.fsync(fd);
                     }
                     ff.close(fd);
                 }
@@ -622,7 +637,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Release the reader's native handle (which borrows from the mmap) before munmap.
             // See ParquetMetaFileReader lifecycle contract.
             ctx.releaseResources();
-            parquetMetaReader.unmapAndClear(ff);
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
             path.of(pathToTable);
             if (isRewrite) {
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn);
@@ -2090,6 +2110,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             ParquetMetaPartitionDecoder decoder,
+            int rowGroupSize,
             RowGroupBuffers rowGroupBuffers,
             int rowGroupIndex,
             int timestampIndex,
@@ -2136,8 +2157,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             activeColCount++;
         }
 
-        assert decoder.metadata().getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
-        final int rowGroupSize = (int) decoder.metadata().getRowGroupSize(rowGroupIndex);
         decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, rowGroupSize);
 
         assert timestampColumnChunkIndex > -1;
@@ -3209,27 +3228,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tableWriter
                 );
             }
-        }
-    }
-
-    private static void regenerateParquetMetadata(FilesFacade ff, Path path, int partitionDirLen, long parquetFileSize, CairoConfiguration configuration) {
-        path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
-        long parquetFd = TableUtils.openRO(ff, path.$(), LOG);
-        try {
-            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            long parquetMetaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
-            try {
-                if (!ff.truncate(parquetMetaFd, 0)) {
-                    throw CairoException.critical(ff.errno()).put("could not truncate _pm [path=").put(path).put(']');
-                }
-                long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-                ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
-            } finally {
-                ff.close(parquetMetaFd);
-            }
-        } finally {
-            ff.close(parquetFd);
-            path.trimTo(partitionDirLen);
         }
     }
 

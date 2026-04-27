@@ -51,6 +51,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -217,7 +218,13 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
         private void closeParquetMeta() {
             if (parquetMetaReader != null) {
-                parquetMetaReader.unmapAndClear(ff);
+                // Capture before clear() zeros the fields so we can munmap.
+                final long parquetMetaAddr = parquetMetaReader.getAddr();
+                final long parquetMetaSize = parquetMetaReader.getFileSize();
+                parquetMetaReader.clear();
+                if (parquetMetaAddr != 0) {
+                    ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
             }
         }
 
@@ -404,7 +411,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 if (parquetMetaReader == null) {
                     parquetMetaReader = new ParquetMetaFileReader();
                 }
-                parquetMetaReader.openAndMapRO(ff, partitionDirPath.$());
+                ParquetMetaFileReader.openAndMapRO(ff, partitionDirPath.$(), parquetMetaReader);
                 if (parquetMetaReader.getAddr() == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
                     throw CairoException.critical(0)
                             .put("could not resolve expected footer");

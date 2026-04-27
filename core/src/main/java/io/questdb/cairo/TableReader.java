@@ -254,7 +254,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txFile);
             freeColumns();
             freeParquetPartitions();
-            Misc.free(parquetMetaReader);
+            parquetMetaReader.clear();
             freeTempMem();
             Misc.free(txnScoreboard);
             Misc.free(path);
@@ -1409,7 +1409,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 .I$();
 
                         final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
@@ -1432,6 +1431,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                         path.trimTo(rootLen);
                         Path nativePath = pathGenNativePartition(partitionIndex, partitionNameTxn);
                         openPartitionColumns(partitionIndex, nativePath, getColumnBase(partitionIndex), partitionSize);
+                        // Assign SIZE last, matching the native branch below. If any of the
+                        // steps above (openParquetMetadata, parquetMem.of, openPartitionColumns)
+                        // throws, the slot stays marked closed (-1) so a retry sees a clean
+                        // state instead of a torn "open" slot with null resources.
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
                         openPartitionCount++;
                     }

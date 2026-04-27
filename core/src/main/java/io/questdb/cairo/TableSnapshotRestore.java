@@ -47,6 +47,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
@@ -562,6 +563,10 @@ public class TableSnapshotRestore implements QuietCloseable {
             try {
                 long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT);
                 long parquetMetaFileSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
+                // Persist the brand-new _pm before snapshot restore returns. Otherwise
+                // a power loss after restore but before the engine syncs would leave
+                // the partition referenced by _txn but with no usable _pm sidecar.
+                ff.fsync(parquetMetaFd);
                 LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", parquetMetaSize=").$(parquetMetaFileSize).I$();
             } catch (Throwable t) {
                 // Remove partially written _pm file so a retry regenerates it.
@@ -571,6 +576,13 @@ public class TableSnapshotRestore implements QuietCloseable {
             } finally {
                 ff.close(parquetFd);
                 ff.close(parquetMetaFd);
+                if (!Os.isWindows()) {
+                    tablePath.trimTo(partitionDirLen).$();
+                    final long dirFd = TableUtils.openRONoCache(ff, tablePath.$(), LOG);
+                    if (dirFd != -1) {
+                        ff.fsyncAndClose(dirFd);
+                    }
+                }
             }
             tablePath.trimTo(plen);
         }
@@ -694,7 +706,6 @@ public class TableSnapshotRestore implements QuietCloseable {
 
         try (
                 Path path = new Path().put(tablePathStr);
-                ParquetMetaPartitionDecoder partitionDecoder = new ParquetMetaPartitionDecoder();
                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 DirectIntList parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT)
         ) {
@@ -711,13 +722,16 @@ public class TableSnapshotRestore implements QuietCloseable {
             long parquetMetaFileSize = 0;
             try {
                 final long parquetSize;
-                try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
-                    parquetMetaAddr = parquetMetaReader.openAndMapRO(ff, path.$());
-                    parquetMetaFileSize = parquetMetaReader.getFileSize();
+                final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+                parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+                parquetMetaFileSize = parquetMetaReader.getFileSize();
+                try {
                     if (parquetMetaAddr == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
                         throw CairoException.critical(0).put("missing or invalid _pm [path=").put(path).put(']');
                     }
                     parquetSize = parquetMetaReader.getParquetFileSize();
+                } finally {
+                    parquetMetaReader.clear();
                 }
 
                 // mmap data.parquet
@@ -729,27 +743,32 @@ public class TableSnapshotRestore implements QuietCloseable {
 
                 long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 try {
-                    partitionDecoder.of(parquetMetaAddr, parquetMetaFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    // Decoder lives strictly inside the parquet/_pm mmaps. Closing it
+                    // before either munmap honors the documented clear-then-munmap
+                    // contract of ParquetMetaPartitionDecoder.
+                    try (ParquetMetaPartitionDecoder partitionDecoder = new ParquetMetaPartitionDecoder()) {
+                        partitionDecoder.of(parquetMetaAddr, parquetMetaFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
-                    // Set path to native partition directory (where index files go)
-                    path.trimTo(pathTableLen);
-                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-                    int partitionPathLen = path.size();
+                        // Set path to native partition directory (where index files go)
+                        path.trimTo(pathTableLen);
+                        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                        int partitionPathLen = path.size();
 
-                    rebuildParquetPartitionIndexes(
-                            ff,
-                            configuration,
-                            path,
-                            partitionPathLen,
-                            partitionDecoder,
-                            rowGroupBuffers,
-                            parquetColumns,
-                            indexWriters,
-                            tableMetadata,
-                            columnVersionReader,
-                            partitionTimestamp,
-                            partitionRowCount
-                    );
+                        rebuildParquetPartitionIndexes(
+                                ff,
+                                configuration,
+                                path,
+                                partitionPathLen,
+                                partitionDecoder,
+                                rowGroupBuffers,
+                                parquetColumns,
+                                indexWriters,
+                                tableMetadata,
+                                columnVersionReader,
+                                partitionTimestamp,
+                                partitionRowCount
+                        );
+                    }
                 } catch (CairoException e) {
                     LOG.error().$("could not rebuild bitmap indexes for parquet partition [path=").$(path)
                             .$(", errno=").$(e.getErrno())

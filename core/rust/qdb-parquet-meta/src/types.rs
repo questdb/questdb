@@ -25,7 +25,7 @@
 //! Constants, enums, and bitfield types for the `_pm` metadata file format.
 
 #[cfg(not(target_endian = "little"))]
-compile_error!("pm metadata format requires a little-endian target");
+compile_error!("parquet meta format requires a little-endian target");
 
 use crate::error::ParquetMetaErrorKind;
 use crate::error::ParquetMetaResult;
@@ -402,7 +402,7 @@ impl From<&[parquet2::encoding::Encoding]> for EncodingMask {
                 Encoding::DeltaByteArray => Self::DELTA_BYTE_ARRAY,
                 Encoding::ByteStreamSplit => Self::BYTE_STREAM_SPLIT,
                 // RLE and BitPacked are used for definition/repetition levels,
-                // not data encodings tracked in the pm mask.
+                // not data encodings tracked in the parquet meta mask.
                 Encoding::Rle | Encoding::BitPacked => 0,
             };
         }

@@ -220,14 +220,19 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
      */
     public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, int memoryTag) {
         destroy();
-        this.parquetMetaAddr = parquetMetaAddr;
-        this.parquetMetaSize = parquetMetaSize;
-        this.parquetAddr = parquetAddr;
-        this.parquetSize = parquetSize;
-        this.allocator = Unsafe.getNativeAllocator(memoryTag);
-        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
-        if (!this.parquetMetaReader.resolveFooter(parquetSize)) {
-            throw CairoException.critical(0).put("could not resolve _pm footer");
+        try {
+            this.parquetMetaAddr = parquetMetaAddr;
+            this.parquetMetaSize = parquetMetaSize;
+            this.parquetAddr = parquetAddr;
+            this.parquetSize = parquetSize;
+            this.allocator = Unsafe.getNativeAllocator(memoryTag);
+            this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
+            if (!this.parquetMetaReader.resolveFooter(parquetSize)) {
+                throw CairoException.critical(0).put("could not resolve _pm footer");
+            }
+        } catch (Throwable t) {
+            destroy();
+            throw t;
         }
     }
 

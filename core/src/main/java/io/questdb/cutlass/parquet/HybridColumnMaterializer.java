@@ -417,9 +417,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 int joinSpaceIdx = cf.getColumnIndex();
                 // The column index in function space includes virtualColumnReservedSlots offset.
                 // For base columns, the index is >= virtualColumnReservedSlots.
-                int pmBaseIdx = priorityMetadata.getBaseColumnIndex(joinSpaceIdx);
-                if (pmBaseIdx >= 0) {
-                    baseColIdx = pmBaseIdx;
+                int priorityMetadataBaseIdx = priorityMetadata.getBaseColumnIndex(joinSpaceIdx);
+                if (priorityMetadataBaseIdx >= 0) {
+                    baseColIdx = priorityMetadataBaseIdx;
                 }
             }
 

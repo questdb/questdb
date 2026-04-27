@@ -41,7 +41,7 @@ pub enum ParquetMetaErrorKind {
     InvalidValue,
     /// Column counts differ between metadata sources.
     SchemaMismatch,
-    /// Parquet-to-pm conversion failed (unsupported feature, stat type, etc.).
+    /// Parquet-to-parquet-meta conversion failed (unsupported feature, stat type, etc.).
     Conversion,
     /// File requires feature flags that this reader does not support.
     UnsupportedFeature { flags: u64 },

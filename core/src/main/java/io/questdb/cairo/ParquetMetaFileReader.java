@@ -26,33 +26,38 @@ package io.questdb.cairo;
 
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
-import io.questdb.log.Log;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 
 /**
- * Zero-allocation reader for _pm parquet metadata files.
- * Reads directly from mmaped memory via Unsafe offset arithmetic.
+ * Zero-allocation flyweight reader for _pm parquet metadata files.
+ * Reads directly from caller-owned mmaped memory via Unsafe offset arithmetic.
  * <p>
  * Implements {@link ParquetRowGroupSkipper} for filter-pushdown row group
  * pruning. The first call to {@link #canSkipRowGroup} lazily allocates a
  * native handle that caches the parsed {@code _pm} header/footer; the
  * handle is reused across all subsequent skip calls and freed by
- * {@link #close()} / {@link #clear()}.
+ * {@link #clear()}.
  * <p>
- * <b>Lifecycle contract:</b> Callers MUST invoke {@link #close()} (or
- * {@link #clear()}) BEFORE munmapping the underlying {@code _pm} file. The
- * native handle borrows from the mmap and reading after unmap is undefined
- * behaviour. {@code ShowPartitionsRecordCursorFactory.closeParquetMeta()}
- * is the reference pattern: clear, then munmap.
+ * <b>Ownership:</b> The reader does NOT own the underlying {@code _pm} mmap.
+ * The caller mmaps the file (typically via {@link #openAndMapRO(FilesFacade, LPSZ, ParquetMetaFileReader)}
+ * or its own {@link io.questdb.cairo.vm.api.MemoryCMR}), passes the address
+ * to {@link #of(long, long)}, and is responsible for the matching
+ * {@link FilesFacade#munmap}. {@link #clear()} only releases the lazily
+ * allocated native handle and zeros the reader's fields; it does NOT
+ * munmap.
+ * <p>
+ * <b>Lifecycle contract:</b> Callers MUST invoke {@link #clear()} BEFORE
+ * munmapping the underlying {@code _pm} file. The native handle borrows
+ * from the mmap and reading after unmap is undefined behaviour.
+ * {@code ShowPartitionsRecordCursorFactory.closeParquetMeta()} is the
+ * reference pattern: clear, then munmap.
  * <p>
  * <b>Thread safety:</b> Not thread-safe per instance. The lazy native
  * handle initialization is racy if two threads enter {@link #canSkipRowGroup}
@@ -91,11 +96,11 @@ import io.questdb.std.str.Utf8s;
  * writer might modify the file simultaneously. Instead, read the committed {@code PARQUET_META_FILE_SIZE} via
  * {@link #readParquetMetaFileSize(FilesFacade, LPSZ)}, map that many bytes, then call {@link #of(long, long)} passing the same size
  * as {@code parquetMetaFileSize}. The filesystem size may include bytes from an in-progress, unpublished append and is not a valid commit
- * boundary — only {@code PARQUET_META_FILE_SIZE} is. You may also use {@link #openAndMapRO(FilesFacade, LPSZ)} to automatically open and
- * map the file as expected. Note that after calling it, you need to call {@link #resolveFooter(long)} before accessing any fields other
- * than {@code addr} or {@code fileSize}.
+ * boundary -- only {@code PARQUET_META_FILE_SIZE} is. You may also use {@link #openAndMapRO(FilesFacade, LPSZ, ParquetMetaFileReader)} to
+ * open and map the file in one call. Note that after calling it, you need to call {@link #resolveFooter(long)} before accessing any
+ * fields other than {@code addr} or {@code fileSize}.
  */
-public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietCloseable {
+public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
     public static final int HEADER_FIXED_SIZE = 32;
     // Header offsets (layout: parquet_meta_file_size(8) + feature_flags(8) + dts(4) + sorting(4) + col_count(4) + reserved(4))
@@ -141,19 +146,92 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int STAT_FLAG_MIN_PRESENT = 1;
     private final DirectUtf8String flyweightColName = new DirectUtf8String();
     private long addr;
+    // CRC32 verification result for the currently bound _pm mapping. Set
+    // true after a successful verifyChecksum0 call so subsequent opens
+    // (resolveFooter and onward) skip re-verification. Reset by clear().
+    private boolean checksumVerified;
     private int columnCount;
     private long fileSize;
     private long footerAddr;
     // Lazily allocated native handle to a JniParquetMetaReader. Created on
-    // the first canSkipRowGroup call and freed by clear()/close().
+    // the first canSkipRowGroup call and freed by clear().
     private long nativeReaderPtr;
     private int rowGroupCount;
+
+    /**
+     * Single-open helper: opens the {@code _pm} file once, reads the
+     * committed {@code parquet_meta_file_size} at offset 0, mmaps the file
+     * at that size, calls {@code reader.of(addr, size)}, and closes the fd
+     * before returning. The mmap survives the fd close. This is a one-open
+     * replacement for the {@link #readParquetMetaFileSize} plus
+     * {@link TableUtils#mapRO} plus {@link #of} sequence, used on the
+     * partition-scan path where the per-partition syscall count matters.
+     * <p>
+     * Returns the mmap address, or {@code 0} if the file is missing,
+     * unreadable, or holds an implausible {@code parquet_meta_file_size}
+     * (in which case the reader is left cleared via {@link #clear()}).
+     * <p>
+     * The caller owns the returned mapping. After use:
+     * <ul>
+     *   <li>capture {@link #getFileSize()} BEFORE calling {@link #clear()}
+     *       (clear zeros the field);</li>
+     *   <li>call {@link #clear()} to release the native handle and zero the
+     *       reader's fields;</li>
+     *   <li>call {@code ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER)}
+     *       to release the mapping. {@code clear()} must run before munmap;
+     *       the native handle borrows from the mapping.</li>
+     * </ul>
+     *
+     * @param ff     files facade
+     * @param path   path to the {@code _pm} file
+     * @param reader reader to bind the mapping to
+     * @return the mapping address, or {@code 0} if the file is missing/invalid
+     * @throws CairoException if the header claims a size larger than the file
+     */
+    public static long openAndMapRO(FilesFacade ff, LPSZ path, ParquetMetaFileReader reader) {
+        // The reader is left cleared on failure (no addr, no fileSize, no
+        // native handle), so the caller can use the return value alone as
+        // the success/failure signal without inspecting reader state.
+        reader.clear();
+        final long fd = ff.openRO(path);
+        if (fd < 0) {
+            return 0;
+        }
+        try {
+            final long parquetMetaFileSize = ff.readNonNegativeLong(fd, 0);
+            if (parquetMetaFileSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE) {
+                return 0;
+            }
+            // Reject header-claimed sizes that exceed the actual file length.
+            // Mapping more bytes than the file holds and reading past EOF would
+            // SIGBUS the JVM; corruption / partial write / stale-header bugs
+            // must surface as a clear error rather than crash the process.
+            final long actualFileSize = ff.length(fd);
+            if (parquetMetaFileSize > actualFileSize) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm parquet_meta_file_size exceeds file length [parquetMetaFileSize=")
+                        .put(parquetMetaFileSize)
+                        .put(", actualFileSize=").put(actualFileSize)
+                        .put(", path=").put(path).put(']');
+            }
+            final long addr = TableUtils.mapRO(ff, fd, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            try {
+                reader.of(addr, parquetMetaFileSize);
+            } catch (Throwable t) {
+                ff.munmap(addr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                throw t;
+            }
+            return addr;
+        } finally {
+            ff.close(fd);
+        }
+    }
 
     /**
      * Reads the committed {@code PARQUET_META_FILE_SIZE} field from a {@code _pm} file
      * without mapping the whole file. Callers that manage their own mapping
      * (e.g. via {@link io.questdb.cairo.vm.api.MemoryCMR}) use this to size the
-     * full mapping. Never calls {@code ff.length()} — the filesystem size is
+     * full mapping. Never calls {@code ff.length()} -- the filesystem size is
      * not a valid commit boundary.
      * <p>
      * Returns {@code -1} if the file is missing, unreadable, or the header
@@ -163,11 +241,16 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      * "regenerate" or "missing" signal with a plain {@code <= 0} check
      * instead of catching exceptions. Propagates unrecoverable errors
      * (e.g. native allocation failure) as-is.
+     * <p>
+     * Throws {@link CairoException} when the header-claimed size exceeds the
+     * actual file length: callers would otherwise mmap past EOF and SIGBUS
+     * the JVM on the first read of the trailing region.
      *
      * @param ff   files facade
      * @param path path to the {@code _pm} file
      * @return the committed {@code parquet_meta_file_size} stored in the header, or
      * {@code -1} if the file cannot be opened or yields an invalid value
+     * @throws CairoException if the header claims a size larger than the file
      */
     public static long readParquetMetaFileSize(FilesFacade ff, LPSZ path) {
         final long fd = ff.openRO(path);
@@ -178,6 +261,18 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
             final long parquetMetaFileSize = ff.readNonNegativeLong(fd, 0);
             if (parquetMetaFileSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE) {
                 return -1;
+            }
+            // Reject header-claimed sizes that exceed the actual file length.
+            // Mapping more bytes than the file holds and reading past EOF would
+            // SIGBUS the JVM; corruption / partial write / stale-header bugs
+            // must surface as a clear error rather than crash the process.
+            final long actualFileSize = ff.length(fd);
+            if (parquetMetaFileSize > actualFileSize) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm parquet_meta_file_size exceeds file length [parquetMetaFileSize=")
+                        .put(parquetMetaFileSize)
+                        .put(", actualFileSize=").put(actualFileSize)
+                        .put(", path=").put(path).put(']');
             }
             return parquetMetaFileSize;
         } finally {
@@ -211,21 +306,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.footerAddr = 0;
         this.columnCount = 0;
         this.rowGroupCount = 0;
-    }
-
-    /**
-     * Releases the native reader handle but preserves in-memory state
-     * (addr, fileSize, column/row group counts). This allows long-lived
-     * owners to defensively close without breaking subsequent accessor
-     * reads or canSkipRowGroup calls (which lazily reallocate the handle).
-     * Use {@link #clear()} for a full reset.
-     */
-    @Override
-    public void close() {
-        if (nativeReaderPtr != 0) {
-            destroyNativeReader(nativeReaderPtr);
-            nativeReaderPtr = 0;
-        }
+        this.checksumVerified = false;
     }
 
     public long getAddr() {
@@ -310,7 +391,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      * Returns the native reader handle, allocating it lazily on first call.
      * The handle caches the parsed {@code _pm} header / footer / feature-flag
      * layout so repeated JNI calls (filter pruning AND row-group decode) avoid
-     * reparsing. Freed by {@link #clear()} / {@link #close()}.
+     * reparsing. Freed by {@link #clear()}.
      */
     public long getOrCreateNativeReaderPtr() {
         if (nativeReaderPtr == 0) {
@@ -451,6 +532,15 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      */
     public void of(long addr, long parquetMetaFileSize) {
         clear();
+        // Reject a null mapping address up front. Subsequent Unsafe reads
+        // would dereference offsets from a null base pointer (e.g.
+        // resolveFooter reads addr + currentSize - 4) and SIGSEGV the
+        // JVM. Callers that pass addr == 0 typically forgot to check
+        // openAndMapRO's return code.
+        if (addr == 0) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm mapping address [addr=0]");
+        }
         if (parquetMetaFileSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE) {
             throw CairoException.critical(0)
                     .put("invalid _pm parquet_meta_file_size [parquetMetaFileSize=").put(parquetMetaFileSize).put(']');
@@ -465,7 +555,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      * underlying mmap is NOT copied — this reader borrows the same
      * {@code addr} and must not outlive the mapping {@code other} points
      * at. The native handle is not shared; it will be lazily allocated on
-     * first use (freed independently by {@link #close()} / {@link #clear()}).
+     * first use (freed independently by {@link #clear()}).
      *
      * @param other a reader whose state has already been resolved via
      *              {@link #resolveFooter(long)}
@@ -477,54 +567,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.footerAddr = other.footerAddr;
         this.columnCount = other.columnCount;
         this.rowGroupCount = other.rowGroupCount;
-    }
-
-    /**
-     * Opens the {@code _pm} file once, reads the committed
-     * {@code parquet_meta_file_size} at offset 0, maps the file at that size,
-     * and initializes this reader over the mapping via {@link #of(long, long)}.
-     * Closes the fd before returning; the mmap survives the fd close. This is
-     * a one-open replacement for the {@link #readParquetMetaFileSize} plus
-     * {@link TableUtils#mapRO} plus {@link #of} sequence, used on the
-     * partition-scan path where the per-partition syscall count matters.
-     * <p>
-     * On a missing or unreadable file, or an implausible
-     * {@code parquet_meta_file_size}, returns {@code 0} and leaves this reader
-     * uninitialized ({@link #isOpen()} stays {@code false}).
-     * <p>
-     * After a successful call the caller owns the mapping: {@link #getAddr()}
-     * and {@link #getFileSize()} return the address and size for a later
-     * {@code ff.munmap(addr, size, memoryTag)} with the same {@code memoryTag}
-     * passed here. Munmap must happen AFTER {@link #clear()} / {@link #close()}
-     * since this reader borrows from the mapping.
-     *
-     * @param ff   files facade
-     * @param path path to the {@code _pm} file
-     * @return the mapping address, or {@code 0} if the file is missing/invalid
-     */
-    public long openAndMapRO(FilesFacade ff, LPSZ path) {
-        final long fd = ff.openRO(path);
-        if (fd < 0) {
-            clear();
-            return 0;
-        }
-        try {
-            final long parquetMetaFileSize = ff.readNonNegativeLong(fd, 0);
-            if (parquetMetaFileSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE) {
-                clear();
-                return 0;
-            }
-            final long addr = TableUtils.mapRO(ff, fd, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            try {
-                of(addr, parquetMetaFileSize);
-            } catch (Throwable t) {
-                ff.munmap(addr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                throw t;
-            }
-            return addr;
-        } finally {
-            ff.close(fd);
-        }
+        this.checksumVerified = other.checksumVerified;
     }
 
     /**
@@ -570,6 +613,18 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         final long addr = this.addr;
         final long parquetMetaFileSize = this.fileSize;
 
+        // Verify the CRC32 once per open before trusting any byte of the
+        // file. Single-bit disk rot or RAM corruption otherwise passes the
+        // structural bound checks and is served as authoritative metadata
+        // steering SQL row-group pruning and cold-storage byte-range reads.
+        // The check parses the file once; the cached flag stops re-verifying
+        // on subsequent canSkipRowGroup calls. verifyChecksum0 throws
+        // CairoException on mismatch, null pointer, or unparseable file.
+        if (!checksumVerified) {
+            verifyChecksum0(addr, parquetMetaFileSize);
+            checksumVerified = true;
+        }
+
         // Walk the MVCC chain. Each step: read the trailer at
         // `currentSize - 4` to get the footer length, derive the footer
         // offset, then check the parquet file size. If it doesn't match,
@@ -588,7 +643,16 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
             currentFooterLength = Integer.toUnsignedLong(
                     Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
             currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
-            if (currentOffset < HEADER_FIXED_SIZE || currentOffset >= currentSize) {
+            // Bound checks use currentSize (the snapshot's committed size)
+            // not parquetMetaFileSize (the mapping size). Intermediate
+            // footers in the MVCC chain only own bytes up to their own
+            // currentSize; using the mapping size would let a corrupted
+            // footer steer reads into a later snapshot's bytes. The
+            // FOOTER_FIXED_SIZE guard ensures the subsequent fixed-field
+            // reads (parquet footer offset/length, prev_size, footer
+            // feature flags) all fall within currentSize.
+            if (currentOffset < HEADER_FIXED_SIZE
+                    || currentOffset + FOOTER_FIXED_SIZE > currentSize) {
                 throw CairoException.critical(0)
                         .put("invalid _pm footer offset [footerLength=").put(currentFooterLength)
                         .put(", parquetMetaFileSize=").put(currentSize)
@@ -620,22 +684,59 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         // assigned at the very end so that a validation failure leaves
         // isOpen()==false, preventing double-munmap in callers that
         // check isOpen() in catch blocks.
+        //
+        // Read columnCount / rowGroupCount as u32 (writer emits Rust u32).
+        // A signed-int interpretation lets bit-31-set values become negative,
+        // making the (long) columnCount * COLUMN_DESCRIPTOR_SIZE arithmetic
+        // negative and silently passing the headerEndOffset bound check;
+        // downstream reads would then land at attacker-controlled offsets.
+        // Reject values that overflow Java int because they cannot be stored
+        // in this reader's int fields and would overflow downstream sizing
+        // arithmetic.
         long footerAddr = addr + currentOffset;
-        int columnCount = Unsafe.getInt(addr + HEADER_COLUMN_COUNT_OFF);
-        long headerEndOffset = HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
+        long columnCountLong = Integer.toUnsignedLong(Unsafe.getInt(addr + HEADER_COLUMN_COUNT_OFF));
+        if (columnCountLong > Integer.MAX_VALUE) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm columnCount [count=").put(columnCountLong)
+                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                    .put(']');
+        }
+        int columnCount = (int) columnCountLong;
+        long headerEndOffset = HEADER_FIXED_SIZE + columnCountLong * COLUMN_DESCRIPTOR_SIZE;
         if (headerEndOffset > parquetMetaFileSize) {
             throw CairoException.critical(0)
                     .put("invalid _pm columnCount [count=").put(columnCount)
                     .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
                     .put(']');
         }
-        int rowGroupCount = Unsafe.getInt(footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
-        final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
+        long rowGroupCountLong = Integer.toUnsignedLong(Unsafe.getInt(footerAddr + FOOTER_ROW_GROUP_COUNT_OFF));
+        if (rowGroupCountLong > Integer.MAX_VALUE) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm rowGroupCount [count=").put(rowGroupCountLong)
+                    .put(", footerOffset=").put(currentOffset)
+                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                    .put(']');
+        }
+        int rowGroupCount = (int) rowGroupCountLong;
+        final long baseFooterLength = FOOTER_FIXED_SIZE + rowGroupCountLong * Integer.BYTES + Integer.BYTES;
         if (currentOffset + baseFooterLength > parquetMetaFileSize) {
             throw CairoException.critical(0)
                     .put("invalid _pm footer length [rowGroupCount=").put(rowGroupCount)
                     .put(", footerOffset=").put(currentOffset)
                     .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                    .put(']');
+        }
+        // Validate designated timestamp column index. The writer emits -1
+        // when no DTS is set, otherwise a 0-based column index. Any other
+        // value (e.g. a sentinel from corruption or a stale-format file)
+        // would feed downstream readers an out-of-range index that
+        // silently aliases unrelated columns or reads past the descriptor
+        // table.
+        int dtsIndex = Unsafe.getInt(addr + HEADER_DESIGNATED_TS_OFF);
+        if (dtsIndex < -1 || dtsIndex >= columnCount) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm designated timestamp column index [dtsIndex=").put(dtsIndex)
+                    .put(", columnCount=").put(columnCount)
                     .put(']');
         }
         long featureFlags = Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF);
@@ -689,23 +790,39 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
             }
         }
 
+        // Validate column descriptor name pointers. Each descriptor stores a
+        // (nameOffset, nameLength) pair pointing into the same mapping.
+        // Without validation, getColumnName would build a flyweight over an
+        // arbitrary memory region (UB) and even nameOffset+nameLength could
+        // wrap. Reject offsets that land in the fixed header / column
+        // descriptor area, and pairs whose end exceeds the committed size.
+        // nameLength is read as int and treated as unsigned.
+        for (int i = 0; i < columnCount; i++) {
+            long descAddr = addr + HEADER_FIXED_SIZE + (long) i * COLUMN_DESCRIPTOR_SIZE;
+            long nameOffset = Unsafe.getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
+            long nameLength = Integer.toUnsignedLong(Unsafe.getInt(descAddr + COL_DESC_NAME_LENGTH_OFF));
+            // nameOffset is signed long from disk; reject negatives explicitly.
+            // nameOffset + nameLength can overflow when nameOffset is large;
+            // compare nameLength against the remaining space instead of
+            // computing the sum.
+            if (nameOffset < headerEndOffset
+                    || nameOffset > parquetMetaFileSize
+                    || nameLength > parquetMetaFileSize - nameOffset) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm column name pointer [columnIndex=").put(i)
+                        .put(", nameOffset=").put(nameOffset)
+                        .put(", nameLength=").put(nameLength)
+                        .put(", headerEndOffset=").put(headerEndOffset)
+                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                        .put(']');
+            }
+        }
+
         // All validations passed — commit state.
         this.footerAddr = footerAddr;
         this.columnCount = columnCount;
         this.rowGroupCount = rowGroupCount;
         return true;
-    }
-
-    /**
-     * Unmap the {@code _pm} file (if opened) and clear this instance.
-     */
-    public void unmapAndClear(FilesFacade ff) {
-        final long addr = this.addr;
-        final long fileSize = this.fileSize;
-        clear();
-        if (addr != 0) {
-            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-        }
     }
 
     private static native boolean canSkipRowGroup0(
@@ -720,7 +837,14 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
     private static native void destroyNativeReader(long ptr);
 
-    private static native void readPartitionMeta0(long pmAddr, long pmSize, long destAddr);
+    private static native void readPartitionMeta0(long parquetMetaAddr, long parquetMetaSize, long destAddr);
+
+    /**
+     * Verifies the CRC32 stored in the {@code _pm} footer.
+     * Throws {@link CairoException} on mismatch, null pointer, or any
+     * structural error encountered while parsing the file.
+     */
+    private static native void verifyChecksum0(long addr, long fileSize);
 
     /**
      * Computes the absolute memory address of a column chunk within a row group block.

@@ -314,7 +314,7 @@ mod tests {
 
     /// Build a `_pm` file with one Int64 column and configurable stats per row group.
     /// Each entry: `(num_rows, null_count, min, max, has_stats)`.
-    fn build_long_pm(row_groups: &[(u64, u64, i64, i64, bool)]) -> ParquetResult<(Vec<u8>, u64)> {
+    fn build_long_parquet_meta(row_groups: &[(u64, u64, i64, i64, bool)]) -> ParquetResult<(Vec<u8>, u64)> {
         let mut writer = ParquetMetaWriter::new();
         writer
             .designated_timestamp(-1)
@@ -360,7 +360,7 @@ mod tests {
     }
 
     /// Build a `_pm` file with one FLBA(16) UUID column and OOL stats.
-    fn build_uuid_pm(
+    fn build_uuid_parquet_meta(
         row_groups: &[(u64, u64, [u8; 16], [u8; 16])],
     ) -> ParquetResult<(Vec<u8>, u64)> {
         let mut writer = ParquetMetaWriter::new();
@@ -421,8 +421,8 @@ mod tests {
     #[test]
     fn skip_is_null_when_no_nulls() -> ParquetResult<()> {
         //                  (rows, nulls, min, max, has_stats)
-        let (pm, fo) = build_long_pm(&[(100, 0, 10, 200, true)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(100, 0, 10, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
         assert!(can_skip_row_group(&reader, 0, &[filter], 0)?);
@@ -431,8 +431,8 @@ mod tests {
 
     #[test]
     fn no_skip_is_null_when_nulls_present() -> ParquetResult<()> {
-        let (pm, fo) = build_long_pm(&[(100, 5, 10, 200, true)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(100, 5, 10, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
         assert!(!can_skip_row_group(&reader, 0, &[filter], 0)?);
@@ -441,8 +441,8 @@ mod tests {
 
     #[test]
     fn skip_is_not_null_when_all_nulls() -> ParquetResult<()> {
-        let (pm, fo) = build_long_pm(&[(100, 100, 0, 0, true)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(100, 100, 0, 0, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NOT_NULL, 0, ColumnTypeTag::Long as i32);
         assert!(can_skip_row_group(&reader, 0, &[filter], 0)?);
@@ -451,8 +451,8 @@ mod tests {
 
     #[test]
     fn no_skip_is_not_null_when_some_non_nulls() -> ParquetResult<()> {
-        let (pm, fo) = build_long_pm(&[(100, 50, 10, 200, true)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(100, 50, 10, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NOT_NULL, 0, ColumnTypeTag::Long as i32);
         assert!(!can_skip_row_group(&reader, 0, &[filter], 0)?);
@@ -462,8 +462,8 @@ mod tests {
     #[test]
     fn skip_eq_outside_min_max() -> ParquetResult<()> {
         // Range [100, 200], search for 300.
-        let (pm, fo) = build_long_pm(&[(1000, 0, 100, 200, true)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(1000, 0, 100, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         let value: i64 = 300;
         let filter = make_filter(
@@ -481,8 +481,8 @@ mod tests {
     #[test]
     fn no_skip_eq_inside_min_max() -> ParquetResult<()> {
         // Range [100, 200], search for 150.
-        let (pm, fo) = build_long_pm(&[(1000, 0, 100, 200, true)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(1000, 0, 100, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         let value: i64 = 150;
         let filter = make_filter(
@@ -500,8 +500,8 @@ mod tests {
     #[test]
     fn skip_gt_above_max() -> ParquetResult<()> {
         // Range [100, 200], GT 200 → all values <= 200 so skip.
-        let (pm, fo) = build_long_pm(&[(1000, 0, 100, 200, true)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(1000, 0, 100, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         let value: i64 = 200;
         let filter = make_filter(
@@ -519,8 +519,8 @@ mod tests {
     #[test]
     fn skip_lt_below_min() -> ParquetResult<()> {
         // Range [100, 200], LT 100 → all values >= 100 so skip.
-        let (pm, fo) = build_long_pm(&[(1000, 0, 100, 200, true)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(1000, 0, 100, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         let value: i64 = 100;
         let filter = make_filter(
@@ -537,8 +537,8 @@ mod tests {
 
     #[test]
     fn no_skip_without_stats() -> ParquetResult<()> {
-        let (pm, fo) = build_long_pm(&[(1000, 0, 0, 0, false)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(1000, 0, 0, 0, false)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         let value: i64 = 9999;
         let filter = make_filter(
@@ -556,8 +556,8 @@ mod tests {
 
     #[test]
     fn skip_rg_index_out_of_range() {
-        let (pm, fo) = build_long_pm(&[(100, 0, 10, 200, true)]).unwrap();
-        let reader = ParquetMetaReader::from_file_size(&pm, fo).unwrap();
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(100, 0, 10, 200, true)]).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo).unwrap();
 
         let err = can_skip_row_group(&reader, 5, &[], 0);
         assert!(err.is_err());
@@ -569,8 +569,8 @@ mod tests {
 
     #[test]
     fn skip_column_index_out_of_range_continues() -> ParquetResult<()> {
-        let (pm, fo) = build_long_pm(&[(100, 0, 10, 200, true)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(100, 0, 10, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         // Column index 99 doesn't exist → filter is ignored, no skip.
         let filter = make_filter(99, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
@@ -580,8 +580,8 @@ mod tests {
 
     #[test]
     fn skip_empty_filters() -> ParquetResult<()> {
-        let (pm, fo) = build_long_pm(&[(100, 0, 10, 200, true)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(100, 0, 10, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         assert!(!can_skip_row_group(&reader, 0, &[], 0)?);
         Ok(())
@@ -592,8 +592,8 @@ mod tests {
         // UUID range [0x11..11, 0x33..33], search for 0xFF..FF → outside range.
         let min = [0x11u8; 16];
         let max = [0x33u8; 16];
-        let (pm, fo) = build_uuid_pm(&[(100, 0, min, max)])?;
-        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
+        let (parquet_meta, fo) = build_uuid_parquet_meta(&[(100, 0, min, max)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         // Filter value: 0xFF..FF (16 bytes), outside the range.
         let filter_value = [0xFFu8; 16];

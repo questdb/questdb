@@ -38,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -130,6 +131,20 @@ public final class Mig940 {
             int partitionCount = partitionLongs / LONGS_PER_PARTITION;
 
             long dataStart = partitionTableSizeOffset + Integer.BYTES;
+            // Reject a partitionCount that does not fit within the mapped _txn region.
+            // A corrupt or truncated _txn could otherwise drive the loop below past the
+            // mapped pages and SIGBUS the JVM. Mirrors the analogous bound check in Mig620.
+            long maxPartitionCount = partitionCount > 0
+                    ? Math.max(0L, (txFileSize - dataStart) / ((long) LONGS_PER_PARTITION * Long.BYTES))
+                    : 0L;
+            if (partitionCount > maxPartitionCount) {
+                throw CairoException.critical(0)
+                        .put("migration failed, corrupt _txn file, partitionCount exceeds mapped region [path=").put(path)
+                        .put(", partitionCount=").put(partitionCount)
+                        .put(", maxPartitionCount=").put(maxPartitionCount)
+                        .put(", txFileSize=").put(txFileSize)
+                        .put(']');
+            }
             path.trimTo(plen);
 
             final ParquetMetaFileReader reader = new ParquetMetaFileReader();
@@ -176,7 +191,7 @@ public final class Mig940 {
         TableUtils.setPathForNativePartition(path.trimTo(pathRootLen), timestampType, partitionBy, partitionTs, nameTxn);
         path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
         try {
-            reader.openAndMapRO(ff, path.$());
+            ParquetMetaFileReader.openAndMapRO(ff, path.$(), reader);
             if (reader.getAddr() == 0) {
                 return true;
             }
@@ -186,7 +201,13 @@ public final class Mig940 {
                 return true;
             }
         } finally {
-            reader.unmapAndClear(ff);
+            // Capture before clear() zeros the fields so we can munmap.
+            final long mappedAddr = reader.getAddr();
+            final long mappedSize = reader.getFileSize();
+            reader.clear();
+            if (mappedAddr != 0) {
+                ff.munmap(mappedAddr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
             path.trimTo(pathRootLen);
         }
     }
@@ -239,6 +260,11 @@ public final class Mig940 {
             }
             long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_MIG);
             long parquetMetaSize = ParquetMetadataWriter.generate(allocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
+            // Persist the new _pm before the migration completes. If the process
+            // crashes between this generate call and the next time the engine
+            // syncs the partition dir, partitions referenced by _txn would
+            // otherwise come back without a usable _pm sidecar.
+            ff.fsync(parquetMetaFd);
             LOG.info().$("generated parquet metadata [path=").$(path).$(", parquetMetadataFileSize=").$(parquetMetaSize).I$();
             return parquetMetaSize;
         } catch (Throwable t) {
@@ -248,6 +274,14 @@ public final class Mig940 {
         } finally {
             ff.close(parquetFd);
             ff.close(parquetMetaFd);
+            // _pm is brand new in this dir; fsync the parent so the dirent survives a crash.
+            if (!Os.isWindows()) {
+                path.trimTo(partitionDirLen).$();
+                final long dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                if (dirFd != -1) {
+                    ff.fsyncAndClose(dirFd);
+                }
+            }
             path.trimTo(partitionDirLen);
         }
     }

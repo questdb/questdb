@@ -63,8 +63,8 @@ public class ParquetMetaPartitionDecoderTest extends AbstractCairoTest {
         // the test if the first handle is stranded.
         assertMemoryLeak(() -> {
             try (
-                    PmTestFile file1 = buildFile(1, 100);
-                    PmTestFile file2 = buildFile(2, 200)
+                    ParquetMetaTestFile file1 = buildFile(1, 100);
+                    ParquetMetaTestFile file2 = buildFile(2, 200)
             ) {
                 ParquetMetaPartitionDecoder decoder = new ParquetMetaPartitionDecoder();
                 try {
@@ -112,7 +112,7 @@ public class ParquetMetaPartitionDecoderTest extends AbstractCairoTest {
         // ParquetMetaPartitionDecoder), and its native handle must be
         // freed when the shallow copy closes — even though owned == false.
         assertMemoryLeak(() -> {
-            try (PmTestFile file = buildFile(1, 100)) {
+            try (ParquetMetaTestFile file = buildFile(1, 100)) {
                 ParquetMetaPartitionDecoder source = new ParquetMetaPartitionDecoder();
                 ParquetMetaPartitionDecoder copy = new ParquetMetaPartitionDecoder();
                 try {
@@ -149,9 +149,9 @@ public class ParquetMetaPartitionDecoderTest extends AbstractCairoTest {
 
     /**
      * Builds a `_pm` byte buffer with the given column count and a single
-     * row group of size {@code numRows}, then wraps it in a {@link PmTestFile}.
+     * row group of size {@code numRows}, then wraps it in a {@link ParquetMetaTestFile}.
      */
-    private static PmTestFile buildFile(int columnCount, long numRows) {
+    private static ParquetMetaTestFile buildFile(int columnCount, long numRows) {
         long writerPtr = ParquetMetaFileWriter.create();
         try {
             ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, -1);
@@ -164,18 +164,18 @@ public class ParquetMetaPartitionDecoderTest extends AbstractCairoTest {
             ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
             ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
             long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
-            return new PmTestFile(resultPtr);
+            return new ParquetMetaTestFile(resultPtr);
         } finally {
             ParquetMetaFileWriter.destroyWriter(writerPtr);
         }
     }
 
-    private static final class PmTestFile implements AutoCloseable {
+    private static final class ParquetMetaTestFile implements AutoCloseable {
         final long dataLen;
         final long dataPtr;
         final long resultPtr;
 
-        PmTestFile(long resultPtr) {
+        ParquetMetaTestFile(long resultPtr) {
             this.resultPtr = resultPtr;
             this.dataPtr = ParquetMetaFileWriter.resultDataPtr(resultPtr);
             this.dataLen = ParquetMetaFileWriter.resultDataLen(resultPtr);

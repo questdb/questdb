@@ -130,7 +130,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 } finally {
                     started.countDown();
                 }
-            }, "pm-canskip-loop");
+            }, "parquet-meta-canskip-loop");
             bg.setDaemon(true);
             bg.start();
 
