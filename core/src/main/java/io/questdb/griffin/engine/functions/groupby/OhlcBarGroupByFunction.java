@@ -89,6 +89,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     private final int functionPosition;
     private final @Nullable Utf8StringSink labelSink;
     private final Function maxFunc;
+    private final int maxBufferLength;
     private final int maxWidth;
     private final Function minFunc;
     private final String name;
@@ -128,6 +129,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         this.showLabels = showLabels;
         this.functionPosition = functionPosition;
         this.widthPosition = widthPosition;
+        this.maxBufferLength = maxBufferLength;
         this.labelSink = showLabels ? new Utf8StringSink() : null;
         if (showLabels) {
             this.maxWidth = Math.max(1, (maxBufferLength - LABEL_RESERVE) / 3);
@@ -370,6 +372,18 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         if (srcMax > destMax) {
             destValue.putDouble(valueIndex + 5, srcMax);
         }
+        // Reconcile user-supplied bounds (slots +6/+7): widen to the
+        // widest range seen across shards, same logic as computeNext.
+        double srcScaleMin = srcValue.getDouble(valueIndex + 6);
+        double destScaleMin = destValue.getDouble(valueIndex + 6);
+        if (!Double.isNaN(srcScaleMin) && (Double.isNaN(destScaleMin) || srcScaleMin < destScaleMin)) {
+            destValue.putDouble(valueIndex + 6, srcScaleMin);
+        }
+        double srcScaleMax = srcValue.getDouble(valueIndex + 7);
+        double destScaleMax = destValue.getDouble(valueIndex + 7);
+        if (!Double.isNaN(srcScaleMax) && (Double.isNaN(destScaleMax) || srcScaleMax > destScaleMax)) {
+            destValue.putDouble(valueIndex + 7, srcScaleMax);
+        }
     }
 
     @Override
@@ -498,7 +512,15 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             labelBytes = labelSink.size();
         }
 
-        long out = allocator.malloc(barBytes + labelBytes + 1);
+        long totalBytes = barBytes + labelBytes;
+        if (totalBytes > maxBufferLength) {
+            throw CairoException.nonCritical().position(functionPosition)
+                    .put("breached memory limit set for ").put(name)
+                    .put(" [maxBytes=").put(maxBufferLength)
+                    .put(", actualBytes=").put(totalBytes).put(']');
+        }
+
+        long out = allocator.malloc(totalBytes + 1);
 
         for (int i = 0; i < width; i++) {
             char c;

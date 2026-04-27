@@ -90,6 +90,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
         private static final char DOJI = '\u2502';
         private static final char WICK = '\u2500';
         private final ObjList<Function> args;
+        private final int maxBufferLength;
         private final int maxWidth;
         private final String name;
         private final int minArgPosition;
@@ -109,6 +110,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
             this.name = name;
             this.args = args;
             this.showLabels = showLabels;
+            this.maxBufferLength = maxWidth * 3;
             this.maxWidth = showLabels ? Math.max(1, (maxWidth * 3 - 120) / 3) : maxWidth;
             this.minArgPosition = argPositions.getQuick(4);
             this.widthArgIndex = args.size() > 6 ? 6 : -1;
@@ -226,6 +228,13 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
                 Numbers.append(sink, low);
                 sink.putAscii(" C:");
                 Numbers.append(sink, close);
+            }
+
+            if (sink.size() > maxBufferLength) {
+                throw CairoException.nonCritical().position(minArgPosition)
+                        .put("breached memory limit set for ").put(name)
+                        .put(" [maxBytes=").put(maxBufferLength)
+                        .put(", actualBytes=").put(sink.size()).put(']');
             }
 
             return sink;
