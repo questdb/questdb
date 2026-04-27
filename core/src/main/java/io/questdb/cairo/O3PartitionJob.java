@@ -126,11 +126,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
 
-            // Open _pm and require its tail to match the current parquet file size.
-            // We do not attempt to repair stale _pm — append-only writes paired with
-            // _txn commit ordering keep them in sync, so a mismatch indicates
-            // corruption, operator file tampering, or a writer bug. Surface as a
-            // hard error rather than silently rewriting on suspect state.
             ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
             if (parquetMetaReader.getAddr() == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
                 throw CairoException.critical(0)
