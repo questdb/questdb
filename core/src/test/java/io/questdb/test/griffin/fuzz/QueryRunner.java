@@ -28,12 +28,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 
@@ -55,18 +57,71 @@ import io.questdb.std.str.StringSink;
  * "Materialize every value" means we call a per-column accessor for every
  * row via {@link CursorPrinter#printColumn}, which exercises the type's
  * read path end to end.
+ * <p>
+ * When constructed with {@code diffJit = true}, every query is run twice
+ * &mdash; once with {@link SqlJitMode#JIT_MODE_ENABLED} and once with
+ * {@link SqlJitMode#JIT_MODE_DISABLED} &mdash; and the two materializations
+ * are compared. Any divergence (different row text, different exception
+ * class/message, or one path succeeding while the other throws) is reported
+ * as a failure. Queries that do not engage the filter JIT path produce
+ * identical output in both modes, so the toggle is safe to apply
+ * universally; the price is roughly doubled run time per query.
  */
 public final class QueryRunner {
+    private final boolean diffJit;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
-    private final StringSink rowSink = new StringSink();
+    private final StringSink rowsA = new StringSink();
+    private final StringSink rowsB = new StringSink();
 
-    public QueryRunner(CairoEngine engine, SqlExecutionContext executionContext) {
+    public QueryRunner(CairoEngine engine, SqlExecutionContext executionContext, boolean diffJit) {
         this.engine = engine;
         this.executionContext = executionContext;
+        this.diffJit = diffJit;
     }
 
     public Result run(String sql) {
+        if (!diffJit) {
+            Outcome outcome = runOnce(sql, rowsA);
+            return toResult(sql, outcome);
+        }
+        int prevJitMode = executionContext.getJitMode();
+        try {
+            executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            Outcome a = runOnce(sql, rowsA);
+            executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            Outcome b = runOnce(sql, rowsB);
+            return reconcile(sql, a, b, rowsA, rowsB);
+        } finally {
+            executionContext.setJitMode(prevJitMode);
+        }
+    }
+
+    private static boolean isAcceptedSkip(Throwable t) {
+        return t instanceof SqlException
+                || t instanceof ImplicitCastException
+                || t instanceof NumericException;
+    }
+
+    private static String renderOutcome(Outcome outcome, CharSequence rows) {
+        if (outcome.failure == null) {
+            return "ok, " + outcome.rowsRead + " rows:\n" + rows;
+        }
+        return outcome.exceptionClass + ": " + outcome.exceptionMessage;
+    }
+
+    private static Result toResult(String sql, Outcome outcome) {
+        if (outcome.failure == null) {
+            return Result.ok(outcome.rowsRead);
+        }
+        if (isAcceptedSkip(outcome.failure)) {
+            return Result.skipped(outcome.exceptionClass + ": " + outcome.exceptionMessage);
+        }
+        return Result.failed(sql, outcome.failure);
+    }
+
+    private Outcome runOnce(String sql, StringSink rows) {
+        rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
@@ -74,23 +129,77 @@ public final class QueryRunner {
                 Record record = cursor.getRecord();
                 int rowsRead = 0;
                 while (cursor.hasNext()) {
-                    rowSink.clear();
                     for (int i = 0; i < columnCount; i++) {
-                        CursorPrinter.printColumn(record, metadata, i, rowSink, false);
-                        rowSink.put('\t');
+                        CursorPrinter.printColumn(record, metadata, i, rows, false);
+                        rows.put('\t');
                     }
+                    rows.put('\n');
                     rowsRead++;
                 }
-                return Result.ok(rowsRead);
+                return Outcome.ok(rowsRead);
             }
         } catch (SqlException e) {
-            return Result.skipped(e.getFlyweightMessage().toString());
+            return Outcome.error(e, e.getFlyweightMessage().toString());
         } catch (ImplicitCastException e) {
-            return Result.skipped(e.getFlyweightMessage().toString());
+            return Outcome.error(e, e.getFlyweightMessage().toString());
         } catch (NumericException e) {
-            return Result.skipped("NumericException");
+            return Outcome.error(e, "");
         } catch (Throwable t) {
-            return Result.failed(sql, t);
+            String msg = t.getMessage();
+            return Outcome.error(t, msg == null ? "" : msg);
+        }
+    }
+
+    private Result reconcile(String sql, Outcome a, Outcome b, StringSink rowsA, StringSink rowsB) {
+        // Both succeeded.
+        if (a.failure == null && b.failure == null) {
+            if (Chars.equals(rowsA, rowsB)) {
+                return Result.ok(a.rowsRead);
+            }
+            return Result.failed(sql, divergence(a, b, rowsA, rowsB));
+        }
+        // Both threw the same exception. Outcome the same way the single-run
+        // path would: skip if allowlisted, fail if not.
+        if (a.failure != null && b.failure != null
+                && a.exceptionClass.equals(b.exceptionClass)
+                && a.exceptionMessage.equals(b.exceptionMessage)) {
+            if (isAcceptedSkip(a.failure)) {
+                return Result.skipped(a.exceptionClass + ": " + a.exceptionMessage);
+            }
+            return Result.failed(sql, a.failure);
+        }
+        // Anything else: divergence (one succeeded, one threw; or both threw
+        // different exceptions/messages).
+        return Result.failed(sql, divergence(a, b, rowsA, rowsB));
+    }
+
+    private AssertionError divergence(Outcome a, Outcome b, CharSequence rowsA, CharSequence rowsB) {
+        String msg = "JIT divergence:\n"
+                + "  jit on : " + renderOutcome(a, rowsA) + "\n"
+                + "  jit off: " + renderOutcome(b, rowsB);
+        Throwable cause = a.failure != null ? a.failure : b.failure;
+        return cause == null ? new AssertionError(msg) : new AssertionError(msg, cause);
+    }
+
+    private static final class Outcome {
+        final String exceptionClass;
+        final String exceptionMessage;
+        final Throwable failure;
+        final int rowsRead;
+
+        private Outcome(int rowsRead, Throwable failure, String exceptionClass, String exceptionMessage) {
+            this.rowsRead = rowsRead;
+            this.failure = failure;
+            this.exceptionClass = exceptionClass;
+            this.exceptionMessage = exceptionMessage;
+        }
+
+        static Outcome error(Throwable t, String message) {
+            return new Outcome(0, t, t.getClass().getSimpleName(), message);
+        }
+
+        static Outcome ok(int rowsRead) {
+            return new Outcome(rowsRead, null, null, null);
         }
     }
 

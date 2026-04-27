@@ -58,6 +58,10 @@ import java.util.List;
  * <ul>
  *     <li>{@code -Dquestdb.fuzz.queries=N} &mdash; number of queries per
  *         run (default 100). Crank up locally when hunting bugs.</li>
+ *     <li>{@code -Dquestdb.fuzz.diff.jit=true|false} &mdash; differential
+ *         JIT-on/off mode (default true). When enabled, every query is run
+ *         twice and the materializations are compared; any divergence is
+ *         reported as a failure.</li>
  * </ul>
  */
 public class QueryFuzzTest extends AbstractCairoTest {
@@ -70,7 +74,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
 
             LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                     .$(", rows=").$(config.getRowsPerTable())
-                    .$(", queries=").$(config.getNumQueries()).$();
+                    .$(", queries=").$(config.getNumQueries())
+                    .$(", diffJit=").$(config.isDiffJitEnabled()).$();
 
             FuzzTableFactory factory = new FuzzTableFactory(config);
             ObjList<FuzzTable> tables = new ObjList<>();
@@ -79,7 +84,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             }
             drainWalQueue();
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled());
             int skipped = 0;
             List<QueryRunner.Result> failures = new ArrayList<>();
             try (BufferedWriter dump = openDump(config.getDumpPath())) {
@@ -92,11 +97,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     QueryRunner.Result result = runner.run(sql);
                     if (result.isSkipped()) {
                         skipped++;
-                        LOG.info().$("fuzz skip (").$(result.getSkipReason()).$("): ").$(sql).$();
+                        LOG.info().$("fuzz skip (").$safe(result.getSkipReason()).$("): ").$safe(sql).$();
                     } else if (result.isFailed()) {
-                        LOG.error().$("fuzz failure on query: ").$(sql)
+                        LOG.error().$("fuzz failure on query: ").$safe(sql)
                                 .$(" -- ").$(result.getFailure().getClass().getName())
-                                .$(": ").$(result.getFailure().getMessage())
+                                .$(": ").$safe(result.getFailure().getMessage())
                                 .$();
                         failures.add(result);
                     }

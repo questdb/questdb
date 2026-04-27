@@ -33,9 +33,11 @@ import io.questdb.std.Rnd;
  * up when hunting issues.
  */
 public final class FuzzConfig {
+    public static final String DIFF_JIT_PROP = "questdb.fuzz.diff.jit";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
 
+    private final boolean isDiffJitEnabled;
     private final String dumpPath;
     private final int maxColumnsPerTable;
     private final int minColumnsPerTable;
@@ -55,6 +57,7 @@ public final class FuzzConfig {
         this.tsStart = "2024-01-01";
         this.numQueries = Integer.getInteger(QUERIES_PROP, 100);
         this.dumpPath = System.getProperty(DUMP_PROP);
+        this.isDiffJitEnabled = Boolean.parseBoolean(System.getProperty(DIFF_JIT_PROP, "true"));
     }
 
     public String getDumpPath() {
@@ -87,5 +90,9 @@ public final class FuzzConfig {
 
     public String getTsStart() {
         return tsStart;
+    }
+
+    public boolean isDiffJitEnabled() {
+        return isDiffJitEnabled;
     }
 }
