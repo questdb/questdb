@@ -299,54 +299,26 @@ public final class PostingIndexUtils {
         if (firstWord < 0 || firstWord > MAX_BLOCK_COUNT) {
             throw CairoException.critical(0).put("corrupt posting index: invalid blockCount [blockCount=").put(firstWord).put(']');
         }
-        long pos = srcAddr + 4;
 
-        // Read valueCounts[]
-        int[] valueCounts = new int[firstWord];
-        for (int b = 0; b < firstWord; b++) {
-            valueCounts[b] = Unsafe.getByte(pos + b) & 0xFF;
-        }
-        pos += firstWord;
+        // Per-block metadata is read directly from the encoded blob via the
+        // pre-computed offsets below; no scratch arrays needed. blockDeltas
+        // stays native because BitpackUtils.unpackAllValues writes there.
+        long valueCountsAddr = srcAddr + 4;
+        long firstValuesAddr = valueCountsAddr + firstWord;
+        long minDeltasAddr = firstValuesAddr + (long) firstWord * Long.BYTES;
+        long bitWidthsAddr = minDeltasAddr + (long) firstWord * Long.BYTES;
+        long packedDataAddr = bitWidthsAddr + firstWord
+                + (firstWord > 1 ? (long) firstWord * Long.BYTES : 0);
 
-        long firstValuesAddr = 0;
-        long minDeltasAddr = 0;
-        long blockDeltasAddr = 0;
+        long blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         try {
-            // Read firstValues[] (off-heap)
-            firstValuesAddr = Unsafe.malloc((long) firstWord * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            for (int b = 0; b < firstWord; b++) {
-                Unsafe.putLong(firstValuesAddr + (long) b * Long.BYTES,
-                        Unsafe.getLong(pos + (long) b * Long.BYTES));
-            }
-            pos += (long) firstWord * Long.BYTES;
-
-            // Read minDeltas[] (off-heap)
-            minDeltasAddr = Unsafe.malloc((long) firstWord * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            for (int b = 0; b < firstWord; b++) {
-                Unsafe.putLong(minDeltasAddr + (long) b * Long.BYTES,
-                        Unsafe.getLong(pos + (long) b * Long.BYTES));
-            }
-            pos += (long) firstWord * Long.BYTES;
-
-            // Read bitWidths[]
-            int[] bitWidths = new int[firstWord];
-            for (int b = 0; b < firstWord; b++) {
-                bitWidths[b] = Unsafe.getByte(pos + b) & 0xFF;
-            }
-            pos += firstWord;
-
-            // Skip packedOffsets (only present for multi-block keys)
-            if (firstWord > 1) {
-                pos += (long) firstWord * Long.BYTES;
-            }
-
-            // Decode each block — only count-1 deltas are packed (first value is in firstValues[])
             int destIdx = 0;
-            blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            long pos = packedDataAddr;
             for (int b = 0; b < firstWord; b++) {
-                int count = valueCounts[b];
-                int bitWidth = bitWidths[b];
+                int count = Unsafe.getByte(valueCountsAddr + b) & 0xFF;
+                int bitWidth = Unsafe.getByte(bitWidthsAddr + b) & 0xFF;
                 int numDeltas = count - 1;
+                long firstValue = Unsafe.getLong(firstValuesAddr + (long) b * Long.BYTES);
 
                 if (numDeltas > 0) {
                     long minD = Unsafe.getLong(minDeltasAddr + (long) b * Long.BYTES);
@@ -360,8 +332,7 @@ public final class PostingIndexUtils {
                 }
                 pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
-                // Cumulative sum from firstValue to reconstruct absolute values
-                long cumulative = Unsafe.getLong(firstValuesAddr + (long) b * Long.BYTES);
+                long cumulative = firstValue;
                 dest[destIdx++] = cumulative;
                 for (int i = 0; i < numDeltas; i++) {
                     cumulative += Unsafe.getLong(blockDeltasAddr + (long) i * Long.BYTES);
@@ -369,15 +340,7 @@ public final class PostingIndexUtils {
                 }
             }
         } finally {
-            if (firstValuesAddr != 0) {
-                Unsafe.free(firstValuesAddr, (long) firstWord * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
-            if (minDeltasAddr != 0) {
-                Unsafe.free(minDeltasAddr, (long) firstWord * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
-            if (blockDeltasAddr != 0) {
-                Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
+            Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         }
     }
 
@@ -573,7 +536,7 @@ public final class PostingIndexUtils {
             for (int i = 0; i < count; i++) {
                 Unsafe.putLong(srcAddr + (long) i * Long.BYTES, values[i]);
             }
-            int efSize = encodeKeyEF(srcAddr, count, ctx.efTrialAddr);
+            int efSize = encodeKeyEF(srcAddr, count, ctx.efTrialAddr, ctx);
             int deltaSize = encodeKeyDeltaFoR(values, count, destAddr, ctx);
             if (efSize < deltaSize) {
                 Unsafe.copyMemory(ctx.efTrialAddr, destAddr, efSize);
@@ -719,7 +682,11 @@ public final class PostingIndexUtils {
      * Encodes sorted long values using Elias-Fano encoding directly from native memory.
      * Format: [sentinel:4B][count:4B][L:1B][universe:8B][lowBits][highBits]
      */
-    public static int encodeKeyEF(long srcAddr, int count, long destAddr) {
+    public static int encodeKeyEF(long srcAddr, int count, long destAddr, EncodeContext ctx) {
+        if (count == 0) {
+            Unsafe.putInt(destAddr, 0);
+            return 4;
+        }
         long lastValue = Unsafe.getLong(srcAddr + (long) (count - 1) * Long.BYTES);
         long u = lastValue + 1;
         int L = Math.max(0, 63 - Long.numberOfLeadingZeros(u / count));
@@ -737,12 +704,14 @@ public final class PostingIndexUtils {
 
         long lowStart = pos;
         int lowBytes = efLowBytesAligned(count, L);
-        for (long i = 0; i < lowBytes; i += 8) {
-            Unsafe.putLong(lowStart + i, 0);
-        }
-        for (int i = 0; i < count; i++) {
-            long val = Unsafe.getLong(srcAddr + (long) i * Long.BYTES);
-            writeBitsWord(lowStart, (long) i * L, val & lowMask, L);
+        Unsafe.setMemory(lowStart, lowBytes, (byte) 0);
+        if (L > 0) {
+            long scratch = ctx.efLowMaskedAddr;
+            for (int i = 0; i < count; i++) {
+                long val = Unsafe.getLong(srcAddr + (long) i * Long.BYTES);
+                Unsafe.putLong(scratch + (long) i * Long.BYTES, val & lowMask);
+            }
+            PostingIndexNative.packValuesNative(scratch, count, 0, L, lowStart);
         }
         pos += lowBytes;
 
@@ -754,37 +723,37 @@ public final class PostingIndexUtils {
         }
         int numHighWords = (int) numHighWordsL;
         int highBytes = numHighWords * 8;
-        for (long i = 0; i < highBytes; i += 8) {
-            Unsafe.putLong(highStart + i, 0);
-        }
+        Unsafe.setMemory(highStart, highBytes, (byte) 0);
+        // Batch set-bits per word: bitPos is monotonically increasing, so we
+        // OR all set bits that share a word into an accumulator and write
+        // it once on the word-boundary crossing. The setMemory zero-fill
+        // above lets us write straight without a read-modify-write.
         long bitPos = 0;
         long prevHigh = 0;
+        long currentWordIdx = -1;
+        long accumulator = 0;
         for (int i = 0; i < count; i++) {
             long val = Unsafe.getLong(srcAddr + (long) i * Long.BYTES);
             long high = val >>> L;
             bitPos += (high - prevHigh);
-            setBitWord(highStart, bitPos);
+            long wordIdx = bitPos >>> 6;
+            if (wordIdx != currentWordIdx) {
+                if (currentWordIdx >= 0) {
+                    Unsafe.putLong(highStart + (currentWordIdx << 3), accumulator);
+                }
+                currentWordIdx = wordIdx;
+                accumulator = 0;
+            }
+            accumulator |= 1L << (bitPos & 63);
             bitPos++;
             prevHigh = high;
+        }
+        if (currentWordIdx >= 0) {
+            Unsafe.putLong(highStart + (currentWordIdx << 3), accumulator);
         }
         pos += highBytes;
 
         return (int) (pos - destAddr);
-    }
-
-    /**
-     * Encodes sorted values for a single key directly from native memory,
-     * eliminating the copy to a Java array. Used by the writer's flushAllPending()
-     * to encode values directly from the pending values buffer.
-     *
-     * @param srcAddr  native memory address of sorted long values
-     * @param count    number of values
-     * @param destAddr destination memory address
-     * @param ctx      reusable encode context (call ensureCapacity first)
-     * @return number of bytes written
-     */
-    public static int encodeKeyNative(long srcAddr, int count, long destAddr, EncodeContext ctx) {
-        return encodeKeyNative(srcAddr, count, destAddr, ctx, ENCODING_ADAPTIVE);
     }
 
     public static int encodeKeyNative(long srcAddr, int count, long destAddr, EncodeContext ctx, byte encoding) {
@@ -793,31 +762,10 @@ public final class PostingIndexUtils {
             return 4;
         }
         return switch (encoding) {
-            case ENCODING_EF -> encodeKeyEF(srcAddr, count, destAddr);
+            case ENCODING_EF -> encodeKeyEF(srcAddr, count, destAddr, ctx);
             case ENCODING_DELTA -> encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
             default -> encodeKeyNativeAdaptive(srcAddr, count, destAddr, ctx);
         };
-    }
-
-    /**
-     * Encodes a key using the smaller of EF and delta-FoR.
-     * Trial-encodes with both codecs and picks the winner. The format sentinel
-     * (EF_FORMAT_SENTINEL for EF, positive blockCount for delta-FoR) allows the
-     * decoder to auto-detect the format, so mixed keys within a stride work
-     * transparently.
-     */
-    public static int encodeKeyNativeAdaptive(long srcAddr, int count, long destAddr, EncodeContext ctx) {
-        if (count == 0) {
-            Unsafe.putInt(destAddr, 0);
-            return 4;
-        }
-        int efSize = encodeKeyEF(srcAddr, count, ctx.efTrialAddr);
-        int deltaSize = encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
-        if (efSize < deltaSize) {
-            Unsafe.copyMemory(ctx.efTrialAddr, destAddr, efSize);
-            return efSize;
-        }
-        return deltaSize;
     }
 
     /**
@@ -1180,10 +1128,6 @@ public final class PostingIndexUtils {
         return (strideCount(keyCount) + 1) * STRIDE_IDX_BYTES;
     }
 
-    // ==================================================================================
-    // Elias-Fano encode/decode
-    // ==================================================================================
-
     /**
      * Builds the full path to a sealed value file (.pv).
      * <p>
@@ -1202,6 +1146,27 @@ public final class PostingIndexUtils {
         }
         path.put('.').put(sealTxn);
         return path.$();
+    }
+
+    /**
+     * Encodes a key using the smaller of EF and delta-FoR.
+     * Trial-encodes with both codecs and picks the winner. The format sentinel
+     * (EF_FORMAT_SENTINEL for EF, positive blockCount for delta-FoR) allows the
+     * decoder to auto-detect the format, so mixed keys within a stride work
+     * transparently.
+     */
+    private static int encodeKeyNativeAdaptive(long srcAddr, int count, long destAddr, EncodeContext ctx) {
+        if (count == 0) {
+            Unsafe.putInt(destAddr, 0);
+            return 4;
+        }
+        int efSize = encodeKeyEF(srcAddr, count, ctx.efTrialAddr, ctx);
+        int deltaSize = encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
+        if (efSize < deltaSize) {
+            Unsafe.copyMemory(ctx.efTrialAddr, destAddr, efSize);
+            return efSize;
+        }
+        return deltaSize;
     }
 
     /**
@@ -1394,44 +1359,20 @@ public final class PostingIndexUtils {
         }
     }
 
-    private static void setBitWord(long baseAddr, long bitPos) {
-        long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
-        int bitOffset = (int) (bitPos & 63);
-        long word = Unsafe.getLong(wordAddr);
-        Unsafe.putLong(wordAddr, word | (1L << bitOffset));
-    }
-
-    // ==================================================================================
-    // Elias-Fano support methods for readers
-    // ==================================================================================
-
-    private static void writeBitsWord(long baseAddr, long bitPos, long value, int numBits) {
-        if (numBits == 0) return;
-        long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
-        int bitOffset = (int) (bitPos & 63);
-        long mask = (numBits < 64) ? (1L << numBits) - 1 : -1L;
-        long word = Unsafe.getLong(wordAddr);
-        word = (word & ~(mask << bitOffset)) | ((value & mask) << bitOffset);
-        Unsafe.putLong(wordAddr, word);
-        if (bitOffset + numBits > 64) {
-            long word2 = Unsafe.getLong(wordAddr + 8);
-            int bitsInSecond = bitOffset + numBits - 64;
-            long mask2 = (1L << bitsInSecond) - 1;
-            word2 = (word2 & ~mask2) | ((value >>> (64 - bitOffset)) & mask2);
-            Unsafe.putLong(wordAddr + 8, word2);
-        }
-    }
-
-
-    // ==================================================================================
-    // Bit manipulation helpers for Elias-Fano
-    // ==================================================================================
-
     /**
      * Computes 8-byte-aligned size for the EF low bits region.
      */
     static int efLowBytesAligned(int n, int L) {
-        return (int) ((((long) n * L + 63) >>> 6) << 3);
+        long bytes = (((long) n * L + 63) >>> 6) << 3;
+        if (bytes > Integer.MAX_VALUE) {
+            // n*L > 2^31 bits: a single key holding ~256 MB of low bits.
+            // pos arithmetic on the encoded blob is int-based, so silent
+            // truncation here would dereference outside the buffer.
+            throw CairoException.critical(0)
+                    .put("EF low region too large [n=").put(n)
+                    .put(", L=").put(L).put(']');
+        }
+        return (int) bytes;
     }
 
     /**
@@ -1555,6 +1496,8 @@ public final class PostingIndexUtils {
         long blockValueCountsAddr;
         int deltaCapacity;
         long deltasAddr;
+        long efLowMaskedAddr;
+        int efLowMaskedCapacity;
         long efTrialAddr;
         long efTrialCapacity;
         // Native residuals buffer for SIMD packing (BLOCK_CAPACITY * 8 bytes)
@@ -1586,6 +1529,11 @@ public final class PostingIndexUtils {
             }
             blockCapacity = 0;
             deltaCapacity = 0;
+            if (efLowMaskedAddr != 0) {
+                Unsafe.free(efLowMaskedAddr, (long) efLowMaskedCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                efLowMaskedAddr = 0;
+                efLowMaskedCapacity = 0;
+            }
             if (efTrialAddr != 0) {
                 Unsafe.free(efTrialAddr, efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
                 efTrialAddr = 0;
@@ -1660,6 +1608,14 @@ public final class PostingIndexUtils {
             if (needed > efTrialCapacity) {
                 efTrialAddr = Unsafe.realloc(efTrialAddr, efTrialCapacity, needed, MemoryTag.NATIVE_INDEX_READER);
                 efTrialCapacity = needed;
+            }
+            if (count > efLowMaskedCapacity) {
+                int newCap = Math.max(count, efLowMaskedCapacity * 2);
+                efLowMaskedAddr = Unsafe.realloc(efLowMaskedAddr,
+                        (long) efLowMaskedCapacity * Long.BYTES,
+                        (long) newCap * Long.BYTES,
+                        MemoryTag.NATIVE_INDEX_READER);
+                efLowMaskedCapacity = newCap;
             }
         }
     }

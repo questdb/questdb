@@ -46,13 +46,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -227,8 +227,9 @@ public class PostingIndexWriter implements IndexWriter {
                     pendingValuesAddr + ((long) key * PENDING_SLOT_CAPACITY + count - 1) * Long.BYTES);
             if (value < lastVal) {
                 throw CairoException.critical(0)
-                        .put("index values must be added in ascending order [lastValue=")
-                        .put(lastVal).put(", newValue=").put(value).put(']');
+                        .put("index values must be added in ascending order [key=").put(key)
+                        .put(", lastValue=").put(lastVal)
+                        .put(", newValue=").put(value).put(']');
             }
         } else {
             int spillCount = getSpillCount(key);
@@ -237,8 +238,9 @@ public class PostingIndexWriter implements IndexWriter {
                 long lastSpilledVal = Unsafe.getLong(spillAddr + (long) (spillCount - 1) * Long.BYTES);
                 if (value < lastSpilledVal) {
                     throw CairoException.critical(0)
-                            .put("index values must be added in ascending order [lastSpilledValue=")
-                            .put(lastSpilledVal).put(", newValue=").put(value).put(']');
+                            .put("index values must be added in ascending order [key=").put(key)
+                            .put(", lastValue=").put(lastSpilledVal)
+                            .put(", newValue=").put(value).put(']');
                 }
             } else {
                 activeKeyIds[activeKeyCount++] = key;
@@ -461,11 +463,6 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @TestOnly
-    public int getTimestampColumnIndex() {
-        return timestampColumnIndex;
-    }
-
-    @TestOnly
     public RowCursor getCursor(int key) {
         flushAllPending();
 
@@ -580,6 +577,11 @@ public class PostingIndexWriter implements IndexWriter {
     @TestOnly
     public int getPendingPurgesSizeForTesting() {
         return pendingPurges.size();
+    }
+
+    @TestOnly
+    public int getTimestampColumnIndex() {
+        return timestampColumnIndex;
     }
 
     @Override
@@ -1009,22 +1011,40 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
 
-        // Single sparse generation: seal to convert to stride-indexed dense format
-        // (enables flat mode compression which can be significantly smaller)
-        if (genCount == 1) {
-            long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
-            int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            if (gen0KeyCount >= 0) {
-                // Already dense — nothing to do (sidecar files from previous seal are valid)
-                return;
-            }
+        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+
+        // Single dense gen: already sealed, sidecars from prior seal still valid.
+        if (genCount == 1 && gen0KeyCount >= 0) {
+            return;
         }
 
         final long oldSealTxn = sealTxn;
         final long newSealTxn = Math.max(1, sealTxn + 1);
 
+        // Incremental seal: gen 0 dense covering every current key, all later
+        // gens sparse, and path-based (sealIncremental writes a fresh .pv via
+        // sealValueMem; fd-based seal must take sealFull's chunked path).
+        boolean isIncrementalCandidate = gen0KeyCount >= 0
+                && gen0KeyCount == keyCount
+                && partitionPath.size() > 0;
+        if (isIncrementalCandidate) {
+            for (int g = 1; g < genCount; g++) {
+                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+                int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                if (gkc >= 0) {
+                    isIncrementalCandidate = false;
+                    break;
+                }
+            }
+        }
+
+        // Snapshot only when going incremental — sealFull rebuilds sidecars
+        // from scratch, so mmap-copying old sidecar bytes into native bufs
+        // would just be discarded. With many cover columns and large
+        // partitions the snapshot cost is multi-GB.
         boolean haveSavedSidecars = false;
-        if (coverCount > 0 && partitionPath.size() > 0) {
+        if (isIncrementalCandidate && coverCount > 0) {
             if (savedSidecarBufs == null || savedSidecarBufs.length < coverCount) {
                 savedSidecarBufs = new long[coverCount];
                 savedSidecarSizes = new long[coverCount];
@@ -1033,74 +1053,54 @@ public class PostingIndexWriter implements IndexWriter {
                 Arrays.fill(savedSidecarSizes, 0, savedSidecarSizes.length, 0L);
             }
             haveSavedSidecars = true;
-            Path p = Path.getThreadLocal(partitionPath);
-            int pp = p.size();
-            for (int c = 0; c < coverCount; c++) {
-                if (coveredColumnIndices.getQuick(c) < 0) {
-                    continue;
-                }
-                long covT = getCoveredColumnNameTxn(c);
-                LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, postingColumnNameTxn, covT, sealTxn);
-                if (ff.exists(pcFile)) {
-                    long fileLen = ff.length(pcFile);
-                    if (fileLen > 0) {
-                        long fd = ff.openRO(pcFile);
-                        if (fd >= 0) {
-                            try {
-                                long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-                                if (mapped > 0) {
-                                    try {
-                                        savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_INDEX_READER);
-                                        savedSidecarSizes[c] = fileLen;
-                                        Unsafe.copyMemory(mapped, savedSidecarBufs[c], fileLen);
-                                    } finally {
-                                        ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
-                                    }
-                                }
-                            } finally {
-                                ff.close(fd);
-                            }
-                        }
-                    }
-                }
-                p.trimTo(pp);
-            }
-            if (sidecarMems.size() > 0) {
-                closeSidecarMems();
-            }
         }
 
         try {
-            // Open new sidecar files at newSealTxn. The files do not exist on
-            // disk yet, so the open creates them fresh — no truncation, no
-            // racing with readers holding the previous-sealTxn files.
-            if (coverCount > 0 && sidecarMems.size() == 0 && partitionPath.size() > 0) {
-                openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
-            }
-
-            // Check if incremental seal is possible:
-            // gen 0 must be dense, and all subsequent gens must be sparse
-            long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
-            int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            boolean isIncrementalCandidate = gen0KeyCount >= 0;
-
-            if (isIncrementalCandidate) {
-                for (int g = 1; g < genCount; g++) {
-                    long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
-                    int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-                    if (gkc >= 0) {
-                        isIncrementalCandidate = false;
-                        break;
+            // Sidecar snapshot lives inside this try so a malloc OOM mid-loop
+            // gets cleaned up by the finally instead of leaking partial bufs.
+            if (haveSavedSidecars) {
+                Path p = Path.getThreadLocal(partitionPath);
+                int pp = p.size();
+                for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
                     }
+                    long covT = getCoveredColumnNameTxn(c);
+                    LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, postingColumnNameTxn, covT, sealTxn);
+                    if (ff.exists(pcFile)) {
+                        long fileLen = ff.length(pcFile);
+                        if (fileLen > 0) {
+                            long fd = ff.openRO(pcFile);
+                            if (fd >= 0) {
+                                try {
+                                    long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                                    if (mapped > 0) {
+                                        try {
+                                            savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_INDEX_READER);
+                                            savedSidecarSizes[c] = fileLen;
+                                            Unsafe.copyMemory(mapped, savedSidecarBufs[c], fileLen);
+                                        } finally {
+                                            ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
+                                        }
+                                    }
+                                } finally {
+                                    ff.close(fd);
+                                }
+                            }
+                        }
+                    }
+                    p.trimTo(pp);
                 }
             }
 
-            // sealIncremental writes via sealValueMem (a fresh .pv file at
-            // newSealTxn) and is path-based-only. fd-based seal (e.g. inline
-            // at MAX_GEN_COUNT during O3) must take sealFull, whose chunked
-            // path now handles fd-based via end-of-valueMem write + memmove
-            // (see openSealValueFile / reencodeWithStrideDecoding).
-            if (isIncrementalCandidate && gen0KeyCount == keyCount && partitionPath.size() > 0) {
+            if (coverCount > 0 && partitionPath.size() > 0) {
+                if (sidecarMems.size() > 0) {
+                    closeSidecarMems();
+                }
+                openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
+            }
+
+            if (isIncrementalCandidate) {
                 sealIncremental(newSealTxn, savedSidecarBufs, savedSidecarSizes);
                 // ownership of inner buffers transferred to sealIncremental;
                 // zero entries so the finally cleanup skips them.
@@ -1819,26 +1819,33 @@ public class PostingIndexWriter implements IndexWriter {
         } else if (needed > spillArraysCapacity) {
             int newCap = Math.max(keyCapacity, needed);
 
-            // Realloc all three buffers. Only update spillArraysCapacity after
-            // ALL succeed so freeSpillData() uses the correct size on OOM cleanup.
-            // Realloc smallest buffers first (counts, caps at 4B/slot) before
-            // the largest (addrs at 8B/slot) to minimize tag accounting error if
-            // the last realloc is the one that fails.
             long oldCountsSize = (long) spillArraysCapacity * Integer.BYTES;
             long newCountsSize = (long) newCap * Integer.BYTES;
-            spillKeyCountsAddr = Unsafe.realloc(spillKeyCountsAddr, oldCountsSize, newCountsSize, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.setMemory(spillKeyCountsAddr + oldCountsSize, newCountsSize - oldCountsSize, (byte) 0);
-
             long oldCapsSize = (long) spillArraysCapacity * Integer.BYTES;
             long newCapsSize = (long) newCap * Integer.BYTES;
-            spillKeyCapacitiesAddr = Unsafe.realloc(spillKeyCapacitiesAddr, oldCapsSize, newCapsSize, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.setMemory(spillKeyCapacitiesAddr + oldCapsSize, newCapsSize - oldCapsSize, (byte) 0);
-
             long oldAddrsSize = (long) spillArraysCapacity * Long.BYTES;
             long newAddrsSize = (long) newCap * Long.BYTES;
-            spillKeyAddrsAddr = Unsafe.realloc(spillKeyAddrsAddr, oldAddrsSize, newAddrsSize, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.setMemory(spillKeyAddrsAddr + oldAddrsSize, newAddrsSize - oldAddrsSize, (byte) 0);
 
+            // Roll back earlier reallocs on a later failure so each buffer's
+            // size stays in sync with spillArraysCapacity; otherwise
+            // freeSpillData drifts the memory-tag accounting.
+            spillKeyCountsAddr = Unsafe.realloc(spillKeyCountsAddr, oldCountsSize, newCountsSize, MemoryTag.NATIVE_INDEX_READER);
+            try {
+                spillKeyCapacitiesAddr = Unsafe.realloc(spillKeyCapacitiesAddr, oldCapsSize, newCapsSize, MemoryTag.NATIVE_INDEX_READER);
+            } catch (Throwable e) {
+                spillKeyCountsAddr = Unsafe.realloc(spillKeyCountsAddr, newCountsSize, oldCountsSize, MemoryTag.NATIVE_INDEX_READER);
+                throw e;
+            }
+            try {
+                spillKeyAddrsAddr = Unsafe.realloc(spillKeyAddrsAddr, oldAddrsSize, newAddrsSize, MemoryTag.NATIVE_INDEX_READER);
+            } catch (Throwable e) {
+                spillKeyCountsAddr = Unsafe.realloc(spillKeyCountsAddr, newCountsSize, oldCountsSize, MemoryTag.NATIVE_INDEX_READER);
+                spillKeyCapacitiesAddr = Unsafe.realloc(spillKeyCapacitiesAddr, newCapsSize, oldCapsSize, MemoryTag.NATIVE_INDEX_READER);
+                throw e;
+            }
+            Unsafe.setMemory(spillKeyCountsAddr + oldCountsSize, newCountsSize - oldCountsSize, (byte) 0);
+            Unsafe.setMemory(spillKeyCapacitiesAddr + oldCapsSize, newCapsSize - oldCapsSize, (byte) 0);
+            Unsafe.setMemory(spillKeyAddrsAddr + oldAddrsSize, newAddrsSize - oldAddrsSize, (byte) 0);
             spillArraysCapacity = newCap;
         }
     }
@@ -1905,6 +1912,16 @@ public class PostingIndexWriter implements IndexWriter {
             activeKeyCount = 0;
             resetSpill();
             return;
+        }
+
+        // Sidecar block header is a 32-bit int; silent wrap here would feed
+        // a negative count into reader-side varBlockOffsetsSize and dereference
+        // outside the mapping. Lifting the limit needs a sidecar format bump.
+        if (totalValues > Integer.MAX_VALUE) {
+            throw CairoException.critical(0)
+                    .put("posting index gen exceeds 2^31 values [totalValues=").put(totalValues)
+                    .put(", genCount=").put(genCount)
+                    .put("]; split commit into smaller batches");
         }
 
         long maxValue = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE);
@@ -2049,7 +2066,6 @@ public class PostingIndexWriter implements IndexWriter {
 
         long headerAddr = valueMem.addressOf(genOffset);
         Unsafe.copyMemory(flushHeaderBuf, headerAddr, headerSize);
-        assert totalValues <= Integer.MAX_VALUE : "totalValues overflow: " + totalValues;
         writeSidecarGenData((int) totalValues, genCount);
 
         genCount++;
@@ -2232,27 +2248,33 @@ public class PostingIndexWriter implements IndexWriter {
     private void growKeyBuffers(int minCapacity) {
         int newCapacity = Math.max(keyCapacity * 2, minCapacity);
 
-        // Realloc counts first (smaller buffer, less likely to OOM).
         long oldCountSize = (long) keyCapacity * Integer.BYTES;
         long newCountSize = (long) newCapacity * Integer.BYTES;
-        pendingCountsAddr = Unsafe.realloc(pendingCountsAddr, oldCountSize, newCountSize, MemoryTag.NATIVE_INDEX_READER);
-        Unsafe.setMemory(pendingCountsAddr + oldCountSize, newCountSize - oldCountSize, (byte) 0);
-
         long oldValSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         long newValSize = (long) newCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
+
+        // Roll back earlier reallocs on a later failure so each buffer's size
+        // stays in sync with keyCapacity; otherwise freePendingBuffers frees
+        // with the wrong size and drifts the memory-tag accounting.
+        pendingCountsAddr = Unsafe.realloc(pendingCountsAddr, oldCountSize, newCountSize, MemoryTag.NATIVE_INDEX_READER);
         try {
             pendingValuesAddr = Unsafe.realloc(pendingValuesAddr, oldValSize, newValSize, MemoryTag.NATIVE_INDEX_READER);
         } catch (Throwable e) {
-            // Counts buffer already resized — update keyCapacity to match so
-            // freePendingBuffers() frees with the correct sizes.
-            keyCapacity = newCapacity;
-            activeKeyIds = Arrays.copyOf(activeKeyIds, newCapacity);
+            pendingCountsAddr = Unsafe.realloc(pendingCountsAddr, newCountSize, oldCountSize, MemoryTag.NATIVE_INDEX_READER);
             throw e;
         }
+        int[] newKeyIds;
+        try {
+            newKeyIds = Arrays.copyOf(activeKeyIds, newCapacity);
+        } catch (Throwable e) {
+            pendingCountsAddr = Unsafe.realloc(pendingCountsAddr, newCountSize, oldCountSize, MemoryTag.NATIVE_INDEX_READER);
+            pendingValuesAddr = Unsafe.realloc(pendingValuesAddr, newValSize, oldValSize, MemoryTag.NATIVE_INDEX_READER);
+            throw e;
+        }
+        Unsafe.setMemory(pendingCountsAddr + oldCountSize, newCountSize - oldCountSize, (byte) 0);
         Unsafe.setMemory(pendingValuesAddr + oldValSize, newValSize - oldValSize, (byte) 0);
-
+        activeKeyIds = newKeyIds;
         keyCapacity = newCapacity;
-        activeKeyIds = Arrays.copyOf(activeKeyIds, newCapacity);
     }
 
     /**
@@ -3121,7 +3143,7 @@ public class PostingIndexWriter implements IndexWriter {
                 Unsafe.storeFence();
                 // genCount must publish after writeMetadataPage so a mid-seal failure
                 // leaves the in-memory view consistent with on-disk .pk.
-                writeMetadataPage(1, maxValue, sealOffset, valueMemSize - sealOffset, keyCount, keyCount - 1);
+                writeMetadataPage(maxValue, sealOffset, valueMemSize - sealOffset, keyCount, keyCount - 1);
                 genCount = 1;
             } finally {
                 Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
@@ -3374,7 +3396,7 @@ public class PostingIndexWriter implements IndexWriter {
         // fresh .pv, fd-based just memmoved its output to offset 0.
         // genCount must publish after writeMetadataPage so a mid-seal failure
         // leaves the in-memory view consistent with on-disk .pk.
-        writeMetadataPage(1, maxValue, 0, valueMemSize, keyCount, keyCount - 1);
+        writeMetadataPage(maxValue, 0, valueMemSize, keyCount, keyCount - 1);
         genCount = 1;
     }
 
@@ -3462,15 +3484,22 @@ public class PostingIndexWriter implements IndexWriter {
         int sc = PostingIndexUtils.strideCount(keyCount);
         long dirtyStridesAddr = Unsafe.malloc(sc, MemoryTag.NATIVE_INDEX_READER);
         int dirtyCount;
+        int sparseMaxPerKey = 0;
         try {
             Unsafe.setMemory(dirtyStridesAddr, sc, (byte) 0);
             dirtyCount = 0;
             for (int g = 1; g < genCount; g++) {
                 long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                long gDataSize = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_SIZE);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                if (genKeyCount >= 0 || gDataSize == 0) {
+                    continue;
+                }
                 int activeKeyCount = -genKeyCount;
+                valueMem.extend(genFileOffset + gDataSize);
                 long genAddr = valueMem.addressOf(genFileOffset);
+                long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
                 for (int i = 0; i < activeKeyCount; i++) {
                     int key = Unsafe.getInt(genAddr + (long) i * Integer.BYTES);
@@ -3478,6 +3507,10 @@ public class PostingIndexWriter implements IndexWriter {
                     if (stride < sc && Unsafe.getByte(dirtyStridesAddr + stride) == 0) {
                         Unsafe.putByte(dirtyStridesAddr + stride, (byte) 1);
                         dirtyCount++;
+                    }
+                    int c = Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
+                    if (c > sparseMaxPerKey) {
+                        sparseMaxPerKey = c;
                     }
                 }
             }
@@ -3516,25 +3549,6 @@ public class PostingIndexWriter implements IndexWriter {
         // can conditionally free only those that were successfully allocated.
         int siSize = PostingIndexUtils.strideIndexSize(keyCount);
         int maxPerKey = estimateMaxPerKey(valueMem.addressOf(gen0FileOffset), gen0KeyCount, gen0SiSize);
-        // Scan sparse gens for actual max per-key count — the spill mechanism
-        // can produce counts >> BLOCK_CAPACITY, so BLOCK_CAPACITY * genCount
-        // is not a safe upper bound.
-        int sparseMaxPerKey = 0;
-        for (int g = 1; g < genCount; g++) {
-            long gDirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
-            long gFileOffset = keyMem.getLong(gDirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            long gDataSize = keyMem.getLong(gDirOffset + GEN_DIR_OFFSET_SIZE);
-            int gKeyCount = keyMem.getInt(gDirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            if (gKeyCount >= 0 || gDataSize == 0) continue; // dense or empty
-            int activeKeys = -gKeyCount;
-            valueMem.extend(gFileOffset + gDataSize);
-            long gAddr = valueMem.addressOf(gFileOffset);
-            long countsBase = gAddr + (long) activeKeys * Integer.BYTES;
-            for (int i = 0; i < activeKeys; i++) {
-                int c = Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                if (c > sparseMaxPerKey) sparseMaxPerKey = c;
-            }
-        }
         int preAllocPerKey = maxPerKey + sparseMaxPerKey * (genCount - 1);
         long perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(Math.max(preAllocPerKey, PostingIndexUtils.BLOCK_CAPACITY));
         long maxBPStrideDataSize = PostingIndexUtils.DENSE_STRIDE * perKeyBufSize;
@@ -3664,11 +3678,8 @@ public class PostingIndexWriter implements IndexWriter {
                         if (totalStrideVals > 0) {
                             long neededBuf = (long) totalStrideVals * Long.BYTES;
                             if (neededBuf > incrSidecarBufSize) {
-                                if (incrSidecarBuf != 0) {
-                                    Unsafe.free(incrSidecarBuf, incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-                                }
+                                incrSidecarBuf = Unsafe.realloc(incrSidecarBuf, incrSidecarBufSize, neededBuf, MemoryTag.NATIVE_INDEX_READER);
                                 incrSidecarBufSize = neededBuf;
-                                incrSidecarBuf = Unsafe.malloc(incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
                             }
                             for (int c = 0; c < coverCount; c++) {
                                 if (incrSidecarSiBufs[c] == 0) continue;
@@ -3736,7 +3747,7 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.storeFence();
             // genCount must publish after writeMetadataPage so a mid-seal failure
             // leaves the in-memory view consistent with on-disk .pk.
-            writeMetadataPage(1,
+            writeMetadataPage(
                     keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
                     sealOffset, valueMemSize - sealOffset, keyCount, keyCount - 1);
             genCount = 1;
@@ -3950,18 +3961,19 @@ public class PostingIndexWriter implements IndexWriter {
      * Writes a new metadata page to the inactive page (double-buffer protocol).
      * Copies gen dir entries from the active page, with an optional override for one entry.
      *
-     * @param genCount           number of generations
      * @param maxValue           max value to write
      * @param overrideFileOffset file offset for the overridden gen dir entry
      * @param overrideSize       size for the overridden gen dir entry
      * @param overrideKeyCount   key count for the overridden gen dir entry
      * @param overrideMaxKey     max key for the overridden gen dir entry
      */
-    private void writeMetadataPage(int genCount, long maxValue,
+    private void writeMetadataPage(long maxValue,
                                    long overrideFileOffset,
-                                   long overrideSize, int overrideKeyCount,
-                                   int overrideMaxKey) {
-        writeMetadataPage(genCount, maxValue, 0, overrideFileOffset,
+                                   long overrideSize,
+                                   int overrideKeyCount,
+                                   int overrideMaxKey
+    ) {
+        writeMetadataPage(1, maxValue, 0, overrideFileOffset,
                 overrideSize, overrideKeyCount, 0, overrideMaxKey);
     }
 

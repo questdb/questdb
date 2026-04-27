@@ -42,6 +42,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.idx.PostingIndexUtils.ENCODING_ADAPTIVE;
 
 /**
  * Oracle tests comparing PostingIndex (BP) against the Legacy (BitmapIndex)
@@ -427,7 +428,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                 int size1 = PostingIndexUtils.encodeKey(values, count, destAddr1, ctx1);
 
                 ctx2.ensureCapacity(count);
-                int size2 = PostingIndexUtils.encodeKeyNative(srcAddr, count, destAddr2, ctx2);
+                int size2 = PostingIndexUtils.encodeKeyNative(srcAddr, count, destAddr2, ctx2, ENCODING_ADAPTIVE);
 
                 Assert.assertEquals("Encoded sizes differ", size1, size2);
                 for (int i = 0; i < size1; i++) {
@@ -441,6 +442,99 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                 Unsafe.free(destAddr2, PostingIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    @Test
+    public void testBPRoundTripEliasFano() throws Exception {
+        assertMemoryLeak(() -> {
+            // count=1 dense (L=0)
+            assertEliasFanoRoundTrip(new long[]{0});
+            assertEliasFanoRoundTrip(new long[]{42});
+
+            // L=0: dense values where universe <= count.
+            long[] dense = new long[64];
+            for (int i = 0; i < 64; i++) {
+                dense[i] = i;
+            }
+            assertEliasFanoRoundTrip(dense);
+
+            // Single high-bits word boundary: count=64 keeps high bits inside
+            // word 0 for typical L; count=65 forces a write past the boundary.
+            long[] step1k = new long[64];
+            for (int i = 0; i < 64; i++) {
+                step1k[i] = (long) i * 1_000;
+            }
+            assertEliasFanoRoundTrip(step1k);
+            long[] step1kPlus = new long[65];
+            for (int i = 0; i < 65; i++) {
+                step1kPlus[i] = (long) i * 1_000;
+            }
+            assertEliasFanoRoundTrip(step1kPlus);
+
+            // Multi-block (count > BLOCK_CAPACITY) with mid-range L.
+            long[] step10 = new long[1_000];
+            for (int i = 0; i < 1_000; i++) {
+                step10[i] = (long) i * 10;
+            }
+            assertEliasFanoRoundTrip(step10);
+
+            // Sparse values that span many high-bits words, leaving empty
+            // words in between: validates the batched flush correctly skips
+            // unset words (keeping them at the setMemory zero baseline).
+            long[] sparse = new long[]{0L, 1L << 20, (1L << 21) + 5, (1L << 30), (1L << 30) + 100};
+            assertEliasFanoRoundTrip(sparse);
+
+            // Large L: u/count near 2^60 forces L close to its practical max.
+            long[] highL = new long[]{0L, 1L << 60, (1L << 60) + 1, (1L << 61)};
+            assertEliasFanoRoundTrip(highL);
+
+            // Pseudo-random sorted distinct longs to exercise mixed deltas.
+            Rnd rnd = new Rnd();
+            long[] randomVals = new long[2_000];
+            long acc = 0;
+            for (int i = 0; i < randomVals.length; i++) {
+                acc += 1L + (rnd.nextLong() & 0xFFFFL);
+                randomVals[i] = acc;
+            }
+            assertEliasFanoRoundTrip(randomVals);
+        });
+    }
+
+    private static void assertEliasFanoRoundTrip(long[] values) {
+        int count = values.length;
+        long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long encMaxBytes = PostingIndexUtils.computeMaxEncodedSize(count);
+        long destAddr = Unsafe.malloc(encMaxBytes, MemoryTag.NATIVE_DEFAULT);
+        long nativeOutAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try (PostingIndexUtils.EncodeContext ctx = new PostingIndexUtils.EncodeContext()) {
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, values[i]);
+            }
+            ctx.ensureCapacity(count);
+            int size = PostingIndexUtils.encodeKeyEF(srcAddr, count, destAddr, ctx);
+            Assert.assertTrue("encoded size positive [count=" + count + "]", size > 0);
+            // Sentinel at start signals EF format to the decoder.
+            Assert.assertEquals("EF sentinel missing",
+                    PostingIndexUtils.EF_FORMAT_SENTINEL,
+                    Unsafe.getUnsafe().getInt(destAddr));
+
+            long[] decoded = new long[count];
+            PostingIndexUtils.decodeKeyEF(destAddr, decoded);
+            for (int i = 0; i < count; i++) {
+                Assert.assertEquals("decodeKeyEF mismatch at " + i, values[i], decoded[i]);
+            }
+
+            PostingIndexUtils.decodeKeyEFToNative(destAddr, nativeOutAddr);
+            for (int i = 0; i < count; i++) {
+                Assert.assertEquals("decodeKeyEFToNative mismatch at " + i,
+                        values[i],
+                        Unsafe.getUnsafe().getLong(nativeOutAddr + (long) i * Long.BYTES));
+            }
+        } finally {
+            Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(destAddr, encMaxBytes, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(nativeOutAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test

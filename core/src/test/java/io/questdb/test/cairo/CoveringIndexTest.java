@@ -1771,10 +1771,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // End-to-end SQL tests
-    // ===================================================================
-
     @Test
     public void testCoveringIndexGroupByMultiPartition() throws Exception {
         // Verify aggregation over covering index works across multiple partitions
@@ -2335,10 +2331,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Fallback scenario tests: covering index NOT used
-    // ===================================================================
-
     @Test
     public void testCoveringIndexSidecarSurvivesPartitionSwitch() throws Exception {
         // After ALTER TABLE ADD INDEX INCLUDE, inserting into the next partition
@@ -2485,10 +2477,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // DDL edge case tests
-    // ===================================================================
-
     @Test
     public void testCoveringIndexWithResidualFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -2633,10 +2621,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ===================================================================
-    // Type-specific covering column tests
-    // ===================================================================
 
     @Test
     public void testCoveringLatestOnMultiKey() throws Exception {
@@ -4861,8 +4845,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== Coverage gap tests ====================
-
     @Test
     public void testCoveringQueryUuidColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -5980,8 +5962,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== FSST-compressed covered varchar/string tests ====================
-
     @Test
     public void testDistinctSymFromPostingIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -6227,8 +6207,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== COUNT pushdown tests ====================
-
     @Test
     public void testDistinctWithNonIntervalFilterFallsBack() throws Exception {
         assertMemoryLeak(() -> {
@@ -6346,8 +6324,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT DISTINCT sym FROM t_dist_where WHERE ts >= '2024-01-02' ORDER BY sym");
         });
     }
-
-    // ==================== DISTINCT with WHERE tests ====================
 
     @Test
     public void testDistinctWithTimestampRangeNoMatches() throws Exception {
@@ -6530,8 +6506,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== additional coverage tests ====================
-
     @Test
     public void testFallbackInList3Keys() throws Exception {
         assertMemoryLeak(() -> {
@@ -6654,8 +6628,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, extra FROM t_in_fallback WHERE sym IN ('A', 'B')");
         });
     }
-
-    // ==================== var-width page frame tests ====================
 
     @Test
     public void testFallbackSelectStar() throws Exception {
@@ -7006,8 +6978,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_in_dup WHERE sym IN ('A', 'A', 'B')");
         });
     }
-
-    // ==================== end new optimization tests ====================
 
     @Test
     public void testIncludeOnlyValidWithPosting() throws Exception {
@@ -7740,8 +7710,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== no_covering hint tests ====================
-
     @Test
     public void testLatestOnMultiPartitionManyCommits() throws Exception {
         // LATEST ON after multiple commits across 3 partitions
@@ -7884,8 +7852,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertSql("count\n733\n", "SELECT COUNT(*) FROM t_multi_vc WHERE sym = 'A'");
         });
     }
-
-    // ==================== no_index hint tests ====================
 
     @Test
     public void testNoCoveringHint_DataCorrectness() throws Exception {
@@ -8097,8 +8063,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     plan.contains("Index"));
         });
     }
-
-    // ==================== residual filter + covering index tests ====================
 
     @Test
     public void testNoIndexHint_InList() throws Exception {
@@ -8542,8 +8506,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_o3_null WHERE sym = 'A'");
         });
     }
-
-    // ==================== page frame cursor tests ====================
 
     @Test
     public void testO3WithSymbolIncludeColumn() throws Exception {
