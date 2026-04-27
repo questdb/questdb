@@ -158,6 +158,7 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             int timestampColumnIndex
     ) {
         return findRowGroupByTimestamp(
+                allocator,
                 parquetAddr,
                 parquetSize,
                 parquetMetaReader.getOrCreateNativeReaderPtr(),
@@ -428,6 +429,7 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     ) throws CairoException;
 
     private static native long findRowGroupByTimestamp(
+            long allocator,
             long parquetFilePtr,
             long parquetFileSize,
             long parquetMetaReaderPtr,
