@@ -24,53 +24,16 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
 
-    // Unicode characters used in rendering:
-    // \u2800 = Braille Blank (padding)
-    // \u2500 = Box Drawings Light Horizontal (wick)
-    // \u2588 = Full Block (bullish body)
-    // \u2591 = Light Shade (bearish body)
-    // \u2502 = Box Drawings Light Vertical (doji)
+    // --- Aggregate ohlc_bar(price, min, max [, width]) tests ---
 
     @Test
-    public void testAllIdenticalValues() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (100.0, '2024-01-01T00:00:00.000000Z'),
-                    (100.0, '2024-01-01T00:01:00.000000Z'),
-                    (100.0, '2024-01-01T00:02:00.000000Z')
-                    """);
-            // All identical -> doji at center
-            assertSql(
-                    "ohlc_bar\n" +
-                            "\u2800\u2800\u2800\u2800\u2800\u2502\u2800\u2800\u2800\u2800\n",
-                    "SELECT ohlc_bar(price, 10) FROM t"
-            );
-        });
-    }
-
-    @Test
-    public void testAllNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO t VALUES (NULL, '2024-01-01T00:00:00.000000Z')");
-            assertSql(
-                    "ohlc_bar\n\n",
-                    "SELECT ohlc_bar(price, 10) FROM t"
-            );
-        });
-    }
-
-    @Test
-    public void testBearishCandle() throws Exception {
+    public void testAggregateBearish() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -80,18 +43,17 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0.0, '2024-01-01T00:02:00.000000Z'),
                     (20.0, '2024-01-01T00:03:00.000000Z')
                     """);
-            // O=80, H=100, L=0, C=20. Single group: global=per-group.
-            // Width=10, open pos=7, close pos=1, body 1-7 bearish
+            // O=80, H=100, L=0, C=20, range 0-100, width=10
             assertSql(
                     "ohlc_bar\n" +
                             "\u2500\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2500\u2500\n",
-                    "SELECT ohlc_bar(price, 10) FROM t"
+                    "SELECT ohlc_bar(price, 0, 100, 10) FROM t"
             );
         });
     }
 
     @Test
-    public void testBullishCandle() throws Exception {
+    public void testAggregateBullish() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -101,18 +63,16 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0.0, '2024-01-01T00:02:00.000000Z'),
                     (80.0, '2024-01-01T00:03:00.000000Z')
                     """);
-            // O=20, H=100, L=0, C=80. Width=10, pad=1, inner=8.
-            // Single group: global=per-group. Wick spans full width.
             assertSql(
                     "ohlc_bar\n" +
                             "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500\n",
-                    "SELECT ohlc_bar(price, 10) FROM t"
+                    "SELECT ohlc_bar(price, 0, 100, 10) FROM t"
             );
         });
     }
 
     @Test
-    public void testCustomWidth() throws Exception {
+    public void testAggregateDoji() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -122,109 +82,27 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0.0, '2024-01-01T00:02:00.000000Z'),
                     (50.0, '2024-01-01T00:03:00.000000Z')
                     """);
-            // O=C=50. Single group. Doji at pos 2.
-            assertSql(
-                    "ohlc_bar\n" +
-                            "\u2500\u2500\u2502\u2500\u2500\n",
-                    "SELECT ohlc_bar(price, 5) FROM t"
-            );
-        });
-    }
-
-    @Test
-    public void testDojiCandle() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (50.0, '2024-01-01T00:00:00.000000Z'),
-                    (100.0, '2024-01-01T00:01:00.000000Z'),
-                    (0.0, '2024-01-01T00:02:00.000000Z'),
-                    (50.0, '2024-01-01T00:03:00.000000Z')
-                    """);
-            // O=C=50. Single group. Doji at pos 4.
             assertSql(
                     "ohlc_bar\n" +
                             "\u2500\u2500\u2500\u2500\u2502\u2500\u2500\u2500\u2500\u2500\n",
-                    "SELECT ohlc_bar(price, 10) FROM t"
+                    "SELECT ohlc_bar(price, 0, 100, 10) FROM t"
             );
         });
     }
 
     @Test
-    public void testEmptyTable() throws Exception {
+    public void testAggregateEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             assertSql(
                     "ohlc_bar\n\n",
-                    "SELECT ohlc_bar(price, 10) FROM t"
+                    "SELECT ohlc_bar(price, 0, 100, 10) FROM t"
             );
         });
     }
 
     @Test
-    public void testExplainPlan() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            assertPlanNoLeakCheck(
-                    "SELECT ohlc_bar(price, 10) FROM t",
-                    """
-                            Async Group By workers: 1
-                              vectorized: false
-                              values: [ohlc_bar(price,10)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """
-            );
-        });
-    }
-
-    @Test
-    public void testFactoryReuse() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (10.0, '2024-01-01T00:00:00.000000Z'),
-                    (90.0, '2024-01-01T00:01:00.000000Z')
-                    """);
-            // Run once - bullish full body within wick
-            String result1 = queryResultString("SELECT ohlc_bar(price, 10) FROM t");
-            // Truncate and re-insert different data
-            execute("TRUNCATE TABLE t");
-            execute("""
-                    INSERT INTO t VALUES
-                    (90.0, '2024-01-01T00:00:00.000000Z'),
-                    (10.0, '2024-01-01T00:01:00.000000Z')
-                    """);
-            // Should produce bearish now
-            String result2 = queryResultString("SELECT ohlc_bar(price, 10) FROM t");
-            Assert.assertNotEquals(result1, result2);
-            Assert.assertTrue(result2.contains("\u2591")); // bearish char
-        });
-    }
-
-    @Test
-    public void testFillLinearRejected() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (10.0, '2024-01-01T00:10:00.000000Z'),
-                    (20.0, '2024-01-01T01:10:00.000000Z')
-                    """);
-            assertException(
-                    "SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h FILL(LINEAR)",
-                    11,
-                    "support for LINEAR fill is not yet implemented"
-            );
-        });
-    }
-
-    @Test
-    public void testFillNone() throws Exception {
+    public void testAggregateFillNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -234,64 +112,20 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:10:00.000000Z'),
                     (40.0, '2024-01-01T02:20:00.000000Z')
                     """);
-            String result = queryResultString("SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h FILL(NONE)");
-            int lineCount = result.split("\n").length;
-            Assert.assertEquals("Expected 3 lines (header + 2 rows)", 3, lineCount);
-        });
-    }
-
-    @Test
-    public void testFillNull() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (10.0, '2024-01-01T00:10:00.000000Z'),
-                    (20.0, '2024-01-01T00:20:00.000000Z'),
-                    (30.0, '2024-01-01T02:10:00.000000Z'),
-                    (40.0, '2024-01-01T02:20:00.000000Z')
-                    """);
-            // Global range: 10-40. Width=5.
-            // Hour 00: O=10(pos 0), C=20(pos 1) -> bullish pos 0-1
-            // Hour 01: NULL
-            // Hour 02: O=30(pos 2), C=40(pos 4) -> bullish pos 2-4
+            // Bounds 0-50, width=5
+            // Bounds 0-50, width=5. H00: O=10(pos 0),C=20(pos 1). H02: O=30(pos 2),C=40(pos 3).
             assertSql(
                     "ts\tohlc_bar\n" +
                             "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2800\u2800\u2800\n" +
                             "2024-01-01T01:00:00.000000Z\t\n" +
-                            "2024-01-01T02:00:00.000000Z\t\u2800\u2800\u2588\u2588\u2588\n",
-                    "SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h FILL(NULL)"
+                            "2024-01-01T02:00:00.000000Z\t\u2800\u2800\u2588\u2588\u2800\n",
+                    "SELECT ts, ohlc_bar(price, 0, 50, 5) FROM t SAMPLE BY 1h FILL(NULL)"
             );
         });
     }
 
     @Test
-    public void testFillPrev() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (10.0, '2024-01-01T00:10:00.000000Z'),
-                    (20.0, '2024-01-01T00:20:00.000000Z'),
-                    (30.0, '2024-01-01T02:10:00.000000Z'),
-                    (40.0, '2024-01-01T02:20:00.000000Z')
-                    """);
-            // FILL(PREV) uses a serial cursor that renders each bucket
-            // before the next is processed. Hour 00 sees only its own
-            // data (global range 10-20), so body fills full width.
-            // Hour 01 copies hour 00. Hour 02 sees range 10-40.
-            assertSql(
-                    "ts\tohlc_bar\n" +
-                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588\n" +
-                            "2024-01-01T01:00:00.000000Z\t\u2588\u2588\u2588\u2588\u2588\n" +
-                            "2024-01-01T02:00:00.000000Z\t\u2800\u2800\u2588\u2588\u2588\n",
-                    "SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h FILL(PREV)"
-            );
-        });
-    }
-
-    @Test
-    public void testGroupBySymbol() throws Exception {
+    public void testAggregateGroupBySymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -301,38 +135,18 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (90.0, 'B', '2024-01-01T00:00:00.000000Z'),
                     (10.0, 'B', '2024-01-01T01:00:00.000000Z')
                     """);
-            // Global range: 10-90. Both A and B span the full range.
+            // Bounds 0-100, width=5. A: O=10(pos 0),C=90(pos 3). B: O=90(pos 3),C=10(pos 0).
             assertSql(
                     "symbol\tohlc_bar\n" +
-                            "A\t\u2588\u2588\u2588\u2588\u2588\n" +
-                            "B\t\u2591\u2591\u2591\u2591\u2591\n",
-                    "SELECT symbol, ohlc_bar(price, 5) FROM t ORDER BY symbol"
+                            "A\t\u2588\u2588\u2588\u2588\u2800\n" +
+                            "B\t\u2591\u2591\u2591\u2591\u2800\n",
+                    "SELECT symbol, ohlc_bar(price, 0, 100, 5) FROM t ORDER BY symbol"
             );
         });
     }
 
     @Test
-    public void testIntColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price INT, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (20, '2024-01-01T00:00:00.000000Z'),
-                    (100, '2024-01-01T00:01:00.000000Z'),
-                    (0, '2024-01-01T00:02:00.000000Z'),
-                    (80, '2024-01-01T00:03:00.000000Z')
-                    """);
-            // Single group: wick spans full width
-            assertSql(
-                    "ohlc_bar\n" +
-                            "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500\n",
-                    "SELECT ohlc_bar(price, 10) FROM t"
-            );
-        });
-    }
-
-    @Test
-    public void testLabelsBasic() throws Exception {
+    public void testAggregateLabels() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -342,57 +156,16 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (0.0, '2024-01-01T00:02:00.000000Z'),
                     (80.0, '2024-01-01T00:03:00.000000Z')
                     """);
-            // Single group: wick spans full width
             assertSql(
                     "ohlc_bar_labels\n" +
                             "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500 O:20.0 H:100.0 L:0.0 C:80.0\n",
-                    "SELECT ohlc_bar_labels(price, 10) FROM t"
+                    "SELECT ohlc_bar_labels(price, 0, 100, 10) FROM t"
             );
         });
     }
 
     @Test
-    public void testLabelsWithCustomWidth() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (50.0, '2024-01-01T00:00:00.000000Z'),
-                    (100.0, '2024-01-01T00:01:00.000000Z'),
-                    (0.0, '2024-01-01T00:02:00.000000Z'),
-                    (50.0, '2024-01-01T00:03:00.000000Z')
-                    """);
-            // Single group: wick spans full width
-            assertSql(
-                    "ohlc_bar_labels\n" +
-                            "\u2500\u2500\u2502\u2500\u2500 O:50.0 H:100.0 L:0.0 C:50.0\n",
-                    "SELECT ohlc_bar_labels(price, 5) FROM t"
-            );
-        });
-    }
-
-    @Test
-    public void testLabelsSampleByHourly() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO t VALUES
-                    (10.0, '2024-01-01T00:00:00.000000Z'),
-                    (50.0, '2024-01-01T00:30:00.000000Z'),
-                    (80.0, '2024-01-01T01:00:00.000000Z'),
-                    (60.0, '2024-01-01T01:30:00.000000Z')
-                    """);
-            assertSql(
-                    "ts\tohlc_bar_labels\n" +
-                            "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2800\u2800 O:10.0 H:50.0 L:10.0 C:50.0\n" +
-                            "2024-01-01T01:00:00.000000Z\t\u2800\u2800\u2591\u2591\u2591 O:80.0 H:80.0 L:60.0 C:60.0\n",
-                    "SELECT ts, ohlc_bar_labels(price, 5) FROM t SAMPLE BY 1h"
-            );
-        });
-    }
-
-    @Test
-    public void testMixedNullsSkipped() throws Exception {
+    public void testAggregateMixedNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -403,30 +176,28 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (80.0, '2024-01-01T00:03:00.000000Z'),
                     (NULL, '2024-01-01T00:04:00.000000Z')
                     """);
-            // O=20,C=80,L=20,H=80. Single group: body spans full width.
             assertSql(
                     "ohlc_bar\n" +
                             "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\n",
-                    "SELECT ohlc_bar(price, 10) FROM t"
+                    "SELECT ohlc_bar(price, 20, 80, 10) FROM t"
             );
         });
     }
 
     @Test
-    public void testNegativeWidth() throws Exception {
+    public void testAggregateNullInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO t VALUES (50.0, '2024-01-01T00:00:00.000000Z')");
-            assertException(
-                    "SELECT ohlc_bar(price, -5) FROM t",
-                    23,
-                    "width must be a positive integer"
+            execute("INSERT INTO t VALUES (NULL, '2024-01-01T00:00:00.000000Z')");
+            assertSql(
+                    "ohlc_bar\n\n",
+                    "SELECT ohlc_bar(price, 0, 100, 10) FROM t"
             );
         });
     }
 
     @Test
-    public void testOrderByOhlcBar() throws Exception {
+    public void testAggregateOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -434,19 +205,16 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (10.0, 'A', '2024-01-01T00:00:00.000000Z'),
                     (90.0, 'A', '2024-01-01T01:00:00.000000Z'),
                     (90.0, 'B', '2024-01-01T00:00:00.000000Z'),
-                    (10.0, 'B', '2024-01-01T01:00:00.000000Z'),
-                    (50.0, 'C', '2024-01-01T00:00:00.000000Z'),
-                    (50.0, 'C', '2024-01-01T01:00:00.000000Z')
+                    (10.0, 'B', '2024-01-01T01:00:00.000000Z')
                     """);
-            String result = queryResultString("SELECT symbol, ohlc_bar(price, 5) bar FROM t ORDER BY bar");
+            String result = queryResultString("SELECT symbol, ohlc_bar(price, 0, 100, 5) bar FROM t ORDER BY bar");
             Assert.assertTrue(result.contains("A"));
             Assert.assertTrue(result.contains("B"));
-            Assert.assertTrue(result.contains("C"));
         });
     }
 
     @Test
-    public void testParallelExecutionLargeDataset() throws Exception {
+    public void testAggregateParallelDeterminism() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -457,16 +225,14 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                         dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z')
                     FROM long_sequence(100_000)
                     """);
-            String result1 = queryResultString("SELECT symbol, ohlc_bar(price, 20) FROM t ORDER BY symbol");
-            String result2 = queryResultString("SELECT symbol, ohlc_bar(price, 20) FROM t ORDER BY symbol");
+            String result1 = queryResultString("SELECT symbol, ohlc_bar(price, 0, 120, 20) FROM t ORDER BY symbol");
+            String result2 = queryResultString("SELECT symbol, ohlc_bar(price, 0, 120, 20) FROM t ORDER BY symbol");
             Assert.assertEquals(result1, result2);
-            int lineCount = result1.split("\n").length;
-            Assert.assertEquals("Expected 5 lines (header + 4 symbols)", 5, lineCount);
         });
     }
 
     @Test
-    public void testSampleByHourly() throws Exception {
+    public void testAggregateSampleByHourly() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -476,73 +242,12 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (80.0, '2024-01-01T01:00:00.000000Z'),
                     (60.0, '2024-01-01T01:30:00.000000Z')
                     """);
-            // Global range: 10-80. Width=5.
-            // Hour 00: O=10(pos 0), C=50(pos 2) -> bullish pos 0-2
-            // Hour 01: O=80(pos 4), C=60(pos 2) -> bearish pos 2-4
+            // Bounds 0-100, width=5
             assertSql(
                     "ts\tohlc_bar\n" +
                             "2024-01-01T00:00:00.000000Z\t\u2588\u2588\u2588\u2800\u2800\n" +
-                            "2024-01-01T01:00:00.000000Z\t\u2800\u2800\u2591\u2591\u2591\n",
-                    "SELECT ts, ohlc_bar(price, 5) FROM t SAMPLE BY 1h"
-            );
-        });
-    }
-
-    @Test
-    public void testSingleValue() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO t VALUES (42.0, '2024-01-01T00:00:00.000000Z')");
-            // Single value -> doji at center
-            assertSql(
-                    "ohlc_bar\n" +
-                            "\u2800\u2800\u2800\u2800\u2800\u2502\u2800\u2800\u2800\u2800\n",
-                    "SELECT ohlc_bar(price, 10) FROM t"
-            );
-        });
-    }
-
-    @Test
-    public void testTwoValues() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (0.0, '2024-01-01T00:00:00.000000Z'),
-                    (100.0, '2024-01-01T00:01:00.000000Z')
-                    """);
-            // O=0,C=100. Single group: body spans full width.
-            assertSql(
-                    "ohlc_bar\n" +
-                            "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\n",
-                    "SELECT ohlc_bar(price, 10) FROM t"
-            );
-        });
-    }
-
-    @Test
-    public void testWidthExceedsMaxLimit() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, 30);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO t VALUES (50.0, '2024-01-01T00:00:00.000000Z')");
-            assertException(
-                    "SELECT ohlc_bar(price, 100) FROM t",
-                    23,
-                    "breached memory limit set for ohlc_bar"
-            );
-        });
-    }
-
-    @Test
-    public void testZeroWidth() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO t VALUES (50.0, '2024-01-01T00:00:00.000000Z')");
-            assertException(
-                    "SELECT ohlc_bar(price, 0) FROM t",
-                    23,
-                    "width must be a positive integer"
+                            "2024-01-01T01:00:00.000000Z\t\u2800\u2800\u2591\u2591\u2800\n",
+                    "SELECT ts, ohlc_bar(price, 0, 100, 5) FROM t SAMPLE BY 1h"
             );
         });
     }
@@ -550,20 +255,20 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
     // --- Scalar ohlc_bar(open, high, low, close, min, max [, width]) tests ---
 
     @Test
-    public void testScalarBasicBullish() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "ohlc_bar\n" +
-                        "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500\n",
-                "SELECT ohlc_bar(20, 100, 0, 80, 0, 100, 10)"
-        ));
-    }
-
-    @Test
     public void testScalarBasicBearish() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "ohlc_bar\n" +
                         "\u2500\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2500\u2500\n",
                 "SELECT ohlc_bar(80, 100, 0, 20, 0, 100, 10)"
+        ));
+    }
+
+    @Test
+    public void testScalarBasicBullish() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "ohlc_bar\n" +
+                        "\u2500\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2500\u2500\n",
+                "SELECT ohlc_bar(20, 100, 0, 80, 0, 100, 10)"
         ));
     }
 

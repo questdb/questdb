@@ -31,11 +31,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class OhlcBarLabelsWidthGroupByFunctionFactory implements FunctionFactory {
+public class OhlcBarBoundsWidthGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "ohlc_bar_labels(Di)";
+        return "ohlc_bar(DDDi)";
     }
 
     @Override
@@ -52,12 +52,14 @@ public class OhlcBarLabelsWidthGroupByFunctionFactory implements FunctionFactory
             SqlExecutionContext sqlExecutionContext
     ) {
         return new OhlcBarGroupByFunction(
-                "ohlc_bar_labels",
+                "ohlc_bar",
                 args.getQuick(0),
                 args.getQuick(1),
-                true,
+                args.getQuick(2),
+                args.getQuick(3),
+                false,
                 argPositions.getQuick(0),
-                argPositions.getQuick(1),
+                argPositions.getQuick(3),
                 configuration.getStrFunctionMaxBufferLength()
         );
     }

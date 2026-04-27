@@ -53,10 +53,9 @@ import org.jetbrains.annotations.Nullable;
  * Open is the first non-NULL value (smallest rowId), Close is the last
  * (largest rowId), High is the maximum, Low is the minimum.
  * <p>
- * Global auto-scaling: the function tracks global min/max across ALL
- * groups during accumulation and merge. At render time each candle is
- * scaled against this global range, so wicks and bodies reflect actual
- * price proportions and candles are directly comparable across rows.
+ * Requires explicit min/max bounds for scaling. The bounds can come from
+ * literal constants, bind variables, or lateral join columns. This ensures
+ * deterministic rendering regardless of execution path (serial or parallel).
  * <p>
  * <b>MapValue layout</b> (6 slots):
  * <pre>
@@ -66,21 +65,20 @@ import org.jetbrains.annotations.Nullable;
  *   +3  DOUBLE  lastValue    (close price)
  *   +4  DOUBLE  minValue     (low price)
  *   +5  DOUBLE  maxValue     (high price)
+ *   +6  DOUBLE  scaleMin     (user-supplied lower bound, from lateral join or constant)
+ *   +7  DOUBLE  scaleMax     (user-supplied upper bound, from lateral join or constant)
  * </pre>
- *
  * <b>Rendering characters</b> (all 3-byte BMP):
  * <pre>
- *   U+2800  ⠀  Braille Blank               (padding beyond wick)
- *   U+2500  ─  Box Drawings Light Horiz     (wick: low-to-body, body-to-high)
- *   U+2588  █  Full Block                   (bullish body: close >= open)
- *   U+2591  ░  Light Shade                  (bearish body: close < open)
- *   U+2502  │  Box Drawings Light Vertical  (doji: close == open)
+ *   U+2800  Braille Blank               (padding beyond wick)
+ *   U+2500  Box Drawings Light Horiz     (wick: low-to-body, body-to-high)
+ *   U+2588  Full Block                   (bullish body: close >= open)
+ *   U+2591  Light Shade                  (bearish body: close < open)
+ *   U+2502  Box Drawings Light Vertical  (doji: close == open)
  * </pre>
  */
 public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunction, GroupByFunction {
     static final int DEFAULT_WIDTH = 40;
-    // Reserve bytes for label text: " O:<num> H:<num> L:<num> C:<num>"
-    // Each number can be up to ~24 chars. 4 labels + separators ~ 120 bytes max.
     private static final int LABEL_RESERVE = 120;
     private static final char BLANK = '\u2800';
     private static final char BODY_BEAR = '\u2591';
@@ -89,27 +87,17 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     private static final char WICK = '\u2500';
     private final Function arg;
     private final int functionPosition;
+    private final @Nullable Utf8StringSink labelSink;
+    private final Function maxFunc;
     private final int maxWidth;
+    private final Function minFunc;
     private final String name;
     private final boolean showLabels;
-    // Scratch buffer for label formatting. Allocated once, reused on every
-    // render call. The internal byte[] grows on first use (~100 bytes for
-    // 4 doubles) and stays sized - no per-row heap allocation after warmup.
-    // Same pattern as BarFunctionFactory's Utf8StringSink sinkA/sinkB.
-    private final @Nullable Utf8StringSink labelSink;
     private final DirectUtf8String viewA = new DirectUtf8String();
     private final DirectUtf8String viewB = new DirectUtf8String();
     private final @Nullable Function widthFunc;
     private final int widthPosition;
     private GroupByAllocator allocator;
-    // Global min/max across ALL groups for auto-scaling. Updated in
-    // computeFirst, computeNext, and merge. Reset in clear() only -
-    // NOT in toTop(), because SAMPLE BY calls toTop() between buckets
-    // and we need the bounds to accumulate across all buckets.
-    private double globalMax = Double.NEGATIVE_INFINITY;
-    private double globalMin = Double.POSITIVE_INFINITY;
-    // Render caches - one per flyweight side, keyed by the
-    // (firstRowId, lastRowId) pair that identifies a group's state.
     private long cachedKeyA1;
     private long cachedKeyA2;
     private long cachedKeyB1;
@@ -124,6 +112,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     public OhlcBarGroupByFunction(
             String name,
             Function arg,
+            Function minFunc,
+            Function maxFunc,
             @Nullable Function widthFunc,
             boolean showLabels,
             int functionPosition,
@@ -132,6 +122,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     ) {
         this.name = name;
         this.arg = arg;
+        this.minFunc = minFunc;
+        this.maxFunc = maxFunc;
         this.widthFunc = widthFunc;
         this.showLabels = showLabels;
         this.functionPosition = functionPosition;
@@ -154,14 +146,14 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         cachedRenderLenB = 0;
         cachedRenderPtrA = 0;
         cachedRenderPtrB = 0;
-        globalMax = Double.NEGATIVE_INFINITY;
-        globalMin = Double.POSITIVE_INFINITY;
         lastRenderPtr = 0;
     }
 
     @Override
     public void close() {
         Misc.free(arg);
+        Misc.free(minFunc);
+        Misc.free(maxFunc);
         Misc.free(widthFunc);
     }
 
@@ -177,6 +169,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             mapValue.putDouble(valueIndex + 3, Double.NaN);
             mapValue.putDouble(valueIndex + 4, Double.NaN);
             mapValue.putDouble(valueIndex + 5, Double.NaN);
+            mapValue.putDouble(valueIndex + 6, minFunc.getDouble(record));
+            mapValue.putDouble(valueIndex + 7, maxFunc.getDouble(record));
             return;
         }
         mapValue.putLong(valueIndex, rowId);
@@ -185,12 +179,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         mapValue.putDouble(valueIndex + 3, value);
         mapValue.putDouble(valueIndex + 4, value);
         mapValue.putDouble(valueIndex + 5, value);
-        if (value < globalMin) {
-            globalMin = value;
-        }
-        if (value > globalMax) {
-            globalMax = value;
-        }
+        mapValue.putDouble(valueIndex + 6, minFunc.getDouble(record));
+        mapValue.putDouble(valueIndex + 7, maxFunc.getDouble(record));
     }
 
     @Override
@@ -201,35 +191,24 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         }
         long firstRowId = mapValue.getLong(valueIndex);
         if (firstRowId == Numbers.LONG_NULL) {
-            // All previous values were NaN; treat as first observation.
             computeFirst(mapValue, record, rowId);
             return;
         }
-        // Update first (open) if this rowId is earlier
         if (rowId < firstRowId) {
             mapValue.putLong(valueIndex, rowId);
             mapValue.putDouble(valueIndex + 1, value);
         }
-        // Update last (close) if this rowId is later
         if (rowId > mapValue.getLong(valueIndex + 2)) {
             mapValue.putLong(valueIndex + 2, rowId);
             mapValue.putDouble(valueIndex + 3, value);
         }
-        // Update min (low)
         double currentMin = mapValue.getDouble(valueIndex + 4);
         if (value < currentMin) {
             mapValue.putDouble(valueIndex + 4, value);
         }
-        // Update max (high)
         double currentMax = mapValue.getDouble(valueIndex + 5);
         if (value > currentMax) {
             mapValue.putDouble(valueIndex + 5, value);
-        }
-        if (value < globalMin) {
-            globalMin = value;
-        }
-        if (value > globalMax) {
-            globalMax = value;
         }
     }
 
@@ -277,7 +256,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         if (firstRowId == cachedKeyB1 && lastRowId == cachedKeyB2 && cachedRenderPtrB != 0) {
             return viewB.of(cachedRenderPtrB, cachedRenderPtrB + cachedRenderLenB);
         }
-        // If side A already rendered this group, share its buffer.
         if (firstRowId == cachedKeyA1 && lastRowId == cachedKeyA2 && cachedRenderPtrA != 0) {
             cachedKeyB1 = firstRowId;
             cachedKeyB2 = lastRowId;
@@ -297,6 +275,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         arg.init(symbolTableSource, executionContext);
+        minFunc.init(symbolTableSource, executionContext);
+        maxFunc.init(symbolTableSource, executionContext);
         if (widthFunc != null) {
             widthFunc.init(symbolTableSource, executionContext);
         }
@@ -316,6 +296,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         columnTypes.add(ColumnType.DOUBLE); // +3 lastValue (close)
         columnTypes.add(ColumnType.DOUBLE); // +4 minValue (low)
         columnTypes.add(ColumnType.DOUBLE); // +5 maxValue (high)
+        columnTypes.add(ColumnType.DOUBLE); // +6 scaleMin (user-supplied lower bound)
+        columnTypes.add(ColumnType.DOUBLE); // +7 scaleMax (user-supplied upper bound)
     }
 
     @Override
@@ -341,42 +323,32 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         }
         double srcMin = srcValue.getDouble(valueIndex + 4);
         double srcMax = srcValue.getDouble(valueIndex + 5);
-        // Track global bounds before any early return
-        if (srcMin < globalMin) {
-            globalMin = srcMin;
-        }
-        if (srcMax > globalMax) {
-            globalMax = srcMax;
-        }
         long destFirstRowId = destValue.getLong(valueIndex);
         if (destFirstRowId == Numbers.LONG_NULL) {
-            // Dest is empty, adopt src's state.
             destValue.putLong(valueIndex, srcFirstRowId);
             destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
             destValue.putLong(valueIndex + 2, srcValue.getLong(valueIndex + 2));
             destValue.putDouble(valueIndex + 3, srcValue.getDouble(valueIndex + 3));
             destValue.putDouble(valueIndex + 4, srcMin);
             destValue.putDouble(valueIndex + 5, srcMax);
+            destValue.putDouble(valueIndex + 6, srcValue.getDouble(valueIndex + 6));
+            destValue.putDouble(valueIndex + 7, srcValue.getDouble(valueIndex + 7));
             return;
         }
-        // Merge first (open): smallest rowId wins
         if (srcFirstRowId < destFirstRowId) {
             destValue.putLong(valueIndex, srcFirstRowId);
             destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
         }
-        // Merge last (close): largest rowId wins
         long srcLastRowId = srcValue.getLong(valueIndex + 2);
         long destLastRowId = destValue.getLong(valueIndex + 2);
         if (srcLastRowId > destLastRowId) {
             destValue.putLong(valueIndex + 2, srcLastRowId);
             destValue.putDouble(valueIndex + 3, srcValue.getDouble(valueIndex + 3));
         }
-        // Merge min (low)
         double destMin = destValue.getDouble(valueIndex + 4);
         if (srcMin < destMin) {
             destValue.putDouble(valueIndex + 4, srcMin);
         }
-        // Merge max (high)
         double destMax = destValue.getDouble(valueIndex + 5);
         if (srcMax > destMax) {
             destValue.putDouble(valueIndex + 5, srcMax);
@@ -396,6 +368,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         mapValue.putDouble(valueIndex + 3, Double.NaN);
         mapValue.putDouble(valueIndex + 4, Double.NaN);
         mapValue.putDouble(valueIndex + 5, Double.NaN);
+        mapValue.putDouble(valueIndex + 6, Double.NaN);
+        mapValue.putDouble(valueIndex + 7, Double.NaN);
     }
 
     @Override
@@ -406,6 +380,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(name).val('(').val(arg);
+        sink.val(',').val(minFunc);
+        sink.val(',').val(maxFunc);
         if (widthFunc != null) {
             sink.val(',').val(widthFunc);
         }
@@ -415,6 +391,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     @Override
     public void toTop() {
         arg.toTop();
+        minFunc.toTop();
+        maxFunc.toTop();
         if (widthFunc != null) {
             widthFunc.toTop();
         }
@@ -447,8 +425,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         return Math.max(0, Math.min(width - 1, pos));
     }
 
-    // All chars used are in the BMP and encode as three UTF-8 bytes:
-    // 1110xxxx 10yyyyyy 10zzzzzz. Pack into a single little-endian int.
     private void putChar(long out, int pos, char c) {
         int packed = (0xE0 | ((c >> 12) & 0x0F))
                 | ((0x80 | ((c >> 6) & 0x3F)) << 8)
@@ -464,20 +440,20 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
         int width = effectiveWidth();
 
-        // Scale against global bounds so candles are comparable.
-        double scaleRange = globalMax - globalMin;
+        double scaleMin = rec.getDouble(valueIndex + 6);
+        double scaleMax = rec.getDouble(valueIndex + 7);
+        double scaleRange = scaleMax - scaleMin;
 
-        int lowPos = mapPosition(low, globalMin, scaleRange, width);
-        int highPos = mapPosition(high, globalMin, scaleRange, width);
-        int openPos = mapPosition(open, globalMin, scaleRange, width);
-        int closePos = mapPosition(close, globalMin, scaleRange, width);
+        int lowPos = mapPosition(low, scaleMin, scaleRange, width);
+        int highPos = mapPosition(high, scaleMin, scaleRange, width);
+        int openPos = mapPosition(open, scaleMin, scaleRange, width);
+        int closePos = mapPosition(close, scaleMin, scaleRange, width);
 
         int bodyStart = Math.min(openPos, closePos);
         int bodyEnd = Math.max(openPos, closePos);
         boolean isDoji = openPos == closePos;
         boolean isBullish = close >= open;
 
-        // Calculate output size
         long barBytes = (long) width * 3;
         long labelBytes = 0;
         if (labelSink != null) {
@@ -493,10 +469,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             labelBytes = labelSink.size();
         }
 
-        // +1 byte for putChar's 4-byte write safety on the last BMP char
         long out = allocator.malloc(barBytes + labelBytes + 1);
 
-        // Render: blank outside wick, wick from low to high, body within.
         for (int i = 0; i < width; i++) {
             char c;
             if (i < lowPos || i > highPos) {
@@ -511,7 +485,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             putChar(out, i, c);
         }
 
-        // Append label bytes
         if (labelSink != null && labelBytes > 0) {
             for (int i = 0; i < labelBytes; i++) {
                 Unsafe.getUnsafe().putByte(out + barBytes + i, labelSink.byteAt(i));
