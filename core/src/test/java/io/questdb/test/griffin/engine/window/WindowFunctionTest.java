@@ -4817,12 +4817,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testKSumPartitionedRangeCachedWindow() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sym symbol, val double) timestamp(ts)", timestampType.getTypeName());
-            execute("insert into tab values (1000000::timestamp, 'A', 10.0)");
-            execute("insert into tab values (2000000::timestamp, 'B', 100.0)");
-            execute("insert into tab values (2000000::timestamp, 'A', 30.0)");
-            execute("insert into tab values (3000000::timestamp, 'B', 200.0)");
+            execute("insert into tab values " +
+                    "(1_000_000::timestamp, 'A', 10.0), " +
+                    "(2_000_000::timestamp, 'B', 100.0), " +
+                    "(2_000_000::timestamp, 'A', 30.0), " +
+                    "(3_000_000::timestamp, 'B', 200.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix("""
                             ts\tsym\tval\tksum_val\tavg_all
                             1970-01-01T00:00:01.000000Z\tA\t10.0\t10.0\t85.0
@@ -4831,7 +4832,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:03.000000Z\tB\t200.0\t300.0\t85.0
                             """),
                     "select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab"
+                            "from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -5118,12 +5122,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testKSumRangeCachedWindow() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sym symbol, val double) timestamp(ts)", timestampType.getTypeName());
-            execute("insert into tab values (1000000::timestamp, 'A', 10.0)");
-            execute("insert into tab values (2000000::timestamp, 'B', 20.0)");
-            execute("insert into tab values (3000000::timestamp, 'A', 30.0)");
-            execute("insert into tab values (4000000::timestamp, 'B', 40.0)");
+            execute("insert into tab values " +
+                    "(1_000_000::timestamp, 'A', 10.0), " +
+                    "(2_000_000::timestamp, 'B', 20.0), " +
+                    "(3_000_000::timestamp, 'A', 30.0), " +
+                    "(4_000_000::timestamp, 'B', 40.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix("""
                             ts\tsym\tval\tksum_val\tavg_all
                             1970-01-01T00:00:01.000000Z\tA\t10.0\t10.0\t25.0
@@ -5132,7 +5137,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:04.000000Z\tB\t40.0\t70.0\t25.0
                             """),
                     "select ts, sym, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab"
+                            "from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }

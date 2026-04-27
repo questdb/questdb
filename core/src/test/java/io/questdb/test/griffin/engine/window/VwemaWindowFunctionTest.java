@@ -447,6 +447,67 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     // ========================= Period and Time-Weighted Mode Tests =========================
 
     @Test
+    public void testVwemaCachedWindowAllPass1Variants() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, sort_key long, sym symbol, price double, volume double) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2024-01-01T00:00:01.000000Z'::timestamp, 1, 'A', 10.0, 1.0), " +
+                    "('2024-01-01T00:00:02.000000Z'::timestamp, 2, 'B', 100.0, 1.0), " +
+                    "('2024-01-01T00:00:03.000000Z'::timestamp, 3, 'A', 20.0, 1.0), " +
+                    "('2024-01-01T00:00:04.000000Z'::timestamp, 4, 'B', 200.0, 1.0)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsort_key\tsym\tprice\tvolume\tvwema_period\tvwema_period_part\tvwema_second\tvwema_second_part
+                            2024-01-01T00:00:01.000000Z\t1\tA\t10.0\t1.0\t10.0\t10.0\t10.0\t10.0
+                            2024-01-01T00:00:02.000000Z\t2\tB\t100.0\t1.0\t55.0\t100.0\t66.89085029457019\t100.0
+                            2024-01-01T00:00:03.000000Z\t3\tA\t20.0\t1.0\t37.5\t15.0\t37.25017980242024\t18.646647167633873
+                            2024-01-01T00:00:04.000000Z\t4\tB\t200.0\t1.0\t118.75\t150.0\t140.12768709496163\t186.46647167633873
+                            """,
+                    "select ts, sort_key, sym, price, volume, " +
+                            "avg(price, 'period', 3, volume) over (order by sort_key) vwema_period, " +
+                            "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_period_part, " +
+                            "avg(price, 'second', 1, volume) over (order by sort_key) vwema_second, " +
+                            "avg(price, 'second', 1, volume) over (partition by sym order by sort_key) vwema_second_part " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testVwemaPeriodCachedWindowPartitionedReorderedReplay() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, sort_key long, sym symbol, price double, volume double) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2024-01-01T00:00:00.000000Z'::timestamp, 2, 'A', 10.0, 3.0), " +
+                    "('2024-01-01T00:00:01.000000Z'::timestamp, 2, 'B', 100.0, 1.0), " +
+                    "('2024-01-01T00:00:02.000000Z'::timestamp, 1, 'A', 20.0, 1.0), " +
+                    "('2024-01-01T00:00:03.000000Z'::timestamp, 3, 'B', 300.0, 4.0), " +
+                    "('2024-01-01T00:00:04.000000Z'::timestamp, 3, 'A', 30.0, 1.0), " +
+                    "('2024-01-01T00:00:05.000000Z'::timestamp, 1, 'B', 200.0, 2.0)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsort_key\tsym\tprice\tvolume\tvwema
+                            2024-01-01T00:00:00.000000Z\t2\tA\t10.0\t3.0\t12.5
+                            2024-01-01T00:00:01.000000Z\t2\tB\t100.0\t1.0\t166.66666666666666
+                            2024-01-01T00:00:02.000000Z\t1\tA\t20.0\t1.0\t20.0
+                            2024-01-01T00:00:03.000000Z\t3\tB\t300.0\t4.0\t263.6363636363636
+                            2024-01-01T00:00:04.000000Z\t3\tA\t30.0\t1.0\t18.333333333333332
+                            2024-01-01T00:00:05.000000Z\t1\tB\t200.0\t2.0\t200.0
+                            """,
+                    "select ts, sort_key, sym, price, volume, avg(price, 'period', 3, volume) over (partition by sym order by sort_key) as vwema from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testVwemaPeriodMode() throws Exception {
         // Test avg() VWEMA with period mode (alpha = 2 / (period + 1))
         // With period=2, alpha = 2/3
@@ -553,65 +614,6 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                         """
         );
-    }
-
-    @Test
-    public void testVwemaPeriodCachedWindowPartitionedReorderedReplay() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, sort_key long, sym symbol, price double, volume double) timestamp(ts)");
-            execute("insert into tab values ('2024-01-01T00:00:00.000000Z'::timestamp, 2, 'A', 10.0, 3.0)");
-            execute("insert into tab values ('2024-01-01T00:00:01.000000Z'::timestamp, 2, 'B', 100.0, 1.0)");
-            execute("insert into tab values ('2024-01-01T00:00:02.000000Z'::timestamp, 1, 'A', 20.0, 1.0)");
-            execute("insert into tab values ('2024-01-01T00:00:03.000000Z'::timestamp, 3, 'B', 300.0, 4.0)");
-            execute("insert into tab values ('2024-01-01T00:00:04.000000Z'::timestamp, 3, 'A', 30.0, 1.0)");
-            execute("insert into tab values ('2024-01-01T00:00:05.000000Z'::timestamp, 1, 'B', 200.0, 2.0)");
-
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tsort_key\tsym\tprice\tvolume\tvwema
-                            2024-01-01T00:00:00.000000Z\t2\tA\t10.0\t3.0\t12.5
-                            2024-01-01T00:00:01.000000Z\t2\tB\t100.0\t1.0\t166.66666666666666
-                            2024-01-01T00:00:02.000000Z\t1\tA\t20.0\t1.0\t20.0
-                            2024-01-01T00:00:03.000000Z\t3\tB\t300.0\t4.0\t263.6363636363636
-                            2024-01-01T00:00:04.000000Z\t3\tA\t30.0\t1.0\t18.333333333333332
-                            2024-01-01T00:00:05.000000Z\t1\tB\t200.0\t2.0\t200.0
-                            """,
-                    "select ts, sort_key, sym, price, volume, avg(price, 'period', 3, volume) over (partition by sym order by sort_key) as vwema from tab",
-                    "ts",
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testVwemaCachedWindowAllPass1Variants() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, sort_key long, sym symbol, price double, volume double) timestamp(ts)");
-            execute("insert into tab values ('2024-01-01T00:00:01.000000Z'::timestamp, 1, 'A', 10.0, 1.0)");
-            execute("insert into tab values ('2024-01-01T00:00:02.000000Z'::timestamp, 2, 'B', 100.0, 1.0)");
-            execute("insert into tab values ('2024-01-01T00:00:03.000000Z'::timestamp, 3, 'A', 20.0, 1.0)");
-            execute("insert into tab values ('2024-01-01T00:00:04.000000Z'::timestamp, 4, 'B', 200.0, 1.0)");
-
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tsort_key\tsym\tprice\tvolume\tvwema_period\tvwema_period_part\tvwema_second\tvwema_second_part
-                            2024-01-01T00:00:01.000000Z\t1\tA\t10.0\t1.0\t10.0\t10.0\t10.0\t10.0
-                            2024-01-01T00:00:02.000000Z\t2\tB\t100.0\t1.0\t55.0\t100.0\t66.89085029457019\t100.0
-                            2024-01-01T00:00:03.000000Z\t3\tA\t20.0\t1.0\t37.5\t15.0\t37.25017980242024\t18.646647167633873
-                            2024-01-01T00:00:04.000000Z\t4\tB\t200.0\t1.0\t118.75\t150.0\t140.12768709496163\t186.46647167633873
-                            """,
-                    "select ts, sort_key, sym, price, volume, " +
-                            "avg(price, 'period', 3, volume) over (order by sort_key) vwema_period, " +
-                            "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_period_part, " +
-                            "avg(price, 'second', 1, volume) over (order by sort_key) vwema_second, " +
-                            "avg(price, 'second', 1, volume) over (partition by sym order by sort_key) vwema_second_part " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
-        });
     }
 
     @Test
