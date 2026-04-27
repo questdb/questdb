@@ -9131,6 +9131,76 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReindexPreservesCoveringWithDroppedColumnsBeforeTimestamp() throws Exception {
+        // Regression: IndexBuilder and TableSnapshotRestore both fed
+        // PostingIndexWriter.configureCovering with metadata.getTimestampIndex()
+        // taken from RecordMetadata, which is a DENSE position. The writer
+        // then compared it against coveredColumnIndices, which are WRITER
+        // indices. After DROP COLUMN before the timestamp the two index
+        // spaces diverge, and a covered column whose writer index happens
+        // to equal the timestamp's dense position gets misclassified as
+        // the designated timestamp at REINDEX time. The misclassified
+        // column's bytes are routed through compressLongsLinearPred — a
+        // long-only, monotonic-only encoder — bypassing the type-specific
+        // encoder and corrupting the covering sidecar on disk.
+        //
+        // Layout that triggers the collision:
+        //   CREATE: writer 0=a, 1=b, 2=ts, 3=sym, 4=c
+        //   DROP a: live writer 1=b, 2=ts, 3=sym, 4=c
+        //           live dense  0=b, 1=ts, 2=sym, 3=c, dense_ts = 1
+        //   covering for sym holds writer 1 (b). 1 == 1 == dense_ts -> hit.
+        //
+        // Disable timestamp auto-include so the covering list contains
+        // exactly the user-specified columns (otherwise ts at writer 2 is
+        // appended too, which is unrelated to the bug).
+        setProperty(io.questdb.PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, "false");
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_reindex (
+                        a INT,
+                        b INT,
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        c INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_reindex VALUES
+                        (1, 100, '2024-01-01T00:00:00', 'A', 200),
+                        (2, 101, '2024-01-01T01:00:00', 'A', 201),
+                        (3, 102, '2024-01-01T02:00:00', 'A', 202)
+                    """);
+            execute("ALTER TABLE t_reindex ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (b, c)");
+
+            // Sanity: covering query is correct before any drop / reindex.
+            assertSql("""
+                    b\tc
+                    100\t200
+                    101\t201
+                    102\t202
+                    """, "SELECT b, c FROM t_reindex WHERE sym = 'A' ORDER BY ts");
+
+            execute("ALTER TABLE t_reindex DROP COLUMN a");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            execute("REINDEX TABLE t_reindex LOCK EXCLUSIVE");
+            engine.releaseAllReaders();
+
+            // After REINDEX, the covering query for b must still return
+            // the original values. With the bug, b's bytes were re-encoded
+            // through compressLongsLinearPred and the read path returns
+            // garbage.
+            assertSql("""
+                    b\tc
+                    100\t200
+                    101\t201
+                    102\t202
+                    """, "SELECT b, c FROM t_reindex WHERE sym = 'A' ORDER BY ts");
+        });
+    }
+
+    @Test
     public void testRenameIndexedColumn() throws Exception {
         // Rename a column that has INDEX TYPE POSTING
         assertMemoryLeak(() -> {

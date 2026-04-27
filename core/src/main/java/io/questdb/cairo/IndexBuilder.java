@@ -270,8 +270,18 @@ public class IndexBuilder extends RebuildColumnBase {
             coveringIndices.add(covWriterIdx);
             coveringTypes.add(covType);
         }
+        // PostingIndexWriter compares the timestamp parameter against
+        // coveredColumnIndices, which we just populated with writer
+        // indices. RecordMetadata.getTimestampIndex() returns a DENSE
+        // position, so translate to writer space first; otherwise after
+        // DROP COLUMN before the timestamp the two index spaces diverge
+        // and a covered column whose writer index happens to equal the
+        // timestamp's dense position gets misclassified as the
+        // designated timestamp.
+        int tsDense = metadata.getTimestampIndex();
+        int tsWriter = tsDense >= 0 ? metadata.getWriterIndex(tsDense) : -1;
         indexer.configureCovering(coveringNames, coveringNameTxns, coveringTops, coveringShifts,
-                coveringIndices, coveringTypes, metadata.getTimestampIndex());
+                coveringIndices, coveringTypes, tsWriter);
     }
 
     @Override

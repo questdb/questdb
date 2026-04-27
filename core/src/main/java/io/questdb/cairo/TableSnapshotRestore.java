@@ -688,7 +688,15 @@ public class TableSnapshotRestore implements QuietCloseable {
             indices.add(covWriterIdx);
             types.add(covType);
         }
-        indexWriter.configureCovering(names, nameTxns, tops, shifts, indices, types, metadata.getTimestampIndex());
+        // PostingIndexWriter compares the timestamp parameter against
+        // the writer-space coveredColumnIndices we just built, so
+        // translate metadata.getTimestampIndex() (dense) to writer
+        // space. After DROP COLUMN before the timestamp the two index
+        // spaces diverge and the comparison would otherwise hit the
+        // wrong column.
+        int tsDense = metadata.getTimestampIndex();
+        int tsWriter = tsDense >= 0 ? metadata.getWriterIndex(tsDense) : -1;
+        indexWriter.configureCovering(names, nameTxns, tops, shifts, indices, types, tsWriter);
     }
 
     private void rebuildBitmapIndexForParquetPartition(
