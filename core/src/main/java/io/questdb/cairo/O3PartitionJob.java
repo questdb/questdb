@@ -81,7 +81,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     // High bit set on the column type signals the Rust parquet encoder that the
     // symbol column contains no nulls, so it can emit an all-ones RLE run for
     // definition levels instead of checking each row.  This is a write-time hint
-    // only — it does NOT change the parquet schema Repetition (always Optional).
+    // only - it does NOT change the parquet schema Repetition (always Optional).
     private static final int PARQUET_SYMBOL_NOT_NULL_HINT = Integer.MIN_VALUE;
 
     public O3PartitionJob(MessageBus messageBus) {
@@ -282,7 +282,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // so the output file footer, column remapping, and null column
                     // chunks use the new schema.
                     // For SYMBOL columns, set the high bit on the column type
-                    // when the symbol map has no null flag — this is a write-time
+                    // when the symbol map has no null flag - this is a write-time
                     // hint for the Rust encoder to emit a fast all-ones RLE run
                     // for definition levels (symbols are always Optional in the schema).
                     final PartitionDescriptor schemaDesc = ctx.getChunkDescriptor();
@@ -295,7 +295,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // The high bit is a write-time hint telling the Rust encoder
                         // that this symbol column has no nulls, so it can emit a fast
                         // all-ones RLE run for definition levels. It does NOT change
-                        // the parquet schema Repetition — symbols are always Optional.
+                        // the parquet schema Repetition - symbols are always Optional.
                         if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
                             colType |= PARQUET_SYMBOL_NOT_NULL_HINT;
                         }
@@ -1707,7 +1707,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IntList tableToParquetIdx
     ) {
         // Count missing columns (present in table but absent from parquet).
-        // This may be zero in a DROP-only scenario — the function still
+        // This may be zero in a DROP-only scenario - the function still
         // handles column remapping via field_id, dropping extra parquet
         // columns that no longer exist in the table schema.
         int nullColCount = 0;
@@ -2323,26 +2323,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int srcTag = ColumnType.tagOf(srcType);
                 int dstTag = ColumnType.tagOf(columnType);
                 if (ColumnType.isVarSize(srcTag) && !ColumnType.isVarSize(dstTag) && !ColumnType.isSymbol(dstTag)) {
-                    // Var→fixed: must use VARCHAR_SLICE (not native VARCHAR) because
+                    // Var->fixed: must use VARCHAR_SLICE (not native VARCHAR) because
                     // convertVarColumnToFixed() reads VarcharSlice aux layout directly:
                     // 4-byte u32 header at offset 0 + absolute data pointer at offset 8.
                     decodeType = (srcTag == ColumnType.VARCHAR)
                             ? ColumnType.VARCHAR_SLICE : srcType;
                 } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
                     if (ColumnType.isVarSize(dstTag)) {
-                        // Symbol→var: must use native VARCHAR (not VARCHAR_SLICE) because
+                        // Symbol->var: must use native VARCHAR (not VARCHAR_SLICE) because
                         // the merge path and parquet write path expect native VARCHAR aux format.
                         // VarcharSlice aux entries have bit 0 set in the header, which the native
                         // VARCHAR reader misinterprets as HEADER_FLAG_INLINED.
                         decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR;
                     } else {
-                        // Symbol→fixed: must use VARCHAR_SLICE because convertVarColumnToFixed()
+                        // Symbol->fixed: must use VARCHAR_SLICE because convertVarColumnToFixed()
                         // reads VarcharSlice aux layout (4-byte header + absolute pointer at offset 8).
                         decodeType = ColumnType.VARCHAR_SLICE;
                     }
                 } else if (!ColumnType.isVarSize(srcTag) && !ColumnType.isSymbol(srcTag)
                         && ColumnType.isVarSize(dstTag)) {
-                    // Fixed→var: Rust cannot produce var-size output from fixed input.
+                    // Fixed->var: Rust cannot produce var-size output from fixed input.
                     // Decode as source fixed type; Java converts afterward.
                     decodeType = srcType;
                 }
@@ -2517,13 +2517,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
                     long columnAuxPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxPtr(decodeIdx) : 0;
                     // Rust refresh_ptrs() sets aux_ptr to a non-null dangling pointer even when
-                    // aux_vec is empty (e.g. fixed→var: decoded as INT, target is VARCHAR/STRING).
+                    // aux_vec is empty (e.g. fixed->var: decoded as INT, target is VARCHAR/STRING).
                     // Use aux_size to detect empty aux.
                     long columnAuxSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxSize(decodeIdx) : 0;
 
                     if (columnAuxSize == 0) {
                         if (decodeIdx >= 0 && columnDataPtr != 0) {
-                            // Fixed→var: Rust decoded as source fixed type (no aux).
+                            // Fixed->var: Rust decoded as source fixed type (no aux).
                             // Batch-convert fixed data to the target var-size format.
                             int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
                             int srcType = decoder.metadata().getColumnType(parquetIdx);
@@ -2607,7 +2607,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     long columnAuxSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxSize(decodeIdx) : 0;
 
                     if (columnAuxSize > 0 && columnDataPtr != 0) {
-                        // Var→fixed or Symbol→fixed: Rust decoded as source var type (has aux).
+                        // Var->fixed or Symbol->fixed: Rust decoded as source var type (has aux).
                         // Batch-convert var data to the target fixed-size format.
                         long columnAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodeIdx);
                         int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
@@ -3492,7 +3492,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * have been ALTER-ed, and writes the result as a new row group via
      * addRowGroup(). This is used instead of copyRowGroupWithNullColumns()
      * when type-converted columns exist, because the raw-copy approach cannot
-     * remap field IDs across conversion chains (W1→W2→W3) and produces
+     * remap field IDs across conversion chains (W1->W2->W3) and produces
      * zero-filled columns.
      */
     private static void rewriteParquetRowGroupWithConversions(
@@ -3512,7 +3512,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         parquetColumns.clear();
         final int columnCount = tableWriterMetadata.getColumnCount();
         int decodeColCount = 0;
-        // Map from active column position → decode buffer index (-1 if missing).
+        // Map from active column position -> decode buffer index (-1 if missing).
         final int[] activeToDecodeIdx = new int[columnCount];
         final int[] activeColIndices = new int[columnCount];
         int activeColCount = 0;
@@ -3530,26 +3530,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int srcTag = ColumnType.tagOf(srcType);
                 int dstTag = ColumnType.tagOf(columnType);
                 if (ColumnType.isVarSize(srcTag) && !ColumnType.isVarSize(dstTag) && !ColumnType.isSymbol(dstTag)) {
-                    // Var→fixed: must use VARCHAR_SLICE (not native VARCHAR) because
+                    // Var->fixed: must use VARCHAR_SLICE (not native VARCHAR) because
                     // convertVarColumnToFixed() reads VarcharSlice aux layout directly:
                     // 4-byte u32 header at offset 0 + absolute data pointer at offset 8.
                     decodeType = (srcTag == ColumnType.VARCHAR)
                             ? ColumnType.VARCHAR_SLICE : srcType;
                 } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
                     if (ColumnType.isVarSize(dstTag)) {
-                        // Symbol→var: must use native VARCHAR (not VARCHAR_SLICE) because
+                        // Symbol->var: must use native VARCHAR (not VARCHAR_SLICE) because
                         // the merge path and parquet write path expect native VARCHAR aux format.
                         // VarcharSlice aux entries have bit 0 set in the header, which the native
                         // VARCHAR reader misinterprets as HEADER_FLAG_INLINED.
                         decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR;
                     } else {
-                        // Symbol→fixed: must use VARCHAR_SLICE because convertVarColumnToFixed()
+                        // Symbol->fixed: must use VARCHAR_SLICE because convertVarColumnToFixed()
                         // reads VarcharSlice aux layout (4-byte header + absolute pointer at offset 8).
                         decodeType = ColumnType.VARCHAR_SLICE;
                     }
                 } else if (!ColumnType.isVarSize(srcTag) && !ColumnType.isSymbol(srcTag)
                         && ColumnType.isVarSize(dstTag)) {
-                    // Fixed→var: Rust cannot produce var-size output from fixed input.
+                    // Fixed->var: Rust cannot produce var-size output from fixed input.
                     // Decode as source fixed type; Java converts afterward.
                     decodeType = srcType;
                 }
@@ -3592,7 +3592,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     if (columnAuxSize == 0) {
                         if (decodeIdx >= 0 && columnDataPtr != 0) {
-                            // Fixed→var: Rust decoded as source fixed type (no aux).
+                            // Fixed->var: Rust decoded as source fixed type (no aux).
                             int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
                             int srcType = decoder.metadata().getColumnType(parquetIdx);
 
@@ -3664,7 +3664,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     long columnAuxSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxSize(decodeIdx) : 0;
 
                     if (columnAuxSize > 0 && columnDataPtr != 0) {
-                        // Var→fixed or Symbol→fixed: batch-convert.
+                        // Var->fixed or Symbol->fixed: batch-convert.
                         long columnAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodeIdx);
                         int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
                         int srcType = decoder.metadata().getColumnType(parquetIdx);

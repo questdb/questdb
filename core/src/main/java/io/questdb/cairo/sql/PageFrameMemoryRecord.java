@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -35,6 +37,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -55,8 +58,6 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
-import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StableStringSource;
@@ -65,7 +66,6 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
-import io.questdb.griffin.SqlKeywords;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -85,25 +85,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     protected final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
     protected final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
-    protected DirectLongList auxPageAddresses;
-    protected DirectLongList auxPageSizes;
-    protected int columnOffset;
-    protected byte frameFormat = -1;
-    protected int frameIndex = -1;
-    // True when any column in the current frame needs lazy fixed→var conversion.
-    protected boolean hasTypeCasts;
-    // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
-    // RECORD_A_LETTER (0) stands for record A, RECORD_B_LETTER (1) stands for record B.
-    protected byte letter;
-    protected DirectLongList pageAddresses;
-    protected DirectLongList pageSizes;
-    protected long rowIdOffset;
-    protected long rowIndex;
-    // Per-column source type tag for fixed→var type-cast columns.
-    // Set from PageFrameMemoryPool during init(); null when hasTypeCasts is false.
-    protected IntList sourceColumnTypes;
-    protected boolean stableStrings;
-    // Reusable decimal instances for lazy var→decimal conversion.
+    // Reusable decimal instances for lazy var->decimal conversion.
     private final Decimal128 decimal128Buf = new Decimal128();
     private final Decimal256 decimal256Buf = new Decimal256();
     private final Decimal64 decimal64Buf = new Decimal64();
@@ -117,6 +99,24 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private final StringSink utf16DecodeSink = new StringSink();
     private final Utf8StringSink varcharSinkA = new Utf8StringSink();
     private final Utf8StringSink varcharSinkB = new Utf8StringSink();
+    protected DirectLongList auxPageAddresses;
+    protected DirectLongList auxPageSizes;
+    protected int columnOffset;
+    protected byte frameFormat = -1;
+    protected int frameIndex = -1;
+    // True when any column in the current frame needs lazy fixed->var conversion.
+    protected boolean hasTypeCasts;
+    // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
+    // RECORD_A_LETTER (0) stands for record A, RECORD_B_LETTER (1) stands for record B.
+    protected byte letter;
+    protected DirectLongList pageAddresses;
+    protected DirectLongList pageSizes;
+    protected long rowIdOffset;
+    protected long rowIndex;
+    // Per-column source type tag for fixed->var type-cast columns.
+    // Set from PageFrameMemoryPool during init(); null when hasTypeCasts is false.
+    protected IntList sourceColumnTypes;
+    protected boolean stableStrings;
     protected SymbolTableSource symbolTableSource;
 
     public PageFrameMemoryRecord() {
@@ -160,10 +160,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         symbolTableCache.clear();
         Misc.freeObjList(arrayBuffers);
         clear();
-    }
-
-    public long getPageAddress(int columnIndex) {
-        return pageAddresses.get(columnOffset + columnIndex);
     }
 
     @Override
@@ -291,6 +287,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     @Override
+    public long getDate(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                return convertVarToDate(-srcTag, columnIndex);
+            }
+        }
+        return getLong(columnIndex);
+    }
+
+    @Override
     public void getDecimal128(int columnIndex, Decimal128 sink) {
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
@@ -401,17 +408,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
         }
         return NullMemoryCMR.INSTANCE.getDouble(0);
-    }
-
-    @Override
-    public long getDate(int columnIndex) {
-        if (hasTypeCasts) {
-            int srcTag = sourceColumnTypes.getQuick(columnIndex);
-            if (srcTag < -1) {
-                return convertVarToDate(-srcTag, columnIndex);
-            }
-        }
-        return getLong(columnIndex);
     }
 
     @Override
@@ -578,6 +574,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public long getLongIPv4(int columnIndex) {
         return Numbers.ipv4ToLong(getIPv4(columnIndex));
+    }
+
+    public long getPageAddress(int columnIndex) {
+        return pageAddresses.get(columnOffset + columnIndex);
     }
 
     @Override
@@ -787,67 +787,101 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         setRowIndex(rowIndex);
     }
 
-    private @NotNull DirectString csViewA(int columnIndex) {
-        DirectString view = csViewsA.getQuiet(columnIndex);
-        if (view != null) {
-            return view;
+    private boolean appendDecimalToSink(int srcType, long address, CharSink<?> sink) {
+        final int tag = ColumnType.tagOf(srcType);
+        final int precision = ColumnType.getDecimalPrecision(srcType);
+        final int scale = ColumnType.getDecimalScale(srcType);
+        switch (tag) {
+            case ColumnType.DECIMAL8 -> {
+                byte val = Unsafe.getUnsafe().getByte(address + rowIndex);
+                if (val == Decimals.DECIMAL8_NULL) {
+                    return false;
+                }
+                Decimals.appendNonNull(val, precision, scale, sink);
+            }
+            case ColumnType.DECIMAL16 -> {
+                short val = Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
+                if (val == Decimals.DECIMAL16_NULL) {
+                    return false;
+                }
+                Decimals.appendNonNull(val, precision, scale, sink);
+            }
+            case ColumnType.DECIMAL32 -> {
+                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+                if (val == Decimals.DECIMAL32_NULL) {
+                    return false;
+                }
+                Decimals.appendNonNull(val, precision, scale, sink);
+            }
+            case ColumnType.DECIMAL64 -> {
+                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                if (val == Decimals.DECIMAL64_NULL) {
+                    return false;
+                }
+                Decimals.appendNonNull(val, precision, scale, sink);
+            }
+            case ColumnType.DECIMAL128 -> {
+                long hi = Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
+                long lo = Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
+                if (Decimal128.isNull(hi, lo)) {
+                    return false;
+                }
+                Decimals.appendNonNull(hi, lo, precision, scale, sink);
+            }
+            case ColumnType.DECIMAL256 -> {
+                long base = address + (rowIndex << 5);
+                long hh = Unsafe.getUnsafe().getLong(base);
+                long hl = Unsafe.getUnsafe().getLong(base + 8L);
+                long lh = Unsafe.getUnsafe().getLong(base + 16L);
+                long ll = Unsafe.getUnsafe().getLong(base + 24L);
+                if (Decimal256.isNull(hh, hl, lh, ll)) {
+                    return false;
+                }
+                Decimals.appendNonNull(hh, hl, lh, ll, precision, scale, sink);
+            }
+            default -> {
+                return false;
+            }
         }
-        csViewsA.extendAndSet(columnIndex, view = new DirectString(this));
-        return view;
+        return true;
     }
 
-    private @NotNull DirectString csViewB(int columnIndex) {
-        DirectString view = csViewsB.getQuiet(columnIndex);
-        if (view != null) {
-            return view;
+    /**
+     * Converts a fixed-type value to a STRING CharSequence.
+     * Returns null for null values. Called only when the column needs a type cast.
+     */
+    private CharSequence convertFixedToStr(int srcType, int columnIndex, StringSink sink) {
+        final long address = pageAddresses.get(columnOffset + columnIndex);
+        if (address == 0) {
+            return null; // column top
         }
-        csViewsB.extendAndSet(columnIndex, view = new DirectString(this));
-        return view;
+        sink.clear();
+        // Decimal has a distinct (precision, scale) format path that the shared
+        // Fixed2VarConverter doesn't cover.
+        if (ColumnType.isDecimal(srcType)) {
+            return appendDecimalToSink(srcType, address, sink) ? sink : null;
+        }
+        final ColumnTypeConverter.Fixed2VarConverter converter =
+                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.STRING);
+        return converter.convert(address + rowIndex * ColumnType.sizeOf(srcType), sink) ? sink : null;
     }
 
-    private void getLong256(int columnIndex, Long256Acceptor sink) {
-        final long columnAddress = pageAddresses.get(columnOffset + columnIndex);
-        if (columnAddress != 0) {
-            sink.fromAddress(columnAddress + (rowIndex << 5));
-            return;
+    /**
+     * Converts a fixed-type value to a VARCHAR Utf8Sequence.
+     * Returns null for null values. Called only when the column needs a type cast.
+     */
+    private Utf8Sequence convertFixedToVarchar(int srcType, int columnIndex, Utf8StringSink sink) {
+        final long address = pageAddresses.get(columnOffset + columnIndex);
+        if (address == 0) {
+            return null; // column top
         }
-        NullMemoryCMR.INSTANCE.getLong256(0, sink);
-    }
-
-    private @NotNull Long256Impl long256A(int columnIndex) {
-        Long256Impl long256 = longs256A.getQuiet(columnIndex);
-        if (long256 != null) {
-            return long256;
+        sink.clear();
+        if (ColumnType.isDecimal(srcType)) {
+            return appendDecimalToSink(srcType, address, sink) ? sink : null;
         }
-        longs256A.extendAndSet(columnIndex, long256 = new Long256Impl());
-        return long256;
-    }
-
-    private @NotNull Long256Impl long256B(int columnIndex) {
-        Long256Impl long256 = longs256B.getQuiet(columnIndex);
-        if (long256 != null) {
-            return long256;
-        }
-        longs256B.extendAndSet(columnIndex, long256 = new Long256Impl());
-        return long256;
-    }
-
-    private @NotNull Utf8SplitString utf8ViewA(int columnIndex) {
-        Utf8SplitString view = utf8ViewsA.getQuiet(columnIndex);
-        if (view != null) {
-            return view;
-        }
-        utf8ViewsA.extendAndSet(columnIndex, view = new Utf8SplitString(this));
-        return view;
-    }
-
-    private @NotNull Utf8SplitString utf8ViewB(int columnIndex) {
-        Utf8SplitString view = utf8ViewsB.getQuiet(columnIndex);
-        if (view != null) {
-            return view;
-        }
-        utf8ViewsB.extendAndSet(columnIndex, view = new Utf8SplitString(this));
-        return view;
+        final ColumnTypeConverter.Fixed2VarConverter converter =
+                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.VARCHAR);
+        return converter.convert(address + rowIndex * ColumnType.sizeOf(srcType), sink) ? sink : null;
     }
 
     private boolean convertVarToBool(int srcTag, int columnIndex) {
@@ -866,20 +900,23 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return 0;
     }
 
+    private char convertVarToChar(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        return cs != null && cs.length() > 0 ? cs.charAt(0) : (char) 0;
+    }
+
     private long convertVarToDate(int srcTag, int columnIndex) {
         CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
         if (cs != null) {
             try {
-                return DateFormatUtils.parseUTCDate(cs);
+                // parseFloor matches the native conversion path (parseFloorLiteral) and
+                // accepts higher-precision input (micros/nanos) by truncating extras,
+                // unlike DateFormatUtils.parseUTCDate which only accepts millis.
+                return MillisTimestampDriver.INSTANCE.parseFloor(cs, 0, cs.length());
             } catch (NumericException ignore) {
             }
         }
         return Numbers.LONG_NULL;
-    }
-
-    private char convertVarToChar(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
-        return cs != null && cs.length() > 0 ? cs.charAt(0) : (char) 0;
     }
 
     private void convertVarToDecimal128(int encoded, int columnIndex, Decimal128 sink) {
@@ -1039,7 +1076,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
         if (cs != null) {
             try {
-                return MicrosFormatUtils.parseTimestamp(cs);
+                // parseFloor matches the native conversion path (parseFloorLiteral) and
+                // accepts nanosecond-precision input by truncating trailing nanos. The
+                // previous MicrosFormatUtils.parseTimestamp only knew patterns up to
+                // microsecond precision and returned NULL for TIMESTAMP_NS->STRING
+                // intermediate values that get lazily decoded back to TIMESTAMP.
+                return MicrosTimestampDriver.INSTANCE.parseFloor(cs, 0, cs.length());
             } catch (NumericException ignore) {
             }
         }
@@ -1068,6 +1110,51 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Numbers.LONG_NULL;
     }
 
+    private @NotNull DirectString csViewA(int columnIndex) {
+        DirectString view = csViewsA.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
+        }
+        csViewsA.extendAndSet(columnIndex, view = new DirectString(this));
+        return view;
+    }
+
+    private @NotNull DirectString csViewB(int columnIndex) {
+        DirectString view = csViewsB.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
+        }
+        csViewsB.extendAndSet(columnIndex, view = new DirectString(this));
+        return view;
+    }
+
+    private void getLong256(int columnIndex, Long256Acceptor sink) {
+        final long columnAddress = pageAddresses.get(columnOffset + columnIndex);
+        if (columnAddress != 0) {
+            sink.fromAddress(columnAddress + (rowIndex << 5));
+            return;
+        }
+        NullMemoryCMR.INSTANCE.getLong256(0, sink);
+    }
+
+    private @NotNull Long256Impl long256A(int columnIndex) {
+        Long256Impl long256 = longs256A.getQuiet(columnIndex);
+        if (long256 != null) {
+            return long256;
+        }
+        longs256A.extendAndSet(columnIndex, long256 = new Long256Impl());
+        return long256;
+    }
+
+    private @NotNull Long256Impl long256B(int columnIndex) {
+        Long256Impl long256 = longs256B.getQuiet(columnIndex);
+        if (long256 != null) {
+            return long256;
+        }
+        longs256B.extendAndSet(columnIndex, long256 = new Long256Impl());
+        return long256;
+    }
+
     private CharSequence readVarValueForConversion(int srcTag, int columnIndex) {
         if (srcTag == ColumnType.VARCHAR) {
             Utf8Sequence utf8 = getVarchar(columnIndex, utf8ViewA(columnIndex));
@@ -1082,101 +1169,22 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
     }
 
-    private boolean appendDecimalToSink(int srcType, long address, CharSink<?> sink) {
-        final int tag = ColumnType.tagOf(srcType);
-        final int precision = ColumnType.getDecimalPrecision(srcType);
-        final int scale = ColumnType.getDecimalScale(srcType);
-        switch (tag) {
-            case ColumnType.DECIMAL8 -> {
-                byte val = Unsafe.getUnsafe().getByte(address + rowIndex);
-                if (val == Decimals.DECIMAL8_NULL) {
-                    return false;
-                }
-                Decimals.appendNonNull(val, precision, scale, sink);
-            }
-            case ColumnType.DECIMAL16 -> {
-                short val = Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
-                if (val == Decimals.DECIMAL16_NULL) {
-                    return false;
-                }
-                Decimals.appendNonNull(val, precision, scale, sink);
-            }
-            case ColumnType.DECIMAL32 -> {
-                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
-                if (val == Decimals.DECIMAL32_NULL) {
-                    return false;
-                }
-                Decimals.appendNonNull(val, precision, scale, sink);
-            }
-            case ColumnType.DECIMAL64 -> {
-                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
-                if (val == Decimals.DECIMAL64_NULL) {
-                    return false;
-                }
-                Decimals.appendNonNull(val, precision, scale, sink);
-            }
-            case ColumnType.DECIMAL128 -> {
-                long hi = Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
-                long lo = Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
-                if (Decimal128.isNull(hi, lo)) {
-                    return false;
-                }
-                Decimals.appendNonNull(hi, lo, precision, scale, sink);
-            }
-            case ColumnType.DECIMAL256 -> {
-                long base = address + (rowIndex << 5);
-                long hh = Unsafe.getUnsafe().getLong(base);
-                long hl = Unsafe.getUnsafe().getLong(base + 8L);
-                long lh = Unsafe.getUnsafe().getLong(base + 16L);
-                long ll = Unsafe.getUnsafe().getLong(base + 24L);
-                if (Decimal256.isNull(hh, hl, lh, ll)) {
-                    return false;
-                }
-                Decimals.appendNonNull(hh, hl, lh, ll, precision, scale, sink);
-            }
-            default -> {
-                return false;
-            }
+    private @NotNull Utf8SplitString utf8ViewA(int columnIndex) {
+        Utf8SplitString view = utf8ViewsA.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        return true;
+        utf8ViewsA.extendAndSet(columnIndex, view = new Utf8SplitString(this));
+        return view;
     }
 
-    /**
-     * Converts a fixed-type value to a STRING CharSequence.
-     * Returns null for null values. Called only when the column needs a type cast.
-     */
-    private CharSequence convertFixedToStr(int srcType, int columnIndex, StringSink sink) {
-        final long address = pageAddresses.get(columnOffset + columnIndex);
-        if (address == 0) {
-            return null; // column top
+    private @NotNull Utf8SplitString utf8ViewB(int columnIndex) {
+        Utf8SplitString view = utf8ViewsB.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
         }
-        sink.clear();
-        // Decimal has a distinct (precision, scale) format path that the shared
-        // Fixed2VarConverter doesn't cover.
-        if (ColumnType.isDecimal(srcType)) {
-            return appendDecimalToSink(srcType, address, sink) ? sink : null;
-        }
-        final ColumnTypeConverter.Fixed2VarConverter converter =
-                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.STRING);
-        return converter.convert(address + rowIndex * ColumnType.sizeOf(srcType), sink) ? sink : null;
-    }
-
-    /**
-     * Converts a fixed-type value to a VARCHAR Utf8Sequence.
-     * Returns null for null values. Called only when the column needs a type cast.
-     */
-    private Utf8Sequence convertFixedToVarchar(int srcType, int columnIndex, Utf8StringSink sink) {
-        final long address = pageAddresses.get(columnOffset + columnIndex);
-        if (address == 0) {
-            return null; // column top
-        }
-        sink.clear();
-        if (ColumnType.isDecimal(srcType)) {
-            return appendDecimalToSink(srcType, address, sink) ? sink : null;
-        }
-        final ColumnTypeConverter.Fixed2VarConverter converter =
-                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.VARCHAR);
-        return converter.convert(address + rowIndex * ColumnType.sizeOf(srcType), sink) ? sink : null;
+        utf8ViewsB.extendAndSet(columnIndex, view = new Utf8SplitString(this));
+        return view;
     }
 
     protected @NotNull BorrowedArray borrowedArray(int columnIndex) {
