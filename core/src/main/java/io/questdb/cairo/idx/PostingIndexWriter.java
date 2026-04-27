@@ -385,6 +385,12 @@ public class PostingIndexWriter implements IndexWriter {
      * Configure covering with pre-mapped addresses. Used by O3 where column
      * data lives in native memory buffers, not files on disk. The caller
      * owns the mmaps and is responsible for unmapping them.
+     * <p>
+     * timestampColumnIndex is the writer-space index of the designated
+     * timestamp; pass -1 if no covered column is the designated timestamp.
+     * It must be passed through so the O3 reseal path keeps using the
+     * linear-prediction encoder for the timestamp covering instead of
+     * silently falling back to the generic long encoder.
      */
     public void configureCovering(
             LongList coveredColumnAddrs,
@@ -392,7 +398,8 @@ public class PostingIndexWriter implements IndexWriter {
             IntList coveredColumnShifts,
             IntList coveredColumnIndices,
             IntList coveredColumnTypes,
-            int coverCount
+            int coverCount,
+            int timestampColumnIndex
     ) {
         unmapCoveredColumnReads();
         this.coveredPartitionPath.clear();
@@ -412,7 +419,7 @@ public class PostingIndexWriter implements IndexWriter {
             this.coveredColumnNameTxns.add(COLUMN_NAME_TXN_NONE);
         }
         this.coverCount = coverCount;
-        this.timestampColumnIndex = -1;
+        this.timestampColumnIndex = timestampColumnIndex;
     }
 
     @TestOnly
@@ -423,6 +430,20 @@ public class PostingIndexWriter implements IndexWriter {
             int[] coveredColumnIndices,
             int[] coveredColumnTypes,
             int coverCount
+    ) {
+        configureCovering(coveredColumnAddrs, coveredColumnTops, coveredColumnShifts,
+                coveredColumnIndices, coveredColumnTypes, coverCount, -1);
+    }
+
+    @TestOnly
+    public void configureCovering(
+            long[] coveredColumnAddrs,
+            long[] coveredColumnTops,
+            int[] coveredColumnShifts,
+            int[] coveredColumnIndices,
+            int[] coveredColumnTypes,
+            int coverCount,
+            int timestampColumnIndex
     ) {
         LongList addrs = new LongList(coverCount);
         LongList tops = new LongList(coverCount);
@@ -436,7 +457,12 @@ public class PostingIndexWriter implements IndexWriter {
             indices.add(coveredColumnIndices[i]);
             types.add(coveredColumnTypes[i]);
         }
-        configureCovering(addrs, tops, shifts, indices, types, coverCount);
+        configureCovering(addrs, tops, shifts, indices, types, coverCount, timestampColumnIndex);
+    }
+
+    @TestOnly
+    public int getTimestampColumnIndex() {
+        return timestampColumnIndex;
     }
 
     @TestOnly

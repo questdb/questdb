@@ -63,7 +63,8 @@ public interface ColumnIndexer extends QuietCloseable {
             IntList coveredColumnShifts,
             IntList coveredColumnIndices,
             IntList coveredColumnTypes,
-            int coverCount
+            int coverCount,
+            int timestampColumnIndex
     ) {
     }
 

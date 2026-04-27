@@ -8509,6 +8509,70 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testO3PreMappedConfigureCoveringPreservesTimestampIndex() throws Exception {
+        // Regression: PostingIndexWriter's pre-mapped configureCovering
+        // overload (used exclusively by TableWriter.finishO3Commit's reseal
+        // path at TableWriter.java:10760) used to hard-reset
+        // timestampColumnIndex to -1, dropping the linear-prediction codec
+        // for the designated-timestamp covering on every O3-affected
+        // partition. compressSidecarBlock then routed the timestamp
+        // through CoveringCompressor.compressLongs (generic delta-FoR)
+        // instead of compressLongsLinearPred, silently disabling the
+        // headline optimisation.
+        //
+        // Verify the writer-space timestamp index is now propagated
+        // through both the LongList and long[] @TestOnly overloads.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cover_o3_ts";
+                int plen = path.size();
+                int rowCount = 8;
+                long tsAddr = Unsafe.malloc((long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    long base = 1_700_000_000_000_000L;
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putLong(tsAddr + (long) i * Long.BYTES, base + i * 1_000_000L);
+                    }
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        // Long[] @TestOnly with explicit timestamp slot.
+                        writer.configureCovering(
+                                new long[]{tsAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{2},
+                                new int[]{ColumnType.TIMESTAMP},
+                                1,
+                                2 // writer-space designated-timestamp index
+                        );
+                        assertEquals("pre-mapped overload must preserve timestamp index",
+                                2, writer.getTimestampColumnIndex());
+
+                        // The compat 6-arg @TestOnly overload (no timestamp
+                        // slot) keeps its old "no covered timestamp"
+                        // semantics: index is reset to -1.
+                        writer.configureCovering(
+                                new long[]{tsAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{2},
+                                new int[]{ColumnType.TIMESTAMP},
+                                1
+                        );
+                        assertEquals("compat overload defaults timestamp index to -1",
+                                -1, writer.getTimestampColumnIndex());
+                    }
+                    // Restore plen for any subsequent path reuse.
+                    path.trimTo(plen);
+                } finally {
+                    Unsafe.free(tsAddr, (long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
     // ==================== page frame cursor tests ====================
 
     @Test

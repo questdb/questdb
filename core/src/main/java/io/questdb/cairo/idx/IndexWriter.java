@@ -83,7 +83,8 @@ public interface IndexWriter extends Closeable, Mutable {
             IntList coveredColumnShifts,
             IntList coveredColumnIndices,
             IntList coveredColumnTypes,
-            int coverCount
+            int coverCount,
+            int timestampColumnIndex
     ) {
     }
 

@@ -10757,7 +10757,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // (O3 split of this partition, replace-range,
                         // dedup-replace). No-op when maxValue < size.
                         indexer.getWriter().rollbackConditionally(partitionSize);
-                        indexer.configureCovering(o3SealAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount);
+                        // Pass the writer-space timestamp index so the
+                        // O3 reseal preserves the linear-prediction
+                        // encoding for the designated-timestamp covering
+                        // entry. metadata is TableWriterMetadata, whose
+                        // getTimestampIndex returns the writer-space
+                        // value directly from META_OFFSET_TIMESTAMP_INDEX.
+                        indexer.configureCovering(o3SealAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
+                                metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
                         indexer.rebuildSidecars();
                         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());

@@ -103,11 +103,12 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             IntList coveredColumnShifts,
             IntList coveredColumnIndices,
             IntList coveredColumnTypes,
-            int coverCount
+            int coverCount,
+            int timestampColumnIndex
     ) {
         writer.configureCovering(
                 coveredColumnAddrs, coveredColumnTops, coveredColumnShifts,
-                coveredColumnIndices, coveredColumnTypes, coverCount);
+                coveredColumnIndices, coveredColumnTypes, coverCount, timestampColumnIndex);
     }
 
     @Override
