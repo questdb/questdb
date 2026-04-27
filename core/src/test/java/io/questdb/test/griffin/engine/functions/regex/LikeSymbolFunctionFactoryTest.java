@@ -552,6 +552,35 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testExactLikeOnIndexedSymbolUsesIndexScan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO x VALUES ('v', 0::TIMESTAMP), ('vv', 1::TIMESTAMP), (NULL, 2::TIMESTAMP)");
+
+            // exact LIKE without wildcards should return same result as =
+            assertSql("s\tts\n" +
+                    "v\t1970-01-01T00:00:00.000000Z\n", "SELECT * FROM x WHERE s LIKE 'v'");
+
+            // verify the plan uses index scan, not table scan
+            assertSql("QUERY PLAN\n" +
+                            "DeferredSingleSymbolFilterPageFrame\n" +
+                            "    Index forward scan on: s\n" +
+                            "      filter: s=1\n" +
+                            "    Frame forward scan on: x\n",
+                    "EXPLAIN SELECT * FROM x WHERE s LIKE 'v'");
+
+            // wildcard LIKE should still use table scan
+            assertSql("QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s like v% [state-shared]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "EXPLAIN SELECT * FROM x WHERE s LIKE 'v%'");
+        });
+    }
+
     private void assertLike(String expected, String query) throws Exception {
         assertQueryNoLeakCheck(expected, query, null, true, false);
         assertQueryNoLeakCheck(expected, query.replace("like", "ilike"), null, true, false);

@@ -1860,6 +1860,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLikeWithConst() throws Exception {
+        IntrinsicModel m = modelOf("sym like 'X'");
+        Assert.assertEquals("[X]", keyValueFuncsToString(m.keyValueFuncs));
+        assertFilter(m, null);
+    }
+
+    @Test
+    public void testLikeWithWildCards() throws Exception {
+        IntrinsicModel m = modelOf("sym like 'X%'");
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
+        assertFilter(m, "'X%' sym like");
+    }
+
+    @Test
     public void testEqualsIndexedSearchWithFunction2() throws Exception {
         IntrinsicModel m = modelOf("sym = case when 1 = 0 then 'A' else 'B' end ");
         TestUtils.assertEquals("sym", m.keyColumn);

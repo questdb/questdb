@@ -78,6 +78,7 @@ public final class WhereClauseParser implements Mutable {
     private static final int INTRINSIC_OP_LESS_EQ = 5;
     private static final int INTRINSIC_OP_NOT = 8;
     private static final int INTRINSIC_OP_NOT_EQ = 7;
+    private static final int MAYBE_INTRINSIC_OP_LIKE = 11;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
     // TODO: configure size
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
@@ -2567,8 +2568,32 @@ public final class WhereClauseParser implements Mutable {
                     analyzeBetween(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext);
             case INTRINSIC_OP_AND_OFFSET ->
                     analyzeAndOffset(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn, reader);
+            case MAYBE_INTRINSIC_OP_LIKE -> {
+                if (node.rhs != null && node.rhs.type == ExpressionNode.CONSTANT) {
+                    CharSequence pattern = unquote(node.rhs.token);
+                    if (!hasWildcard(pattern)) {
+                        yield analyzeEquals(timestampDriver, translator, model, node, m,
+                                functionParser, executionContext, latestByMultiColumn, reader);
+                    }
+                }
+                yield false;
+            }
             default -> false;
         };
+    }
+
+    private boolean hasWildcard(CharSequence pattern) {
+        for (int i = 0, n = pattern.length(); i < n; i++) {
+            char c = pattern.charAt(i);
+            if (c == '\\') {
+                i++;
+                continue;
+            }
+            if (c == '%' || c == '_') {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void removeNodes(ExpressionNode b, ObjList<ExpressionNode> nodes) {
@@ -2879,5 +2904,6 @@ public final class WhereClauseParser implements Mutable {
         intrinsicOps.put("not", INTRINSIC_OP_NOT);
         intrinsicOps.put("between", INTRINSIC_OP_BETWEEN);
         intrinsicOps.put("and_offset", INTRINSIC_OP_AND_OFFSET);
+        intrinsicOps.put("like", MAYBE_INTRINSIC_OP_LIKE);
     }
 }
