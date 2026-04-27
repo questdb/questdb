@@ -5761,81 +5761,90 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
                     final RowCursorFactory rcf;
                     if (nKeyValues == 1) {
-                        final Function symbolValueFunc = intrinsicModel.keyValueFuncs.get(0);
-                        final int symbol = symbolValueFunc.isRuntimeConstant()
-                                ? SymbolTable.VALUE_NOT_FOUND
-                                : symbolMapReader.keyOf(symbolValueFunc.getStrA(null));
+                        Function symbolValueFunc = intrinsicModel.keyValueFuncs.get(0);
+                        try {
+                            final int symbol = symbolValueFunc.isRuntimeConstant()
+                                    ? SymbolTable.VALUE_NOT_FOUND
+                                    : symbolMapReader.keyOf(symbolValueFunc.getStrA(null));
 
-                        if (!SqlHints.hasNoCoveringHint(model)) {
-                            // Check if covering index can serve LATEST ON (with or without filter)
-                            int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
-                            int[] coveringMapping = buildCoveringIndexMapping(
-                                    reader, keyReaderColIdx, columnIndexes, metadata
-                            );
-                            if (coveringMapping != null) {
-                                return new CoveringIndexRecordCursorFactory(
+                            if (!SqlHints.hasNoCoveringHint(model)) {
+                                // Check if covering index can serve LATEST ON (with or without filter)
+                                int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
+                                int[] coveringMapping = buildCoveringIndexMapping(
+                                        reader, keyReaderColIdx, columnIndexes, metadata
+                                );
+                                if (coveringMapping != null) {
+                                    RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                            metadata,
+                                            partitionFrameCursorFactory,
+                                            keyReaderColIdx,
+                                            symbol,
+                                            symbolValueFunc,
+                                            columnIndexes,
+                                            coveringMapping,
+                                            true,
+                                            filter
+                                    );
+                                    symbolValueFunc = null;
+                                    return coveringFactory;
+                                }
+                            }
+
+                            if (filter == null) {
+                                if (symbol == SymbolTable.VALUE_NOT_FOUND) {
+                                    rcf = new LatestByValueDeferredIndexedRowCursorFactory(
+                                            latestByIndex,
+                                            symbolValueFunc
+                                    );
+                                    symbolValueFunc = null;
+                                } else {
+                                    rcf = new LatestByValueIndexedRowCursorFactory(
+                                            latestByIndex,
+                                            symbol
+                                    );
+                                }
+                                return new PageFrameRecordCursorFactory(
+                                        configuration,
                                         metadata,
                                         partitionFrameCursorFactory,
-                                        keyReaderColIdx,
-                                        symbol,
-                                        symbolValueFunc,
+                                        rcf,
+                                        false,
+                                        null,
+                                        false,
                                         columnIndexes,
-                                        coveringMapping,
+                                        columnSizeShifts,
                                         true,
-                                        filter
+                                        true
                                 );
                             }
-                        }
 
-                        if (filter == null) {
                             if (symbol == SymbolTable.VALUE_NOT_FOUND) {
-                                rcf = new LatestByValueDeferredIndexedRowCursorFactory(
+                                RecordCursorFactory result = new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
+                                        configuration,
+                                        metadata,
+                                        partitionFrameCursorFactory,
                                         latestByIndex,
-                                        symbolValueFunc
+                                        symbolValueFunc,
+                                        filter,
+                                        columnIndexes,
+                                        columnSizeShifts
                                 );
-                            } else {
-                                rcf = new LatestByValueIndexedRowCursorFactory(
-                                        latestByIndex,
-                                        symbol
-                                );
+                                symbolValueFunc = null;
+                                return result;
                             }
-                            return new PageFrameRecordCursorFactory(
-                                    configuration,
-                                    metadata,
-                                    partitionFrameCursorFactory,
-                                    rcf,
-                                    false,
-                                    null,
-                                    false,
-                                    columnIndexes,
-                                    columnSizeShifts,
-                                    true,
-                                    true
-                            );
-                        }
-
-                        if (symbol == SymbolTable.VALUE_NOT_FOUND) {
-                            return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
+                            return new LatestByValueIndexedFilteredRecordCursorFactory(
                                     configuration,
                                     metadata,
                                     partitionFrameCursorFactory,
                                     latestByIndex,
-                                    symbolValueFunc,
+                                    symbol,
                                     filter,
                                     columnIndexes,
                                     columnSizeShifts
                             );
+                        } finally {
+                            Misc.free(symbolValueFunc);
                         }
-                        return new LatestByValueIndexedFilteredRecordCursorFactory(
-                                configuration,
-                                metadata,
-                                partitionFrameCursorFactory,
-                                latestByIndex,
-                                symbol,
-                                filter,
-                                columnIndexes,
-                                columnSizeShifts
-                        );
                     }
 
                     // Check if covering index can serve LATEST ON multi-key (with or without filter)
@@ -5896,34 +5905,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 assert nExcludedKeyValues == 0;
 
                 // we have a single symbol key
-                final Function symbolKeyFunc = intrinsicModel.keyValueFuncs.get(0);
-                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
-                final int symbolKey = symbolKeyFunc.isRuntimeConstant()
-                        ? SymbolTable.VALUE_NOT_FOUND
-                        : symbolMapReader.keyOf(symbolKeyFunc.getStrA(null));
-                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                    return new LatestByValueDeferredFilteredRecordCursorFactory(
+                Function symbolKeyFunc = intrinsicModel.keyValueFuncs.get(0);
+                try {
+                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
+                    final int symbolKey = symbolKeyFunc.isRuntimeConstant()
+                            ? SymbolTable.VALUE_NOT_FOUND
+                            : symbolMapReader.keyOf(symbolKeyFunc.getStrA(null));
+                    if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                        RecordCursorFactory result = new LatestByValueDeferredFilteredRecordCursorFactory(
+                                configuration,
+                                metadata,
+                                partitionFrameCursorFactory,
+                                latestByIndex,
+                                symbolKeyFunc,
+                                filter,
+                                columnIndexes,
+                                columnSizeShifts
+                        );
+                        symbolKeyFunc = null;
+                        return result;
+                    }
+
+                    return new LatestByValueFilteredRecordCursorFactory(
                             configuration,
                             metadata,
                             partitionFrameCursorFactory,
                             latestByIndex,
-                            symbolKeyFunc,
+                            symbolKey,
                             filter,
                             columnIndexes,
                             columnSizeShifts
                     );
+                } finally {
+                    Misc.free(symbolKeyFunc);
                 }
-
-                return new LatestByValueFilteredRecordCursorFactory(
-                        configuration,
-                        metadata,
-                        partitionFrameCursorFactory,
-                        latestByIndex,
-                        symbolKey,
-                        filter,
-                        columnIndexes,
-                        columnSizeShifts
-                );
             }
             // we select all values of "latest by" column
 
@@ -9471,97 +9486,107 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         if (nKeyValues == 1) {
                             final RowCursorFactory rcf;
-                            final Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
-                            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex));
-                            final int symbolKey = symbolFunc.isRuntimeConstant()
-                                    ? SymbolTable.VALUE_NOT_FOUND
-                                    : symbolMapReader.keyOf(symbolFunc.getStrA(null));
+                            Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
+                            try {
+                                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex));
+                                final int symbolKey = symbolFunc.isRuntimeConstant()
+                                        ? SymbolTable.VALUE_NOT_FOUND
+                                        : symbolMapReader.keyOf(symbolFunc.getStrA(null));
 
-                            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                                if (!SqlHints.hasNoCoveringHint(model) && !model.isUpdate()) {
+                                    int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
+                                    int[] coveringMapping = buildCoveringIndexMapping(
+                                            reader, keyReaderColIdx, columnIndexes, queryMeta
+                                    );
+                                    if (coveringMapping != null) {
+                                        RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                                queryMeta,
+                                                dfcFactory,
+                                                keyReaderColIdx,
+                                                symbolKey,
+                                                symbolFunc,
+                                                columnIndexes,
+                                                coveringMapping
+                                        );
+                                        symbolFunc = null;
+                                        if (filter != null) {
+                                            return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
+                                        }
+                                        return coveringFactory;
+                                    }
+                                }
+
+                                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                                    if (filter == null) {
+                                        rcf = new DeferredSymbolIndexRowCursorFactory(
+                                                keyColumnIndex,
+                                                symbolFunc,
+                                                indexDirection
+                                        );
+                                    } else {
+                                        rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
+                                                keyColumnIndex,
+                                                symbolFunc,
+                                                filter,
+                                                indexDirection
+                                        );
+                                    }
+                                } else {
+                                    if (filter == null) {
+                                        rcf = new SymbolIndexRowCursorFactory(
+                                                keyColumnIndex,
+                                                symbolKey,
+                                                indexDirection,
+                                                null
+                                        );
+                                    } else {
+                                        rcf = new SymbolIndexFilteredRowCursorFactory(
+                                                keyColumnIndex,
+                                                symbolKey,
+                                                filter,
+                                                indexDirection,
+                                                null
+                                        );
+                                    }
+                                }
+
                                 if (filter == null) {
-                                    rcf = new DeferredSymbolIndexRowCursorFactory(
+                                    // This special case factory can later be disassembled to framing and index
+                                    // cursors in SAMPLE BY processing
+                                    RecordCursorFactory result = new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
+                                            configuration,
                                             keyColumnIndex,
                                             symbolFunc,
-                                            indexDirection
-                                    );
-                                } else {
-                                    rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
-                                            keyColumnIndex,
-                                            symbolFunc,
-                                            filter,
-                                            indexDirection
-                                    );
-                                }
-                            } else {
-                                if (filter == null) {
-                                    rcf = new SymbolIndexRowCursorFactory(
-                                            keyColumnIndex,
-                                            symbolKey,
-                                            indexDirection,
-                                            null
-                                    );
-                                } else {
-                                    rcf = new SymbolIndexFilteredRowCursorFactory(
-                                            keyColumnIndex,
-                                            symbolKey,
-                                            filter,
-                                            indexDirection,
-                                            null
-                                    );
-                                }
-                            }
-
-                            if (!SqlHints.hasNoCoveringHint(model) && !model.isUpdate()) {
-                                int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
-                                int[] coveringMapping = buildCoveringIndexMapping(
-                                        reader, keyReaderColIdx, columnIndexes, queryMeta
-                                );
-                                if (coveringMapping != null) {
-                                    RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                            rcf,
                                             queryMeta,
                                             dfcFactory,
-                                            keyReaderColIdx,
-                                            symbolKey,
-                                            symbolFunc,
+                                            orderByKeyColumn || orderByTimestamp,
                                             columnIndexes,
-                                            coveringMapping
+                                            columnSizeShifts,
+                                            supportsRandomAccess
                                     );
-                                    if (filter != null) {
-                                        return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
-                                    }
-                                    return coveringFactory;
+                                    symbolFunc = null;
+                                    return result;
                                 }
-                            }
-
-                            if (filter == null) {
-                                // This special case factory can later be disassembled to framing and index
-                                // cursors in SAMPLE BY processing
-                                return new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
+                                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                                    symbolFunc = null;
+                                }
+                                return new PageFrameRecordCursorFactory(
                                         configuration,
-                                        keyColumnIndex,
-                                        symbolFunc,
-                                        rcf,
                                         queryMeta,
                                         dfcFactory,
+                                        rcf,
                                         orderByKeyColumn || orderByTimestamp,
+                                        filter,
+                                        false,
                                         columnIndexes,
                                         columnSizeShifts,
-                                        supportsRandomAccess
+                                        supportsRandomAccess,
+                                        false
                                 );
+                            } finally {
+                                Misc.free(symbolFunc);
                             }
-                            return new PageFrameRecordCursorFactory(
-                                    configuration,
-                                    queryMeta,
-                                    dfcFactory,
-                                    rcf,
-                                    orderByKeyColumn || orderByTimestamp,
-                                    filter,
-                                    false,
-                                    columnIndexes,
-                                    columnSizeShifts,
-                                    supportsRandomAccess,
-                                    false
-                            );
                         }
 
                         // Check if covering index can serve IN-list queries

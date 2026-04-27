@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
+import io.questdb.std.Misc;
 
 public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
     private final int columnIndex;
@@ -45,6 +46,11 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
         this.columnIndex = columnIndex;
         this.symbolFunc = symbolFunc;
         symbolKey = SymbolTable.VALUE_NOT_FOUND;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(symbolFunc);
     }
 
     @Override

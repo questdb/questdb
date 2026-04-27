@@ -101,6 +101,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final int[] queryColToIncludeIdx;
     private final IntList resolvedKeys;
     private final Function symbolFunction;
+    private final boolean symbolFunctionRuntimeConstant;
 
     public CoveringIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -138,6 +139,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.resolvedKeys = null;
 
         this.queryColToIncludeIdx = queryColToIncludeIdx;
+        this.symbolFunctionRuntimeConstant = symbolKey == SymbolTable.VALUE_NOT_FOUND;
 
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
         this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, 0, symInclCols, columnIndexes, latestBy, metadata);
@@ -179,7 +181,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
         this.symbolFunction = symbolFunction;
         this.columnIndexes = columnIndexes;
-
+        this.symbolFunctionRuntimeConstant = symbolKey == SymbolTable.VALUE_NOT_FOUND;
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
 
@@ -224,6 +226,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         );
         try {
             if (resolvedKeys != null) {
+                if (keyValueFuncs != null) {
+                    Function.init(keyValueFuncs, frameCursor, executionContext, null);
+                }
                 SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
                 cursor.multiKeys.clear();
                 boolean hasAnyKey = false;
@@ -251,19 +256,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return cursor;
             }
 
-            // Single-key path.
-            // When the key comes from a function (bind variable or runtime-constant
-            // expression), re-resolve on every execution: the underlying value may
-            // have changed since the last call. When the key was resolved at
-            // compile time from a string literal, cursor.symbolKey already holds
-            // the result and symbolFunction is null.
             int resolvedKey;
-            if (symbolFunction != null) {
+            if (!this.symbolFunctionRuntimeConstant) {
+                resolvedKey = cursor.symbolKey;
+            } else {
+                symbolFunction.init(frameCursor, executionContext);
                 SymbolMapReader symbolMapReader = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
                 CharSequence symValue = symbolFunction.getStrA(null);
                 resolvedKey = symValue != null ? symbolMapReader.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
-            } else {
-                resolvedKey = cursor.symbolKey;
             }
             if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
                 Misc.free(frameCursor);
@@ -301,6 +301,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         try {
             TableReader reader = frameCursor.getTableReader();
             if (resolvedKeys != null) {
+                if (keyValueFuncs != null) {
+                    Function.init(keyValueFuncs, frameCursor, executionContext, null);
+                }
                 SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
                 pageFrameCursor.multiKeys.clear();
                 for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
@@ -319,15 +322,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     return pageFrameCursor;
                 }
             } else {
-                // Single-key path: see the matching block in getCursor() for why
-                // we always re-resolve when symbolFunction is non-null.
+                // Single-key path: see the matching block in getCursor().
                 int resolvedKey;
-                if (symbolFunction != null) {
+                if (!this.symbolFunctionRuntimeConstant) {
+                    resolvedKey = pageFrameCursor.symbolKey;
+                } else {
+                    symbolFunction.init(frameCursor, executionContext);
                     SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
                     CharSequence symValue = symbolFunction.getStrA(null);
                     resolvedKey = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
-                } else {
-                    resolvedKey = pageFrameCursor.symbolKey;
                 }
                 if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
                     Misc.free(frameCursor);
@@ -2007,7 +2010,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * Zero per-row branching — the cursor swaps between CoveringRecord and
      * FallbackRecord at partition boundaries.
      */
-    @SuppressWarnings("resource")
     private static class FallbackRecord implements Record {
         private final IntList columnIndexes;
         private final BorrowedArray fallbackArray = new BorrowedArray();

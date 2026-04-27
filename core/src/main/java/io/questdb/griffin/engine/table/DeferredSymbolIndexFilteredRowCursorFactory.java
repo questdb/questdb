@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBasedRowCursorFactory {
     private final int columnIndex;
@@ -51,6 +52,11 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
         this.columnIndex = columnIndex;
         this.symbolFunction = symbolFunction;
         cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, indexDirection);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(symbolFunction);
     }
 
     @Override
