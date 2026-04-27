@@ -108,6 +108,7 @@ public final class WhereClauseParser implements Mutable {
     private boolean isConstFunction;
     private CharSequence preferredKeyColumn;
     private CharSequence timestamp;
+    private boolean useIndexedSymbolFilters = true;
 
     @Override
     public void clear() {
@@ -130,6 +131,7 @@ public final class WhereClauseParser implements Mutable {
         preferredKeyColumn = null;
         allKeyValuesAreKnown = true;
         allKeyExcludedValuesAreKnown = true;
+        useIndexedSymbolFilters = true;
     }
 
     public IntrinsicModel extract(
@@ -150,6 +152,12 @@ public final class WhereClauseParser implements Mutable {
 
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
+        // Live view base SELECT compilation suppresses indexed-symbol key extraction so the
+        // planner emits a plain FilteredRecordCursorFactory shape that the incremental refresh
+        // path already handles. Without this, an indexed-symbol equality predicate would push
+        // the filter into a SymbolIndexFilteredRowCursorFactory whose Function is invisible to
+        // the live view refresh, causing filtered rows to slip through.
+        this.useIndexedSymbolFilters = !executionContext.isLiveViewCompile();
 
         // Extracts designated timestamp argument from dateadd predicates, if any.
         rewriteDateaddTimestamp(expressionNodePool, node);
@@ -1888,7 +1896,7 @@ public final class WhereClauseParser implements Mutable {
         return !latestByMultiColumn &&
                 (
                         Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                                || (preferredKeyColumn == null && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                                || (useIndexedSymbolFilters && preferredKeyColumn == null && m.isColumnIndexed(m.getColumnIndex(columnName)))
                 );
     }
 

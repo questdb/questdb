@@ -1383,11 +1383,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
         }
 
-        final int key = predicateContext.symbolTable.keyOf(symbol);
-        if (key != SymbolTable.VALUE_NOT_FOUND) {
-            // Known symbol constant case
-            putOperand(offset, IMM, I4_TYPE, key);
-            return;
+        // Live view incremental refresh runs the JIT-compiled filter against WAL segment
+        // data, whose row int keys are segment-local and do not match the base table's
+        // global keys resolved here. Force the deferred bind-variable path so the key
+        // gets resolved per segment via the WAL cursor's symbol table (see
+        // WalSegmentPageFrameCursor.WalSymbolTable.keyOf).
+        if (!executionContext.isLiveViewCompile()) {
+            final int key = predicateContext.symbolTable.keyOf(symbol);
+            if (key != SymbolTable.VALUE_NOT_FOUND) {
+                // Known symbol constant case
+                putOperand(offset, IMM, I4_TYPE, key);
+                return;
+            }
         }
 
         // Unknown symbol constant case. Create a fake bind variable function to handle it.

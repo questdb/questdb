@@ -44,6 +44,7 @@ import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -366,6 +367,7 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     }
 
     private static final class WalSymbolTable implements StaticSymbolTable {
+        private final DirectString scanView = new DirectString();
         private final DirectString viewA = new DirectString();
         private final DirectString viewB = new DirectString();
         // Per-transaction overlay (key -> symbol) built from the current txn's
@@ -388,10 +390,27 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             return Integer.MAX_VALUE;
         }
 
+        // Resolves a constant string to the int key in this segment's symbol space.
+        // The per-txn overlay takes precedence over the reader's cumulative map for
+        // the same reason {@link #resolve} prefers it: cross-txn local-id collisions
+        // can leave stale cumulative entries. Filter Functions like
+        // {@link io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory.ConstCheckColumnFunc}
+        // call this once at filter init per segment, so the O(N) scan in
+        // {@link WalReader#getSymbolKey} is acceptable.
         @Override
         public int keyOf(CharSequence value) {
-            // Live view refresh only performs key->value resolution.
-            return SymbolTable.VALUE_NOT_FOUND;
+            if (value == null) {
+                return SymbolTable.VALUE_NOT_FOUND;
+            }
+            if (txnDiff != null) {
+                for (int k = 0, n = txnDiff.size(); k < n; k++) {
+                    CharSequence v = txnDiff.valueOf(k, scanView);
+                    if (v != null && Chars.equals(value, v)) {
+                        return k;
+                    }
+                }
+            }
+            return reader.getSymbolKey(walColumnIndex, value, scanView);
         }
 
         public void of(int walColumnIndex, WalReader reader, @Nullable DirectSymbolMap txnDiff) {

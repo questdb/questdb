@@ -694,10 +694,19 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         }
 
-        // compile the SELECT to validate and get metadata
+        // compile the SELECT to validate and get metadata. The live-view-compile flag
+        // suppresses indexed-symbol key extraction in WhereClauseParser so the planner
+        // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
+        // path can handle.
         GenericRecordMetadata metadata;
         try (SqlCompiler compiler = getSqlCompiler()) {
-            CompiledQuery cq = compiler.compile(op.getSelectSql(), executionContext);
+            executionContext.setLiveViewCompile(true);
+            CompiledQuery cq;
+            try {
+                cq = compiler.compile(op.getSelectSql(), executionContext);
+            } finally {
+                executionContext.setLiveViewCompile(false);
+            }
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
                 validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
@@ -2199,8 +2208,9 @@ public class CairoEngine implements Closeable, WriterSource {
         // A single filter factory (FilteredRecordCursorFactory / AsyncFilteredRecordCursorFactory /
         // AsyncJitFilteredRecordCursorFactory) may sit between the window and the page frame factory;
         // the refresh job applies its Function filter row-by-row to WAL segment rows during
-        // incremental refresh. Index-backed filters (filter pushed into the row cursor factory) are
-        // not yet supported because the live view refresh bypasses the indexed row cursor.
+        // incremental refresh. Indexed-symbol key extraction is suppressed during live view
+        // compilation (see SqlExecutionContext.isLiveViewCompile and WhereClauseParser), so the
+        // planner never pushes the filter into the row cursor factory.
         RecordCursorFactory base = wf.getBaseFactory();
         if (base.getFilter() != null) {
             base = base.getBaseFactory();
@@ -2218,16 +2228,11 @@ public class CairoEngine implements Closeable, WriterSource {
                     "joins, subqueries, GROUP BY, ORDER BY and LIMIT are not supported yet");
         }
         if (pfrcf.hasFilter()) {
-            // The planner pushed the filter down into a SymbolIndexFilteredRowCursorFactory
-            // (or a deferred variant). There's no outer FilteredRecordCursorFactory wrapper,
-            // so the filter Function is invisible to the incremental refresh path, which
-            // would then let filtered rows slip through. Triggered by, e.g.,
-            // WHERE <indexed-symbol> = 'X' AND <residual-predicate>.
-            // TODO(live-view): disable indexed-key-column extraction during live view
-            //  compilation (e.g., via a flag on SqlExecutionContext consulted by
-            //  WhereClauseParser.isTrueKeyColumn) so the planner falls back to a plain
-            //  FilteredRecordCursorFactory shape that the incremental path already handles.
-            throw SqlException.$(position, "live view select cannot use index-backed filters yet");
+            // Defensive: WhereClauseParser is supposed to have suppressed indexed-symbol key
+            // extraction for live view compiles, so the planner shouldn't produce an indexed
+            // row cursor factory here. If it ever does, the filter Function is invisible to
+            // the incremental refresh path and rows would slip through unfiltered.
+            throw SqlException.$(position, "live view select produced an indexed row cursor factory unexpectedly");
         }
         TableToken scannedToken = base.getTableToken();
         if (scannedToken == null || !scannedToken.equals(baseTableToken)) {

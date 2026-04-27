@@ -889,26 +889,6 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateLiveViewRejectsIndexBackedFilter() throws Exception {
-        // Indexed SYMBOL equality combined with a residual predicate makes the planner
-        // push the filter into a SymbolIndexFilteredRowCursorFactory. The filter is no
-        // longer visible as a wrapping factory, so the live view incremental path would
-        // miss it. Verify the validator rejects this shape.
-        execute("CREATE TABLE trades (symbol SYMBOL INDEX, price DOUBLE, ts TIMESTAMP)" +
-                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
-        drainWalQueue();
-
-        assertException(
-                "CREATE LIVE VIEW lv_bad LAG 1s RETENTION 1h AS" +
-                        " SELECT symbol, price, ts, row_number() OVER () AS rn" +
-                        " FROM trades WHERE symbol = 'AAPL' AND price > 100",
-                17,
-                "live view select cannot use index-backed filters yet"
-        );
-        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
-    }
-
-    @Test
     public void testCreateLiveViewRejectsSubquery() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -1173,6 +1153,179 @@ public class LiveViewTest extends AbstractCairoTest {
         );
 
         execute("DROP LIVE VIEW live_filtered");
+    }
+
+    @Test
+    public void testLiveViewIncrementalRefreshWithIndexedSymbolEquality() throws Exception {
+        // Indexed SYMBOL equality predicate. Without the live-view-compile flag, the planner
+        // would push the filter into a SymbolIndexFilteredRowCursorFactory, hiding the filter
+        // Function from the incremental refresh path. With the flag set, WhereClauseParser
+        // suppresses indexed-symbol key extraction so the planner emits a plain
+        // FilteredRecordCursorFactory that the refresh path already handles.
+        execute("CREATE TABLE trades (symbol SYMBOL INDEX, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_idx_eq LAG 1s RETENTION 1h AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades WHERE symbol = 'AAPL'");
+
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('GOOG', 2800.0, '2024-01-01T00:00:01.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:00:02.000000Z')," +
+                " ('MSFT', 400.0, '2024-01-01T00:00:03.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:02.000000Z\t2\n",
+                "SELECT * FROM live_idx_eq",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // incremental refresh must keep the filter active and continue numbering AAPL rows.
+        execute("INSERT INTO trades VALUES" +
+                " ('GOOG', 2900.0, '2024-01-01T00:00:04.000000Z')," +
+                " ('AAPL', 102.0, '2024-01-01T00:00:05.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:02.000000Z\t2\n" +
+                        "AAPL\t102.0\t2024-01-01T00:00:05.000000Z\t3\n",
+                "SELECT * FROM live_idx_eq",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_idx_eq");
+    }
+
+    @Test
+    public void testLiveViewIncrementalRefreshWithIndexedSymbolEqualityAndResidual() throws Exception {
+        // Equality on the indexed SYMBOL combined with a residual predicate. Pre-fix this was
+        // the canonical broken shape: the planner extracted the indexed key and pushed the
+        // filter down, leaving the residual predicate invisible to the refresh path.
+        execute("CREATE TABLE trades (symbol SYMBOL INDEX, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_idx_residual LAG 1s RETENTION 1h AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades WHERE symbol = 'AAPL' AND price > 100");
+
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('AAPL', 150.0, '2024-01-01T00:00:01.000000Z')," +
+                " ('GOOG', 2800.0, '2024-01-01T00:00:02.000000Z')," +
+                " ('AAPL', 99.0, '2024-01-01T00:00:03.000000Z')," +
+                " ('AAPL', 200.0, '2024-01-01T00:00:04.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // Only AAPL rows with price > 100 survive both predicates.
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t200.0\t2024-01-01T00:00:04.000000Z\t2\n",
+                "SELECT * FROM live_idx_residual",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // incremental refresh must keep both predicates active.
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 50.0, '2024-01-01T00:00:05.000000Z')," +
+                " ('GOOG', 3000.0, '2024-01-01T00:00:06.000000Z')," +
+                " ('AAPL', 250.0, '2024-01-01T00:00:07.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t200.0\t2024-01-01T00:00:04.000000Z\t2\n" +
+                        "AAPL\t250.0\t2024-01-01T00:00:07.000000Z\t3\n",
+                "SELECT * FROM live_idx_residual",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_idx_residual");
+    }
+
+    @Test
+    public void testLiveViewIncrementalRefreshWithIndexedSymbolInList() throws Exception {
+        // IN list on an indexed SYMBOL column. Same risk as the equality path: the planner
+        // would normally turn the IN list into an indexed scan and bypass the filter Function.
+        execute("CREATE TABLE trades (symbol SYMBOL INDEX, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_idx_in LAG 1s RETENTION 1h AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades WHERE symbol IN ('AAPL', 'GOOG')");
+
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('GOOG', 2800.0, '2024-01-01T00:00:01.000000Z')," +
+                " ('MSFT', 400.0, '2024-01-01T00:00:02.000000Z')," +
+                " ('AAPL', 101.0, '2024-01-01T00:00:03.000000Z')," +
+                " ('GOOG', 2900.0, '2024-01-01T00:00:04.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:03.000000Z\t2\n" +
+                        "GOOG\t2900.0\t2024-01-01T00:00:04.000000Z\t2\n",
+                "SELECT * FROM live_idx_in",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        // incremental refresh must keep filtering MSFT out and continue numbering AAPL/GOOG.
+        execute("INSERT INTO trades VALUES" +
+                " ('MSFT', 401.0, '2024-01-01T00:00:05.000000Z')," +
+                " ('AAPL', 102.0, '2024-01-01T00:00:06.000000Z')," +
+                " ('GOOG', 3000.0, '2024-01-01T00:00:07.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t100.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "AAPL\t101.0\t2024-01-01T00:00:03.000000Z\t2\n" +
+                        "GOOG\t2900.0\t2024-01-01T00:00:04.000000Z\t2\n" +
+                        "AAPL\t102.0\t2024-01-01T00:00:06.000000Z\t3\n" +
+                        "GOOG\t3000.0\t2024-01-01T00:00:07.000000Z\t3\n",
+                "SELECT * FROM live_idx_in",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_idx_in");
     }
 
     @Test

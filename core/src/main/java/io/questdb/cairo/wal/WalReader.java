@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -130,6 +131,29 @@ public class WalReader implements Closeable {
      * view itself via another call. Callers that need two simultaneous views on the
      * same column must supply two distinct {@link DirectString} instances.
      */
+    /**
+     * Returns the int key whose stored value equals {@code value} in column {@code col},
+     * or {@link SymbolTable#VALUE_NOT_FOUND} if no such entry exists. The cumulative
+     * symbol map is populated via {@link DirectSymbolMap#put(int, CharSequence)} which
+     * does not maintain a reverse index, so this method walks the dense key range
+     * 0..size-1 and compares each value byte-wise. The cost is proportional to the
+     * column's accumulated dictionary size; the live view incremental refresh path calls
+     * this once per filter init per segment, so the linear scan is acceptable.
+     */
+    public int getSymbolKey(int col, CharSequence value, DirectString view) {
+        DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
+        if (symbolMap == null || value == null) {
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+        for (int k = 0, n = symbolMap.size(); k < n; k++) {
+            CharSequence v = symbolMap.valueOf(k, view);
+            if (v != null && Chars.equals(value, v)) {
+                return k;
+            }
+        }
+        return SymbolTable.VALUE_NOT_FOUND;
+    }
+
     public CharSequence getSymbolValue(int col, int key, DirectString view) {
         DirectSymbolMap symbolMap = symbolMaps.getQuick(col);
         return symbolMap != null ? symbolMap.valueOf(key, view) : null;
