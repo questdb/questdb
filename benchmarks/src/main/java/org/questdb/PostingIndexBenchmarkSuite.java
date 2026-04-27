@@ -211,7 +211,7 @@ public class PostingIndexBenchmarkSuite {
                     s.coverMetadata, s.cvr, 0)) {
                 for (int key : s.readKeys) {
                     try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
-                        if ("covering".equals(s.mode) && cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+                        if ("covering".equals(s.mode) && cursor instanceof CoveringRowCursor crc && crc.isCoveredAvailable(0)) {
                             while (crc.hasNext()) {
                                 crc.next();
                                 sum += switch (s.columnType) {
@@ -390,7 +390,7 @@ public class PostingIndexBenchmarkSuite {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                 for (int key : keys) {
                     try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
-                        if (cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+                        if (cursor instanceof CoveringRowCursor crc && crc.isCoveredAvailable(0)) {
                             while (crc.hasNext()) {
                                 crc.next();
                                 switch (ct) {
