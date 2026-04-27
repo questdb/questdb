@@ -87,7 +87,7 @@ public class LiveViewTest extends AbstractCairoTest {
 
         // Pre-populate the base table with rows spanning 2 hours. With RETENTION 10m,
         // bootstrap must skip the first 4 rows (older than max_ts - 10m) and seed the
-        // view with only the last 2. Window functions see the retained horizon only,
+        // view with only the last 2. Window functions see the retained range only,
         // so row_number starts at 1 on the earliest retained row.
         execute("INSERT INTO trades VALUES" +
                 " ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z')," +
@@ -122,7 +122,7 @@ public class LiveViewTest extends AbstractCairoTest {
         // Cold-path disk-read replay for any-unbounded views: a row older than the
         // merge buffer's retention coverage (ts < maxTimestampSeen - retention) bypasses the
         // merge buffer entirely. The refresh job expands {@code stateHorizonTimestamp} and
-        // re-bootstraps from the base table over [horizon, maxTs], so the unbounded
+        // re-bootstraps from the base table over (backfillTimestamp, maxTs], so the unbounded
         // window function's accumulator reflects the cold row without reaching for
         // the all-bounded skip counter.
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
@@ -177,15 +177,15 @@ public class LiveViewTest extends AbstractCairoTest {
                 0,
                 instance.getMergeBuffer().getLateRowCount()
         );
-        // Disk-read replay expanded the state horizon to one tick below the cold
-        // row's ts — bootstrap uses a strict > lower bound, so the stored horizon
-        // is the exclusive bound that keeps the cold row in state.
+        // Disk-read replay advanced the state backfill timestamp to one tick below
+        // the cold row's ts — bootstrap uses a strict > lower bound, so the stored
+        // value is the exclusive bound that keeps the cold row in state.
         Assert.assertEquals(
-                "state horizon must expand to include the cold row",
+                "state backfill timestamp must advance to include the cold row",
                 MicrosFormatUtils.parseUTCTimestamp("2020-01-01T00:00:00.000000Z") - 1,
-                instance.getStateHorizonTimestamp()
+                instance.getStateBackfillTimestamp()
         );
-        // Disk-read rebuild scanned (newHorizon, maxTs], which is (2020 - 1µs,
+        // Disk-read rebuild scanned (newBackfillTimestamp, maxTs], which is (2020 - 1µs,
         // 2024-01-01T00:00:10] — the 0s boundary row is now part of state too.
         // applyRetention evicts ts <= 0s, leaving the two newer rows visible with
         // shifted rn values reflecting the four upstream rows in state.
@@ -204,17 +204,17 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testColdPathHorizonPersistsAcrossWarmPath() throws Exception {
-        // Once the state horizon expands via a cold row, subsequent warm-path replays
-        // (late rows within retention) must preserve that horizon. Without the
-        // disk-read branch in drainAndCommit, a merge-buffer-only replay would
-        // rebuild state from the retention window alone and silently drop the cold
-        // row's contribution to the accumulator.
+    public void testColdPathBackfillTimestampPersistsAcrossWarmPath() throws Exception {
+        // Once the state backfill timestamp advances via a cold row, subsequent
+        // warm-path replays (late rows within retention) must preserve that value.
+        // Without the disk-read branch in drainAndCommit, a merge-buffer-only replay
+        // would rebuild state from the retention window alone and silently drop the
+        // cold row's contribution to the accumulator.
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
 
-        execute("CREATE LIVE VIEW live_horizon LAG 1s RETENTION 10s AS" +
+        execute("CREATE LIVE VIEW live_backfill LAG 1s RETENTION 10s AS" +
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
 
@@ -225,26 +225,27 @@ public class LiveViewTest extends AbstractCairoTest {
         drainWalQueue();
         drainLiveViewQueue();
 
-        // Cold row: expands the horizon, rn shifts by 1 across the visible range.
+        // Cold row: advances the backfill timestamp, rn shifts by 1 across the visible range.
         execute("INSERT INTO trades VALUES ('AAPL', 1.0, '2020-01-01T00:00:00.000000Z')");
         drainWalQueue();
         drainLiveViewQueue();
 
         // Warm row: within retention but arrives late. For an any-unbounded view
-        // whose horizon has been expanded, drainAndCommit must route warm-path
-        // replay back through disk-read so the cold row stays in the accumulator.
+        // whose backfill timestamp has been advanced, drainAndCommit must route
+        // warm-path replay back through disk-read so the cold row stays in the
+        // accumulator.
         execute("INSERT INTO trades VALUES ('AAPL', 150.0, '2024-01-01T00:00:07.000000Z')");
         drainWalQueue();
         drainLiveViewQueue();
 
-        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_horizon");
-        // Horizon stays at the cold row's exclusive lower bound even after the warm
-        // path fired — the disk-read branch in drainAndCommit is what keeps it
-        // there.
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_backfill");
+        // Backfill timestamp stays at the cold row's exclusive lower bound even after
+        // the warm path fired — the disk-read branch in drainAndCommit is what keeps
+        // it there.
         Assert.assertEquals(
-                "horizon must persist across warm-path disk-read replay",
+                "backfill timestamp must persist across warm-path disk-read replay",
                 MicrosFormatUtils.parseUTCTimestamp("2020-01-01T00:00:00.000000Z") - 1,
-                instance.getStateHorizonTimestamp()
+                instance.getStateBackfillTimestamp()
         );
         // The warm row is inserted between 5s and 10s. State now carries five rows
         // (cold + 0s + 5s + warm + 10s). applyRetention evicts ts <= 0s, so visible
@@ -255,20 +256,20 @@ public class LiveViewTest extends AbstractCairoTest {
                         "AAPL\t101.0\t2024-01-01T00:00:05.000000Z\t3\n" +
                         "AAPL\t150.0\t2024-01-01T00:00:07.000000Z\t4\n" +
                         "AAPL\t102.0\t2024-01-01T00:00:10.000000Z\t5\n",
-                "SELECT * FROM live_horizon",
+                "SELECT * FROM live_backfill",
                 null,
                 "ts",
                 true,
                 true
         );
 
-        execute("DROP LIVE VIEW live_horizon");
+        execute("DROP LIVE VIEW live_backfill");
     }
 
     @Test
-    public void testMultipleColdRowsInOneBatchTakeMinHorizon() throws Exception {
-        // When two cold rows arrive in the same WAL batch, the horizon expands to
-        // the older of the two — a single disk-read replay picks up both.
+    public void testMultipleColdRowsInOneBatchTakeMinBackfillTimestamp() throws Exception {
+        // When two cold rows arrive in the same WAL batch, the backfill timestamp
+        // advances to the older of the two — a single disk-read replay picks up both.
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
         drainWalQueue();
@@ -292,12 +293,12 @@ public class LiveViewTest extends AbstractCairoTest {
         drainLiveViewQueue();
 
         LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_multi_cold");
-        // Horizon advances to the older of the two cold rows (stored as the
-        // exclusive lower bound used by the disk-read replay).
+        // Backfill timestamp advances to the older of the two cold rows (stored as
+        // the exclusive lower bound used by the disk-read replay).
         Assert.assertEquals(
-                "horizon must take the min of all cold timestamps in a batch",
+                "backfill timestamp must take the min of all cold timestamps in a batch",
                 MicrosFormatUtils.parseUTCTimestamp("2020-01-01T00:00:00.000000Z") - 1,
-                instance.getStateHorizonTimestamp()
+                instance.getStateBackfillTimestamp()
         );
         // Accumulator sees five rows (2020, 2021, 0s, 5s, 10s). applyRetention
         // evicts ts <= 0s, leaving the two newer rows visible with rn=4, 5.
@@ -438,7 +439,7 @@ public class LiveViewTest extends AbstractCairoTest {
 
         // Late row lands between GOOG's two rows (ts=2s and ts=6s). GOOG's counter must
         // renumber; AAPL's counter must also renumber because row_number replays from the
-        // retention horizon across all partitions.
+        // retention boundary across all partitions.
         execute("INSERT INTO trades VALUES ('GOOG', 2500.0, '2024-01-01T00:00:05.000000Z')");
         drainWalQueue();
         drainLiveViewQueue();
@@ -586,7 +587,7 @@ public class LiveViewTest extends AbstractCairoTest {
         //     table's metadata cache (the SQL cursor's metadata reports -1).
         // The non-partitioned row_number() OVER () counter is what the test inspects:
         // with all three bugs in place every refresh fell through to fullRecompute and
-        // bounded backfill seeded the counter from the retained horizon (rn=1 each
+        // bounded backfill seeded the counter from the retained range (rn=1 each
         // time). With the fixes, the counter accumulates across incremental refreshes.
         execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");

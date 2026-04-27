@@ -154,7 +154,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * backfill window and rebuild the accumulator so it reflects a cold row (one
      * that arrived past retention and cannot pass through the merge buffer). Pass
      * {@link Long#MAX_VALUE} for the normal bounded backfill. The effective lower
-     * bound becomes the view's {@code stateHorizonTimestamp}, which {@link #drainAndCommit}
+     * bound becomes the view's {@code stateBackfillTimestamp}, which {@link #drainAndCommit}
      * consults on subsequent warm paths to decide between merge-buffer replay and
      * another disk-read replay.
      */
@@ -261,7 +261,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // is strict-greater-than). drainAndCommit uses this to decide whether a
             // subsequent warm path can replay from the merge buffer alone or must
             // route back through disk-read replay.
-            instance.setStateHorizonTimestamp(lowerBound);
+            instance.setStateBackfillTimestamp(lowerBound);
             // Advance the high watermark even when the inbound notification carried
             // seqTxn=-1 (initial flush triggered by forceFlushAllViews). Without this,
             // the next refresh re-enters the bootstrap branch and calls
@@ -388,15 +388,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code ts <= lastDrainedWatermark}, so the window functions have already emitted
      * state for that time range out of order. Reset window state, clear the write
      * buffer, and re-emit every retained row in sort order through
-     * {@link MergeBuffer#replay} so the accumulator rebuilds from the retained horizon.
+     * {@link MergeBuffer#replay} so the accumulator rebuilds from the retained range.
      * <p>
      * Any-unbounded disk-read branch: when the view has at least one unbounded window
-     * function and its {@code stateHorizonTimestamp} is older than the merge buffer's retention
+     * function and its {@code stateBackfillTimestamp} is older than the merge buffer's retention
      * coverage, warm-path replay from the merge buffer alone would shrink the
      * accumulator's coverage (merge buffer has already evicted rows the accumulator
      * still reflects). The warm path therefore routes back through
-     * {@link #bootstrap} with the horizon as the lower-bound override, re-reading the
-     * base table and rebuilding the accumulator over the wider window.
+     * {@link #bootstrap} with the backfill timestamp as the lower-bound override,
+     * re-reading the base table and rebuilding the accumulator over the wider window.
      */
     private void drainAndCommit(
             LiveViewInstance instance,
@@ -410,9 +410,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (needsDiskReadWarmPath(instance, windowFactory, mergeBuffer)) {
             LOG.info().$("live view warm-path disk-read replay [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", horizonMicros=").$(instance.getStateHorizonTimestamp())
+                    .$(", backfillTimestampMicros=").$(instance.getStateBackfillTimestamp())
                     .$(", maxTimestampSeenMicros=").$(mergeBuffer.getMaxTimestampSeen()).I$();
-            bootstrap(instance, forceDrain, instance.getStateHorizonTimestamp());
+            bootstrap(instance, forceDrain, instance.getStateBackfillTimestamp());
             return;
         }
         InMemoryTable writeBuffer = instance.tryAcquireWriteBuffer();
@@ -535,9 +535,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code applyRetention}. The disk-read warm-path branch returns early from
      * {@link #drainAndCommit} before reaching this site, so an accumulator
      * rebuilt via cold-path replay is not immediately evicted. Eviction does
-     * still fire on subsequent hot-path refreshes, which means the expanded-
-     * horizon coverage can be partially re-discarded over time; the deferred
-     * "cap horizon expansion" policy is the long-term fix. For the V1
+     * still fire on subsequent hot-path refreshes, which means the expanded
+     * backfill coverage can be partially re-discarded over time; the deferred
+     * "cap backfill expansion" policy is the long-term fix. For the V1
      * any-unbounded views in scope today, this trade-off matches the bounded-
      * backfill semantics: once a partition key has no rows in the retained
      * window, its accumulator state is treated as stale.
@@ -725,19 +725,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // cold row, and publishes a fresh snapshot. The diverted cold row is
             // already durable in the base table via WAL apply, so the disk scan
             // picks it up without the merge buffer having to carry it. Bootstrap
-            // installs the effective lower bound on {@code stateHorizonTimestamp} only
-            // after it succeeds, so a mid-way failure leaves the previous horizon
-            // intact.
+            // installs the effective lower bound on {@code stateBackfillTimestamp} only
+            // after it succeeds, so a mid-way failure leaves the previous value intact.
             // <p>
             // {@code - 1}: bootstrap's bounded-backfill predicate is {@code ts >
             // lowerBound}, so passing {@code batchMinColdTimestamp - 1} makes the cold row
             // at exactly {@code batchMinColdTimestamp} pass the filter.
-            long newHorizon = Math.min(instance.getStateHorizonTimestamp(), batchMinColdTimestamp - 1);
+            long newBackfillTimestamp = Math.min(instance.getStateBackfillTimestamp(), batchMinColdTimestamp - 1);
             LOG.info().$("live view cold-path disk-read replay [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", minColdTimestampMicros=").$(batchMinColdTimestamp)
-                    .$(", newHorizonMicros=").$(newHorizon).I$();
-            bootstrap(instance, forceDrain, newHorizon);
+                    .$(", newBackfillTimestampMicros=").$(newBackfillTimestamp).I$();
+            bootstrap(instance, forceDrain, newBackfillTimestamp);
             return;
         }
 
@@ -748,7 +747,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Reports whether the upcoming commit must route through
      * {@link #bootstrap}'s disk-read replay rather than a merge-buffer replay. Fires
      * only when the view has at least one unbounded window function, a warm path is
-     * pending, and {@code stateHorizonTimestamp} sits older than the merge buffer's retention
+     * pending, and {@code stateBackfillTimestamp} sits older than the merge buffer's retention
      * coverage — at which point replaying the merge buffer alone would shrink the
      * accumulator by discarding rows the state still reflects.
      */
@@ -763,8 +762,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (windowFactory.getMaxLookbackMicros() >= 0) {
             return false;
         }
-        long horizon = instance.getStateHorizonTimestamp();
-        if (horizon == Long.MAX_VALUE) {
+        long backfillTimestamp = instance.getStateBackfillTimestamp();
+        if (backfillTimestamp == Long.MAX_VALUE) {
             return false;
         }
         long maxTimestampSeen = mergeBuffer.getMaxTimestampSeen();
@@ -775,7 +774,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (retentionMicros <= 0 || maxTimestampSeen < Long.MIN_VALUE + retentionMicros) {
             return false;
         }
-        return horizon < maxTimestampSeen - retentionMicros;
+        return backfillTimestamp < maxTimestampSeen - retentionMicros;
     }
 
     private boolean processNotifications() {

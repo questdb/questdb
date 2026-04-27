@@ -61,7 +61,7 @@ public class LiveViewInstance implements QuietCloseable {
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
     // Cumulative count of WAL rows the live view refresh job skipped because they were
     // cold relative to the published buffer's oldest visible row and the compiled window
-    // functions' lookback horizon. Accessed only while the refresh latch is held.
+    // functions' lookback range. Accessed only while the refresh latch is held.
     private long coldRowSkipCount;
     // Cached factory from the bootstrap compile. Window functions carry state across rows
     // (e.g., row_number() counter), so incremental refresh must reuse the same function
@@ -92,7 +92,7 @@ public class LiveViewInstance implements QuietCloseable {
     // expanded backward by the cold-path disk-read replay when an any-unbounded view
     // sees a row older than the merge buffer's retention coverage. Long.MAX_VALUE until
     // the first bootstrap completes. Accessed only while the refresh latch is held.
-    private long stateHorizonTimestamp = Long.MAX_VALUE;
+    private long stateBackfillTimestamp = Long.MAX_VALUE;
 
     public LiveViewInstance(LiveViewDefinition definition) {
         this.definition = definition;
@@ -175,8 +175,8 @@ public class LiveViewInstance implements QuietCloseable {
         return mergeBuffer;
     }
 
-    public long getStateHorizonTimestamp() {
-        return stateHorizonTimestamp;
+    public long getStateBackfillTimestamp() {
+        return stateBackfillTimestamp;
     }
 
     public void invalidate(String reason) {
@@ -275,8 +275,8 @@ public class LiveViewInstance implements QuietCloseable {
      * coverage extends below merge buffer coverage). Must be called while the refresh
      * latch is held.
      */
-    public void setStateHorizonTimestamp(long stateHorizonTimestamp) {
-        this.stateHorizonTimestamp = stateHorizonTimestamp;
+    public void setStateBackfillTimestamp(long stateBackfillTimestamp) {
+        this.stateBackfillTimestamp = stateBackfillTimestamp;
     }
 
     /**
