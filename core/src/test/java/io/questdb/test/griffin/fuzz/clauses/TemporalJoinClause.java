@@ -29,6 +29,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.FuzzNames;
 import io.questdb.test.griffin.fuzz.FuzzSource;
 import io.questdb.test.griffin.fuzz.FuzzTable;
+import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
@@ -49,7 +50,7 @@ public final class TemporalJoinClause {
     private TemporalJoinClause() {
     }
 
-    public static String generate(Rnd rnd, FuzzSource leftSrc, FuzzSource rightSrc) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource leftSrc, FuzzSource rightSrc) {
         FuzzTable left = leftSrc.getTable();
         FuzzTable right = rightSrc.getTable();
         String joinKind = JOIN_KINDS[rnd.nextInt(JOIN_KINDS.length)];
@@ -113,7 +114,13 @@ public final class TemporalJoinClause {
             }
         }
 
-        sql.put(" LIMIT ").put(1 + rnd.nextInt(50));
-        return sql.toString();
+        // LIMIT over a parallel ASOF / LT / SPLICE join can pick a different
+        // valid subset across runs. Emit it half the time and tell the runner
+        // which queries are safe to compare row-for-row.
+        boolean hasLimit = rnd.nextBoolean();
+        if (hasLimit) {
+            sql.put(" LIMIT ").put(1 + rnd.nextInt(50));
+        }
+        return new GeneratedQuery(sql.toString(), !hasLimit);
     }
 }

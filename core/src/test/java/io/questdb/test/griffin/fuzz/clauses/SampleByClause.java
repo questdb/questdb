@@ -29,6 +29,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.FuzzNames;
 import io.questdb.test.griffin.fuzz.FuzzSource;
 import io.questdb.test.griffin.fuzz.FuzzTable;
+import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
@@ -61,7 +62,7 @@ public final class SampleByClause {
     private SampleByClause() {
     }
 
-    public static String generate(Rnd rnd, FuzzSource source) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source) {
         FuzzTable table = source.getTable();
         boolean useColAliases = rnd.nextBoolean();
         ExpressionGenerator exprGen = new ExpressionGenerator(rnd, table.getColumns(), null, 2);
@@ -158,7 +159,9 @@ public final class SampleByClause {
             }
         }
 
-        return sql.toString();
+        // SampleByClause never emits LIMIT, so the result multiset is stable
+        // across runs.
+        return new GeneratedQuery(sql.toString(), true);
     }
 
     private static ColumnKind pickGroupableKind(Rnd rnd) {

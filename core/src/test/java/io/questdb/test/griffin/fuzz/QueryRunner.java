@@ -83,7 +83,8 @@ public final class QueryRunner {
         this.diffJit = diffJit;
     }
 
-    public Result run(String sql) {
+    public Result run(GeneratedQuery query) {
+        String sql = query.sql();
         if (!diffJit) {
             Outcome outcome = runOnce(sql, rowsA);
             return toResult(sql, outcome);
@@ -94,7 +95,7 @@ public final class QueryRunner {
             Outcome a = runOnce(sql, rowsA);
             executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             Outcome b = runOnce(sql, rowsB);
-            return reconcile(sql, a, b, rowsA, rowsB);
+            return reconcile(sql, a, b, rowsA, rowsB, query.deterministic());
         } finally {
             executionContext.setJitMode(prevJitMode);
         }
@@ -180,10 +181,19 @@ public final class QueryRunner {
         }
     }
 
-    private Result reconcile(String sql, Outcome a, Outcome b, StringSink rowsA, StringSink rowsB) {
+    private Result reconcile(String sql, Outcome a, Outcome b, StringSink rowsA, StringSink rowsB, boolean deterministic) {
         // Both succeeded.
         if (a.failure == null && b.failure == null) {
             if (rowsetEquals(rowsA, rowsB)) {
+                return Result.ok(a.rowsRead);
+            }
+            // Non-deterministic queries (LIMIT without fully-disambiguating
+            // ORDER BY over parallel GROUP BY / hash join, etc.) can return a
+            // different valid subset of rows on each run. Row content diff is
+            // meaningless for them, but a row count diff is still a real bug:
+            // the engine's parallel and serial paths must agree on how many
+            // rows survive the LIMIT, regardless of which rows they are.
+            if (!deterministic && a.rowsRead == b.rowsRead) {
                 return Result.ok(a.rowsRead);
             }
             return Result.failed(sql, divergence(a, b, rowsA, rowsB));

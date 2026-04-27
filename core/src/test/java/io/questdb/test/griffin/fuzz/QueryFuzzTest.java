@@ -89,17 +89,17 @@ public class QueryFuzzTest extends AbstractCairoTest {
             List<QueryRunner.Result> failures = new ArrayList<>();
             try (BufferedWriter dump = openDump(config.getDumpPath())) {
                 for (int q = 0; q < config.getNumQueries(); q++) {
-                    String sql = QueryGenerator.generate(rnd, tables);
+                    GeneratedQuery query = QueryGenerator.generate(rnd, tables);
                     if (dump != null) {
-                        dump.write(sql);
+                        dump.write(query.sql());
                         dump.newLine();
                     }
-                    QueryRunner.Result result = runner.run(sql);
+                    QueryRunner.Result result = runner.run(query);
                     if (result.isSkipped()) {
                         skipped++;
-                        LOG.info().$("fuzz skip (").$safe(result.getSkipReason()).$("): ").$safe(sql).$();
+                        LOG.info().$("fuzz skip (").$safe(result.getSkipReason()).$("): ").$safe(query.sql()).$();
                     } else if (result.isFailed()) {
-                        LOG.error().$("fuzz failure on query: ").$safe(sql)
+                        LOG.error().$("fuzz failure on query: ").$safe(query.sql())
                                 .$(" -- ").$(result.getFailure().getClass().getName())
                                 .$(": ").$safe(result.getFailure().getMessage())
                                 .$();

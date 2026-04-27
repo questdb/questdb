@@ -29,6 +29,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.FuzzNames;
 import io.questdb.test.griffin.fuzz.FuzzSource;
 import io.questdb.test.griffin.fuzz.FuzzTable;
+import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
@@ -48,7 +49,7 @@ public final class SimpleClause {
     private SimpleClause() {
     }
 
-    public static String generate(Rnd rnd, FuzzSource source) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source) {
         FuzzTable table = source.getTable();
         boolean useTableAlias = rnd.nextBoolean();
         boolean useColAliases = rnd.nextBoolean();
@@ -73,8 +74,15 @@ public final class SimpleClause {
             appendOrderBy(sql, rnd, table, qualifier, numAliases);
         }
 
-        sql.put(" LIMIT ").put(1 + rnd.nextInt(50));
-        return sql.toString();
+        // LIMIT without a fully-disambiguating ORDER BY can pick a different
+        // subset on each run when the source has parallel non-determinism. We
+        // emit it half the time and let the runner know which queries are
+        // safe to compare row-for-row vs. row-count-only.
+        boolean hasLimit = rnd.nextBoolean();
+        if (hasLimit) {
+            sql.put(" LIMIT ").put(1 + rnd.nextInt(50));
+        }
+        return new GeneratedQuery(sql.toString(), !hasLimit);
     }
 
     private static void appendOrderBy(

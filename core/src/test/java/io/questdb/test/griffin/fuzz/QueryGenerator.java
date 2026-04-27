@@ -54,7 +54,7 @@ public final class QueryGenerator {
     private QueryGenerator() {
     }
 
-    public static String generate(Rnd rnd, ObjList<FuzzTable> tables) {
+    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
 

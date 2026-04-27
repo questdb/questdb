@@ -29,6 +29,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.FuzzSource;
 import io.questdb.test.griffin.fuzz.FuzzTable;
+import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
@@ -51,7 +52,7 @@ public final class GroupByClause {
     private GroupByClause() {
     }
 
-    public static String generate(Rnd rnd, FuzzSource source) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source) {
         FuzzTable table = source.getTable();
         boolean useAlias = rnd.nextBoolean();
         String alias = useAlias ? "t0" : null;
@@ -119,8 +120,14 @@ public final class GroupByClause {
             appendOrderBy(sql, rnd, keys.size());
         }
 
-        sql.put(" LIMIT ").put(1 + rnd.nextInt(50));
-        return sql.toString();
+        // LIMIT over a parallel GROUP BY can pick a different valid subset on
+        // each run when ORDER BY does not fully disambiguate; emit it half the
+        // time and tag the query so the runner can choose the right oracle.
+        boolean hasLimit = rnd.nextBoolean();
+        if (hasLimit) {
+            sql.put(" LIMIT ").put(1 + rnd.nextInt(50));
+        }
+        return new GeneratedQuery(sql.toString(), !hasLimit);
     }
 
     private static void appendOrderBy(StringSink sink, Rnd rnd, int numKeys) {
