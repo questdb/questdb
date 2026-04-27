@@ -945,7 +945,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_row_group_from_buffers_matches_mmap() -> ParquetResult<()> {
+    fn decode_row_group_buffers_matches_file() -> ParquetResult<()> {
         let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_meta(50)?;
         let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
 
@@ -1038,7 +1038,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_row_group_filtered_fill_nulls_from_buffers_matches_mmap() -> ParquetResult<()> {
+    fn decode_row_group_filtered_fill_nulls_buffers_matches_file() -> ParquetResult<()> {
         let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_meta(20)?;
         let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
 
