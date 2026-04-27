@@ -103,13 +103,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         if (key < keyCount) {
-            if (requiredCoverColumns != null && coverCount > 0) {
-                for (int c : requiredCoverColumns) {
-                    if (c >= 0 && c < coverCount) {
-                        ensureSidecarOpen(c);
-                    }
-                }
-            }
+            openRequiredSidecars(requiredCoverColumns);
             Cursor c;
             if (freeCursors.size() > 0) {
                 c = freeCursors.popLast();
@@ -879,11 +873,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
             releaseResources();
-        }
-
-        @Override
-        public boolean hasCovering() {
-            return false;
         }
 
         @Override

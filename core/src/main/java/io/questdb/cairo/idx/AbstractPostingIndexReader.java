@@ -74,6 +74,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected final MemoryMR valueMem = Vm.getCMRInstance();
     protected long columnTop;
     protected int coverCount;
+    protected boolean[] coveredAvailable;
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
@@ -527,6 +528,28 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
     }
 
+    protected void openRequiredSidecars(int[] requiredCoverColumns) {
+        if (coverCount == 0) {
+            return;
+        }
+        if (coveredAvailable == null || coveredAvailable.length < coverCount) {
+            coveredAvailable = new boolean[coverCount];
+        } else {
+            for (int i = 0; i < coverCount; i++) {
+                coveredAvailable[i] = false;
+            }
+        }
+        if (requiredCoverColumns == null) {
+            return;
+        }
+        for (int c : requiredCoverColumns) {
+            if (c >= 0 && c < coverCount) {
+                ensureSidecarOpen(c);
+                coveredAvailable[c] = sidecarMems.getQuick(c).getFd() != -1;
+            }
+        }
+    }
+
     protected abstract class AbstractCoveringCursor implements CoveringRowCursor {
         protected final BorrowedArray arrayView = new BorrowedArray();
         protected final DirectBinarySequence binView = new DirectBinarySequence();
@@ -757,14 +780,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         @Override
-        public boolean hasCovering() {
-            return coverCount > 0;
-        }
-
-        @Override
         public boolean isCoveredAvailable(int includeIdx) {
             return includeIdx >= 0 && includeIdx < coverCount
-                    && sidecarMems.getQuick(includeIdx).size() > 0;
+                    && coveredAvailable != null && coveredAvailable[includeIdx];
         }
 
         @Override

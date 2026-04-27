@@ -670,7 +670,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testAsyncFilterWithAlterTableIndex() throws Exception {
         // ALTER TABLE ADD INDEX path: index is rebuilt for existing data.
         // The async filter wraps CoveringIndex and must produce correct results
-        // whether hasCovering() is true (sealed sidecar) or false (fallback to columns).
+        // whether isCoveredAvailable(0) is true (sealed sidecar) or false (fallback to columns).
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_alter_async (
@@ -1261,7 +1261,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cursor instanceof CoveringRowCursor);
-                        assertTrue(((CoveringRowCursor) cursor).hasCovering());
+                        assertTrue(((CoveringRowCursor) cursor).isCoveredAvailable(0));
 
                         int count = 0;
                         while (cursor.hasNext()) {
@@ -1319,7 +1319,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
                             coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
                         for (int i = 0; i < 30; i++) {
                             assertTrue("row " + i, cc.hasNext());
@@ -1425,7 +1425,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
 
                         assertTrue(cc.hasNext());
@@ -1436,7 +1436,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         // Key 299 is in stride 1, local key 43
                         cursor = reader.getCursor(299, 0, Long.MAX_VALUE, new int[]{0});
                         cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
                         assertTrue(cc.hasNext());
                         assertEquals(299, cc.next());
@@ -1446,7 +1446,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         // Key 0 is in stride 0 (control)
                         cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
                         assertTrue(cc.hasNext());
                         assertEquals(0, cc.next());
@@ -3029,7 +3029,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testCoveringMultiGenFallback() throws Exception {
-        // With per-gen sidecars, hasCovering() returns true even with genCount > 1.
+        // With per-gen sidecars, isCoveredAvailable(0) returns true even with genCount > 1.
         // Covering data is written during each commit's flushAllPending().
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -3075,8 +3075,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        // Per-gen sidecars: hasCovering() returns true
-                        assertTrue(cc.hasCovering());
+                        // Per-gen sidecars: isCoveredAvailable(0) returns true
+                        assertTrue(cc.isCoveredAvailable(0));
 
 
                         // Row IDs and covered values are correct
@@ -3137,7 +3137,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         // Key 0: only gen 0 data (rows 0,2)
                         CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
                         assertTrue(cc.hasNext());
                         assertEquals(0, cc.next());
@@ -3149,7 +3149,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                         // Key 1: gen 0 + gen 1 (rows 1,3,4,5)
                         cc = (CoveringRowCursor) reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
                         assertTrue(cc.hasNext());
                         assertEquals(1, cc.next());
@@ -3211,7 +3211,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         // Key 1: rows 1,3,5,7,9,11,13,15,17,19
                         RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
                         int count = 0;
                         while (cc.hasNext()) {
@@ -3270,7 +3270,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.GEOSHORT}), EMPTY_CVR, 0)) {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
 
                         // Rows 0-1: below columnTop, must get GeoHashes.SHORT_NULL (-1)
@@ -5420,7 +5420,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
 
                         // First 4 rows: below columnTop, null sentinel is NaN for DOUBLE
@@ -7130,7 +7130,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue("covering should be available after incremental seal", cc.hasCovering());
+                        assertTrue("covering should be available after incremental seal", cc.isCoveredAvailable(0));
                         assertTrue(cc.hasNext());
                         assertEquals(0, cc.next());
                         assertEquals(1000L, cc.getCoveredLong(0));
@@ -7139,7 +7139,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         // Key 100 is in stride 0 (clean stride)
                         cursor = reader.getCursor(100, 0, Long.MAX_VALUE, new int[]{0});
                         cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
                         assertTrue(cc.hasNext());
                         assertEquals(100, cc.next());
@@ -7150,7 +7150,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         // Key 260 is in stride 1 (dirty stride) — should also work
                         cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0});
                         cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
                         assertTrue(cc.hasNext());
                         assertEquals(260, cc.next());
@@ -8182,9 +8182,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                    // Cursor should still implement CoveringRowCursor but hasCovering() returns false
+                    // Cursor should still implement CoveringRowCursor but isCoveredAvailable(0) returns false
                     assertTrue(cursor instanceof CoveringRowCursor);
-                    assertFalse(((CoveringRowCursor) cursor).hasCovering());
+                    assertFalse(((CoveringRowCursor) cursor).isCoveredAvailable(0));
 
                     // Regular iteration should work
                     assertTrue(cursor.hasNext());
@@ -8877,7 +8877,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
 
                         // key 0: rows 0, 3, 6 -> values 10.0, 40.0, 70.0
@@ -8898,7 +8898,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         // key 1: rows 1, 4 -> values 20.0, 50.0
                         cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
                         cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.isCoveredAvailable(0));
 
 
                         assertTrue(cc.hasNext());
@@ -9783,7 +9783,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         final long minValue = 464;
                         CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(1, minValue, Long.MAX_VALUE, new int[]{0});
                         try {
-                            assertTrue(cc.hasCovering());
+                            assertTrue(cc.isCoveredAvailable(0));
                             int expectedRow = 464;
                             while (cc.hasNext()) {
                                 // RowCursor.next() returns rowId relative to minValue.

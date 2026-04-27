@@ -69,8 +69,6 @@ public interface CoveringRowCursor extends RowCursor {
 
     Utf8Sequence getCoveredVarcharB(int includeIdx);
 
-    boolean hasCovering();
-
     boolean isCoveredAvailable(int includeIdx);
 
     long seekToLast();

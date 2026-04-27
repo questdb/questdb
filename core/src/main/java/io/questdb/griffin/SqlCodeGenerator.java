@@ -5782,6 +5782,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             symbolValueFunc,
                                             columnIndexes,
                                             coveringMapping,
+                                            null,
+                                            null,
                                             true,
                                             filter
                                     );
@@ -9506,7 +9508,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 symbolKey,
                                                 symbolFunc,
                                                 columnIndexes,
-                                                coveringMapping
+                                                coveringMapping,
+                                                null,
+                                                null,
+                                                false,
+                                                null
                                         );
                                         symbolFunc = null;
                                         if (filter != null) {
@@ -9605,7 +9611,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         columnIndexes,
                                         coveringMapping,
                                         intrinsicModel.keyValueFuncs,
-                                        reader
+                                        reader,
+                                        false,
+                                        null
                                 );
                                 if (filter != null) {
                                     return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
