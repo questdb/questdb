@@ -98,6 +98,22 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    /**
+     * Returns a {@link io.questdb.cairo.wal.seq.TxnWaiter} scoped to this execution
+     * context. Implementations are free to pool a single instance and reuse it across
+     * suspending-function invocations (PGWire serializes queries per connection, so at
+     * most one wait is in flight per context at a time). The default implementation
+     * allocates a fresh waiter.
+     */
+    default io.questdb.cairo.wal.seq.TxnWaiter borrowTxnWaiter(
+            long targetWriterTxn,
+            io.questdb.mp.SqlContinuation cont,
+            io.questdb.mp.ContinuationResumeJob resumeJob,
+            long deadlineNanos
+    ) {
+        return new io.questdb.cairo.wal.seq.TxnWaiter(targetWriterTxn, cont, resumeJob, deadlineNanos);
+    }
+
     default Rnd getAsyncRandom() {
         return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
     }
@@ -111,6 +127,17 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     SqlExecutionCircuitBreaker getCircuitBreaker();
 
     boolean getCloneSymbolTables();
+
+    /**
+     * Returns the SqlContinuation that wraps the currently-executing SQL evaluation, or
+     * {@code null} if the caller did not wrap execution in a continuation gateway.
+     * Functions that want to suspend (e.g. {@code wait_wal_table}) must read this to
+     * obtain the reference they hand to a TxnWaiter; a null return means they must fall
+     * back to blocking behavior.
+     */
+    default @Nullable io.questdb.mp.SqlContinuation getCurrentContinuation() {
+        return null;
+    }
 
     Decimal128 getDecimal128();
 
@@ -265,6 +292,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCancelledFlag(AtomicBoolean cancelled);
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    /**
+     * Binds a SqlContinuation to this execution context so that suspending functions
+     * can retrieve it via {@link #getCurrentContinuation()}. Must be called before
+     * {@link io.questdb.mp.SqlContinuation#run()} and cleared after completion.
+     * The default implementation is a no-op; contexts that support continuation-based
+     * suspension override it.
+     */
+    default void setCurrentContinuation(@Nullable io.questdb.mp.SqlContinuation cont) {
+    }
 
     void setIntervalFunctionType(int intervalType);
 

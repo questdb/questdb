@@ -99,9 +99,14 @@ public class PGServer implements Closeable {
                             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
                             return false;
                         }
-                        context.handleClientOperation(operation);
+                        context.handleClientOperation(operation, dispatcher);
                         dispatcher.registerChannel(context, IOOperation.READ);
                         return true;
+                    } catch (OperationParkedException e) {
+                        // A SQL function (e.g. wait_wal_table) parked the continuation.
+                        // The worker that resumes it will re-register the connection with
+                        // the dispatcher — this thread must not touch the fd.
+                        return false;
                     } catch (PeerIsSlowToWriteException e) {
                         dispatcher.registerChannel(context, IOOperation.READ);
                     } catch (PeerIsSlowToReadException e) {

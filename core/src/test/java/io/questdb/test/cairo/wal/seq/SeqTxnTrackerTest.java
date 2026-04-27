@@ -26,11 +26,15 @@ package io.questdb.test.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.seq.TableWriterPressureControlImpl;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TxnWaiter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.ContinuationResumeJob;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SqlContinuation;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
@@ -257,6 +261,97 @@ public class SeqTxnTrackerTest {
             tracker.updateInflightPartitions(expectedParallelism);
             assertEquals(expectedParallelism, tracker.getMemoryPressureRegulationValue());
         }
+    }
+
+    @Test
+    public void testWaiterCancelledIsSkippedByFire() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            ContinuationResumeJob resumeJob = new ContinuationResumeJob();
+            TxnWaiter w = new TxnWaiter(10, dummyContinuation(), resumeJob);
+            tracker.registerWaiter(w);
+            assertTrue(w.tryCancel());
+            assertTrue(w.isCancelled());
+            // Advancing past target must not fire a cancelled waiter.
+            tracker.updateWriterTxns(10, 10);
+            assertTrue(w.isCancelled());
+            assertFalse(w.isFired());
+        });
+    }
+
+    @Test
+    public void testWaiterFiresImmediatelyIfAlreadyMet() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(10, 10, false);
+            ContinuationResumeJob resumeJob = new ContinuationResumeJob();
+            TxnWaiter w = new TxnWaiter(5, dummyContinuation(), resumeJob);
+            tracker.registerWaiter(w);
+            assertTrue(w.isFired());
+            assertFalse(w.isCancelled());
+        });
+    }
+
+    @Test
+    public void testWaiterFiresOnDrop() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            ContinuationResumeJob resumeJob = new ContinuationResumeJob();
+            TxnWaiter w = new TxnWaiter(100, dummyContinuation(), resumeJob);
+            tracker.registerWaiter(w);
+            assertFalse(w.isFired());
+            tracker.notifyOnDrop();
+            assertTrue(w.isFired());
+        });
+    }
+
+    @Test
+    public void testWaiterFiresOnSuspend() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            ContinuationResumeJob resumeJob = new ContinuationResumeJob();
+            TxnWaiter w = new TxnWaiter(100, dummyContinuation(), resumeJob);
+            tracker.registerWaiter(w);
+            assertFalse(w.isFired());
+            tracker.setSuspended(ErrorTag.NONE, "test");
+            assertTrue(w.isFired());
+        });
+    }
+
+    @Test
+    public void testWaiterFiresOnWriterTxnAdvance() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            ContinuationResumeJob resumeJob = new ContinuationResumeJob();
+            TxnWaiter w1 = new TxnWaiter(3, dummyContinuation(), resumeJob);
+            TxnWaiter w2 = new TxnWaiter(7, dummyContinuation(), resumeJob);
+            tracker.registerWaiter(w1);
+            tracker.registerWaiter(w2);
+            // w1.target(3) is already met by initTxns writerTxn=1... wait, initTxns sets
+            // writerTxn=1, so w1.target(3) is NOT met yet. w2.target(7) also not met.
+            assertFalse(w1.isFired());
+            assertFalse(w2.isFired());
+
+            tracker.updateWriterTxns(3, 3);
+            // w1 fires (target 3 met), w2 stays (target 7 not met yet).
+            assertTrue(w1.isFired());
+            assertFalse(w2.isFired());
+
+            tracker.updateWriterTxns(7, 7);
+            assertTrue(w2.isFired());
+        });
+    }
+
+    private static SqlContinuation dummyContinuation() {
+        // A continuation whose body never runs in these tests; we only need a reference
+        // that ContinuationResumeJob.enqueue() can stash. Tests verify the waiter state,
+        // not the resume side.
+        return new SqlContinuation(() -> {
+        });
     }
 
     @NotNull

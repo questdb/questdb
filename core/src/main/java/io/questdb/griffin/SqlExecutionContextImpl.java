@@ -73,6 +73,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
+    private final io.questdb.cairo.wal.seq.TxnWaiter pooledTxnWaiter = new io.questdb.cairo.wal.seq.TxnWaiter();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -87,6 +88,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
+    private io.questdb.mp.SqlContinuation currentContinuation;
     private int intervalFunctionType;
     private int jitMode;
     private long nowMicros;
@@ -142,6 +144,17 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean allowNonDeterministicFunctions() {
         return allowNonDeterministicFunction;
+    }
+
+    @Override
+    public io.questdb.cairo.wal.seq.TxnWaiter borrowTxnWaiter(
+            long targetWriterTxn,
+            io.questdb.mp.SqlContinuation cont,
+            io.questdb.mp.ContinuationResumeJob resumeJob,
+            long deadlineNanos
+    ) {
+        pooledTxnWaiter.reset(targetWriterTxn, cont, resumeJob, deadlineNanos);
+        return pooledTxnWaiter;
     }
 
     @Override
@@ -233,6 +246,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean getCloneSymbolTables() {
         return cloneSymbolTables;
+    }
+
+    @Override
+    public io.questdb.mp.SqlContinuation getCurrentContinuation() {
+        return currentContinuation;
     }
 
     public Decimal128 getDecimal128() {
@@ -465,6 +483,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
+    }
+
+    @Override
+    public void setCurrentContinuation(io.questdb.mp.SqlContinuation cont) {
+        this.currentContinuation = cont;
     }
 
     @Override

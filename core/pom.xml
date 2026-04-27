@@ -34,7 +34,7 @@
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>25</javac.target>
-        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED</argLine>
+        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=io.questdb</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>1.2.1</web.console.version>
@@ -100,6 +100,8 @@
                     <compilerArgs>
                         <arg>-J-XX:-TieredCompilation</arg>
                         <arg>-J-XX:TieredStopAtLevel=1</arg>
+                        <arg>--add-exports=java.base/jdk.internal.vm=io.questdb</arg>
+                        <arg>--add-exports=java.base/jdk.internal.vm=io.questdb.test</arg>
                     </compilerArgs>
                     <fork>true</fork>
                     <source>${javac.compile.source}</source>

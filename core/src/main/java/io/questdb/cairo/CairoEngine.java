@@ -168,6 +168,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
+    private final io.questdb.mp.ContinuationResumeJob continuationResumeJob = new io.questdb.mp.ContinuationResumeJob();
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
     private final FunctionFactoryCache ffCache;
@@ -814,6 +815,16 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CairoConfiguration getConfiguration() {
         return configuration;
+    }
+
+    /**
+     * Returns the shared job that drains continuations parked by suspending SQL
+     * functions (e.g. {@code wait_wal_table}). Assign this to every worker of the
+     * SQL-executing pool before that pool is started, so any worker is eligible to
+     * resume a parked continuation.
+     */
+    public io.questdb.mp.ContinuationResumeJob getContinuationResumeJob() {
+        return continuationResumeJob;
     }
 
     public CopyExportContext getCopyExportContext() {

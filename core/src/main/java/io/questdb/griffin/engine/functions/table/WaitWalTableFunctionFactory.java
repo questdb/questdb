@@ -31,11 +31,14 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TxnWaiter;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.mp.ContinuationResumeJob;
+import io.questdb.mp.SqlContinuation;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -65,16 +68,49 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            if (seqTxnTracker != null) {
-                for (int i = 0; seqTxnTracker.getWriterTxn() < seqTxn; i++) {
-                    Os.sleep(1);
+            if (seqTxnTracker == null) {
+                return true;
+            }
+
+            // Fast path: already caught up.
+            if (seqTxnTracker.getWriterTxn() >= seqTxn) {
+                throwIfSuspended();
+                return true;
+            }
+
+            // Continuation path: the caller wrapped SQL execution under a SqlContinuation
+            // gateway, so we can suspend the stack and release the carrier thread.
+            SqlContinuation cont = executionContext.getCurrentContinuation();
+            if (cont != null && SqlContinuation.isMounted()) {
+                ContinuationResumeJob resumeJob = executionContext.getCairoEngine().getContinuationResumeJob();
+                TxnWaiter waiter = executionContext.borrowTxnWaiter(seqTxn, cont, resumeJob, TxnWaiter.NO_DEADLINE);
+                seqTxnTracker.registerWaiter(waiter);
+                executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                SqlContinuation.suspend();
+                if (waiter.isCancelled()) {
                     executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
-                    if (i % 1000 == 0 && seqTxnTracker.isSuspended()) {
-                        throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put("]");
-                    }
+                    throw CairoException.nonCritical().put("wait_wal_table cancelled [tableName=").put(tableName).put("]");
+                }
+                throwIfSuspended();
+                return true;
+            }
+
+            // Legacy polling fallback: no continuation gateway in this execution path.
+            for (int i = 0; seqTxnTracker.getWriterTxn() < seqTxn; i++) {
+                Os.sleep(1);
+                executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                if (i % 1000 == 0 && seqTxnTracker.isSuspended()) {
+                    throwIfSuspended();
                 }
             }
+            throwIfSuspended();
             return true;
+        }
+
+        private void throwIfSuspended() {
+            if (seqTxnTracker.isSuspended()) {
+                throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put("]");
+            }
         }
 
         @Override

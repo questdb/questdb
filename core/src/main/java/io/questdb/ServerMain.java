@@ -423,6 +423,10 @@ public class ServerMain implements Closeable {
                 pgServer
         ));
 
+        // Drive SqlContinuation resumes on the network shared pool. Any worker is a valid
+        // carrier for a parked SQL stack, so assigning to every worker spreads the load.
+        workerPoolManager.getSharedPoolNetwork().assign(engine.getContinuationResumeJob());
+
         if (!isReadOnly && config.getLineTcpReceiverConfiguration().isEnabled()) {
             // ilp/tcp
             freeOnExit(services().createLineTcpReceiver(

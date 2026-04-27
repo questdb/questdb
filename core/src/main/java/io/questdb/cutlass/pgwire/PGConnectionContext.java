@@ -49,7 +49,9 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.SqlContinuation;
 import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.Net;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -57,6 +59,11 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.TlsSessionInitFailedException;
+
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV;
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND;
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION;
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_SERVER_ERROR;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
@@ -151,6 +158,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final CharacterStore bindVariableValuesCharacterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final PGConfiguration configuration;
+    // Pooled continuation: one per connection, lifetime of the connection. Every
+    // handleClientOperation call re-enters this continuation; its body is a persistent
+    // loop that yields between tasks. Eliminates per-call allocation of both the
+    // SqlContinuation wrapper and the underlying jdk.internal.vm.Continuation.
+    private final SqlContinuation cont = new SqlContinuation(this::continuationLoop);
     private final DirectUtf8String directUtf8NamedPortal = new DirectUtf8String();
     private final DirectUtf8String directUtf8NamedStatement = new DirectUtf8String();
     private final boolean dumpNetworkTraffic;
@@ -178,6 +190,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private PGPipelineEntry bindingServiceConfiguredFor;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
+    // Pooled-continuation state. taskOperation/taskDispatcher are inputs to the current
+    // task; currentCallComplete flips to true in the loop's finally (distinguishing
+    // "parked mid-task" from "task finished, yielded for next call"); everSuspendedThisCall
+    // tells the loop's finally whether we resumed on a worker and need to run onPostResume;
+    // taskFailure captures exceptions from the body; contShutdown terminates the loop on close.
+    private volatile boolean contShutdown;
+    private boolean currentCallComplete;
+    private boolean everSuspendedThisCall;
     private boolean freezeRecvBuffer;
     private int namedStatementLimit;
     // PG wire protocol has two phases:
@@ -190,6 +210,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long recvBufferWriteOffset = 0;
     private PGResumeCallback resumeCallback;
     private long sendBuffer;
+    private IODispatcher<PGConnectionContext> taskDispatcher;
+    private Throwable taskFailure;
+    private int taskOperation;
     private long sendBufferLimit;
     private long sendBufferPtr;
     private int sendBufferSize;
@@ -352,6 +375,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     @Override
     public void close() {
+        // Drive the pooled continuation's loop to termination so its parked frames are
+        // released and any body references on the Java heap become eligible for GC.
+        // Safe to call even if the continuation has never run (run() on a fresh
+        // Continuation starts it; with contShutdown=true the loop exits immediately).
+        contShutdown = true;
+        try {
+            cont.run();
+        } catch (Throwable ignore) {
+            // Best-effort cleanup; do not let a straggler exception prevent close.
+        }
         // We're about to close the context, so no need to return pending factory to cache.
         clear();
         if (sqlExecutionContext != null) {
@@ -379,7 +412,84 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return getTableWriterAPI(engine.verifyTableName(tableName), lockReason);
     }
 
-    public void handleClientOperation(int operation) throws Exception {
+    public void handleClientOperation(int operation, IODispatcher<PGConnectionContext> dispatcher) throws Exception {
+        taskOperation = operation;
+        taskDispatcher = dispatcher;
+        taskFailure = null;
+        currentCallComplete = false;
+        everSuspendedThisCall = false;
+        sqlExecutionContext.setCurrentContinuation(cont);
+        cont.run();
+        if (!currentCallComplete) {
+            // Body is parked mid-task. The loop has not yet reached its tail-yield.
+            // The worker that eventually resumes will run onPostResume to re-arm the
+            // dispatcher or disconnect the client.
+            everSuspendedThisCall = true;
+            throw OperationParkedException.INSTANCE;
+        }
+        sqlExecutionContext.setCurrentContinuation(null);
+        if (taskFailure != null) {
+            sneakyThrow(taskFailure);
+        }
+    }
+
+    /**
+     * Persistent body of the pooled {@link #cont}. Loops until the connection is
+     * shutting down. Each iteration runs one {@code handleClientOperationImpl(op)} and
+     * then yields, parking the continuation until the next {@link #handleClientOperation}
+     * invocation or a worker-driven resume of an internally-suspended frame.
+     */
+    private void continuationLoop() {
+        while (!contShutdown) {
+            try {
+                handleClientOperationImpl(taskOperation);
+            } catch (Throwable t) {
+                taskFailure = t;
+            } finally {
+                currentCallComplete = true;
+                if (everSuspendedThisCall) {
+                    // We ran past a suspend and are now on the resuming worker. The outer
+                    // handleClientOperation caller has long since thrown OperationParkedException;
+                    // it is our job to re-arm the dispatcher or disconnect the client.
+                    sqlExecutionContext.setCurrentContinuation(null);
+                    onPostResume(taskOperation, taskDispatcher, taskFailure);
+                }
+            }
+            SqlContinuation.suspend();
+        }
+    }
+
+    private void onPostResume(int operation, IODispatcher<PGConnectionContext> dispatcher, Throwable err) {
+        // Runs on the worker thread that finished the continuation body, iff the body
+        // ever suspended. Mirrors the processor's catch chain: normal completion re-arms
+        // for the next client message; flow-control exceptions route to their respective
+        // re-registration; anything else disconnects.
+        if (err == null) {
+            dispatcher.registerChannel(this, IOOperation.READ);
+            return;
+        }
+        if (err instanceof PeerIsSlowToWriteException) {
+            dispatcher.registerChannel(this, IOOperation.READ);
+        } else if (err instanceof PeerIsSlowToReadException) {
+            dispatcher.registerChannel(this, IOOperation.WRITE);
+        } else if (err instanceof PeerDisconnectedException) {
+            dispatcher.disconnect(
+                    this,
+                    operation == IOOperation.READ
+                            ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
+                            : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
+            );
+        } else if (err instanceof PGMessageProcessingException) {
+            LOG.error().$("protocol issue after resume [err=").$safe(((PGMessageProcessingException) err).getFlyweightMessage()).I$();
+            dispatcher.disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+        } else {
+            LOG.critical().$("internal error after resume [ex=").$(err).I$();
+            metrics.healthMetrics().incrementUnhandledErrors();
+            dispatcher.disconnect(this, DISCONNECT_REASON_SERVER_ERROR);
+        }
+    }
+
+    private void handleClientOperationImpl(int operation) throws Exception {
         assert authenticator != null;
 
         try {
@@ -469,6 +579,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (sqlTimeout > 0) {
             circuitBreaker.setTimeout(sqlTimeout);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void sneakyThrow(Throwable t) throws T {
+        throw (T) t;
     }
 
     private static void sendErrorResponseAndReset(PGResponseSink sink, CharSequence message) throws PeerIsSlowToReadException, PeerDisconnectedException {
