@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -35,7 +34,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
@@ -45,6 +43,7 @@ import io.questdb.std.DirectBitSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFactory {
@@ -115,6 +114,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int foundCount;
         private PartitionFrameCursor frameCursor;
+        private boolean isExhausted;
         private boolean isNullReturned;
         private boolean isScanned;
         private int nextKeyToReturn;
@@ -137,6 +137,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             yieldedCount = foundCount;
             nextKeyToReturn = symbolCount;
             isNullReturned = true;
+            isExhausted = true;
         }
 
         @Override
@@ -162,24 +163,28 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
 
         @Override
         public boolean hasNext() {
+            if (isExhausted) {
+                return false;
+            }
             if (!isScanned) {
                 scanPartitions(circuitBreaker);
                 isScanned = true;
             }
-            while (nextKeyToReturn < symbolCount) {
-                int key = nextKeyToReturn++;
-                if (foundKeys.get(key + 1)) {
-                    record.symbolKey = key;
-                    yieldedCount++;
-                    return true;
-                }
+            int bit = foundKeys.nextSetBit(nextKeyToReturn + 1);
+            if (bit > 0 && bit <= symbolCount) {
+                record.symbolKey = bit - 1;
+                nextKeyToReturn = bit;
+                yieldedCount++;
+                return true;
             }
-            if (foundKeys.get(0) && !isNullReturned) {
+            nextKeyToReturn = symbolCount;
+            if (!isNullReturned && foundKeys.get(0)) {
                 isNullReturned = true;
                 record.symbolKey = SymbolTable.VALUE_IS_NULL;
                 yieldedCount++;
                 return true;
             }
+            isExhausted = true;
             return false;
         }
 
@@ -210,6 +215,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             foundCount = 0;
             yieldedCount = 0;
             isNullReturned = false;
+            isExhausted = false;
             foundKeys.clear();
             if (frameCursor != null) {
                 frameCursor.toTop();
@@ -232,37 +238,10 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 );
                 long rowLo = frame.getRowLo();
                 long rowHi = frame.getRowHi();
-                // The metadata-only fast path scans every gen in the partition,
-                // so it is correct only when the frame spans the whole
-                // partition. Interval predicates produce sub-frames; in that
-                // case fall through to the per-key cursor scan, which honors
-                // rowLo/rowHi.
                 boolean fullPartition = rowLo == 0 && rowHi == tableReader.getPartitionRowCount(partitionIndex);
-                int newlyFound = fullPartition ? indexReader.collectDistinctKeys(foundKeys) : -1;
-                if (newlyFound >= 0) {
-                    foundCount += newlyFound;
-                } else {
-                    // Per-key cursor probe: works for any index type and any
-                    // row range. Used by the bitmap path and the posting-index
-                    // path under interval predicates.
-                    for (int key = 0; key < symbolCount; key++) {
-                        int indexKey = TableUtils.toIndexKey(key);
-                        if (!foundKeys.get(indexKey)) {
-                            try (RowCursor c = indexReader.getCursor(indexKey, rowLo, rowHi - 1)) {
-                                if (c.hasNext() && !foundKeys.getAndSet(indexKey)) {
-                                    foundCount++;
-                                }
-                            }
-                        }
-                    }
-                    if (!foundKeys.get(0)) {
-                        try (RowCursor c = indexReader.getCursor(0, rowLo, rowHi - 1)) {
-                            if (c.hasNext() && !foundKeys.getAndSet(0)) {
-                                foundCount++;
-                            }
-                        }
-                    }
-                }
+                foundCount += fullPartition
+                        ? indexReader.collectDistinctKeys(foundKeys)
+                        : indexReader.collectDistinctKeysInRange(foundKeys, rowLo, rowHi - 1);
             }
         }
 
@@ -278,6 +257,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             this.foundCount = 0;
             this.yieldedCount = 0;
             this.isNullReturned = false;
+            this.isExhausted = false;
             foundKeys.reserve(symbolCount + 1);
             foundKeys.clear();
         }
@@ -294,17 +274,17 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
 
         @Override
         public long getRowId() {
-            return symbolKey;
+            return Numbers.LONG_NULL;
         }
 
         @Override
         public CharSequence getSymA(int col) {
-            return symbolTable != null ? symbolTable.valueOf(symbolKey) : null;
+            return symbolTable.valueOf(symbolKey);
         }
 
         @Override
         public CharSequence getSymB(int col) {
-            return symbolTable != null ? symbolTable.valueBOf(symbolKey) : null;
+            return symbolTable.valueBOf(symbolKey);
         }
     }
 }

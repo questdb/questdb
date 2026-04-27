@@ -105,6 +105,57 @@ public class DirectBitSetTest {
     }
 
     @Test
+    public void testNextSetBit() {
+        LOG.info().$("testNextSetBit").$();
+        try (DirectBitSet set = new DirectBitSet()) {
+            Assert.assertEquals(-1, set.nextSetBit(0));
+            Assert.assertEquals(-1, set.nextSetBit(100));
+
+            set.set(5);
+            Assert.assertEquals(5, set.nextSetBit(-10));
+            Assert.assertEquals(5, set.nextSetBit(0));
+            Assert.assertEquals(5, set.nextSetBit(5));
+            Assert.assertEquals(-1, set.nextSetBit(6));
+
+            set.set(7);
+            set.set(63);
+            Assert.assertEquals(5, set.nextSetBit(0));
+            Assert.assertEquals(7, set.nextSetBit(6));
+            Assert.assertEquals(7, set.nextSetBit(7));
+            Assert.assertEquals(63, set.nextSetBit(8));
+            Assert.assertEquals(63, set.nextSetBit(63));
+            Assert.assertEquals(-1, set.nextSetBit(64));
+
+            set.set(200);
+            Assert.assertEquals(200, set.nextSetBit(64));
+            Assert.assertEquals(200, set.nextSetBit(199));
+            Assert.assertEquals(200, set.nextSetBit(200));
+            Assert.assertEquals(-1, set.nextSetBit(201));
+        }
+
+        try (DirectBitSet set = new DirectBitSet(10_000)) {
+            set.set(9999);
+            Assert.assertEquals(9999, set.nextSetBit(0));
+            Assert.assertEquals(9999, set.nextSetBit(9999));
+            Assert.assertEquals(-1, set.nextSetBit(10_000));
+        }
+
+        try (DirectBitSet set = new DirectBitSet()) {
+            set.set(10);
+            set.set(20);
+            set.unset(10);
+            Assert.assertEquals(20, set.nextSetBit(0));
+            set.unset(20);
+            Assert.assertEquals(-1, set.nextSetBit(0));
+        }
+
+        try (DirectBitSet set = new DirectBitSet(64)) {
+            set.set(10);
+            Assert.assertEquals(-1, set.nextSetBit(1_000_000));
+        }
+    }
+
+    @Test
     public void testPreSizedAvoidsResize() {
         LOG.info().$("testPreSizedAvoidsResize").$();
         final int N = 1_000_000;

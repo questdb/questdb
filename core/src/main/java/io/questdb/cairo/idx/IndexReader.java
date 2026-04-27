@@ -66,6 +66,10 @@ public interface IndexReader extends Closeable {
         return -1;
     }
 
+    default int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
+        return -1;
+    }
+
     long getColumnTop();
 
     long getColumnTxn();

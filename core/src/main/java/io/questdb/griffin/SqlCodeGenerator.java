@@ -7667,10 +7667,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && !SqlHints.hasNoIndexHint(model)) {
                 CharSequence colName = columns.getQuick(0).getAst().token;
                 IQueryModel tableModel = model.getNestedModel();
-                while (tableModel != null && tableModel.getTableName() == null) {
-                    tableModel = tableModel.getNestedModel();
-                }
-                if (tableModel != null && tableModel.getLatestBy().size() == 0) {
+                if (tableModel != null && tableModel.getTableName() != null
+                        && tableModel.getLatestBy().size() == 0) {
                     TableToken tableToken = executionContext.getTableTokenIfExists(tableModel.getTableName());
                     if (tableToken != null) {
                         try (TableReader reader = executionContext.getReader(tableToken, tableModel.getMetadataVersion())) {
@@ -7705,15 +7703,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             reader,
                                             false
                                     );
-                                    if (distinctIntrinsic.filter != null || distinctIntrinsic.keyColumn != null) {
-                                        // Has non-interval filters — fall through to regular group-by.
-                                        // Restore the WHERE clause that extract() mutated.
+                                    if (distinctIntrinsic.intrinsicValue == IntrinsicModel.FALSE || distinctIntrinsic.filter != null ||
+                                            distinctIntrinsic.keyColumn != null || distinctIntrinsic.keyExcludedValueFuncs.size() > 0) {
                                         tableModel.setWhereClause(savedWhereClause);
                                         distinctIntrinsic = null;
                                     }
                                 }
 
                                 if (whereClause == null || distinctIntrinsic != null) {
+                                    TableColumnMetadata srcCol = tableMeta.getColumnMetadata(colIdx);
                                     GenericRecordMetadata distinctMeta = new GenericRecordMetadata();
                                     distinctMeta.add(new TableColumnMetadata(
                                             Chars.toString(colName),
@@ -7721,24 +7719,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             tableMeta.getColumnIndexType(colIdx),
                                             tableMeta.getIndexValueBlockCapacity(colIdx),
                                             tableMeta.isSymbolTableStatic(colIdx),
-                                            null, -1, false, 0,
-                                            tableMeta.getColumnMetadata(colIdx).isSymbolCacheFlag(),
-                                            tableMeta.getColumnMetadata(colIdx).getSymbolCapacity()
+                                            null,
+                                            tableMeta.getWriterIndex(colIdx),
+                                            false,
+                                            0,
+                                            srcCol.isSymbolCacheFlag(),
+                                            srcCol.getSymbolCapacity()
                                     ));
                                     IntList colIndexes = new IntList();
                                     colIndexes.add(colIdx);
-                                    IntList colSizeShifts = new IntList();
-                                    colSizeShifts.add(2);
                                     ExpressionNode viewExpr = tableModel.getViewNameExpr();
                                     GenericRecordMetadata dfcMeta = GenericRecordMetadata.copyOfNew(tableMeta);
 
                                     PartitionFrameCursorFactory dfcFactory;
                                     if (distinctIntrinsic != null && distinctIntrinsic.hasIntervalFilters()) {
-                                        // Interval filtering requires the timestamp column to be open
                                         int tsIdx = tableMeta.getTimestampIndex();
                                         if (tsIdx >= 0 && !colIndexes.contains(tsIdx)) {
                                             colIndexes.add(tsIdx);
-                                            colSizeShifts.add(ColumnType.pow2SizeOf(ColumnType.TIMESTAMP));
                                         }
                                         RuntimeIntrinsicIntervalModel intervalModel = distinctIntrinsic.buildIntervalModel();
                                         dfcFactory = new IntervalPartitionFrameCursorFactory(
@@ -7763,7 +7760,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 tableModel.isUpdate()
                                         );
                                     }
-                                    tableModel.setWhereClause(null);
+                                    if (whereClause != null) {
+                                        tableModel.setWhereClause(null);
+                                    }
                                     return new PostingIndexDistinctRecordCursorFactory(distinctMeta, dfcFactory, colIdx, 0, colIndexes);
                                 }
                             }

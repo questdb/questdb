@@ -98,45 +98,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCoveringVarcharEmptyVsNullDistinction() throws Exception {
-        // Regression test for #14: empty VARCHAR ('') must round-trip
-        // through the covering sidecar as a present-but-empty value, NOT as
-        // SQL NULL. The writer used to emit zero bytes for both NULL and
-        // empty, leaving the reader unable to distinguish them.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_vc_empty (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (v),
-                        v VARCHAR
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_vc_empty VALUES
-                    ('2024-01-01T00:00:00', 'A', NULL),
-                    ('2024-01-01T01:00:00', 'A', ''),
-                    ('2024-01-01T02:00:00', 'A', 'data'),
-                    ('2024-01-01T03:00:00', 'A', '')
-                    """);
-            engine.releaseAllWriters();
-
-            // IS NULL must match exactly the literal NULL row, not the two
-            // empty strings. Without the fix, all three were treated as
-            // NULL and the count was 3.
-            assertSql("""
-                    cnt
-                    1
-                    """, "SELECT count() AS cnt FROM t_vc_empty WHERE sym = 'A' AND v IS NULL");
-
-            // And the empty filter must match exactly two rows.
-            assertSql("""
-                    cnt
-                    2
-                    """, "SELECT count() AS cnt FROM t_vc_empty WHERE sym = 'A' AND v = ''");
-        });
-    }
-
-    @Test
     public void testAlterTableAddIndexIncludesColumnWithColumnTop() throws Exception {
         // Regression test: when an INCLUDE column was added via ALTER TABLE
         // ADD COLUMN after some rows already existed, the column file starts
@@ -1678,6 +1639,40 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringIndexDistinctRespectsSubqueryLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dist_lim (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_dist_lim VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'C'),
+                    ('2024-01-01T03:00:00', 'D')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    sym
+                    A
+                    B
+                    C
+                    D
+                    """, "SELECT DISTINCT sym FROM t_dist_lim");
+
+            assertSql("""
+                    sym
+                    A
+                    B
+                    """, "SELECT DISTINCT sym FROM (SELECT sym FROM t_dist_lim LIMIT 2) order by sym");
+        });
+    }
+
+    @Test
     public void testCoveringIndexGroupByAggregation() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1734,10 +1729,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // End-to-end SQL tests
-    // ===================================================================
-
     @Test
     public void testCoveringIndexGroupByMinMax() throws Exception {
         assertMemoryLeak(() -> {
@@ -1779,6 +1770,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT /*+ no_covering */ sym, min(price), max(price) FROM t_minmax WHERE sym = 'A' GROUP BY sym");
         });
     }
+
+    // ===================================================================
+    // End-to-end SQL tests
+    // ===================================================================
 
     @Test
     public void testCoveringIndexGroupByMultiPartition() throws Exception {
@@ -2303,10 +2298,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Fallback scenario tests: covering index NOT used
-    // ===================================================================
-
     @Test
     public void testCoveringIndexSidecarAlterAddIndexMultiPartition() throws Exception {
         // ALTER TABLE ADD INDEX INCLUDE on a table with multiple existing partitions.
@@ -2343,6 +2334,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, qty FROM t_alter_mp WHERE sym = 'B'");
         });
     }
+
+    // ===================================================================
+    // Fallback scenario tests: covering index NOT used
+    // ===================================================================
 
     @Test
     public void testCoveringIndexSidecarSurvivesPartitionSwitch() throws Exception {
@@ -2460,10 +2455,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // DDL edge case tests
-    // ===================================================================
-
     @Test
     public void testCoveringIndexSidecarWrittenOnAlterAddIndexWal() throws Exception {
         // Same as above but through the WAL path.
@@ -2493,6 +2484,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, qty FROM t_alter_wal WHERE sym = 'A'");
         });
     }
+
+    // ===================================================================
+    // DDL edge case tests
+    // ===================================================================
 
     @Test
     public void testCoveringIndexWithResidualFilter() throws Exception {
@@ -2612,10 +2607,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Type-specific covering column tests
-    // ===================================================================
-
     @Test
     public void testCoveringLatestOnExplainPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -2642,6 +2633,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ===================================================================
+    // Type-specific covering column tests
+    // ===================================================================
 
     @Test
     public void testCoveringLatestOnMultiKey() throws Exception {
@@ -4839,8 +4834,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== Coverage gap tests ====================
-
     @Test
     public void testCoveringQueryTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -4867,6 +4860,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT event_time, extra FROM t_ts WHERE sym = 'A'");
         });
     }
+
+    // ==================== Coverage gap tests ====================
 
     @Test
     public void testCoveringQueryUuidColumn() throws Exception {
@@ -5171,6 +5166,45 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     FROM (SELECT price FROM t_totop WHERE sym = 'A') t
                     CROSS JOIN (SELECT x FROM long_sequence(2)) x
                     """);
+        });
+    }
+
+    @Test
+    public void testCoveringVarcharEmptyVsNullDistinction() throws Exception {
+        // Regression test for #14: empty VARCHAR ('') must round-trip
+        // through the covering sidecar as a present-but-empty value, NOT as
+        // SQL NULL. The writer used to emit zero bytes for both NULL and
+        // empty, leaving the reader unable to distinguish them.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_vc_empty (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        v VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_vc_empty VALUES
+                    ('2024-01-01T00:00:00', 'A', NULL),
+                    ('2024-01-01T01:00:00', 'A', ''),
+                    ('2024-01-01T02:00:00', 'A', 'data'),
+                    ('2024-01-01T03:00:00', 'A', '')
+                    """);
+            engine.releaseAllWriters();
+
+            // IS NULL must match exactly the literal NULL row, not the two
+            // empty strings. Without the fix, all three were treated as
+            // NULL and the count was 3.
+            assertSql("""
+                    cnt
+                    1
+                    """, "SELECT count() AS cnt FROM t_vc_empty WHERE sym = 'A' AND v IS NULL");
+
+            // And the empty filter must match exactly two rows.
+            assertSql("""
+                    cnt
+                    2
+                    """, "SELECT count() AS cnt FROM t_vc_empty WHERE sym = 'A' AND v = ''");
         });
     }
 
@@ -8367,102 +8401,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSealFsyncsCoveringSidecarFiles() throws Exception {
-        // Regression: PostingIndexWriter.sealIncremental syncs the sealed
-        // value file (.pv.<sealTxn>) before publishing the new metadata
-        // page in .pk, but it never syncs the covering sidecar files
-        // (.pc<N>... and .pci). On power loss the kernel is free to
-        // reorder writes, so an installer can see the new sealTxn in .pk
-        // while the sidecar tail pages are still dirty in page cache —
-        // readers then map a torn sidecar and decode garbage.
-        //
-        // This test tracks every msync call by mapping mmap address back
-        // to the file descriptor that was passed to mmap, and asserts
-        // that at least one .pc<N> file and the .pci file were msync'd
-        // by the time the seal completed.
-        final java.util.concurrent.ConcurrentHashMap<Long, String> fdToPath = new java.util.concurrent.ConcurrentHashMap<>();
-        final java.util.concurrent.ConcurrentHashMap<Long, Long> addrToFd = new java.util.concurrent.ConcurrentHashMap<>();
-        final java.util.Set<String> syncedFiles = java.util.concurrent.ConcurrentHashMap.newKeySet();
-        ff = new TestFilesFacadeImpl() {
-            @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                long addr = super.mmap(fd, len, offset, flags, memoryTag);
-                if (addr > 0) {
-                    addrToFd.put(addr, fd);
-                }
-                return addr;
-            }
-
-            @Override
-            public void msync(long addr, long len, boolean async) {
-                Long fd = addrToFd.get(addr);
-                if (fd != null) {
-                    String path = fdToPath.get(fd);
-                    if (path != null) {
-                        syncedFiles.add(path);
-                    }
-                }
-                super.msync(addr, len, async);
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                long fd = super.openRW(name, opts);
-                if (fd > 0 && name != null) {
-                    fdToPath.put(fd, Utf8s.stringFromUtf8Bytes(name));
-                }
-                return fd;
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            // Force every memory-mapped sync to actually flush so msync
-            // gets called by MemoryCMARWImpl.sync() instead of being a no-op.
-            setProperty(io.questdb.PropertyKey.CAIRO_COMMIT_MODE, "sync");
-            execute("""
-                    CREATE TABLE t_sync (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
-                        price DOUBLE
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            // Insert in-order rows into 2 partitions.
-            execute("""
-                    INSERT INTO t_sync VALUES
-                    ('2024-01-01T00:00:00', 'A', 1.0),
-                    ('2024-01-01T01:00:00', 'B', 2.0),
-                    ('2024-01-02T00:00:00', 'A', 3.0)
-                    """);
-            // Now do an O3 insert that lands in partition 1. This forces
-            // sealPostingIndexesForO3Partitions() and produces sealed .pv
-            // and covering sidecar files for partition 1.
-            execute("""
-                    INSERT INTO t_sync VALUES
-                    ('2024-01-01T00:30:00', 'C', 9.0)
-                    """);
-            // Clear the recorded set just before the seal runs by closing
-            // the writer (which triggers the final seal of the last
-            // partition) — but keep the tracking maps live so addresses
-            // recorded earlier still resolve.
-            engine.releaseAllWriters();
-
-            boolean sidecarSynced = false;
-            boolean coverInfoSynced = false;
-            for (String f : syncedFiles) {
-                if (f.contains("sym.pci")) {
-                    coverInfoSynced = true;
-                }
-                if (f.matches(".*sym\\.pc\\d+\\..*")) {
-                    sidecarSynced = true;
-                }
-            }
-            assertTrue("seal must msync the .pci covering info sidecar; synced files: " + syncedFiles,
-                    coverInfoSynced);
-            assertTrue("seal must msync the .pc<N> covering data sidecar(s); synced files: " + syncedFiles,
-                    sidecarSynced);
-        });
-    }
-
-    @Test
     public void testO3MultiPartitionSidecarRebuild() throws Exception {
         // Gap 15/16: O3 affecting multiple partitions. Verifies sidecar rebuild
         // handles multiple O3-affected partitions correctly.
@@ -8573,8 +8511,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== page frame cursor tests ====================
-
     @Test
     public void testO3WithNullCoveredValues() throws Exception {
         // Gap 18: O3 with NULL values in covered columns
@@ -8606,6 +8542,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_o3_null WHERE sym = 'A'");
         });
     }
+
+    // ==================== page frame cursor tests ====================
 
     @Test
     public void testO3WithSymbolIncludeColumn() throws Exception {
@@ -9332,6 +9270,102 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     count
                     2
                     """, "SELECT count() FROM t_seal WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testSealFsyncsCoveringSidecarFiles() throws Exception {
+        // Regression: PostingIndexWriter.sealIncremental syncs the sealed
+        // value file (.pv.<sealTxn>) before publishing the new metadata
+        // page in .pk, but it never syncs the covering sidecar files
+        // (.pc<N>... and .pci). On power loss the kernel is free to
+        // reorder writes, so an installer can see the new sealTxn in .pk
+        // while the sidecar tail pages are still dirty in page cache —
+        // readers then map a torn sidecar and decode garbage.
+        //
+        // This test tracks every msync call by mapping mmap address back
+        // to the file descriptor that was passed to mmap, and asserts
+        // that at least one .pc<N> file and the .pci file were msync'd
+        // by the time the seal completed.
+        final java.util.concurrent.ConcurrentHashMap<Long, String> fdToPath = new java.util.concurrent.ConcurrentHashMap<>();
+        final java.util.concurrent.ConcurrentHashMap<Long, Long> addrToFd = new java.util.concurrent.ConcurrentHashMap<>();
+        final java.util.Set<String> syncedFiles = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                if (addr > 0) {
+                    addrToFd.put(addr, fd);
+                }
+                return addr;
+            }
+
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                Long fd = addrToFd.get(addr);
+                if (fd != null) {
+                    String path = fdToPath.get(fd);
+                    if (path != null) {
+                        syncedFiles.add(path);
+                    }
+                }
+                super.msync(addr, len, async);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > 0 && name != null) {
+                    fdToPath.put(fd, Utf8s.stringFromUtf8Bytes(name));
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            // Force every memory-mapped sync to actually flush so msync
+            // gets called by MemoryCMARWImpl.sync() instead of being a no-op.
+            setProperty(io.questdb.PropertyKey.CAIRO_COMMIT_MODE, "sync");
+            execute("""
+                    CREATE TABLE t_sync (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Insert in-order rows into 2 partitions.
+            execute("""
+                    INSERT INTO t_sync VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 3.0)
+                    """);
+            // Now do an O3 insert that lands in partition 1. This forces
+            // sealPostingIndexesForO3Partitions() and produces sealed .pv
+            // and covering sidecar files for partition 1.
+            execute("""
+                    INSERT INTO t_sync VALUES
+                    ('2024-01-01T00:30:00', 'C', 9.0)
+                    """);
+            // Clear the recorded set just before the seal runs by closing
+            // the writer (which triggers the final seal of the last
+            // partition) — but keep the tracking maps live so addresses
+            // recorded earlier still resolve.
+            engine.releaseAllWriters();
+
+            boolean sidecarSynced = false;
+            boolean coverInfoSynced = false;
+            for (String f : syncedFiles) {
+                if (f.contains("sym.pci")) {
+                    coverInfoSynced = true;
+                }
+                if (f.matches(".*sym\\.pc\\d+\\..*")) {
+                    sidecarSynced = true;
+                }
+            }
+            assertTrue("seal must msync the .pci covering info sidecar; synced files: " + syncedFiles,
+                    coverInfoSynced);
+            assertTrue("seal must msync the .pc<N> covering data sidecar(s); synced files: " + syncedFiles,
+                    sidecarSynced);
         });
     }
 

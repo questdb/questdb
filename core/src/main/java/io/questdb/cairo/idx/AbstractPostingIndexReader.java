@@ -126,6 +126,24 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     @Override
+    public int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
+        if (genCount == 0 || keyCount == 0) {
+            return 0;
+        }
+        int newlyFound = 0;
+        for (int g = 0; g < genCount; g++) {
+            int genKeyCount = genLookup.getGenKeyCount(g);
+            long genFileOffset = genLookup.getGenFileOffset(g);
+            if (genKeyCount >= 0) {
+                newlyFound += scanDenseGenForRange(genFileOffset, genKeyCount, foundKeys, rowLo, rowHi);
+            } else {
+                newlyFound += scanSparseGenForRange(genFileOffset, -genKeyCount, foundKeys, rowLo, rowHi);
+            }
+        }
+        return newlyFound;
+    }
+
+    @Override
     public long getColumnTop() {
         return columnTop;
     }
@@ -265,6 +283,83 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         genLookup.setCacheMemoryBudget(budget);
     }
 
+    private static boolean deltaKeyHasValueInRange(long baseAddr, long encodedOffset, long rowLo, long rowHi) {
+        int firstWord = Unsafe.getInt(baseAddr + encodedOffset);
+        if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
+            return efKeyHasValueInRange(baseAddr, encodedOffset, rowLo, rowHi);
+        }
+        if (firstWord <= 0) {
+            return false;
+        }
+        long valueCountsOff = encodedOffset + 4;
+        long firstValuesOff = valueCountsOff + firstWord;
+        long minDeltasOff = firstValuesOff + (long) firstWord * Long.BYTES;
+        long bitWidthsOff = minDeltasOff + (long) firstWord * Long.BYTES;
+        long packedOffsetsOff = bitWidthsOff + firstWord;
+        long packedDataStartOff = firstWord > 1
+                ? packedOffsetsOff + (long) firstWord * Long.BYTES
+                : bitWidthsOff + firstWord;
+
+        long firstFV = Unsafe.getLong(baseAddr + firstValuesOff);
+        if (firstFV > rowHi) {
+            return false;
+        }
+        int lo = 0, hi = firstWord;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            long fv = Unsafe.getLong(baseAddr + firstValuesOff + (long) mid * Long.BYTES);
+            if (fv < rowLo) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if (lo < firstWord) {
+            long fv = Unsafe.getLong(baseAddr + firstValuesOff + (long) lo * Long.BYTES);
+            if (fv <= rowHi) {
+                return true;
+            }
+        }
+
+        int b = lo < firstWord ? lo - 1 : firstWord - 1;
+        int count = Unsafe.getByte(baseAddr + valueCountsOff + b) & 0xFF;
+        int numDeltas = count - 1;
+        if (numDeltas == 0) {
+            return false;
+        }
+        long firstValue = Unsafe.getLong(baseAddr + firstValuesOff + (long) b * Long.BYTES);
+        long minD = Unsafe.getLong(baseAddr + minDeltasOff + (long) b * Long.BYTES);
+        int bitWidth = Unsafe.getByte(baseAddr + bitWidthsOff + b) & 0xFF;
+
+        if (bitWidth == 0) {
+            // Constant arithmetic progression: values are firstValue + k*minD
+            // for k = 0..numDeltas. minD == 0 with count > 1 would mean the
+            // writer emitted duplicate row indices, which it doesn't.
+            if (minD == 0) {
+                return false;
+            }
+            long k = (rowLo - firstValue + minD - 1) / minD;
+            if (k > numDeltas) {
+                return false;
+            }
+            long value = firstValue + k * minD;
+            return value <= rowHi;
+        }
+
+        long packedOffset = b > 0
+                ? Unsafe.getLong(baseAddr + packedOffsetsOff + (long) b * Long.BYTES)
+                : 0;
+        long packedDataAddr = baseAddr + packedDataStartOff + packedOffset;
+        long cum = firstValue;
+        for (int k = 0; k < numDeltas; k++) {
+            cum += BitpackUtils.unpackValue(packedDataAddr, k, bitWidth, minD);
+            if (cum >= rowLo) {
+                return cum <= rowHi;
+            }
+        }
+        return false;
+    }
+
     private static int denseIndexFromWriter(RecordMetadata metadata, int writerIdx) {
         for (int d = 0, n = metadata.getColumnCount(); d < n; d++) {
             if (metadata.getColumnMetadata(d).getWriterIndex() == writerIdx) {
@@ -272,6 +367,98 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
         }
         return -1;
+    }
+
+    // True iff the EF-encoded posting list at encodedOffset contains a value
+    // in [rowLo, rowHi]. Walks the EF stream in sorted order, short-circuiting
+    // on the first value >= rowLo (in range iff also <= rowHi) or on the first
+    // value > rowHi (out of range).
+    private static boolean efKeyHasValueInRange(long baseAddr, long encodedOffset, long rowLo, long rowHi) {
+        long pos = encodedOffset + 4; // skip EF_FORMAT_SENTINEL
+        int totalCount = Unsafe.getInt(baseAddr + pos);
+        pos += 4;
+        int bitsL = Unsafe.getByte(baseAddr + pos) & 0xFF;
+        pos += 1;
+        long universe = Unsafe.getLong(baseAddr + pos);
+        pos += 8;
+        if (totalCount == 0 || universe < rowLo) {
+            return false;
+        }
+        long lowMask = (bitsL < 64) ? (1L << bitsL) - 1 : -1L;
+        long lowOffset = pos;
+        long highOffset = pos + PostingIndexUtils.efLowBytesAligned(totalCount, bitsL);
+        int numHighWords = (int) ((totalCount + (universe >>> bitsL) + 63) / 64);
+
+        int outputCount = 0;
+        int highWordIdx = 0;
+        long lowWordAddr = baseAddr + lowOffset;
+        int lowBitOffset = 0;
+
+        while (highWordIdx < numHighWords && outputCount < totalCount) {
+            long word = Unsafe.getLong(baseAddr + highOffset + (long) highWordIdx * 8);
+            if (word == 0) {
+                highWordIdx++;
+                continue;
+            }
+            // base + trail recovers the high part of value at the current
+            // outputCount; base-- after each consumed bit absorbs the i offset
+            // baked into bit position (high_i + i) of the high-bits bitset.
+            long base = (long) highWordIdx * 64 - outputCount;
+            while (word != 0 && outputCount < totalCount) {
+                int trail = Long.numberOfTrailingZeros(word);
+                long low;
+                if (bitsL == 0) {
+                    low = 0;
+                } else {
+                    long lowWord = Unsafe.getLong(lowWordAddr);
+                    low = (lowWord >>> lowBitOffset) & lowMask;
+                    if (lowBitOffset + bitsL > 64) {
+                        low |= (Unsafe.getLong(lowWordAddr + 8) << (64 - lowBitOffset)) & lowMask;
+                    }
+                    lowBitOffset += bitsL;
+                    if (lowBitOffset >= 64) {
+                        lowWordAddr += 8;
+                        lowBitOffset -= 64;
+                    }
+                }
+                long value = ((base + trail) << bitsL) | low;
+                if (value > rowHi) {
+                    return false;
+                }
+                if (value >= rowLo) {
+                    return true;
+                }
+                outputCount++;
+                base--;
+                word &= word - 1;
+            }
+            highWordIdx++;
+        }
+        return false;
+    }
+
+    private static boolean flatKeyHasValueInRange(
+            long dataAddr, int bitWidth, long baseValue,
+            int startCount, int endCount, long rowLo, long rowHi
+    ) {
+        if (bitWidth == 0) {
+            return baseValue >= rowLo && baseValue <= rowHi;
+        }
+        int lo = startCount, hi = endCount;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
+            if (val < rowLo) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if (lo < endCount) {
+            long val = BitpackUtils.unpackValue(dataAddr, lo, bitWidth, baseValue);
+            return val <= rowHi;
+        }
+        return false;
     }
 
     private void closeSidecarMems() {
@@ -294,7 +481,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // Empty stride: writer records strideOff[s] == strideOff[s+1] when
             // stride s contributed no bytes. Reading on would interpret the next
             // stride's bytes here.
-            if (nextStrideOff == strideOff) continue;
+            if (nextStrideOff == strideOff) {
+                continue;
+            }
             long strideAddr = genAddr + siSize + strideOff;
             int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
             int keyBase = s * PostingIndexUtils.DENSE_STRIDE;
@@ -490,6 +679,96 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             Os.pause();
         }
+    }
+
+    private int scanDenseGenForRange(long genFileOffset, int genKeyCount, DirectBitSet foundKeys, long rowLo, long rowHi) {
+        long genAddr = valueMem.addressOf(genFileOffset);
+        long baseAddr = valueMem.addressOf(0);
+        int sc = PostingIndexUtils.strideCount(genKeyCount);
+        int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+        int newlyFound = 0;
+
+        for (int s = 0; s < sc; s++) {
+            long strideOff = Unsafe.getLong(genAddr + (long) s * Long.BYTES);
+            long nextStrideOff = Unsafe.getLong(genAddr + (long) (s + 1) * Long.BYTES);
+            if (nextStrideOff == strideOff) {
+                continue;
+            }
+            long strideAddr = genAddr + siSize + strideOff;
+            long strideFileOffset = genFileOffset + siSize + strideOff;
+            int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
+            int keyBase = s * PostingIndexUtils.DENSE_STRIDE;
+            byte mode = Unsafe.getByte(strideAddr);
+
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                int bitWidth = Unsafe.getByte(strideAddr + 1) & 0xFF;
+                long baseValue = Unsafe.getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                long dataAddr = strideAddr + PostingIndexUtils.strideFlatHeaderSize(ks);
+                for (int j = 0; j < ks; j++) {
+                    int globalKey = keyBase + j;
+                    if (foundKeys.get(globalKey)) {
+                        continue;
+                    }
+                    int startCount = Unsafe.getInt(prefixAddr + (long) j * Integer.BYTES);
+                    int endCount = Unsafe.getInt(prefixAddr + (long) (j + 1) * Integer.BYTES);
+                    if (endCount == startCount) {
+                        continue;
+                    }
+                    if (flatKeyHasValueInRange(dataAddr, bitWidth, baseValue, startCount, endCount, rowLo, rowHi)
+                            && !foundKeys.getAndSet(globalKey)) {
+                        newlyFound++;
+                    }
+                }
+            } else {
+                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
+                int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+                for (int j = 0; j < ks; j++) {
+                    int globalKey = keyBase + j;
+                    if (foundKeys.get(globalKey)) {
+                        continue;
+                    }
+                    int totalCount = Unsafe.getInt(countsAddr + (long) j * Integer.BYTES);
+                    if (totalCount == 0) {
+                        continue;
+                    }
+                    long dataOffset = Unsafe.getLong(offsetsBase + (long) j * Long.BYTES);
+                    long encodedOffset = strideFileOffset + deltaHeaderSize + dataOffset;
+                    if (deltaKeyHasValueInRange(baseAddr, encodedOffset, rowLo, rowHi)
+                            && !foundKeys.getAndSet(globalKey)) {
+                        newlyFound++;
+                    }
+                }
+            }
+        }
+        return newlyFound;
+    }
+
+    private int scanSparseGenForRange(long genFileOffset, int activeKeyCount, DirectBitSet foundKeys, long rowLo, long rowHi) {
+        long genAddr = valueMem.addressOf(genFileOffset);
+        long baseAddr = valueMem.addressOf(0);
+        long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+        long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+        int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
+        int newlyFound = 0;
+        for (int i = 0; i < activeKeyCount; i++) {
+            int key = Unsafe.getInt(genAddr + (long) i * Integer.BYTES);
+            if (foundKeys.get(key)) {
+                continue;
+            }
+            int totalCount = Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
+            if (totalCount == 0) {
+                continue;
+            }
+            long dataOffset = Unsafe.getLong(offsetsBase + (long) i * Long.BYTES);
+            long encodedOffset = genFileOffset + headerSize + dataOffset;
+            if (deltaKeyHasValueInRange(baseAddr, encodedOffset, rowLo, rowHi)
+                    && !foundKeys.getAndSet(key)) {
+                newlyFound++;
+            }
+        }
+        return newlyFound;
     }
 
     protected static long readVarBlockOffset(long offsetsAddr, int ordinal, boolean longOffsets) {

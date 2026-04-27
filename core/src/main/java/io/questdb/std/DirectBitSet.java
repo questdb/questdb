@@ -95,6 +95,26 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
         return false;
     }
 
+    public int nextSetBit(int fromIndex) {
+        if (fromIndex < 0) {
+            fromIndex = 0;
+        }
+        int wi = wordIndex(fromIndex);
+        if (wi >= wordCount) {
+            return -1;
+        }
+        long word = Unsafe.getUnsafe().getLong(address + ((long) wi << WORD_BYTES_SHIFT)) & (-1L << fromIndex);
+        while (true) {
+            if (word != 0L) {
+                return (wi << 6) + Long.numberOfTrailingZeros(word);
+            }
+            if (++wi >= wordCount) {
+                return -1;
+            }
+            word = Unsafe.getUnsafe().getLong(address + ((long) wi << WORD_BYTES_SHIFT));
+        }
+    }
+
     @Override
     public void reopen() {
         if (address == 0) {
