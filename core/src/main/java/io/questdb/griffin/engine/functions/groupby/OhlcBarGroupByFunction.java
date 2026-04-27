@@ -210,6 +210,17 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         if (value > currentMax) {
             mapValue.putDouble(valueIndex + 5, value);
         }
+        // Reconcile bounds: take widest range across all rows in group
+        double newMin = minFunc.getDouble(record);
+        double storedMin = mapValue.getDouble(valueIndex + 6);
+        if (!Double.isNaN(newMin) && (Double.isNaN(storedMin) || newMin < storedMin)) {
+            mapValue.putDouble(valueIndex + 6, newMin);
+        }
+        double newMax = maxFunc.getDouble(record);
+        double storedMax = mapValue.getDouble(valueIndex + 7);
+        if (!Double.isNaN(newMax) && (Double.isNaN(storedMax) || newMax > storedMax)) {
+            mapValue.putDouble(valueIndex + 7, newMax);
+        }
     }
 
     @Override
@@ -238,6 +249,9 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             return viewA.of(cachedRenderPtrA, cachedRenderPtrA + cachedRenderLenA);
         }
         final long outBytes = render(rec);
+        if (outBytes < 0) {
+            return null;
+        }
         final long out = lastRenderPtr;
         cachedKeyA1 = firstRowId;
         cachedKeyA2 = lastRowId;
@@ -264,6 +278,9 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             return viewB.of(cachedRenderPtrA, cachedRenderPtrA + cachedRenderLenA);
         }
         final long outBytes = render(rec);
+        if (outBytes < 0) {
+            return null;
+        }
         final long out = lastRenderPtr;
         cachedKeyB1 = firstRowId;
         cachedKeyB2 = lastRowId;
@@ -399,21 +416,23 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     }
 
     private int effectiveWidth() {
+        int w;
         if (widthFunc != null) {
-            int w = widthFunc.getInt(null);
+            w = widthFunc.getInt(null);
             if (w < 1) {
                 throw CairoException.nonCritical().position(widthPosition)
                         .put("width must be a positive integer");
             }
-            if (w > maxWidth) {
-                throw CairoException.nonCritical().position(widthPosition)
-                        .put("breached memory limit set for ").put(name)
-                        .put(" [maxWidth=").put(maxWidth)
-                        .put(", requestedWidth=").put(w).put(']');
-            }
-            return w;
+        } else {
+            w = DEFAULT_WIDTH;
         }
-        return DEFAULT_WIDTH;
+        if (w > maxWidth) {
+            throw CairoException.nonCritical().position(widthPosition)
+                    .put("breached memory limit set for ").put(name)
+                    .put(" [maxWidth=").put(maxWidth)
+                    .put(", requestedWidth=").put(w).put(']');
+        }
+        return w;
     }
 
     private int mapPosition(double value, double low, double range, int width) {
@@ -442,6 +461,16 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
         double scaleMin = rec.getDouble(valueIndex + 6);
         double scaleMax = rec.getDouble(valueIndex + 7);
+
+        if (Double.isNaN(scaleMin) || Double.isNaN(scaleMax)) {
+            return -1;
+        }
+        if (scaleMin > scaleMax) {
+            throw CairoException.nonCritical().position(functionPosition)
+                    .put(name).put("() min must not exceed max [min=")
+                    .put(scaleMin).put(", max=").put(scaleMax).put(']');
+        }
+
         double scaleRange = scaleMax - scaleMin;
 
         int lowPos = mapPosition(low, scaleMin, scaleRange, width);

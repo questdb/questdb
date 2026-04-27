@@ -92,6 +92,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int maxWidth;
         private final String name;
+        private final int minArgPosition;
         private final boolean showLabels;
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
@@ -109,7 +110,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
             this.args = args;
             this.showLabels = showLabels;
             this.maxWidth = showLabels ? Math.max(1, (maxWidth * 3 - 120) / 3) : maxWidth;
-            // Width is arg index 6 if present, otherwise use default
+            this.minArgPosition = argPositions.getQuick(4);
             this.widthArgIndex = args.size() > 6 ? 6 : -1;
             this.widthPosition = widthArgIndex >= 0 ? argPositions.getQuick(6) : 0;
         }
@@ -140,21 +141,23 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
         }
 
         private int effectiveWidth(Record rec) {
+            int w;
             if (widthArgIndex >= 0) {
-                int w = args.getQuick(widthArgIndex).getInt(rec);
+                w = args.getQuick(widthArgIndex).getInt(rec);
                 if (w < 1) {
                     throw CairoException.nonCritical().position(widthPosition)
                             .put("width must be a positive integer");
                 }
-                if (w > maxWidth) {
-                    throw CairoException.nonCritical().position(widthPosition)
-                            .put("breached memory limit set for ").put(name)
-                            .put(" [maxWidth=").put(maxWidth)
-                            .put(", requestedWidth=").put(w).put(']');
-                }
-                return w;
+            } else {
+                w = DEFAULT_WIDTH;
             }
-            return DEFAULT_WIDTH;
+            if (w > maxWidth) {
+                throw CairoException.nonCritical().position(widthPosition)
+                        .put("breached memory limit set for ").put(name)
+                        .put(" [maxWidth=").put(maxWidth)
+                        .put(", requestedWidth=").put(w).put(']');
+            }
+            return w;
         }
 
         private int mapPosition(double value, double low, double range, int width) {
@@ -180,7 +183,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
             }
 
             if (scaleMin > scaleMax) {
-                throw CairoException.nonCritical()
+                throw CairoException.nonCritical().position(minArgPosition)
                         .put(name).put("() min must not exceed max [min=")
                         .put(scaleMin).put(", max=").put(scaleMax).put(']');
             }

@@ -291,9 +291,10 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testScalarInvertedBoundsThrows() throws Exception {
+        // Position 32 points at the "100" (min arg, index 4) in the query
         assertMemoryLeak(() -> assertException(
                 "SELECT ohlc_bar(50, 100, 0, 50, 100, 0, 10)",
-                0,
+                32,
                 "min must not exceed max"
         ));
     }
