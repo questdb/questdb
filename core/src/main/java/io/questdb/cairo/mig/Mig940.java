@@ -170,48 +170,6 @@ public final class Mig940 {
         path.trimTo(plen);
     }
 
-    /**
-     * Returns true if the {@code _pm} file is missing, corrupt, or no footer
-     * in its MVCC chain yields a parquet size that matches
-     * {@code parquetFileSizeFromTxn} (the authoritative value from
-     * {@code _txn} field 3). Delegates the chain walk to
-     * {@link ParquetMetaFileReader#resolveFooter(long)}.
-     */
-    private static boolean isParquetMetadataStale(
-            ParquetMetaFileReader reader,
-            FilesFacade ff,
-            Path path,
-            int pathRootLen,
-            int timestampType,
-            int partitionBy,
-            long partitionTs,
-            long nameTxn,
-            long parquetFileSizeFromTxn
-    ) {
-        TableUtils.setPathForNativePartition(path.trimTo(pathRootLen), timestampType, partitionBy, partitionTs, nameTxn);
-        path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-        try {
-            ParquetMetaFileReader.openAndMapRO(ff, path.$(), reader);
-            if (reader.getAddr() == 0) {
-                return true;
-            }
-            try {
-                return !reader.resolveFooter(parquetFileSizeFromTxn);
-            } catch (CairoException ignored) {
-                return true;
-            }
-        } finally {
-            // Capture before clear() zeros the fields so we can munmap.
-            final long mappedAddr = reader.getAddr();
-            final long mappedSize = reader.getFileSize();
-            reader.clear();
-            if (mappedAddr != 0) {
-                ff.munmap(mappedAddr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            }
-            path.trimTo(pathRootLen);
-        }
-    }
-
     private static long generateParquetMetaForPartition(
             FilesFacade ff,
             Path path,
@@ -265,11 +223,14 @@ public final class Mig940 {
             // syncs the partition dir, partitions referenced by _txn would
             // otherwise come back without a usable _pm sidecar.
             ff.fsync(parquetMetaFd);
-            LOG.info().$("generated parquet metadata [path=").$(path).$(", parquetMetadataFileSize=").$(parquetMetaSize).I$();
+            LOG.debug().$("generated parquet metadata [path=").$(path).$(", parquetMetadataFileSize=").$(parquetMetaSize).I$();
             return parquetMetaSize;
         } catch (Throwable t) {
             // Remove partially written _pm file so a retry regenerates it.
-            ff.remove(path.$());
+            if (!ff.removeQuiet(path.$())) {
+                LOG.advisory().$("could not remove partial parquet metadata file [path=").$(path)
+                        .$(", errno=").$(ff.errno()).I$();
+            }
             throw t;
         } finally {
             ff.close(parquetFd);
@@ -283,6 +244,48 @@ public final class Mig940 {
                 }
             }
             path.trimTo(partitionDirLen);
+        }
+    }
+
+    /**
+     * Returns true if the {@code _pm} file is missing, corrupt, or no footer
+     * in its MVCC chain yields a parquet size that matches
+     * {@code parquetFileSizeFromTxn} (the authoritative value from
+     * {@code _txn} field 3). Delegates the chain walk to
+     * {@link ParquetMetaFileReader#resolveFooter(long)}.
+     */
+    private static boolean isParquetMetadataStale(
+            ParquetMetaFileReader reader,
+            FilesFacade ff,
+            Path path,
+            int pathRootLen,
+            int timestampType,
+            int partitionBy,
+            long partitionTs,
+            long nameTxn,
+            long parquetFileSizeFromTxn
+    ) {
+        TableUtils.setPathForNativePartition(path.trimTo(pathRootLen), timestampType, partitionBy, partitionTs, nameTxn);
+        path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+        try {
+            ParquetMetaFileReader.openAndMapRO(ff, path.$(), reader);
+            if (reader.getAddr() == 0) {
+                return true;
+            }
+            try {
+                return !reader.resolveFooter(parquetFileSizeFromTxn);
+            } catch (CairoException ignored) {
+                return true;
+            }
+        } finally {
+            // Capture before clear() zeros the fields so we can munmap.
+            final long mappedAddr = reader.getAddr();
+            final long mappedSize = reader.getFileSize();
+            reader.clear();
+            if (mappedAddr != 0) {
+                ff.munmap(mappedAddr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathRootLen);
         }
     }
 }

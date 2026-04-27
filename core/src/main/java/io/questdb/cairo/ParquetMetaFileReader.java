@@ -133,7 +133,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int HEADER_FEATURE_FLAGS_OFF = 8;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long OPTIONAL_FEATURE_MASK = 0x0000_0000_FFFF_FFFFL;
+    // Trailing bytes after a parquet file's footer body: 4-byte footer length + 4-byte PAR1 magic.
+    private static final int PARQUET_TRAILER_SIZE = 8;
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
+    // Each row group block starts with an 8-byte NUM_ROWS u64 prefix; column chunks follow.
+    private static final int ROW_GROUP_BLOCK_HEADER_SIZE = 8;
+    // Each row group entry in the footer is a 4-byte u32 (block offset >> BLOCK_ALIGNMENT_SHIFT).
+    private static final int ROW_GROUP_ENTRY_SIZE = 4;
     // Stat flag bits within the column chunk stat_flags byte at COLUMN_CHUNK_STAT_FLAGS_OFF.
     // Layout mirrors the Rust writer (see parquet_metadata::types::StatFlags):
     //   bit 0 MIN_PRESENT, bit 1 MIN_INLINED, bit 2 MIN_EXACT,
@@ -402,13 +408,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
     /**
      * Derives the parquet file size from the _pm footer metadata.
-     * parquetFileSize = PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8
+     * parquetFileSize = PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + PARQUET_TRAILER_SIZE
      * (4B parquet footer length field + 4B PAR1 magic)
      */
     public long getParquetFileSize() {
         long parquetFooterOffset = Unsafe.getLong(footerAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
         int parquetFooterLength = Unsafe.getInt(footerAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
-        return parquetFooterOffset + Integer.toUnsignedLong(parquetFooterLength) + 8;
+        return parquetFooterOffset + Integer.toUnsignedLong(parquetFooterLength) + PARQUET_TRAILER_SIZE;
     }
 
     /**
@@ -422,13 +428,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             total += Unsafe.getLong(rowGroupBlockAddr(i));
         }
         return total;
-    }
-
-    /**
-     * Alias for {@link #getPartitionRowCount()}.
-     */
-    public long getRowCount() {
-        return getPartitionRowCount();
     }
 
     public int getRowGroupCount() {
@@ -492,13 +491,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     public long getRowGroupSize(int rowGroupIndex) {
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         return Unsafe.getLong(rowGroupBlockAddr(rowGroupIndex));
-    }
-
-    /**
-     * Alias for {@link #getDesignatedTimestampColumnIndex()}.
-     */
-    public int getTimestampIndex() {
-        return getDesignatedTimestampColumnIndex();
     }
 
     /**
@@ -665,7 +657,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             long currentAddr = addr + currentOffset;
             long pqFooterOffset = Unsafe.getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
             int pqFooterLength = Unsafe.getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
-            long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + 8;
+            long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + PARQUET_TRAILER_SIZE;
             if (derivedPqSize == parquetFileSize) {
                 break;
             }
@@ -718,7 +710,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                     .put(']');
         }
         int rowGroupCount = (int) rowGroupCountLong;
-        final long baseFooterLength = FOOTER_FIXED_SIZE + rowGroupCountLong * Integer.BYTES + Integer.BYTES;
+        final long baseFooterLength = FOOTER_FIXED_SIZE + rowGroupCountLong * ROW_GROUP_ENTRY_SIZE + Integer.BYTES;
         if (currentOffset + baseFooterLength > parquetMetaFileSize) {
             throw CairoException.critical(0)
                     .put("invalid _pm footer length [rowGroupCount=").put(rowGroupCount)
@@ -776,9 +768,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                     .put(']');
         }
 
-        long minBlockSize = 8 + (long) columnCount * COLUMN_CHUNK_SIZE;
+        long minBlockSize = ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnCount * COLUMN_CHUNK_SIZE;
         for (int i = 0; i < rowGroupCount; i++) {
-            long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * 4;
+            long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * ROW_GROUP_ENTRY_SIZE;
             int stored = Unsafe.getInt(entryAddr);
             long blockOffset = Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
             if (blockOffset + minBlockSize > parquetMetaFileSize) {
@@ -848,10 +840,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
     /**
      * Computes the absolute memory address of a column chunk within a row group block.
-     * Column chunks start at offset 8 (after NUM_ROWS) and are 64 bytes each.
+     * Column chunks start after the row group block header (NUM_ROWS) and are 64 bytes each.
      */
     private long columnChunkAddr(int rowGroupIndex, int columnIndex) {
-        return rowGroupBlockAddr(rowGroupIndex) + 8 + (long) columnIndex * COLUMN_CHUNK_SIZE;
+        return rowGroupBlockAddr(rowGroupIndex) + ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnIndex * COLUMN_CHUNK_SIZE;
     }
 
     /**
@@ -868,7 +860,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * Reads the footer entry for the given row group index and applies the <<3 shift.
      */
     private long rowGroupBlockAddr(int rowGroupIndex) {
-        long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) rowGroupIndex * 4;
+        long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) rowGroupIndex * ROW_GROUP_ENTRY_SIZE;
         int stored = Unsafe.getInt(entryAddr);
         return addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT);
     }

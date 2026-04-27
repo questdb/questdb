@@ -354,10 +354,10 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         final ParquetMetaFileReader metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
 
-        if (partitionHi > metadata.getRowCount()) {
+        if (partitionHi > metadata.getPartitionRowCount()) {
             throw CairoException.critical(0)
                     .put("parquet partition row count mismatch [partitionHi=").put(partitionHi)
-                    .put(", parquetRowCount=").put(metadata.getRowCount())
+                    .put(", parquetRowCount=").put(metadata.getPartitionRowCount())
                     .put(", partitionIndex=").put(reenterPartitionIndex)
                     .put(']');
         }

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.ParquetMetaFileWriter;
 import io.questdb.std.DirectLongList;
@@ -47,7 +48,10 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBloomFilterEnabledCanSkipRowGroup() throws Exception {
+    public void testBloomFilterEnabledFileShortCircuitsWithoutFilter() throws Exception {
+        // Empty filters list short-circuits canSkipRowGroup to false even when
+        // the file carries a bloom-filter-enabled feature flag — the early
+        // exit fires before any bloom-filter logic would run.
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFileWithBloomFilter(2, 100)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
@@ -146,18 +150,15 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, 2);
                 try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
                     name.put("amount");
-                    // colType=10 (DOUBLE), id=100
-                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), 100, 10, 0, 0, 0, 0, 0);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), 100, ColumnType.DOUBLE, 0, 0, 0, 0, 0);
                 }
                 try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
                     name.put("symbol");
-                    // colType=12 (SYMBOL), id=200
-                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), 200, 12, 0, 0, 0, 0, 0);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), 200, ColumnType.SYMBOL, 0, 0, 0, 0, 0);
                 }
                 try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
                     name.put("ts");
-                    // colType=8 (TIMESTAMP), id=300
-                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), 300, 8, 0, 0, 0, 0, 0);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), 300, ColumnType.TIMESTAMP, 0, 0, 0, 0, 0);
                 }
                 ParquetMetaFileWriter.addRowGroup(writerPtr, 500);
                 ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
@@ -183,9 +184,9 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(300, reader.getColumnId(2));
 
                     // Column types.
-                    Assert.assertEquals(10, reader.getColumnType(0));
-                    Assert.assertEquals(12, reader.getColumnType(1));
-                    Assert.assertEquals(8, reader.getColumnType(2));
+                    Assert.assertEquals(ColumnType.DOUBLE, reader.getColumnType(0));
+                    Assert.assertEquals(ColumnType.SYMBOL, reader.getColumnType(1));
+                    Assert.assertEquals(ColumnType.TIMESTAMP, reader.getColumnType(2));
 
                     // Lookup by name.
                     Assert.assertEquals(0, reader.getColumnIndex("amount"));
@@ -938,7 +939,12 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStalePmThrowsWithCorrectErrno() throws Exception {
+    public void testStaleParquetMetadataReturnsFalse() throws Exception {
+        // resolveFooter signals MVCC miss by returning false (not throwing):
+        // when no footer in the chain matches the requested parquet file
+        // size, the walk reaches the chain root and returns false so the
+        // caller can treat it as a stale-snapshot retry signal rather than
+        // a corruption error.
         assertMemoryLeak(() -> {
             // Build a _pm with derived parquet size = 100 + 50 + 8 = 158.
             try (ParquetMetaTestFile file = buildFile(2, 100, 50, 1000)) {
