@@ -909,10 +909,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
         if (cs != null) {
             try {
-                // parseFloor matches the native conversion path (parseFloorLiteral) and
-                // accepts higher-precision input (micros/nanos) by truncating extras,
-                // unlike DateFormatUtils.parseUTCDate which only accepts millis.
-                return MillisTimestampDriver.INSTANCE.parseFloor(cs, 0, cs.length());
+                // parseFloorLiteral matches ColumnTypeConverter's STRING->DATE path and
+                // accepts higher-precision input (micros/nanos) by truncating extras.
+                return MillisTimestampDriver.INSTANCE.parseFloorLiteral(cs);
             } catch (NumericException ignore) {
             }
         }
@@ -1076,12 +1075,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
         if (cs != null) {
             try {
-                // parseFloor matches the native conversion path (parseFloorLiteral) and
-                // accepts nanosecond-precision input by truncating trailing nanos. The
-                // previous MicrosFormatUtils.parseTimestamp only knew patterns up to
-                // microsecond precision and returned NULL for TIMESTAMP_NS->STRING
-                // intermediate values that get lazily decoded back to TIMESTAMP.
-                return MicrosTimestampDriver.INSTANCE.parseFloor(cs, 0, cs.length());
+                // parseFloorLiteral matches ColumnTypeConverter's STRING->TIMESTAMP path
+                // and accepts nanosecond-precision input by truncating trailing nanos.
+                return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(cs);
             } catch (NumericException ignore) {
             }
         }

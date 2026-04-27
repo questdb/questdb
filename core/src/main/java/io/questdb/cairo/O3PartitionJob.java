@@ -57,8 +57,6 @@ import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -1978,8 +1976,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 case ColumnType.LONG -> Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), Numbers.parseLong(value));
                 case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(dstPtr + ((long) rowIndex << 2), Numbers.parseFloat(value));
                 case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(dstPtr + ((long) rowIndex << 3), Numbers.parseDouble(value));
-                case ColumnType.DATE -> Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), DateFormatUtils.parseUTCDate(value));
-                case ColumnType.TIMESTAMP -> Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), MicrosFormatUtils.parseTimestamp(value));
+                // parseFloorLiteral accepts higher-precision input (micros/nanos) by
+                // truncating extras, matching ColumnTypeConverter's STRING->DATE/TIMESTAMP path.
+                case ColumnType.DATE -> Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), MillisTimestampDriver.INSTANCE.parseFloorLiteral(value));
+                case ColumnType.TIMESTAMP -> Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), MicrosTimestampDriver.INSTANCE.parseFloorLiteral(value));
                 case ColumnType.IPv4 -> Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
                 case ColumnType.UUID -> {
                     long addr = dstPtr + ((long) rowIndex << 4);
