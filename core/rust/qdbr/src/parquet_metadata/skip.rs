@@ -314,7 +314,9 @@ mod tests {
 
     /// Build a `_pm` file with one Int64 column and configurable stats per row group.
     /// Each entry: `(num_rows, null_count, min, max, has_stats)`.
-    fn build_long_parquet_meta(row_groups: &[(u64, u64, i64, i64, bool)]) -> ParquetResult<(Vec<u8>, u64)> {
+    fn build_long_parquet_meta(
+        row_groups: &[(u64, u64, i64, i64, bool)],
+    ) -> ParquetResult<(Vec<u8>, u64)> {
         let mut writer = ParquetMetaWriter::new();
         writer
             .designated_timestamp(-1)

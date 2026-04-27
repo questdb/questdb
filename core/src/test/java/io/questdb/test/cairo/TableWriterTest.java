@@ -58,6 +58,8 @@ import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -2922,29 +2924,38 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            final TableToken token;
+            // Stamp a real data.parquet into the partition dir without _pm.
+            // Simulates an older partition converted before the _pm work landed:
+            // data.parquet is well-formed, but no sidecar exists. The switch must
+            // regenerate _pm by parsing data.parquet.
+            final TableToken token = engine.verifyTableName(PRODUCT);
+            final long convertedPartitionTs;
+            final long convertedPartitionNameTxn;
+            final long parquetFileSize;
+            try (
+                    Path p = new Path();
+                    PartitionDescriptor descriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader(token)
+            ) {
+                convertedPartitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                convertedPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                p.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, convertedPartitionTs, convertedPartitionNameTxn);
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                PartitionEncoder.encode(descriptor, p);
+                parquetFileSize = FF.length(p.$());
+            }
+
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                token = writer.getTableToken();
                 TxWriter tx = writer.getTxWriter();
-
-                long partitionTs = tx.getPartitionTimestampByIndex(0);
-                int partitionIndex = tx.getPartitionIndex(partitionTs);
-                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
-
-                // Stamp only data.parquet. An older partition converted before the
-                // _pm work has no sidecar, and the switch must tolerate that.
-                try (Path p = new Path()) {
-                    p.of(configuration.getDbRoot()).concat(token);
-                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
-                }
+                int partitionIndex = tx.getPartitionIndex(convertedPartitionTs);
 
                 populateRow(writer, rnd, tx.getMaxTimestamp(), timestampDriver.fromMicros(interval));
                 writer.commit();
 
                 tx.setPartitionParquetGenerated(partitionIndex, true);
 
-                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
+                int rc = writer.switchNativePartitionWithParquet(convertedPartitionTs, parquetFileSize);
                 Assert.assertEquals("switch must succeed even without _pm", TableWriter.SWITCH_OK, rc);
             }
 
@@ -2958,7 +2969,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                     p.of(configuration.getDbRoot()).concat(token);
                     TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, newNameTxn);
-                    Assert.assertFalse("_pm must not be created when source is missing", FF.exists(p.$()));
+                    Assert.assertTrue("_pm must be regenerated when source is missing", FF.exists(p.$()));
                 }
             }
         });

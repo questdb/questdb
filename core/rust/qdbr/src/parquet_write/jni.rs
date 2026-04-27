@@ -1781,7 +1781,8 @@ mod tests {
         std::mem::forget(tmp_writer.into_file());
 
         let result = take_partition_updater_fds(reader_fd, writer_fd, -1);
-        let (reader_file, writer_file, parquet_meta_fd_handle) = result.expect("distinct fds must succeed");
+        let (reader_file, writer_file, parquet_meta_fd_handle) =
+            result.expect("distinct fds must succeed");
         assert!(parquet_meta_fd_handle.is_none());
         // Drop the returned Files to close the fds; the helper must have
         // given us ownership.

@@ -479,7 +479,8 @@ mod tests {
 
     #[test]
     fn find_ts_multiple_row_groups() -> ParquetResult<()> {
-        let (parquet_meta, fo) = build_ts_parquet_meta(&[(100, 1000, 2000), (100, 2000, 3000), (100, 3000, 4000)])?;
+        let (parquet_meta, fo) =
+            build_ts_parquet_meta(&[(100, 1000, 2000), (100, 2000, 3000), (100, 3000, 4000)])?;
         let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
 
         // Before first → 1
@@ -595,9 +596,11 @@ mod tests {
 
     #[test]
     fn decode_single_timestamp_column() -> ParquetResult<()> {
-        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) = build_matched_parquet_meta(10)?;
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) =
+            build_matched_parquet_meta(10)?;
 
-        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -630,8 +633,10 @@ mod tests {
 
     #[test]
     fn decode_row_group_index_out_of_range() -> ParquetResult<()> {
-        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) = build_matched_parquet_meta(10)?;
-        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) =
+            build_matched_parquet_meta(10)?;
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -659,8 +664,10 @@ mod tests {
 
     #[test]
     fn decode_column_index_out_of_range() -> ParquetResult<()> {
-        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) = build_matched_parquet_meta(10)?;
-        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) =
+            build_matched_parquet_meta(10)?;
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -689,8 +696,10 @@ mod tests {
 
     #[test]
     fn decode_partial_row_range() -> ParquetResult<()> {
-        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) = build_matched_parquet_meta(100)?;
-        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) =
+            build_matched_parquet_meta(100)?;
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -725,8 +734,10 @@ mod tests {
 
     #[test]
     fn decode_filtered_subset() -> ParquetResult<()> {
-        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) = build_matched_parquet_meta(100)?;
-        let reader = ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) =
+            build_matched_parquet_meta(100)?;
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();

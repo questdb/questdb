@@ -9323,9 +9323,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int partitionDirLen = path.size();
 
         long parquetAddr = 0;
-        // The native partition output we produce here has no _pm sidecar, so reading
-        // the source _pm would only delay finding out that it is stale. Use
-        // PartitionDecoder, which parses metadata directly from data.parquet.
+        // Read parquet metadata directly from data.parquet via PartitionDecoder
+        // rather than through the _pm sidecar. This makes CONVERT TO NATIVE the
+        // operator-driven escape hatch when _pm is corrupt or stale: the convert
+        // succeeds, and the operator can CONVERT TO PARQUET again to regenerate
+        // a fresh _pm. The output is native, so there is no _pm to maintain here.
         final long parquetSize = parquetFileSize;
 
         long parquetRowCount = 0;

@@ -184,7 +184,10 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_readPartition
 /// Parses the `_pm` buffer and returns `(total_row_count, squash_tracker)`.
 /// Split from the JNI wrapper so unit tests can exercise the error paths
 /// without constructing a `JNIEnv`.
-fn read_partition_meta_impl(parquet_meta_addr: *const u8, parquet_meta_size: u64) -> ParquetResult<(i64, i64)> {
+fn read_partition_meta_impl(
+    parquet_meta_addr: *const u8,
+    parquet_meta_size: u64,
+) -> ParquetResult<(i64, i64)> {
     if parquet_meta_addr.is_null() {
         return Err(fmt_err!(InvalidLayout, "_pm file pointer is null"));
     }
@@ -494,7 +497,10 @@ mod tests {
     }
 
     /// Builds a `_pm` with the given row-group sizes and optional squash_tracker.
-    fn build_parquet_meta_with_row_groups(row_group_sizes: &[u64], squash_tracker: Option<i64>) -> Vec<u8> {
+    fn build_parquet_meta_with_row_groups(
+        row_group_sizes: &[u64],
+        squash_tracker: Option<i64>,
+    ) -> Vec<u8> {
         let mut writer = ParquetMetaWriter::new();
         writer
             .designated_timestamp(-1)
@@ -580,7 +586,8 @@ mod tests {
         // Three row groups with disjoint ranges. The same JniParquetMetaReader
         // instance is reused for all three checks — this exercises the
         // cached-reader path that the refactor was built for.
-        let bytes = build_long_parquet_meta(&[(100, 0, 0, 99), (100, 0, 100, 199), (100, 0, 200, 299)]);
+        let bytes =
+            build_long_parquet_meta(&[(100, 0, 0, 99), (100, 0, 100, 199), (100, 0, 200, 299)]);
         let jni_reader =
             unsafe { JniParquetMetaReader::new(bytes.as_ptr(), bytes.len() as u64) }.unwrap();
 
