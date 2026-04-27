@@ -46,6 +46,7 @@ public class WalSegmentRecordCursor implements RecordCursor, QuietCloseable {
     private final PageFrameAddressCache addressCache;
     private final PageFrameMemoryPool memoryPool;
     private final PageFrameMemoryRecord record = new PageFrameMemoryRecord();
+    private PageFrame cachedFrame;
     private long currentRow;
     private WalSegmentPageFrameCursor frameCursor;
     private boolean isFrameLoaded;
@@ -63,6 +64,7 @@ public class WalSegmentRecordCursor implements RecordCursor, QuietCloseable {
         isFrameLoaded = false;
         currentRow = -1;
         rowCount = 0;
+        cachedFrame = null;
     }
 
     @Override
@@ -82,23 +84,38 @@ public class WalSegmentRecordCursor implements RecordCursor, QuietCloseable {
 
     @Override
     public boolean hasNext() {
-        if (!isFrameLoaded) {
-            PageFrame frame = frameCursor.next(-1);
-            if (frame == null) {
-                return false;
-            }
-            addressCache.clear();
-            addressCache.add(0, frame);
-            memoryPool.navigateTo(0, record);
-            rowCount = frame.getPartitionHi();
-            currentRow = -1;
-            isFrameLoaded = true;
+        if (!isFrameLoaded && loadFrame() == null) {
+            return false;
         }
         if (++currentRow < rowCount) {
             record.setRowIndex(currentRow);
             return true;
         }
         return false;
+    }
+
+    /**
+     * Eagerly loads the single WAL segment page frame and binds the record to it
+     * without consuming any rows. Used by the JIT-compiled filter path, which
+     * iterates filtered row ids via {@link #setRowIndex(long)} instead of
+     * {@link #hasNext()}. Returns {@code null} when the cursor has no frame to yield.
+     */
+    public PageFrame loadFrame() {
+        if (isFrameLoaded) {
+            return cachedFrame;
+        }
+        PageFrame frame = frameCursor.next(-1);
+        if (frame == null) {
+            return null;
+        }
+        addressCache.clear();
+        addressCache.add(0, frame);
+        memoryPool.navigateTo(0, record);
+        rowCount = frame.getPartitionHi();
+        currentRow = -1;
+        cachedFrame = frame;
+        isFrameLoaded = true;
+        return frame;
     }
 
     @Override
@@ -118,6 +135,7 @@ public class WalSegmentRecordCursor implements RecordCursor, QuietCloseable {
         isFrameLoaded = false;
         currentRow = -1;
         rowCount = 0;
+        cachedFrame = null;
     }
 
     @Override
@@ -128,6 +146,16 @@ public class WalSegmentRecordCursor implements RecordCursor, QuietCloseable {
     @Override
     public void recordAt(Record record, long atRowId) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Positions {@link #getRecord()} at {@code rowIndex} within the loaded frame.
+     * The caller must invoke {@link #loadFrame()} first; this method is the
+     * iteration primitive for the JIT-compiled filter path, which reads filtered
+     * row ids out of a row buffer and skips {@link #hasNext()}.
+     */
+    public void setRowIndex(long rowIndex) {
+        record.setRowIndex(rowIndex);
     }
 
     @Override
@@ -143,5 +171,6 @@ public class WalSegmentRecordCursor implements RecordCursor, QuietCloseable {
         isFrameLoaded = false;
         currentRow = -1;
         rowCount = 0;
+        cachedFrame = null;
     }
 }

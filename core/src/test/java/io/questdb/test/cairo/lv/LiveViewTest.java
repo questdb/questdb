@@ -31,11 +31,15 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewTimerJob;
 import io.questdb.cairo.lv.MergeBuffer;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.jit.JitUtil;
 import io.questdb.mp.Job;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 public class LiveViewTest extends AbstractCairoTest {
@@ -1064,6 +1068,61 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewIncrementalRefreshWithJitFilter() throws Exception {
+        // Pin the planner to AsyncJitFilteredRecordCursorFactory so this test exercises the
+        // JIT-compiled filter path on incremental refresh, regardless of whether testNonJit's
+        // sibling test already shadowed the Java fallback. JIT is platform-gated, so skip
+        // where the JIT runtime is not built.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        execute("CREATE LIVE VIEW live_filtered_jit LAG 1s RETENTION 1h AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades WHERE price > 200");
+
+        // First batch boots the view; refresh path is bootstrap, which compiles the factory.
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 250.0, '2024-01-01T00:00:01.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // Verify the planner produced a JIT-compiled filter factory under the window factory.
+        // Without it, the WAL refresh path silently falls back to row-by-row Function eval.
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_filtered_jit");
+        Assert.assertNotNull(instance.getCompiledFactory());
+        Assert.assertTrue(
+                "expected AsyncJitFilteredRecordCursorFactory in compiled chain",
+                hasFactoryInChain(instance.getCompiledFactory(), AsyncJitFilteredRecordCursorFactory.class)
+        );
+
+        // Second batch is the incremental refresh; this exercises the JIT path in
+        // LiveViewRefreshJob.consumeSegmentJit.
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 100.0, '2024-01-01T00:00:02.000000Z')," +
+                " ('GOOG', 2900.0, '2024-01-01T00:00:03.000000Z')," +
+                " ('AAPL', 300.0, '2024-01-01T00:00:04.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t250.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "GOOG\t2900.0\t2024-01-01T00:00:03.000000Z\t1\n" +
+                        "AAPL\t300.0\t2024-01-01T00:00:04.000000Z\t2\n",
+                "SELECT * FROM live_filtered_jit",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_filtered_jit");
+    }
+
+    @Test
     public void testLiveViewIncrementalRefreshWithWhereClause() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -1918,6 +1977,15 @@ public class LiveViewTest extends AbstractCairoTest {
             // the full view state without waiting for the idle timer.
             job.forceFlushAllViews();
         }
+    }
+
+    private static boolean hasFactoryInChain(RecordCursorFactory root, Class<? extends RecordCursorFactory> target) {
+        for (RecordCursorFactory f = root; f != null; f = f.getBaseFactory()) {
+            if (target.isInstance(f)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

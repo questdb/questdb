@@ -33,12 +33,14 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalTxnDetails;
@@ -48,15 +50,20 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.table.AsyncFilterUtils;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -79,13 +86,26 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  * clears the table, resets window functions, and re-bootstraps.
  */
 public class LiveViewRefreshJob implements Job, QuietCloseable {
+    private static final int JIT_LIST_INITIAL_CAPACITY = 16;
     private static final Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
+    // Per-column aux data addresses for the JIT-compiled filter on the WAL refresh
+    // path. Lazily allocated on first JIT-eligible refresh, reused thereafter.
+    private final DirectLongList auxAddresses = new DirectLongList(JIT_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_OFFLOAD);
+    // Scratch slots used by the per-row consume helper to accumulate cold-path
+    // counters across one incremental refresh: [0]=skippedColdRows,
+    // [1]=batchMinColdTimestamp. Cleared at the top of each {@link #incrementalRefresh0}.
+    private final long[] coldRowState = new long[2];
     private final IntList columnIndexes = new IntList();
     private final IntList columnSizeShifts = new IntList();
+    // Per-column data addresses for the JIT-compiled filter on the WAL refresh path.
+    private final DirectLongList dataAddresses = new DirectLongList(JIT_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_OFFLOAD);
     private final CairoEngine engine;
     private final LiveViewRefreshSqlExecutionContext executionContext;
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
+    // Output row-id buffer for the JIT-compiled filter call. Resized to the WAL
+    // segment frame's row count on each call.
+    private final DirectLongList jitRows = new DirectLongList(JIT_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_OFFLOAD);
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
     private final LiveViewStateStore stateStore;
@@ -111,6 +131,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(walPath);
         Misc.free(addressCache);
         Misc.free(memoryPool);
+        Misc.free(dataAddresses);
+        Misc.free(auxAddresses);
+        Misc.free(jitRows);
     }
 
     /**
@@ -376,6 +399,112 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Applies the two cold-path cutoffs to the row currently held by {@code record} and
+     * either appends it to the merge buffer or accumulates the diversion into
+     * {@link #coldRowState}. Counters live in {@link #coldRowState} so the JIT and
+     * Java filter branches share one body.
+     */
+    private void consumeRow(
+            Record record,
+            MergeBuffer mergeBuffer,
+            int baseTimestampIndex,
+            long coldCutoff,
+            long anyUnboundedColdCutoff
+    ) {
+        long ts = record.getTimestamp(baseTimestampIndex);
+        if (coldCutoff != Long.MIN_VALUE && ts < coldCutoff) {
+            coldRowState[0]++;
+            return;
+        }
+        if (anyUnboundedColdCutoff != Long.MIN_VALUE && ts < anyUnboundedColdCutoff) {
+            if (ts < coldRowState[1]) {
+                coldRowState[1] = ts;
+            }
+            return;
+        }
+        mergeBuffer.addRow(record);
+    }
+
+    /**
+     * Runs the JIT-compiled filter against the single NATIVE WAL page frame and feeds
+     * the matching row ids into the merge buffer. Mirrors the filter path in
+     * {@link io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory}: builds
+     * per-column data and aux address vectors, refreshes bind-variable memory from the
+     * current execution context, and dispatches a single {@link CompiledFilter#call}
+     * per segment. WAL segments do not carry column tops, so the column-tops Java
+     * fallback the async factory uses is never needed here.
+     */
+    private void consumeSegmentJit(
+            WalSegmentRecordCursor walRecordCursor,
+            RecordMetadata baseMetadata,
+            Function filter,
+            CompiledFilter compiledFilter,
+            ObjList<Function> bindVarFunctions,
+            MemoryCARW bindVarMemory,
+            MergeBuffer mergeBuffer,
+            int baseTimestampIndex,
+            long coldCutoff,
+            long anyUnboundedColdCutoff
+    ) throws SqlException {
+        PageFrame frame = walRecordCursor.loadFrame();
+        if (frame == null) {
+            return;
+        }
+        // Refresh bind variables, the filter Function, and bind-var memory against the
+        // current segment's symbol-table source. Bind variables in the LV WHERE clause
+        // are constant-resolved at CREATE time, so this is effectively a no-op for the
+        // V1 grammar; we still mirror the canonical filter init to stay safe if a
+        // future planner change starts emitting non-trivial bind-var setups.
+        filter.init(walRecordCursor, executionContext);
+        if (bindVarFunctions != null) {
+            Function.init(bindVarFunctions, walRecordCursor, executionContext, null);
+            AsyncFilterUtils.prepareBindVarMemory(executionContext, walRecordCursor, bindVarFunctions, bindVarMemory);
+        }
+
+        final int columnCount = baseMetadata.getColumnCount();
+        dataAddresses.clear();
+        auxAddresses.clear();
+        if (dataAddresses.getCapacity() < columnCount) {
+            dataAddresses.setCapacity(columnCount);
+            auxAddresses.setCapacity(columnCount);
+        }
+        for (int i = 0; i < columnCount; i++) {
+            dataAddresses.add(frame.getPageAddress(i));
+            auxAddresses.add(
+                    ColumnType.isVarSize(baseMetadata.getColumnType(i))
+                            ? frame.getAuxPageAddress(i)
+                            : 0
+            );
+        }
+
+        final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
+        if (jitRows.getCapacity() < frameRowCount) {
+            jitRows.setCapacity(frameRowCount);
+        }
+        jitRows.clear();
+
+        final int bindVarCount = bindVarFunctions != null ? bindVarFunctions.size() : 0;
+        final long matched = compiledFilter.call(
+                dataAddresses.getAddress(),
+                dataAddresses.size(),
+                auxAddresses.getAddress(),
+                bindVarCount > 0 ? bindVarMemory.getAddress() : 0,
+                bindVarCount,
+                jitRows.getAddress(),
+                frameRowCount
+        );
+        jitRows.setPos(matched);
+
+        Record record = walRecordCursor.getRecord();
+        final long rowsAddr = jitRows.getAddress();
+        for (long i = 0; i < matched; i++) {
+            long rowId = Unsafe.getUnsafe().getLong(rowsAddr + (i << 3));
+            walRecordCursor.setRowIndex(rowId);
+            consumeRow(record, mergeBuffer, baseTimestampIndex, coldCutoff, anyUnboundedColdCutoff);
+        }
+    }
+
+    /**
      * Computes the drain watermark, drains the merge buffer, and feeds the drained rows
      * through the window cursor into the InMemoryTable. No-op when the buffer is empty.
      * When {@code forceDrain} is true, the watermark is the max observed timestamp so
@@ -498,6 +627,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Phase 5 partition-state eviction). Regular queries leave the flag
                 // clear and skip the extra slot.
                 executionContext.setLiveViewCompile(true);
+                // Pre-bind sentinel timestamp values for the BETWEEN intrinsic injected by
+                // overrideWhereIntrinsics. The JIT IR serializer in SqlCodeGenerator opens
+                // the underlying page-frame cursor during JIT compilation, which forces the
+                // interval bounds to be evaluated; without sentinel values, init() on the
+                // bind var functions throws "undefined bind variable: 1/2" and the planner
+                // silently falls back to AsyncFilteredRecordCursorFactory. Bootstrap
+                // overwrites these via setRange() before opening the cursor for real, so
+                // the placeholders never leak into runtime semantics.
+                int timestampType = localReader != null
+                        ? localReader.getMetadata().getTimestampType()
+                        : ColumnType.TIMESTAMP_MICRO;
+                executionContext.setRange(Long.MIN_VALUE, Long.MAX_VALUE, timestampType);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cq = compiler.compile(instance.getDefinition().getViewSql(), executionContext);
                     factory = cq.getRecordCursorFactory();
@@ -602,15 +743,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     ) throws SqlException {
         WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
         // When the view's SELECT has a WHERE clause, the planner inserts a filter factory
-        // between the window and the page-frame factory. We apply its filter row-by-row
-        // against WAL segment rows so the window functions never observe filtered-out rows.
-        // TODO(live-view): hook in the JIT-compiled filter from AsyncJitFilteredRecordCursorFactory.
-        //  The Java Function path below is always correct but ignores the JIT fast-path on the
-        //  WAL refresh hot loop. Supporting it requires invoking CompiledFilter.call() on the
-        //  single NATIVE WAL page frame and iterating the resulting row-id bitmap.
+        // between the window and the page-frame factory. We apply its filter against WAL
+        // segment rows so the window functions never observe filtered-out rows. The JIT
+        // fast path runs on the single NATIVE WAL page frame; we fall back to row-by-row
+        // Function evaluation when the planner did not produce a JIT-compiled filter.
         RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
         final Function filter = filterFactory.getFilter();
         RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
+        final CompiledFilter compiledFilter = filter != null ? filterFactory.getCompiledFilter() : null;
+        final ObjList<Function> bindVarFunctions = filter != null ? filterFactory.getBindVarFunctions() : null;
+        final MemoryCARW bindVarMemory = filter != null ? filterFactory.getBindVarMemory() : null;
+        final boolean useJit = compiledFilter != null && bindVarMemory != null;
         TableToken baseToken = instance.getDefinition().getBaseTableToken();
         RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
 
@@ -633,8 +776,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Long.MIN_VALUE} means the check is off (merge buffer is empty or the view
         // is all-bounded).
         final long anyUnboundedColdCutoff = computeAnyUnboundedColdCutoff(instance, windowFactory, mergeBuffer);
-        long skippedColdRows = 0;
-        long batchMinColdTimestamp = Long.MAX_VALUE;
+        // [skippedColdRows, batchMinColdTimestamp]. Held in a small array so the per-row
+        // helper can update both without returning a struct.
+        coldRowState[0] = 0;
+        coldRowState[1] = Long.MAX_VALUE;
 
         WalSegmentPageFrameCursor frameCursor = new WalSegmentPageFrameCursor(
                 engine.getConfiguration(), columnIndexes, columnSizeShifts
@@ -682,34 +827,41 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     frameCursor.of(baseToken, walNameSink, segmentId, endRow, startRow, endRow, baseMetadata, dataInfo);
                     walRecordCursor.of(frameCursor, baseMetadata);
 
-                    RecordCursor source = walRecordCursor;
-                    if (filter != null) {
-                        // Re-init bind variables and symbol-table caches against the current segment's
-                        // cursor; symbol keys may differ between segments produced by different WAL writers.
-                        filteringCursor.of(walRecordCursor, filter, executionContext);
-                        source = filteringCursor;
-                    }
+                    if (useJit) {
+                        consumeSegmentJit(
+                                walRecordCursor,
+                                baseMetadata,
+                                filter,
+                                compiledFilter,
+                                bindVarFunctions,
+                                bindVarMemory,
+                                mergeBuffer,
+                                baseTimestampIndex,
+                                coldCutoff,
+                                anyUnboundedColdCutoff
+                        );
+                    } else {
+                        RecordCursor source = walRecordCursor;
+                        if (filter != null) {
+                            // Re-init bind variables and symbol-table caches against the current segment's
+                            // cursor; symbol keys may differ between segments produced by different WAL writers.
+                            filteringCursor.of(walRecordCursor, filter, executionContext);
+                            source = filteringCursor;
+                        }
 
-                    Record record = source.getRecord();
-                    while (source.hasNext()) {
-                        long ts = record.getTimestamp(baseTimestampIndex);
-                        if (coldCutoff != Long.MIN_VALUE && ts < coldCutoff) {
-                            skippedColdRows++;
-                            continue;
+                        Record record = source.getRecord();
+                        while (source.hasNext()) {
+                            consumeRow(record, mergeBuffer, baseTimestampIndex, coldCutoff, anyUnboundedColdCutoff);
                         }
-                        if (anyUnboundedColdCutoff != Long.MIN_VALUE && ts < anyUnboundedColdCutoff) {
-                            if (ts < batchMinColdTimestamp) {
-                                batchMinColdTimestamp = ts;
-                            }
-                            continue;
-                        }
-                        mergeBuffer.addRow(record);
                     }
                 }
             }
         } finally {
             Misc.free(frameCursor);
         }
+
+        long skippedColdRows = coldRowState[0];
+        long batchMinColdTimestamp = coldRowState[1];
 
         if (skippedColdRows > 0) {
             instance.addColdRowSkips(skippedColdRows);
