@@ -399,31 +399,53 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLongMulPreservesNullThroughVectorPath() throws Exception {
+    public void testIntegerArithmeticPreservesNullThroughVectorPath() throws Exception {
         assertMemoryLeak(() -> {
             // The AVX2 i64 mul kernel mutated its lhs vector while computing the
             // 64-bit product, then passed the now-clobbered vector into the
             // null-propagation blend. With a LONG null sentinel (Long.MIN_VALUE)
-            // multiplied by an even constant, the low-32-bit product is zero, so
-            // the blend no longer recognised the lane as null and the result
-            // diverged from the scalar path.
-            // Predicate: c4 = c4 * 939722L. 939722 is even.
-            //   c4 = NULL  -> Java filter: NULL = NULL -> true. JIT must agree.
-            //   c4 = 0     -> 0 = 0 -> true.
-            //   any other  -> false.
+            // multiplied by an even constant, the low-32-bit product wraps to
+            // zero, so the blend no longer recognised the lane as null and the
+            // JIT result diverged from the scalar path.
+            // The audit walked every AVX2 arithmetic kernel (add/sub/mul/div
+            // for i32 and i64) and only i64 mul actually mutated its inputs.
+            // This test covers the original bug and locks the audit in: each
+            // predicate would return zero JIT rows (and diverge from the Java
+            // filter) if any of these kernels stopped feeding pristine lhs/rhs
+            // into blend_with_nulls.
+            // Predicate shape: <col> = (<col> <op> <const>). Under QuestDB's
+            // EqXxxFunctionFactory, NULL == NULL is true (both sides return
+            // the type's null sentinel and the primitive == matches), so a
+            // NULL row matches iff arithmetic on a NULL preserves NULL.
+            //   col = NULL -> Java: <op> propagates NULL, NULL = NULL -> true.
+            //   col != NULL -> any of these <op>s yield a different value,
+            //                  so the predicate is false.
             // Need >=4 rows so the AVX2 main loop runs (the bug never reached
             // the scalar tail path, which preserves lhs).
-            execute("CREATE TABLE x (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (l LONG, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
-                    "(NULL, '2024-01-01T00:00:00.000000Z')," +
-                    " (1L, '2024-01-01T00:00:01.000000Z')," +
-                    " (2L, '2024-01-01T00:00:02.000000Z')," +
-                    " (3L, '2024-01-01T00:00:03.000000Z')," +
-                    " (4L, '2024-01-01T00:00:04.000000Z')");
+                    "(NULL, NULL, '2024-01-01T00:00:00.000000Z')," +
+                    " (1L, 1, '2024-01-01T00:00:01.000000Z')," +
+                    " (2L, 2, '2024-01-01T00:00:02.000000Z')," +
+                    " (3L, 3, '2024-01-01T00:00:03.000000Z')," +
+                    " (4L, 4, '2024-01-01T00:00:04.000000Z')");
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l * 939722L)");
 
+            // i64 (LONG): the original failing shape plus the other operators.
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l * 939722L)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l + 1L)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l - 1L)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l / 2L)");
+
+            // i32 (INT): all four operators.
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i * 939722)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i + 1)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i - 1)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i / 2)");
+
+            // Sanity check that JIT actually compiled (otherwise the test
+            // would silently pass via the Java filter).
             try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE l = (l * 939722L)")) {
                 Assert.assertTrue("JIT must compile this filter", factory.usesCompiledFilter());
             }
