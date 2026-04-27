@@ -92,7 +92,7 @@ public class LiveViewInstance implements QuietCloseable {
     // expanded backward by the cold-path disk-read replay when an any-unbounded view
     // sees a row older than the merge buffer's retention coverage. Long.MAX_VALUE until
     // the first bootstrap completes. Accessed only while the refresh latch is held.
-    private long stateHorizonTs = Long.MAX_VALUE;
+    private long stateHorizonTimestamp = Long.MAX_VALUE;
 
     public LiveViewInstance(LiveViewDefinition definition) {
         this.definition = definition;
@@ -175,8 +175,8 @@ public class LiveViewInstance implements QuietCloseable {
         return mergeBuffer;
     }
 
-    public long getStateHorizonTs() {
-        return stateHorizonTs;
+    public long getStateHorizonTimestamp() {
+        return stateHorizonTimestamp;
     }
 
     public void invalidate(String reason) {
@@ -275,8 +275,8 @@ public class LiveViewInstance implements QuietCloseable {
      * coverage extends below merge buffer coverage). Must be called while the refresh
      * latch is held.
      */
-    public void setStateHorizonTs(long stateHorizonTs) {
-        this.stateHorizonTs = stateHorizonTs;
+    public void setStateHorizonTimestamp(long stateHorizonTimestamp) {
+        this.stateHorizonTimestamp = stateHorizonTimestamp;
     }
 
     /**

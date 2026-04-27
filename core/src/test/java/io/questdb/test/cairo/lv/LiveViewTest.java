@@ -120,8 +120,8 @@ public class LiveViewTest extends AbstractCairoTest {
     @Test
     public void testColdPathDiskReadReplayForUnboundedView() throws Exception {
         // Cold-path disk-read replay for any-unbounded views: a row older than the
-        // merge buffer's retention coverage (ts < maxTsSeen - retention) bypasses the
-        // merge buffer entirely. The refresh job expands {@code stateHorizonTs} and
+        // merge buffer's retention coverage (ts < maxTimestampSeen - retention) bypasses the
+        // merge buffer entirely. The refresh job expands {@code stateHorizonTimestamp} and
         // re-bootstraps from the base table over [horizon, maxTs], so the unbounded
         // window function's accumulator reflects the cold row without reaching for
         // the all-bounded skip counter.
@@ -183,7 +183,7 @@ public class LiveViewTest extends AbstractCairoTest {
         Assert.assertEquals(
                 "state horizon must expand to include the cold row",
                 MicrosFormatUtils.parseUTCTimestamp("2020-01-01T00:00:00.000000Z") - 1,
-                instance.getStateHorizonTs()
+                instance.getStateHorizonTimestamp()
         );
         // Disk-read rebuild scanned (newHorizon, maxTs], which is (2020 - 1µs,
         // 2024-01-01T00:00:10] — the 0s boundary row is now part of state too.
@@ -244,7 +244,7 @@ public class LiveViewTest extends AbstractCairoTest {
         Assert.assertEquals(
                 "horizon must persist across warm-path disk-read replay",
                 MicrosFormatUtils.parseUTCTimestamp("2020-01-01T00:00:00.000000Z") - 1,
-                instance.getStateHorizonTs()
+                instance.getStateHorizonTimestamp()
         );
         // The warm row is inserted between 5s and 10s. State now carries five rows
         // (cold + 0s + 5s + warm + 10s). applyRetention evicts ts <= 0s, so visible
@@ -297,7 +297,7 @@ public class LiveViewTest extends AbstractCairoTest {
         Assert.assertEquals(
                 "horizon must take the min of all cold timestamps in a batch",
                 MicrosFormatUtils.parseUTCTimestamp("2020-01-01T00:00:00.000000Z") - 1,
-                instance.getStateHorizonTs()
+                instance.getStateHorizonTimestamp()
         );
         // Accumulator sees five rows (2020, 2021, 0s, 5s, 10s). applyRetention
         // evicts ts <= 0s, leaving the two newer rows visible with rn=4, 5.
@@ -483,7 +483,7 @@ public class LiveViewTest extends AbstractCairoTest {
         drainWalQueue();
         drainLiveViewQueue();
 
-        // Phase B: advance maxTsSeen by 20s with GOOG rows. Retention cutoff becomes
+        // Phase B: advance maxTimestampSeen by 20s with GOOG rows. Retention cutoff becomes
         // 00:00:25 - 10s = 00:00:15, which drops every AAPL row from the view. With
         // Phase 5 in place, AAPL's partition entry (lastActivityTs=00:00:05 < 00:00:15)
         // is evicted from the row_number map during this refresh.

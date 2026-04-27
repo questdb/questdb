@@ -106,14 +106,14 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
     }
 
     /**
-     * Updates the BETWEEN intrinsic's lower and upper boundaries. {@code tsLo} is
-     * inclusive; {@code tsHi} is exclusive at the API level and is stored as
-     * {@code tsHi - 1} to match {@code BETWEEN}'s inclusive-hi semantics. Callers
-     * that want strict-greater-than semantics on the lower end should pass
-     * {@code lowerBound + 1}.
+     * Updates the BETWEEN intrinsic's lower and upper boundaries.
+     * {@code timestampLo} is inclusive; {@code timestampHi} is exclusive at the
+     * API level and is stored as {@code timestampHi - 1} to match {@code BETWEEN}'s
+     * inclusive-hi semantics. Callers that want strict-greater-than semantics on
+     * the lower end should pass {@code lowerBound + 1}.
      */
-    public void setRange(long tsLo, long tsHi, int timestampType) throws SqlException {
-        getBindVariableService().setTimestampWithType(1, timestampType, tsLo);
-        getBindVariableService().setTimestampWithType(2, timestampType, tsHi - 1);
+    public void setRange(long timestampLo, long timestampHi, int timestampType) throws SqlException {
+        getBindVariableService().setTimestampWithType(1, timestampType, timestampLo);
+        getBindVariableService().setTimestampWithType(2, timestampType, timestampHi - 1);
     }
 }

@@ -136,10 +136,10 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         // no-op
     }
 
-    // tsLo is inclusive, tsHi is exclusive
-    public void setRange(long tsLo, long tsHi, int timestampType) throws SqlException {
-        getBindVariableService().setTimestampWithType(1, timestampType, tsLo);
-        getBindVariableService().setTimestampWithType(2, timestampType, tsHi - 1);
+    // timestampLo is inclusive, timestampHi is exclusive
+    public void setRange(long timestampLo, long timestampHi, int timestampType) throws SqlException {
+        getBindVariableService().setTimestampWithType(1, timestampType, timestampLo);
+        getBindVariableService().setTimestampWithType(2, timestampType, timestampHi - 1);
     }
 
     @Override

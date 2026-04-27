@@ -110,7 +110,7 @@ public class MergeBuffer implements QuietCloseable {
     private long lateRowCount;
     // Max timestamp observed across all rows ever added. Drives the caller-computed
     // LAG watermark; retained across drains.
-    private long maxTsSeen = Long.MIN_VALUE;
+    private long maxTimestampSeen = Long.MIN_VALUE;
     // Per-drain late count: rows added since the previous {@link #drain}/{@link #replay}
     // call whose ts triggered the "late" branch. Zeroed on drain cursor close. Callers
     // use this to decide between the hot path and warm-path replay before committing.
@@ -129,7 +129,7 @@ public class MergeBuffer implements QuietCloseable {
     // Timestamp of the most recent row appended via {@link #addRow}; used to detect
     // out-of-order arrivals that flip {@link #sortDirty}. Reset on {@link #reset} and
     // to the last sort-index entry's ts on {@link #compact}.
-    private long tailTs = Long.MIN_VALUE;
+    private long tailTimestamp = Long.MIN_VALUE;
 
     public MergeBuffer(RecordMetadata metadata) {
         this.timestampColumnIndex = metadata.getTimestampIndex();
@@ -172,13 +172,13 @@ public class MergeBuffer implements QuietCloseable {
         Unsafe.getUnsafe().putLong(addr, ts);
         Unsafe.getUnsafe().putLong(addr + Long.BYTES, rowId);
         count++;
-        if (ts > maxTsSeen) {
-            maxTsSeen = ts;
+        if (ts > maxTimestampSeen) {
+            maxTimestampSeen = ts;
         }
-        if (ts < tailTs) {
+        if (ts < tailTimestamp) {
             sortDirty = true;
         }
-        tailTs = ts;
+        tailTimestamp = ts;
         if (ts <= lastDrainedWatermark) {
             lateRowCount++;
             pendingLateCount++;
@@ -189,16 +189,16 @@ public class MergeBuffer implements QuietCloseable {
 
     /**
      * Evicts the prefix of the live sort range whose ts falls at or below
-     * {@code maxTsSeen - retentionMicros}. Advances {@link #sortStart} only; the
+     * {@code maxTimestampSeen - retentionMicros}. Advances {@link #sortStart} only; the
      * physical rows stay allocated in {@link #rows} until {@link #compact} runs.
      * Safe to call after either {@link #drain} or {@link #replay}: both ensure the
      * live sort range is fully sorted by ts.
      */
     public void applyRetention(long retentionMicros) {
-        if (retentionMicros <= 0 || count == sortStart || maxTsSeen == Long.MIN_VALUE) {
+        if (retentionMicros <= 0 || count == sortStart || maxTimestampSeen == Long.MIN_VALUE) {
             return;
         }
-        long cutoff = maxTsSeen - retentionMicros;
+        long cutoff = maxTimestampSeen - retentionMicros;
         long indexAddr = sortIndex.getPageAddress(0);
         long lo = sortStart;
         long hi = count;
@@ -271,7 +271,7 @@ public class MergeBuffer implements QuietCloseable {
         // Post-compact layout is dense and sorted; subsequent drains can skip the sort
         // until a later out-of-order addRow flips sortDirty again.
         sortDirty = false;
-        tailTs = liveCount == 0 ? Long.MIN_VALUE : maxTs;
+        tailTimestamp = liveCount == 0 ? Long.MIN_VALUE : maxTs;
     }
 
     /**
@@ -311,8 +311,8 @@ public class MergeBuffer implements QuietCloseable {
         return lateRowCount;
     }
 
-    public long getMaxTsSeen() {
-        return maxTsSeen;
+    public long getMaxTimestampSeen() {
+        return maxTimestampSeen;
     }
 
     /**
@@ -333,11 +333,11 @@ public class MergeBuffer implements QuietCloseable {
      * new to publish.
      */
     public boolean isEmpty() {
-        // maxTsSeen tracks the high water mark of every row added since reset.
+        // maxTimestampSeen tracks the high water mark of every row added since reset.
         // If it hasn't advanced past lastDrainedWatermark, every live row has been
         // emitted. Late-row arrivals are caught by pendingLateCount — those rows
         // have ts <= lastDrainedWatermark but still need a warm-path replay.
-        return pendingLateCount == 0 && maxTsSeen <= lastDrainedWatermark;
+        return pendingLateCount == 0 && maxTimestampSeen <= lastDrainedWatermark;
     }
 
     /**
@@ -377,14 +377,14 @@ public class MergeBuffer implements QuietCloseable {
         compactScratch.clearRows();
         compactScratch.shareSymbolTablesWith(rows);
         sortIndex.jumpTo(0);
-        maxTsSeen = Long.MIN_VALUE;
+        maxTimestampSeen = Long.MIN_VALUE;
         lastDrainedWatermark = Long.MIN_VALUE;
         lateRowCount = 0;
         pendingLateCount = 0;
         sortStart = 0;
         count = 0;
         sortDirty = false;
-        tailTs = Long.MIN_VALUE;
+        tailTimestamp = Long.MIN_VALUE;
     }
 
     /**
