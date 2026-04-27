@@ -374,6 +374,31 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowMixedWidthArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SHORT, i INT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s=200 -> s*s = 40_000 in int math, but overflows SHORT (low 16 bits = -25_536).
+            // s*s + i = 40_000, matches d=40_000.0; the Java filter widens s to int via the
+            // *.sql.Function classes and returns the row. A SIMD JIT computing s*s at SHORT
+            // width would miss it. Same for s=-200; s=10 stays in range, so its row is
+            // uncontroversial.
+            execute("INSERT INTO x VALUES (200, 0, 40000.0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-200, 0, 40000.0, '2024-01-01T00:00:01.000000Z')," +
+                    " (10, 0, 100.0, '2024-01-01T00:00:02.000000Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n3\n", "SELECT count(*) FROM x WHERE d = (s * s) + i");
+
+            // Narrow arithmetic mixed with a wider operand must JIT in scalar mode --
+            // SIMD would overflow at narrow width, but scalar upcasts to int.
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE d = (s * s) + i")) {
+                Assert.assertTrue("narrow arithmetic must JIT (scalar mode)",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameMaxSize() throws Exception {
         int pageFrameMaxRows = 128;
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, pageFrameMaxRows);

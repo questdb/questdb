@@ -35,9 +35,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
+
+import java.util.Arrays;
 
 /**
  * Runs one generated query, materializes every value, and decides whether
@@ -61,11 +62,13 @@ import io.questdb.std.str.StringSink;
  * When constructed with {@code diffJit = true}, every query is run twice
  * &mdash; once with {@link SqlJitMode#JIT_MODE_ENABLED} and once with
  * {@link SqlJitMode#JIT_MODE_DISABLED} &mdash; and the two materializations
- * are compared. Any divergence (different row text, different exception
- * class/message, or one path succeeding while the other throws) is reported
- * as a failure. Queries that do not engage the filter JIT path produce
- * identical output in both modes, so the toggle is safe to apply
- * universally; the price is roughly doubled run time per query.
+ * are compared as multisets (parallel GROUP BY and similar operators do not
+ * guarantee row order, but they do guarantee the same set of rows). Any
+ * difference in the multiset, exception class/message, or one path succeeding
+ * while the other throws is reported as a failure. Queries that do not
+ * engage the filter JIT path produce identical output in both modes, so the
+ * toggle is safe to apply universally; the price is roughly doubled run
+ * time per query.
  */
 public final class QueryRunner {
     private final boolean diffJit;
@@ -108,6 +111,33 @@ public final class QueryRunner {
             return "ok, " + outcome.rowsRead + " rows:\n" + rows;
         }
         return outcome.exceptionClass + ": " + outcome.exceptionMessage;
+    }
+
+    /**
+     * Multiset comparison: the two row sets are equal iff they contain the same
+     * lines, regardless of order. Parallel operators (GROUP BY, etc.) do not
+     * guarantee a stable iteration order across runs, but the JIT toggle does
+     * not affect which rows are produced -- only the per-row filter evaluation.
+     * So order divergence is normal; element-set divergence is a real bug.
+     */
+    private static boolean rowsetEquals(StringSink a, StringSink b) {
+        // Fast path: identical text.
+        if (a.length() == b.length() && a.toString().contentEquals(b)) {
+            return true;
+        }
+        String[] linesA = a.toString().split("\n", -1);
+        String[] linesB = b.toString().split("\n", -1);
+        if (linesA.length != linesB.length) {
+            return false;
+        }
+        Arrays.sort(linesA);
+        Arrays.sort(linesB);
+        for (int i = 0; i < linesA.length; i++) {
+            if (!linesA[i].equals(linesB[i])) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Result toResult(String sql, Outcome outcome) {
@@ -153,7 +183,7 @@ public final class QueryRunner {
     private Result reconcile(String sql, Outcome a, Outcome b, StringSink rowsA, StringSink rowsB) {
         // Both succeeded.
         if (a.failure == null && b.failure == null) {
-            if (Chars.equals(rowsA, rowsB)) {
+            if (rowsetEquals(rowsA, rowsB)) {
                 return Result.ok(a.rowsRead);
             }
             return Result.failed(sql, divergence(a, b, rowsA, rowsB));

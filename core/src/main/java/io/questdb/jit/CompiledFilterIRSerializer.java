@@ -294,11 +294,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (predicateLeft) {
             // We're out of a predicate
 
-            // Force scalar mode if the predicate had byte or short arithmetic operations.
-            // That's because SIMD mode uses byte/short-sized overflows for arithmetic
-            // calculations instead of implicit upcast to int done by *.sql.Function classes.
-            forceScalarMode |=
-                    predicateContext.hasArithmeticOperations && predicateContext.localTypesObserver.maxSize() <= 2;
+            // Force scalar mode if the predicate has byte or short arithmetic operations.
+            // SIMD mode operates at byte/short width and overflows on intermediate values
+            // (e.g. SHORT * SHORT for c1=200 yields -25536, not 40000); scalar mode upcasts
+            // to int. This applies whether the predicate is all-narrow (maxSize <= 2) or
+            // mixes narrow with wider operands -- both are unsafe under SIMD.
+            forceScalarMode |= predicateContext.hasArithmeticOperations
+                    && (predicateContext.localTypesObserver.maxSize() <= 2
+                    || predicateContext.localTypesObserver.hasNarrowInt());
 
             // Then backfill constants and symbol bind variables and clean up
             try {
@@ -1545,6 +1548,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
             }
             return false;
+        }
+
+        public boolean hasNarrowInt() {
+            return sizes[I1_INDEX] != 0 || sizes[I2_INDEX] != 0;
         }
 
         /**
