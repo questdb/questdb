@@ -1056,6 +1056,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Bumps the partition table version and commits, invalidating reader caches that pin
+     * partition state. Exposed for the cold-storage extension point so eviction/upload
+     * jobs can publish post-conversion partition changes.
+     */
     public void bumpPartitionTableVersion() {
         txWriter.bumpPartitionTableVersion();
         txWriter.commit(denseSymbolMapWriters);
@@ -2156,6 +2161,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return ff;
     }
 
+    /**
+     * Returns the logical (partition-by floored) timestamp for a given row timestamp. Exposed
+     * for the cold-storage extension point so external schedulers can key partitions by their
+     * canonical timestamp.
+     */
     public long getLogicalPartitionTimestamp(long timestamp) {
         return txWriter.getLogicalPartitionTimestamp(timestamp);
     }
@@ -2384,6 +2394,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return tempMem16b != 0;
     }
 
+    /**
+     * Returns true if the partition at the given index is stored in parquet format. Exposed
+     * for the cold-storage extension point so upload/eviction jobs can gate work on the
+     * partition's storage format.
+     */
     public boolean isPartitionParquet(int partitionIndex) {
         return txWriter.isPartitionParquet(partitionIndex);
     }

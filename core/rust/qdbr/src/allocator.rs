@@ -125,7 +125,7 @@ impl Default for MemTracking {
 }
 
 impl MemTracking {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             rss_mem_used: AtomicUsize::new(0),
             rss_mem_limit: AtomicUsize::new(0),
