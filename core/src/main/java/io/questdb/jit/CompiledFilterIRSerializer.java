@@ -535,6 +535,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             || (lhsType == rhsType && isVarSizeType(lhsType))) {
                         throw SqlException.$(0, "var-size columns can only be used in NULL checks");
                     }
+                    // serializeNull() emits IMM with I8_TYPE / I4_TYPE for var-size
+                    // header NULL sentinels, so the rule above does not catch
+                    // <varsize> >= null and similar. Only IS [NOT] NULL, which
+                    // lowers to EQ/NE against the NULL header IMM, is meaningful
+                    // for var-size operands; every other operator must fall back
+                    // to the Java filter.
+                    if ((isVarSizeType(lhsType) || isVarSizeType(rhsType))
+                            && opCode != EQ && opCode != NE) {
+                        throw SqlException.$(0, "var-size columns can only be used in NULL checks");
+                    }
                     typeStack.push(typeCode);
             }
         }

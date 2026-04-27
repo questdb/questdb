@@ -453,6 +453,58 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEqualityNullCompareWithVarSizeColumnRejectedByJit() throws Exception {
+        assertMemoryLeak(() -> {
+            // The fuzzer surfaced JIT-vs-Java divergences on queries like
+            //   WHERE null >= v AND d <= 0.7    (v VARCHAR)
+            // The IR serializer's ensureOnlyVarSizeHeaderChecks() fired only when
+            // both operands were var-size, but serializeNull() emitted the null
+            // sentinel as an I8/I4 IMM. So <varsize_col> >= null was accepted by
+            // the JIT path and the native kernel produced an arbitrary integer
+            // comparison against the var-size header that diverged from the Java
+            // filter's evaluation. Now JIT must reject any non-equality binary
+            // operator that touches a var-size operand and fall back to the Java
+            // filter, leaving IS NULL / IS NOT NULL (which lower to EQ/NE
+            // against the NULL header IMM) on the JIT path.
+            execute("CREATE TABLE x (v VARCHAR, s STRING, b BINARY, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES ('a', 'a', null, 0.1, '2024-01-01T00:00:00.000000Z')," +
+                    " ('b', 'b', null, 0.2, '2024-01-01T00:00:01.000000Z')," +
+                    " ('c', 'c', null, 0.3, '2024-01-01T00:00:02.000000Z')," +
+                    " ('d', 'd', null, 0.4, '2024-01-01T00:00:03.000000Z')," +
+                    " ('e', 'e', null, 0.5, '2024-01-01T00:00:04.000000Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // Non-equality comparisons against NULL with a var-size column on
+            // either side must not JIT.
+            String[] nonJitQueries = {
+                    "SELECT count(*) FROM x WHERE null >= v AND d <= 0.7",
+                    "SELECT count(*) FROM x WHERE v >= null AND d <= 0.7",
+                    "SELECT count(*) FROM x WHERE v < null",
+                    "SELECT count(*) FROM x WHERE null > s",
+            };
+            for (String q : nonJitQueries) {
+                try (RecordCursorFactory factory = select(q)) {
+                    Assert.assertFalse("must not JIT: " + q, factory.usesCompiledFilter());
+                }
+            }
+
+            // var-size IS NULL / IS NOT NULL must continue to JIT (these lower
+            // to EQ/NE against the NULL header IMM, which is the only legitimate
+            // var-size operand the JIT runtime supports).
+            String[] jitQueries = {
+                    "SELECT count(*) FROM x WHERE v IS NULL",
+                    "SELECT count(*) FROM x WHERE s IS NOT NULL",
+            };
+            for (String q : jitQueries) {
+                try (RecordCursorFactory factory = select(q)) {
+                    Assert.assertTrue("must JIT: " + q, factory.usesCompiledFilter());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameMaxSize() throws Exception {
         int pageFrameMaxRows = 128;
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, pageFrameMaxRows);
