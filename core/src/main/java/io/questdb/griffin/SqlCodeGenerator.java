@@ -29,7 +29,6 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -1497,18 +1496,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return false;
         }
 
-        if (loFunc != null && loFunc.isConstant()
-                && hiFunc != null && hiFunc.isConstant()) {
+        if (loFunc != null && loFunc.isConstant() && hiFunc != null && hiFunc.isConstant()) {
             try {
                 loFunc.init(null, context);
                 hiFunc.init(null, context);
-
                 return !(loFunc.getLong(null) >= 0 && hiFunc.getLong(null) < 0);
             } catch (SqlException ex) {
                 LOG.error().$("Failed to initialize lo or hi functions [").$("error=").$safe(ex.getMessage()).I$();
             }
         }
-
         return true;
     }
 
@@ -6715,7 +6711,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             return recordCursorFactory;
-        } catch (SqlException | CairoException e) {
+        } catch (Throwable e) {
+            // ImplicitCastException, NumericException etc. are RuntimeException
+            // and would bypass a narrower catch, leaking the partially-built factory
+            // tree (which can hold native memory via PageFrameSequence).
             recordCursorFactory.close();
             throw e;
         }
@@ -7557,7 +7556,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     limitHiFunc
             );
         } catch (Throwable e) {
-            factory.close();
+            Misc.free(factory);
             throw e;
         }
     }
@@ -8323,9 +8322,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     factory,
                     virtualColumnReservedSlots
             );
-        } catch (SqlException | CairoException e) {
+        } catch (Throwable e) {
+            // Constant-folding a cast (e.g. `(-1234567L)::DECIMAL(4,2)`) can throw
+            // ImplicitCastException at compile time. That escapes a narrower catch
+            // and leaks the inner factory together with its PageFrameSequence.
             Misc.freeObjList(functions);
-            factory.close();
+            Misc.free(factory);
             throw e;
         }
     }

@@ -6256,6 +6256,29 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionConstantCastOverflowDoesNotLeakInnerFactory() throws Exception {
+        // The DECIMAL cast in the projection constant-folds at compile time and
+        // throws ImplicitCastException when the literal does not fit. The inner
+        // factory tree -- including the AsyncFiltered factory's PageFrameSequence,
+        // which holds a native circuit-breaker buffer -- was leaking because the
+        // virtual-projection codegen caught only SqlException | CairoException and
+        // ImplicitCastException is a plain RuntimeException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (10, '2024-01-01T00:00:00.000000Z')," +
+                    " (20, '2024-01-01T00:00:01.000000Z')");
+            for (int i = 0; i < 50; i++) {
+                try {
+                    engine.select("SELECT (-1234567L)::DECIMAL(4,2) FROM t WHERE s > 5", sqlExecutionContext)
+                            .close();
+                    Assert.fail("expected ImplicitCastException");
+                } catch (ImplicitCastException expected) {
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRaceToCreateEmptyTable() throws Exception {
         AtomicInteger index = new AtomicInteger();
         AtomicInteger success = new AtomicInteger();
