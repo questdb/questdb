@@ -255,11 +255,20 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                         sink.putAscii(" INDEX TYPE ");
                         IndexType.putName(sink, idxType);
                         IntList coveringCols = column.getCoveringColumnIndices();
-                        if (coveringCols != null && coveringCols.size() > 0) {
+                        // Drop tombstoned entries (dense -1 left behind by
+                        // DROP COLUMN). If no survivor remains, skip the
+                        // INCLUDE clause entirely — emitting "INCLUDE ()"
+                        // produces invalid DDL that the parser rejects.
+                        int survivors = countCoveringSurvivors(coveringCols, table);
+                        if (survivors > 0) {
                             sink.putAscii(" INCLUDE (");
                             int emitted = 0;
                             for (int ci = 0, cn = coveringCols.size(); ci < cn; ci++) {
-                                CairoColumn covCol = table.getColumnQuiet(coveringCols.getQuick(ci));
+                                int denseIdx = coveringCols.getQuick(ci);
+                                if (denseIdx < 0) {
+                                    continue;
+                                }
+                                CairoColumn covCol = table.getColumnQuiet(denseIdx);
                                 if (covCol != null) {
                                     if (emitted > 0) {
                                         sink.putAscii(", ");
@@ -367,6 +376,20 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         // overridden in ent, do not remove!
         protected void ttlToSink(CharSink<?> sink) {
             ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
+        }
+
+        private static int countCoveringSurvivors(IntList coveringCols, CairoTable table) {
+            if (coveringCols == null || coveringCols.size() == 0) {
+                return 0;
+            }
+            int survivors = 0;
+            for (int ci = 0, cn = coveringCols.size(); ci < cn; ci++) {
+                int denseIdx = coveringCols.getQuick(ci);
+                if (denseIdx >= 0 && table.getColumnQuiet(denseIdx) != null) {
+                    survivors++;
+                }
+            }
+            return survivors;
         }
 
         public class ShowCreateTableRecord implements Record {

@@ -9314,6 +9314,62 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowCreateTableIncludeAfterAllCoveredColumnsDropped() throws Exception {
+        // Regression: when every covered column is dropped, the writer
+        // tombstones each entry to -1 but does not shrink the covering
+        // list (TableWriter.tombstoneCoveredColumnInOtherIndexes). The
+        // SHOW CREATE TABLE renderer guards on coveringCols.size() > 0
+        // and emits "INCLUDE (" / ")" unconditionally, so the rendered
+        // DDL becomes "INCLUDE ()" — which the parser then rejects with
+        // "at least one column name expected in INCLUDE", breaking the
+        // SHOW CREATE TABLE -> execute round-trip.
+        // Disable the timestamp auto-include so the covering list does
+        // not retain ts as a survivor, making it possible to fully empty
+        // the list via DROP COLUMN.
+        setProperty(io.questdb.PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, "false");
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_all (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("ALTER TABLE t_drop_all ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            execute("ALTER TABLE t_drop_all DROP COLUMN price");
+            execute("ALTER TABLE t_drop_all DROP COLUMN qty");
+
+            // Capture the rendered DDL. SHOW CREATE TABLE returns a single
+            // VARCHAR column.
+            String ddl;
+            try (var factory = select("SHOW CREATE TABLE t_drop_all");
+                 var cursor = factory.getCursor(sqlExecutionContext)) {
+                assertTrue(cursor.hasNext());
+                ddl = cursor.getRecord().getVarcharA(0).toString();
+            }
+            assertFalse("SHOW CREATE TABLE produced invalid INCLUDE () in: " + ddl,
+                    ddl.contains("INCLUDE ()"));
+            assertFalse("SHOW CREATE TABLE produced invalid INCLUDE() in: " + ddl,
+                    ddl.contains("INCLUDE()"));
+
+            // The rendered DDL must round-trip: dropping the table and
+            // re-running the DDL must succeed.
+            execute("DROP TABLE t_drop_all");
+            execute(ddl);
+
+            // SHOW COLUMNS must not crash on the all-tombstoned list and
+            // must report indexInclude as empty for sym.
+            assertSql("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\t
+                            """,
+                    "SHOW COLUMNS FROM t_drop_all");
+        });
+    }
+
+    @Test
     public void testShowCreateTableIncludeAfterDropColumn() throws Exception {
         // Regression: the persisted covering list stores writer indices
         // (stable across DROP COLUMN), but the SHOW CREATE TABLE / SHOW

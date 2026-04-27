@@ -232,7 +232,14 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                     includeSink.clear();
                     int emitted = 0;
                     for (int i = 0, n = coveringCols.size(); i < n; i++) {
-                        CairoColumn covCol = cairoTable.getColumnQuiet(coveringCols.getQuick(i));
+                        // Skip tombstoned entries (dense -1 left after
+                        // DROP COLUMN). getColumnQuiet treats -1 as out
+                        // of bounds and would throw.
+                        int denseIdx = coveringCols.getQuick(i);
+                        if (denseIdx < 0) {
+                            continue;
+                        }
+                        CairoColumn covCol = cairoTable.getColumnQuiet(denseIdx);
                         if (covCol != null) {
                             if (emitted > 0) {
                                 includeSink.putAscii(',');
@@ -256,7 +263,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                     includeSinkB.clear();
                     int emitted = 0;
                     for (int i = 0, n = coveringCols.size(); i < n; i++) {
-                        CairoColumn covCol = cairoTable.getColumnQuiet(coveringCols.getQuick(i));
+                        int denseIdx = coveringCols.getQuick(i);
+                        if (denseIdx < 0) {
+                            continue;
+                        }
+                        CairoColumn covCol = cairoTable.getColumnQuiet(denseIdx);
                         if (covCol != null) {
                             if (emitted > 0) {
                                 includeSinkB.putAscii(',');
