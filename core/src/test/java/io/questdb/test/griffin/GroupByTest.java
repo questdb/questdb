@@ -950,6 +950,37 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByArrayKeyDoesNotLeak() throws Exception {
+        // Regression: count_distinct(<expression>) over a row source rewrites to
+        //   count(*) FROM (SELECT <expr> FROM ... WHERE <expr> IS NOT NULL GROUP BY <expr>)
+        // When <expr> is an ARRAY constructor, GroupByUtils rejects the GROUP BY
+        // key as "unsupported type of expression". The first column loop in
+        // assembleGroupByFunctions adds the parsed ARRAY Function to both outer
+        // and inner projection lists, then the third loop replaces the outer
+        // entry with a column-ref Function -- leaving the original ARRAY (and
+        // its NATIVE_ND_ARRAY backing) reachable only via the inner list. The
+        // failure-path cleanup now walks both lists and frees each unique
+        // reference exactly once.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            for (String q : new String[]{
+                    "SELECT count_distinct(ARRAY[0.9873]) FROM t WHERE ts < ts",
+                    "SELECT count_distinct(ARRAY[ARRAY[0.7172, 0.6604, 0.0546]," +
+                            " ARRAY[0.1216, 0.4188, 0.8926]]) FROM t WHERE ts < ts",
+            }) {
+                try {
+                    engine.select(q, sqlExecutionContext).close();
+                    Assert.fail("expected SqlException");
+                } catch (SqlException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(),
+                            "unsupported type of expression");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGroupByColumnIdx1() throws Exception {
         assertQuery(
                 """
