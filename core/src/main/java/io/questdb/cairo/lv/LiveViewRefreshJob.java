@@ -32,7 +32,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -48,7 +47,6 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.log.Log;
@@ -86,7 +84,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final IntList columnIndexes = new IntList();
     private final IntList columnSizeShifts = new IntList();
     private final CairoEngine engine;
-    private final SqlExecutionContextImpl executionContext;
+    private final LiveViewRefreshSqlExecutionContext executionContext;
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
@@ -100,7 +98,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     public LiveViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
         this.workerId = workerId;
         this.engine = engine;
-        this.executionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount).with(AllowAllSecurityContext.INSTANCE);
+        this.executionContext = new LiveViewRefreshSqlExecutionContext(engine, sharedQueryWorkerCount);
         this.walEventReader = new WalEventReader(engine.getConfiguration());
         this.stateStore = engine.getLiveViewStateStore();
     }
@@ -180,42 +178,58 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             mergeBuffer.reset();
 
             // Bounded backfill: window functions see only the last RETENTION worth of
-            // data. maxBaseTs is captured from the base TableReader; rows with
-            // ts <= maxBaseTs - retention are skipped during backfill. The reader's
-            // seqTxn pins the high watermark of WAL transactions visible to the
-            // bootstrap, so the next incremental refresh resumes from there.
-            // TODO(live-view): replace the linear skip with a partition-aware interval
-            //  cursor so backfill cost is O(retained rows) rather than O(base rows).
+            // data. The lower bound is pushed into the base scan as a BETWEEN intrinsic
+            // via LiveViewRefreshSqlExecutionContext.setRange, so the partition-frame
+            // cursor prunes partitions outside the retained window — bootstrap cost is
+            // O(retained rows) rather than O(base rows). The reader's seqTxn pins the
+            // high watermark of WAL transactions visible to bootstrap, so the next
+            // incremental refresh resumes from there.
             TableToken baseToken = instance.getDefinition().getBaseTableToken();
             long retentionMicros = instance.getDefinition().getRetentionMicros();
-            long lowerBound = Long.MIN_VALUE;
-            long bootstrapSeqTxn;
-            try (TableReader reader = engine.getReader(baseToken)) {
-                long maxTs = reader.getMaxTimestamp();
-                if (maxTs != Long.MIN_VALUE) {
-                    lowerBound = maxTs - retentionMicros;
-                    if (lowerBoundOverride != Long.MAX_VALUE && lowerBoundOverride < lowerBound) {
-                        lowerBound = lowerBoundOverride;
-                    }
-                }
-                bootstrapSeqTxn = reader.getSeqTxn();
-            }
-            final int baseTsIdx = baseMetadata.getTimestampIndex();
-
-            RecordCursor baseCursor = baseFactory.getCursor(executionContext);
-            try {
-                Record record = baseCursor.getRecord();
-                while (baseCursor.hasNext()) {
-                    if (record.getTimestamp(baseTsIdx) > lowerBound) {
-                        mergeBuffer.addRow(record);
-                    }
-                }
-            } finally {
-                baseCursor.close();
-            }
-
             long lagMicros = instance.getDefinition().getLagMicros();
-            long watermark = forceDrain ? mergeBuffer.getMaxTsSeen() : mergeBuffer.getMaxTsSeen() - lagMicros;
+            long lowerBound;
+            long bootstrapSeqTxn;
+            long watermark;
+
+            try (TableReader reader = engine.getReader(baseToken)) {
+                engine.detachReader(reader);
+                try {
+                    executionContext.of(reader);
+                    try {
+                        long maxTs = reader.getMaxTimestamp();
+                        lowerBound = Long.MIN_VALUE;
+                        if (maxTs != Long.MIN_VALUE) {
+                            lowerBound = maxTs - retentionMicros;
+                            if (lowerBoundOverride != Long.MAX_VALUE && lowerBoundOverride < lowerBound) {
+                                lowerBound = lowerBoundOverride;
+                            }
+                        }
+                        bootstrapSeqTxn = reader.getSeqTxn();
+
+                        // The cursor's strict-greater-than semantics translate to a
+                        // BETWEEN whose inclusive lo is shifted by one ts unit. tsHi is
+                        // pinned to MAX so the upper end of the scan is unbounded.
+                        int tsType = baseMetadata.getTimestampType();
+                        executionContext.setRange(lowerBound + 1, Long.MAX_VALUE, tsType);
+
+                        RecordCursor baseCursor = baseFactory.getCursor(executionContext);
+                        try {
+                            Record record = baseCursor.getRecord();
+                            while (baseCursor.hasNext()) {
+                                mergeBuffer.addRow(record);
+                            }
+                        } finally {
+                            baseCursor.close();
+                        }
+                    } finally {
+                        executionContext.clearReader();
+                    }
+                } finally {
+                    engine.attachReader(reader);
+                }
+            }
+
+            watermark = forceDrain ? mergeBuffer.getMaxTsSeen() : mergeBuffer.getMaxTsSeen() - lagMicros;
 
             writeBuffer.clear();
             RecordCursor drainCursor = mergeBuffer.drain(watermark);
@@ -464,19 +478,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private RecordCursorFactory ensureCompiledFactory(LiveViewInstance instance) throws SqlException {
         RecordCursorFactory factory = instance.getCompiledFactory();
         if (factory == null) {
-            // Flags the compile so window function factories can tell they are
-            // being compiled inside a live view and opt into live-view-only
-            // machinery (e.g. the lastActivityTs value-layout slot that drives
-            // Phase 5 partition-state eviction). Regular queries leave the flag
-            // clear and skip the extra slot.
-            executionContext.setLiveViewCompile(true);
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery cq = compiler.compile(instance.getDefinition().getViewSql(), executionContext);
-                factory = cq.getRecordCursorFactory();
+            // The compile path needs a base table reader pinned on the execution
+            // context so the BETWEEN intrinsic injected by overrideWhereIntrinsics
+            // resolves against the right TableToken. Compile is one-time per view,
+            // so just own a reader locally when the context has none. Callers that
+            // already pinned one (none today) are honored via the hasReader gate.
+            TableToken baseToken = instance.getDefinition().getBaseTableToken();
+            boolean ownReader = !executionContext.hasReader();
+            TableReader localReader = ownReader ? engine.getReader(baseToken) : null;
+            try {
+                if (ownReader) {
+                    engine.detachReader(localReader);
+                    executionContext.of(localReader);
+                }
+                // Flags the compile so window function factories can tell they are
+                // being compiled inside a live view and opt into live-view-only
+                // machinery (e.g. the lastActivityTs value-layout slot that drives
+                // Phase 5 partition-state eviction). Regular queries leave the flag
+                // clear and skip the extra slot.
+                executionContext.setLiveViewCompile(true);
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    CompiledQuery cq = compiler.compile(instance.getDefinition().getViewSql(), executionContext);
+                    factory = cq.getRecordCursorFactory();
+                } finally {
+                    executionContext.setLiveViewCompile(false);
+                }
+                instance.setCompiledFactory(factory);
             } finally {
-                executionContext.setLiveViewCompile(false);
+                if (ownReader) {
+                    executionContext.clearReader();
+                    engine.attachReader(localReader);
+                    localReader.close();
+                }
             }
-            instance.setCompiledFactory(factory);
         }
         return factory;
     }
