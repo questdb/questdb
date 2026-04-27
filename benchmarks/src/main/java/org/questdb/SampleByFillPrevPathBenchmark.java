@@ -102,6 +102,13 @@ import java.util.concurrent.TimeUnit;
 public class SampleByFillPrevPathBenchmark {
 
     private static final String BUCKET = "1m";
+    // BEST_CASE keeps A = K * B small even for huge R: span is fixed (B
+    // buckets * 1m), so step = (B * 1m) / R. As R grows, step shrinks but B
+    // and A stay constant. With B=1440 (1 day @ 1m) and K=100, A=144_000
+    // regardless of R. Resolution is fine down to R~5*10^10 (step ~1.7us).
+    private static final long BEST_CASE_BUCKET_MICROS = 60_000_000L; // 1m
+    private static final int BEST_CASE_BUCKET_COUNT = 1_440;
+    private static final int BEST_CASE_UNIQUE_KEYS = 100;
     private static final int POSITIVE_CASE_STEP_MICROS = 6_000;
     private static final int POSITIVE_CASE_UNIQUE_KEYS = 1_000;
     private static final String START_TS = "2024-01-01T00:00:00.000000Z";
@@ -110,8 +117,14 @@ public class SampleByFillPrevPathBenchmark {
     private static final int WORST_CASE_KEY_MULTIPLIER = 7_919;
     private static final int WORST_CASE_STEP_MICROS = 120_000;
     private static final int WORST_CASE_UNIQUE_KEYS = 50_000;
-    // Sized to hold the larger of the two scenario key sets with headroom.
-    private static final int SYMBOL_CAPACITY = Math.max(WORST_CASE_UNIQUE_KEYS, POSITIVE_CASE_UNIQUE_KEYS) * 2;
+    // Sized to hold the largest of the three scenario key sets with headroom.
+    private static final int SYMBOL_CAPACITY = Math.max(
+            Math.max(WORST_CASE_UNIQUE_KEYS, POSITIVE_CASE_UNIQUE_KEYS),
+            BEST_CASE_UNIQUE_KEYS
+    ) * 2;
+
+    @Param({"avg"})
+    public String aggFunc;
 
     @Param({"LEGACY", "FAST_PATH"})
     public String path;
@@ -119,8 +132,29 @@ public class SampleByFillPrevPathBenchmark {
     @Param({"10000", "100000", "5000000"})
     public int rowCount;
 
-    @Param({"WORST_CASE", "POSITIVE_CASE"})
+    @Param({"WORST_CASE", "POSITIVE_CASE", "BEST_CASE"})
     public String scenario;
+
+    // Sort strategy applied above AGB output before the PROTO fill cursor consumes it.
+    // Has no effect on LEGACY (single-threaded scan, no sort) or FAST_PATH (always uses
+    // SortedRecordCursorFactory because of the BuildChainObserver hook).
+    //
+    // Four supported values:
+    //   "light_encoded"     -> EncodedSortLightRecordCursorFactory
+    //                          radix/quicksort over byte-encoded ts; rowId-based;
+    //                          requires base.recordCursorSupportsRandomAccess()
+    //   "full_encoded"      -> EncodedSortRecordCursorFactory
+    //                          same sort algorithm; full record materialisation via RecordSink;
+    //                          works without random-access requirement
+    //   "light_recordchain" -> SortedLightRecordCursorFactory
+    //                          red-black tree sort; rowId-based; requires random access
+    //   "full_recordchain"  -> SortedRecordCursorFactory
+    //                          red-black tree sort; full record materialisation; today's FAST_PATH default
+    //
+    // Only "light_encoded" listed here so a default JMH run executes one PROTO sort variant.
+    // Pass -p sort=full_encoded,light_recordchain,full_recordchain (or any subset) to compare.
+    @Param({"light_encoded"})
+    public String sort;
 
     @Param({"1", "4", "10"})
     public int workers;
@@ -155,7 +189,20 @@ public class SampleByFillPrevPathBenchmark {
     public void setUp() throws Exception {
         final int workerCount = resolveWorkerCount();
         tempRoot = java.nio.file.Files.createTempDirectory("samplebyfillprevpathbench-");
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(tempRoot.toString());
+        // Override sort memory caps so the encoded sort variants can hold
+        // ~50M AGB output rows (~1.2 GB packed). Default is 256 MB total,
+        // which trips LimitOverflowException on WORST 50M.
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(tempRoot.toString()) {
+            @Override
+            public int getSqlSortKeyMaxPages() {
+                return 8192; // 8192 * 128 KB = 1 GB
+            }
+
+            @Override
+            public int getSqlSortLightValueMaxPages() {
+                return 8192; // 8192 * 128 KB = 1 GB
+            }
+        };
         engine = new CairoEngine(configuration);
 
         if (workerCount > 1) {
@@ -185,6 +232,11 @@ public class SampleByFillPrevPathBenchmark {
         compiler = new SqlCompilerImpl(engine);
 
         seedTable();
+
+        // Sort strategy. SqlCodeGenerator selects the sort factory by
+        // reading this property. Always set explicitly so a stale value
+        // from a previous @Param sweep cannot leak in.
+        System.setProperty("questdb.sample.by.sort", sort);
 
         final String sql = buildSql();
         factory = compiler.compile(sql, ctx).getRecordCursorFactory();
@@ -238,7 +290,7 @@ public class SampleByFillPrevPathBenchmark {
 
     private String buildSql() {
         final String alignment = "FAST_PATH".equals(path) ? "CALENDAR" : "FIRST OBSERVATION";
-        return "SELECT sym1, last(d), ts FROM tab SAMPLE BY " + BUCKET + " FILL(PREV) ALIGN TO " + alignment;
+        return "SELECT sym1, "+ aggFunc + "(d), ts FROM tab SAMPLE BY " + BUCKET + " FILL(PREV) ALIGN TO " + alignment;
     }
 
     private int resolveWorkerCount() {
@@ -267,6 +319,18 @@ public class SampleByFillPrevPathBenchmark {
                     + "((x * " + WORST_CASE_KEY_MULTIPLIER + ") % " + WORST_CASE_UNIQUE_KEYS + ")::SYMBOL AS sym1, "
                     + "rnd_double() AS d, "
                     + "timestamp_sequence('" + START_TS + "'::timestamp, " + WORST_CASE_STEP_MICROS + ") AS ts "
+                    + "FROM long_sequence(" + rowCount + ")";
+        } else if ("BEST_CASE".equals(scenario)) {
+            // Best case for parallel-aggregation paths: high R, low K, low B.
+            // Span fixed at BEST_CASE_BUCKET_COUNT * 1m so that A = K*B stays
+            // constant regardless of R. Step shrinks inversely with R but
+            // stays in microseconds (1.7us at R=5*10^10).
+            final long stepMicros = (BEST_CASE_BUCKET_COUNT * BEST_CASE_BUCKET_MICROS) / rowCount;
+            insert = "INSERT INTO tab "
+                    + "SELECT "
+                    + "(x % " + BEST_CASE_UNIQUE_KEYS + ")::SYMBOL AS sym1, "
+                    + "rnd_double() AS d, "
+                    + "timestamp_sequence('" + START_TS + "'::timestamp, " + stepMicros + ") AS ts "
                     + "FROM long_sequence(" + rowCount + ")";
         } else {
             // Low-cardinality dense data: every key appears in every bucket so

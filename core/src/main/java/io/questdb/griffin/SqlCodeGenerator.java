@@ -3749,18 +3749,61 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // requires sorted input. We build the sort factory explicitly because
             // the optimizer strips the ORDER BY added by rewriteSampleBy before
             // code generation runs.
+            //
+            // Sort strategy is parameterised through the
+            // "questdb.sample.by.sort" system property so benchmarks can
+            // compare the four (light/full) x (encoded/recordchain) factory
+            // combinations. Defaults to light_encoded, the cheapest when the
+            // base supports random access and the sort key is encodable -- both
+            // hold for a single-TIMESTAMP sort over AGB output.
             final RecordMetadata sortMetadata = groupByFactory.getMetadata();
             listColumnFilterA.clear();
             listColumnFilterA.add(timestampIndex + 1); // positive = ascending
             entityColumnFilter.of(sortMetadata.getColumnCount());
-            groupByFactory = new SortedRecordCursorFactory(
-                    configuration,
-                    sortMetadata,
-                    groupByFactory,
-                    RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
-                    recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
-                    listColumnFilterA.copy()
-            );
+            final String sortChoice = System.getProperty("questdb.sample.by.sort", "light_encoded");
+            switch (sortChoice) {
+                case "light_encoded" -> {
+                    assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
+                            && groupByFactory.recordCursorSupportsRandomAccess();
+                    groupByFactory = new EncodedSortLightRecordCursorFactory(
+                            configuration,
+                            sortMetadata,
+                            groupByFactory,
+                            listColumnFilterA.copy()
+                    );
+                }
+                case "full_encoded" -> {
+                    assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
+                    groupByFactory = new EncodedSortRecordCursorFactory(
+                            configuration,
+                            sortMetadata,
+                            groupByFactory,
+                            RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
+                            listColumnFilterA.copy()
+                    );
+                }
+                case "light_recordchain" -> {
+                    assert groupByFactory.recordCursorSupportsRandomAccess();
+                    groupByFactory = new SortedLightRecordCursorFactory(
+                            configuration,
+                            sortMetadata,
+                            groupByFactory,
+                            recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
+                            listColumnFilterA.copy()
+                    );
+                }
+                case "full_recordchain" -> groupByFactory = new SortedRecordCursorFactory(
+                        configuration,
+                        sortMetadata,
+                        groupByFactory,
+                        RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
+                        recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
+                        listColumnFilterA.copy()
+                );
+                default -> throw new IllegalStateException(
+                        "unknown questdb.sample.by.sort value: " + sortChoice
+                );
+            }
 
             final GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfNew(groupByFactory.getMetadata());
             fillMetadata.setTimestampIndex(timestampIndex);
