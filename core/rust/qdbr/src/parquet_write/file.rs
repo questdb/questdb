@@ -1002,8 +1002,11 @@ fn column_chunk_to_dict_pages(
         ColumnTypeTag::Byte => {
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
             // The byte content represents valid `i8` values.
+            // Schema is Optional so column_top rows can be tagged as parquet-NULL
+            // (def-level=0). The data values themselves never report null because
+            // BYTE has no null sentinel in QuestDB.
             let data: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_dict_pages_notnull::<i8, i32>(
+            primitive::int_slice_to_dict_pages_nullable::<i8, i32>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
@@ -1015,7 +1018,7 @@ fn column_chunk_to_dict_pages(
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
             // The byte content represents valid `i16` values.
             let data: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_dict_pages_notnull::<i16, i32>(
+            primitive::int_slice_to_dict_pages_nullable::<i16, i32>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
@@ -1027,7 +1030,7 @@ fn column_chunk_to_dict_pages(
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
             // The byte content represents valid `u16` values.
             let data: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_dict_pages_notnull::<u16, i32>(
+            primitive::int_slice_to_dict_pages_nullable::<u16, i32>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
@@ -1419,8 +1422,9 @@ fn chunk_to_primitive_page(
         ColumnTypeTag::Byte => {
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
             // The byte content represents valid `i8` values.
+            // Schema is Optional; see ColumnTypeTag::Byte arm in the dict-page dispatch above.
             let data: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_notnull::<i8, i32>(
+            primitive::int_slice_to_page_nullable::<i8, i32, false>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
@@ -1433,7 +1437,7 @@ fn chunk_to_primitive_page(
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
             // The byte content represents valid `u16` values.
             let data: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_notnull::<u16, i32>(
+            primitive::int_slice_to_page_nullable::<u16, i32, true>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
@@ -1446,7 +1450,7 @@ fn chunk_to_primitive_page(
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
             // The byte content represents valid `i16` values.
             let data: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_notnull::<i16, i32>(
+            primitive::int_slice_to_page_nullable::<i16, i32, false>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,

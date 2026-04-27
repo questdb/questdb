@@ -72,6 +72,31 @@ impl Nullable for i32 {
     }
 }
 
+// SHORT, BYTE and CHAR have no in-band null sentinel in QuestDB — every bit
+// pattern is a valid value. They use the OPTIONAL parquet schema solely so
+// that rows in the column-top region can be marked as parquet-NULL via
+// def-level = 0; data values themselves never report null.
+impl Nullable for i8 {
+    #[inline(always)]
+    fn is_null(&self) -> bool {
+        false
+    }
+}
+
+impl Nullable for i16 {
+    #[inline(always)]
+    fn is_null(&self) -> bool {
+        false
+    }
+}
+
+impl Nullable for u16 {
+    #[inline(always)]
+    fn is_null(&self) -> bool {
+        false
+    }
+}
+
 impl Nullable for i64 {
     fn is_null(&self) -> bool {
         *self == nulls::LONG

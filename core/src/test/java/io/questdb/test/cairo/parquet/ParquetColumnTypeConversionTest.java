@@ -785,7 +785,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * garbage or throws.
      */
     @Test
-    public void testMixedConversionStatesAcrossPartitionsReproduceAliasingBug() throws Exception {
+    public void testRecordABMixedConversionStatesAcrossPartitions() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -868,6 +868,76 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             } finally {
                 tryDrop("pt");
             }
+        });
+    }
+
+    @Test
+    public void testShortToIntColumnTopAndNull() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Pre-ADD-COLUMN rows -- column_top region for column 'v'.
+                String preAdd = """
+                        INSERT INTO %s(ts) VALUES
+                        ('2020-01-01T00:00:00.000Z'),
+                        ('2020-01-01T04:00:00.000Z'),
+                        ('2020-01-02T00:00:00.000Z')""";
+                execute(preAdd.formatted("nt"));
+                execute(preAdd.formatted("pt"));
+                drainWalQueue();
+
+                execute("ALTER TABLE nt ADD COLUMN v SHORT");
+                execute("ALTER TABLE pt ADD COLUMN v SHORT");
+                drainWalQueue();
+
+                String postAdd = """
+                        INSERT INTO %s(v, ts) VALUES
+                        (5, '2020-01-01T08:00:00.000Z'),
+                        (NULL, '2020-01-01T12:00:00.000Z'),
+                        (7, '2020-01-01T16:00:00.000Z'),
+                        (8, '2020-01-01T20:00:00.000Z'),
+                        (9, '2020-01-02T12:00:00.000Z')""";
+                execute(postAdd.formatted("nt"));
+                execute(postAdd.formatted("pt"));
+                drainWalQueue();
+
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+                drainWalQueue();
+
+                execute("ALTER TABLE nt ALTER COLUMN v TYPE INT");
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE INT");
+                drainWalQueue();
+
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
+    public void testDoubleToLongBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            // 9.223372036854775807E18 parses to the nearest double, 2^63 (one ULP
+            // above Long.MAX_VALUE).
+            String values = """
+                    (9.223372036854775807E18, '2024-01-01T00:00:01.000000Z'),
+                    (1.0, '2024-01-01T00:00:02.000000Z')""";
+            assertConversion("DOUBLE", "LONG", values);
+        });
+    }
+
+    @Test
+    public void testFloatToIntBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            // 2.147483647E9 parses to the nearest float, 2^31 (one ULP above INT_MAX).
+            String values = """
+                    (2.147483647E9, '2024-01-01T00:00:01.000000Z'),
+                    (1.0, '2024-01-01T00:00:02.000000Z')""";
+            assertConversion("FLOAT", "INT", values);
         });
     }
 

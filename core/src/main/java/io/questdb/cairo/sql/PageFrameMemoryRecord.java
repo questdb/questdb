@@ -1305,24 +1305,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
         if (auxPageAddress != 0) {
             if (frameFormat == PartitionFormat.PARQUET) {
-                Utf8Sequence result = VarcharTypeDriver.getSliceValue(auxPageAddress, rowIndex, utf8View);
-                if (result != null) {
-                    long ptr = Unsafe.getUnsafe().getLong(auxPageAddress + 16L * rowIndex + 8);
-                    if (ptr != 0 && ptr < 65536) {
-                        int srcType = hasTypeCasts ? sourceColumnTypes.getQuick(columnIndex) : -1;
-                        throw CairoException.critical(0)
-                                .put("corrupt varchar slice in parquet frame")
-                                .put(", col=").put(columnIndex)
-                                .put(", row=").put(rowIndex)
-                                .put(", frameIdx=").put(frameIndex)
-                                .put(", ptr=").put(ptr)
-                                .put(", auxAddr=").put(auxPageAddress)
-                                .put(", hasTypeCasts=").put(hasTypeCasts)
-                                .put(", srcType=").put(srcType)
-                                .put(", dataAddr=").put(pageAddresses.get(columnOffset + columnIndex));
-                    }
-                }
-                return result;
+                return VarcharTypeDriver.getSliceValue(auxPageAddress, rowIndex, utf8View);
             }
             final long auxPageLim = auxPageAddress + auxPageSizes.get(columnOffset + columnIndex);
             final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);

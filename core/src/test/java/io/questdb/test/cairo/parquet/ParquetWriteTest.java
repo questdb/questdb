@@ -3659,14 +3659,17 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
             drainWalQueue();
 
-            // TODO: null sentinel handling for SHORT→INT conversion in parquet
-            //  decode: column_top and explicit NULL rows from the parquet
-            //  partition show as 0 (SHORT null sentinel) instead of INT null.
+            // The 00:00 and 04:00 rows were inserted before ADD COLUMN v -- they are
+            // column_top rows and read back as INT null on both native and parquet
+            // (parquet stores them as def-level=0 since SHORT/BYTE/CHAR are now
+            // declared OPTIONAL in the parquet schema). Explicit NULL inserted into
+            // SHORT becomes 0 because SHORT has no null sentinel; that 0 stays 0
+            // after SHORT->INT on both paths.
             assertSql(
                     """
                             ts\tv
-                            2020-01-01T00:00:00.000000Z\t0
-                            2020-01-01T04:00:00.000000Z\t0
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
                             2020-01-01T08:00:00.000000Z\t5
                             2020-01-01T12:00:00.000000Z\t0
                             2020-01-01T16:00:00.000000Z\t7
@@ -3688,8 +3691,8 @@ public class ParquetWriteTest extends AbstractCairoTest {
             assertSql(
                     """
                             ts\tv
-                            2020-01-01T00:00:00.000000Z\t0
-                            2020-01-01T04:00:00.000000Z\t0
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
                             2020-01-01T06:00:00.000000Z\t99
                             2020-01-01T08:00:00.000000Z\t5
                             2020-01-01T12:00:00.000000Z\t0
