@@ -354,6 +354,52 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Pins lazy parquet behavior for narrow-int -&gt; narrow-decimal scaling
+     * overflow.
+     * <p>
+     * In {@code convert_fixed_to_decimal} (core/rust/qdbr/src/parquet_read/row_groups.rs)
+     * the Rust path scales each value as {@code val * 10^scale} then writes only
+     * the low {@code dst_size} bytes. Without a bounds check the high bytes are
+     * silently truncated: INT {@code 2_000_000} -&gt; {@code DECIMAL(2, 2)}
+     * (Decimal8, 1 byte) computes {@code 200_000_000}, low byte {@code 0x00},
+     * displayed as {@code 0.00}; INT {@code 1_000_000} -&gt; {@code DECIMAL(9, 4)}
+     * (Decimal32, 4 bytes) computes {@code 10^10}, low 32 bits
+     * {@code 1_410_065_408}, displayed as {@code 141006.5408}.
+     * <p>
+     * The native (JNI) {@code DecimalColumnTypeConverter.convertToDecimal}
+     * scales through Decimal256 and validates against the destination precision,
+     * so it rejects the ALTER on overflow with {@code CairoException} (the WAL
+     * applier swallows the failure and the column stays INT). The differential
+     * helper {@link #assertConversion} cannot express that asymmetry, so this
+     * test exercises the parquet path directly and asserts the contract: every
+     * overflowing row reads back as NULL, never as a truncated value.
+     */
+    @Test
+    public void testIntToNarrowDecimalScalingOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            assertParquetIntToDecimalOverflowNull("DECIMAL(2, 2)", "2_000_000");
+            assertParquetIntToDecimalOverflowNull("DECIMAL(4, 2)", "1_000_000");
+            assertParquetIntToDecimalOverflowNull("DECIMAL(9, 4)", "1_000_000");
+        });
+    }
+
+    private void assertParquetIntToDecimalOverflowNull(String targetType, String overflowValue) throws Exception {
+        try {
+            execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            // CursorPrinter renders Decimal*_NULL as an empty cell.
+            assertSql("val\n\n", "SELECT val FROM pt");
+        } finally {
+            tryDrop("pt");
+        }
+    }
+
     @Test
     public void testIntToOtherFixedTypes() throws Exception {
         assertMemoryLeak(() -> {

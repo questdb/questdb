@@ -579,13 +579,14 @@ fn convert_fixed_to_decimal(
         // Target Decimal8..Decimal64: use i64 arithmetic.
         tag if decimal_tag_size(tag) <= 8 => {
             let factor = 10i64.wrapping_pow(dst_scale as u32);
+            let null_sentinel = null_i64_for_decimal(dst_tag);
             if dst_size >= src_size {
                 for i in (0..count).rev() {
                     let val = unsafe { read_le_i64_at(ptr, i, src_size) };
                     let scaled = if is_int_null(val, src_tag) {
-                        null_i64_for_decimal(dst_tag)
+                        null_sentinel
                     } else {
-                        val.wrapping_mul(factor)
+                        scale_or_null_i64(val, factor, dst_size, null_sentinel)
                     };
                     unsafe { write_le_i64_at(ptr, i, dst_size, scaled) };
                 }
@@ -593,9 +594,9 @@ fn convert_fixed_to_decimal(
                 for i in 0..count {
                     let val = unsafe { read_le_i64_at(ptr, i, src_size) };
                     let scaled = if is_int_null(val, src_tag) {
-                        null_i64_for_decimal(dst_tag)
+                        null_sentinel
                     } else {
-                        val.wrapping_mul(factor)
+                        scale_or_null_i64(val, factor, dst_size, null_sentinel)
                     };
                     unsafe { write_le_i64_at(ptr, i, dst_size, scaled) };
                 }
@@ -695,6 +696,25 @@ fn null_i64_for_decimal(tag: ColumnTypeTag) -> i64 {
         ColumnTypeTag::Decimal32 => i32::MIN as i64,
         _ => i64::MIN,
     }
+}
+
+/// Scales `val` by `factor` and verifies the result fits the destination width.
+/// Returns `null_sentinel` if the i64 multiplication overflows or the product
+/// is outside the signed range of `dst_size` bytes. Without this guard,
+/// `write_le_i64_at` would silently truncate the low bytes and produce a
+/// corrupted decimal (see issue: INT 2_000_000 -> Decimal8 scale 2 stored as 0).
+#[inline]
+fn scale_or_null_i64(val: i64, factor: i64, dst_size: usize, null_sentinel: i64) -> i64 {
+    let Some(scaled) = val.checked_mul(factor) else {
+        return null_sentinel;
+    };
+    let fits = match dst_size {
+        1 => (i8::MIN as i64..=i8::MAX as i64).contains(&scaled),
+        2 => (i16::MIN as i64..=i16::MAX as i64).contains(&scaled),
+        4 => (i32::MIN as i64..=i32::MAX as i64).contains(&scaled),
+        _ => true,
+    };
+    if fits { scaled } else { null_sentinel }
 }
 
 fn fixed_tag_size(tag: ColumnTypeTag) -> usize {
