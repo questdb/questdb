@@ -9511,8 +9511,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                             }
 
-                            // Check if covering index can serve all selected columns
-                            if (!SqlHints.hasNoCoveringHint(model)) {
+                            if (!SqlHints.hasNoCoveringHint(model) && !model.isUpdate()) {
                                 int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
                                 int[] coveringMapping = buildCoveringIndexMapping(
                                         reader, keyReaderColIdx, columnIndexes, queryMeta
