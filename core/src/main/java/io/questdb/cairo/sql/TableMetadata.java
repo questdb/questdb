@@ -31,4 +31,14 @@ import io.questdb.cairo.TableStructure;
  * table-level metadata.
  */
 public interface TableMetadata extends TableRecordMetadata, TableStructure {
+    /**
+     * True when the on-disk SymbolMapWriter.HEADER_NULL_FLAG accurately reflects whether
+     * any -1 keys exist in any of this table's symbol column data files. Set on tables
+     * created by code that maintains this invariant (post pre-#6645 ingest fix). Legacy
+     * tables, including ones whose metadata predates this field, return false here so
+     * the parquet encoder falls back to scanning column data instead of trusting the flag.
+     */
+    default boolean isSymbolNullFlagReliable() {
+        return false;
+    }
 }

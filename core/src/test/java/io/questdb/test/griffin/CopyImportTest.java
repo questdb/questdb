@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
@@ -563,6 +564,39 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyMaintainsSymbolHeaderNullFlag() throws Exception {
+        // Importing a CSV that contains both populated and empty SYMBOL cells must leave
+        // the symbol map's HEADER_NULL_FLAG set. Pre-#6645 ingest paths failed to do so,
+        // and the resulting stale flag (false despite -1 keys in column data) is what the
+        // parquet encoder used to crash on (#7007).
+        CopyRunnable stmt = () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY MONTH;");
+            runAndFetchCopyID(
+                    "copy x from 'test-symbol-nulls.csv' with header true timestamp 'ts' delimiter ',' " +
+                            "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;",
+                    sqlExecutionContext
+            );
+        };
+
+        CopyRunnable test = () -> {
+            if (walEnabled) {
+                drainWalQueue();
+            }
+            assertSql("c\n5\n", "SELECT count() c FROM x");
+            assertSql("c\n2\n", "SELECT count() c FROM x WHERE sym IS NULL");
+            try (TableReader reader = getReader("x")) {
+                int symIdx = reader.getMetadata().getColumnIndex("sym");
+                Assert.assertTrue(
+                        "HEADER_NULL_FLAG must be true after CSV import with empty SYMBOL cells",
+                        reader.getSymbolMapReader(symIdx).containsNullValue()
+                );
+            }
+        };
+
+        testCopy(stmt, test);
+    }
+
+    @Test
     public void testParallelCopyRequiresWithBeforeOptions() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -874,6 +908,37 @@ public class CopyImportTest extends AbstractCairoTest {
 
         CopyRunnable assertion = () -> assertSql(expected, "x");
         testCopy(insert, assertion);
+    }
+
+    @Test
+    public void testSerialCopyMaintainsSymbolHeaderNullFlag() throws Exception {
+        // Serial CSV import path (no partition_by clause) into a pre-created table.
+        // Mirrors testParallelCopyMaintainsSymbolHeaderNullFlag for the TextLoader path.
+        CopyRunnable stmt = () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY MONTH;");
+            runAndFetchCopyID(
+                    "copy x from 'test-symbol-nulls.csv' with header true timestamp 'ts' delimiter ',' " +
+                            "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT;",
+                    sqlExecutionContext
+            );
+        };
+
+        CopyRunnable test = () -> {
+            if (walEnabled) {
+                drainWalQueue();
+            }
+            assertSql("c\n5\n", "SELECT count() c FROM x");
+            assertSql("c\n2\n", "SELECT count() c FROM x WHERE sym IS NULL");
+            try (TableReader reader = getReader("x")) {
+                int symIdx = reader.getMetadata().getColumnIndex("sym");
+                Assert.assertTrue(
+                        "HEADER_NULL_FLAG must be true after CSV import with empty SYMBOL cells",
+                        reader.getSymbolMapReader(symIdx).containsNullValue()
+                );
+            }
+        };
+
+        testCopy(stmt, test);
     }
 
     @Test

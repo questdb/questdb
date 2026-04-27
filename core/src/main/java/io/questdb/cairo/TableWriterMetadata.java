@@ -35,6 +35,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
+    private int dataInvariantFlagsRaw;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -53,6 +54,17 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public void close() {
         // nothing to release
+    }
+
+    /**
+     * Returns the raw META_OFFSET_DATA_INVARIANT_FLAGS bitmap. The value has already
+     * been sanitised at read time by {@link TableUtils#readDataInvariantFlagsRaw}: any
+     * _meta whose minor version predates META_FORMAT_MINOR_VERSION_DATA_INVARIANT_FLAGS
+     * yields 0 here, so callers cannot accidentally trust uninitialised padding bytes
+     * left by older code.
+     */
+    public int getDataInvariantFlagsRaw() {
+        return dataInvariantFlagsRaw;
     }
 
     @Override
@@ -134,6 +146,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public boolean isSymbolNullFlagReliable() {
+        return (dataInvariantFlagsRaw & TableUtils.DATA_INVARIANT_FLAG_SYMBOL_NULL_FLAG_RELIABLE) != 0;
+    }
+
+    @Override
     public boolean isWalEnabled() {
         return walEnabled;
     }
@@ -151,6 +168,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
+        this.dataInvariantFlagsRaw = TableUtils.readDataInvariantFlagsRaw(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -198,12 +216,12 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = o3MaxLagUs;
     }
 
-    public void setTxReader(TxReader txReader) {
-        this.txReader = txReader;
-    }
-
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+    }
+
+    public void setTxReader(TxReader txReader) {
+        this.txReader = txReader;
     }
 
     public void updateTableToken(TableToken tableToken) {

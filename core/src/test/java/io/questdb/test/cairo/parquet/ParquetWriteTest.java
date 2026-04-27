@@ -25,13 +25,20 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -477,6 +484,66 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             2020-01-01T00:18:18.000000Z\t1098\t[[null,null,null],[null,null,null],[null,null,null]]
                             """,
                     "SELECT * FROM x WHERE x = 1098"
+            );
+        });
+    }
+
+    @Test
+    public void testConvertPartitionToParquetStaleSymbolNullFlag() throws Exception {
+        // Regression for #7007. Before this PR, the COPY TO PARQUET and
+        // ALTER TABLE CONVERT PARTITION TO PARQUET paths set Integer.MIN_VALUE
+        // on the encoded column type whenever SymbolMapWriter.HEADER_NULL_FLAG
+        // was false. Pre-#6645 ingest left some legacy tables with that flag
+        // false despite their column data containing -1 keys, which crashed
+        // the Rust encoder on the def-level fast path.
+        //
+        // This test simulates the legacy state: it forces HEADER_NULL_FLAG to
+        // false on a symbol map whose data file actually contains -1 keys, and
+        // strips the per-table data-invariant flag from _meta so the new code
+        // treats the table as legacy. The encoder must fall back to scanning
+        // column values, the conversion must succeed, and the resulting parquet
+        // must report the null rows correctly.
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (s SYMBOL, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(s, ts) VALUES
+                            ('a', '2020-01-01T00:00:00.000Z'),
+                            ('b', '2020-01-01T01:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T02:00:00.000Z'),
+                            ('2020-01-01T03:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(s, ts) VALUES ('z', '2020-01-02T00:00:00.000Z')");
+
+            TableToken tt = engine.verifyTableName("x");
+            engine.releaseInactive();
+
+            forceStaleSymbolNullFlag(tt, "s");
+            stripDataInvariantFlags(tt);
+            engine.releaseInactive();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+
+            assertSql(
+                    """
+                            s\tts
+                            a\t2020-01-01T00:00:00.000000Z
+                            b\t2020-01-01T01:00:00.000000Z
+                            \t2020-01-01T02:00:00.000000Z
+                            \t2020-01-01T03:00:00.000000Z
+                            """,
+                    "SELECT s, ts FROM x WHERE ts < '2020-01-02' ORDER BY ts"
             );
         });
     }
@@ -3138,7 +3205,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     private static int countPartitionDirs(File tableDir) {
-        String[] dirs = tableDir.list((dir, name) -> name.startsWith("2020-01-01"));
+        String[] dirs = tableDir.list((_, name) -> name.startsWith("2020-01-01"));
         return dirs != null ? dirs.length : 0;
     }
 
@@ -3160,9 +3227,29 @@ public class ParquetWriteTest extends AbstractCairoTest {
         };
     }
 
+    private void forceStaleSymbolNullFlag(TableToken tt, String columnName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path(); MemoryMARW mem = Vm.getCMARWInstance()) {
+            path.of(configuration.getDbRoot()).concat(tt.getDirName());
+            LPSZ name = TableUtils.offsetFileName(path, columnName, -1L);
+            mem.of(ff, name, ff.getMapPageSize(), ff.length(name), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+            mem.putBool(SymbolMapWriter.HEADER_NULL_FLAG, false);
+        }
+    }
+
     private long getPartitionNameTxn(long partitionTimestamp) {
         try (TableReader reader = getReader("x")) {
             return reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+        }
+    }
+
+    private void stripDataInvariantFlags(TableToken tt) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path(); MemoryMARW mem = Vm.getCMARWInstance()) {
+            path.of(configuration.getDbRoot()).concat(tt.getDirName()).concat(TableUtils.META_FILE_NAME);
+            LPSZ name = path.$();
+            mem.of(ff, name, ff.getMapPageSize(), ff.length(name), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+            mem.putInt(TableUtils.META_OFFSET_DATA_INVARIANT_FLAGS, 0);
         }
     }
 }
