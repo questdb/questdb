@@ -1472,6 +1472,25 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionDropAggregateOverParquet() throws Exception {
+        // Projection pruning leaves a column in the underlying scan after the WHERE
+        // that referenced it has been constant-folded away. The projected metadata
+        // lists fewer columns than the cursor's column mapping, which broke the
+        // PageFrameMemoryPool.openParquet loop and caused an async reduce-job assertion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k DOUBLE, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1.0, 'a', '2024-01-01T00:00:00.000000Z'), (2.0, 'b', '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertSql(
+                    "min\na\n",
+                    "SELECT min(rv) FROM (SELECT k AS rk, v AS rv FROM x) WHERE NOT ('z' IS NULL AND 0.5::FLOAT < (rk - rk))"
+            );
+        });
+    }
+
+    @Test
     public void testSinglePartition() throws Exception {
         assertMemoryLeak(() -> {
             execute(
